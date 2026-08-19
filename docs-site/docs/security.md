@@ -43,16 +43,31 @@ shell, fork bomb, `mkfs`, dd-to-device) can **never** be loosened below Block.
 ## Git: the orchestrator owns the branch, you own the files
 
 Kato drives the branch state machine — it prepares the branch, creates the
-commit, and publishes. So the agent is hard-denied `git commit`, `push`,
-`checkout`, `switch`, `branch`, `reset`, `rebase`, `merge` and friends at layer
-1, in **every** permission mode. Read-only git (`status`, `log`, `diff`,
-`show`, `blame`) is not denied — the self-review step needs it.
+commit, and publishes. That, and only that, is what the agent is denied:
+`git commit`, `push`, `pull`, `fetch`, `merge`, `rebase`, `reset`, `checkout`,
+`switch`, `branch` (plus the plumbing that reaches the same capabilities —
+`commit-tree`, `send-pack`, `update-ref` …) are hard-denied at layer 1, in
+**every** permission mode. `config` is denied too: it is the hook/RCE surface,
+not a branch concern.
+
+**Everything else in git is available**, and that is deliberate. Denying every
+verb that can write anything is a much broader rule than "kato owns the
+branch", and it cost real work — an operator could not ask the agent to look
+up a file's history, undo a change, restore a file deleted three commits ago,
+set work aside, or find a lost commit. So `log`, `show`, `diff`, `blame`,
+`status`, `restore`, `stash`, `apply` and `reflog` all pass, subject to the
+normal approval prompt.
 
 `git restore <path>` is deliberately allowed. Reverting a file to its committed
 state is ordinary editing, not branch movement, and blocking it meant the agent
 had to refuse when an operator said "just revert that file". `git restore` is
 the only file-scoped member of the family — it cannot move `HEAD` or switch
 branches — so allowing it can't race the orchestrator.
+
+The destructive FORMS of those verbs are caught by argv rather than by
+denying the verb: `git stash drop`/`clear`, `git reflog expire`/`delete`, and
+`git apply --unsafe-paths` (the one apply form that can write outside the
+worktree) each go to you for approval, while the ordinary forms pass.
 
 A **whole-tree** revert (`git restore .`) is different and asks first: nothing
 is committed until Kato publishes, so discarding every uncommitted change

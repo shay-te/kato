@@ -283,4 +283,4 @@ The exception is one-line callbacks passed inline (`items.map((x) => x.id)`); th
 
 - For file searches and grep work, prefer `rg` (ripgrep) over `find` + `grep`. Always scope: `rg "pattern" webserver/ui/src --type js -l`.
 - For single-line edits / deletions, `sed -i` is fine. Don't read an entire file just to find one key — search first.
-- Don't run `git diff`, `git status`, or any git command unless the task explicitly involves git.
+- Don't run `git diff` / `git status` reflexively at the start or end of a turn — the conversation already records what you changed. DO reach for git when you actually need history: `git log --follow -- <path>`, `git show <commit>:<path>`, `git blame`, and `git restore --source=<commit> -- <path>` to bring a file back to an earlier state. Branch/publish commands (`commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `checkout`, `switch`, `branch`) belong to the orchestrator and are blocked.

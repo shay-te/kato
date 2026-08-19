@@ -6409,6 +6409,26 @@ body.kato-resizing {
   cursor: pointer;
 }
 
+/* Discarding destroys uncommitted work, and nothing is committed until
+   publish — so it reads as a warning in the menu rather than sitting flush
+   with the three harmless copy actions above it. */
+.files-tab-context-menu-item.is-destructive {
+  color: #fde68a;
+  border-top: 1px solid #2a2a2a;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  margin-top: 4px;
+}
+
+.files-tab-context-menu-item.is-destructive:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.files-tab-discard-notice {
+  cursor: pointer;
+}
+
 .files-tab-context-menu-item:hover,
 .files-tab-context-menu-item:focus-visible,
 .diff-file-context-menu-item:hover,
@@ -10220,6 +10240,16 @@ body.kato-resizing {
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Takes the slack so the status label is pinned to the right edge and
+     the column reads down the list instead of wandering with each name. */
+  flex: 1;
+}
+
+.task-palette-status {
+  color: rgba(245, 245, 247, 0.65);
+  font-size: 11px;
+  flex-shrink: 0;
+  text-transform: lowercase;
 }
 
 .task-palette-empty {

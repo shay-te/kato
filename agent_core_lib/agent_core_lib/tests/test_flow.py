@@ -128,7 +128,13 @@ class ImplementationPromptFlowTests(unittest.TestCase):
         self.assertIn('- svc at ' + self.repo_dir, prompt)
         self.assertIn('prepared branch feature/x from main', prompt)
         # The orchestration layer owns publishing — agent must not push.
-        self.assertIn('do not run git checkout', prompt)
+        # Branch movement stays forbidden...
+        self.assertIn('git checkout', prompt)
+        # ...but the prompt must ALSO say what git IS available, or the
+        # agent generalises the prohibitions into "no git at all" and
+        # refuses an operator asking it to revert a file.
+        self.assertIn('EVERYTHING ELSE IN GIT IS AVAILABLE', prompt)
+        self.assertIn('git restore --source=<commit>', prompt)
 
     def test_agents_md_body_surfaces_via_wrapper(self) -> None:
         prompt = self._assemble_prompt()

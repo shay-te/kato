@@ -861,3 +861,19 @@ export async function fetchFullFileDiff(taskId, { repoId = '', path = '' } = {})
     : diffs[0];
   return String((match || payload || {}).diff || '');
 }
+
+// Discard uncommitted changes to ONE file in a task clone (Files-tree
+// right-click → Discard changes). Operator-driven: kato runs the git call
+// itself rather than asking the agent, so it works with no session running
+// and costs no turn.
+//
+// Named for the effect, not for a git subcommand — "revert" would read as
+// ``git revert`` (a NEW commit undoing an old one), which is a different
+// operation. The server runs ``git restore``.
+//
+// Resolves to the usual envelope; on success ``discarded`` is the list of
+// paths that actually had something to throw away, so the caller can tell
+// "discarded" from "there was nothing to discard".
+export function discardWorkspaceFileChanges(taskId, { repoId = '', path = '' } = {}) {
+  return postSession(taskId, 'files/discard-changes', { repo_id: repoId, path });
+}

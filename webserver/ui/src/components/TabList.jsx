@@ -38,9 +38,14 @@ export default function TabList({
   activeTaskId,
   attentionTaskIds,
   agentStatuses = {},
+  // Bumped ONLY when the operator picked a task from somewhere other than
+  // the strip itself (the go-to-task palette). Scrolling the strip is a
+  // response to THAT, and nothing else — see the effect below.
+  revealRequestId = 0,
   onSelect,
   onForget,
   onOpenAddTask,
+  onOpenTaskPalette,
   onScanNow,
   scanPending,
 }) {
@@ -276,11 +281,50 @@ export default function TabList({
     return () => observer.disconnect();
   }, [orderedSessions, pinnedSet]);
 
+  // Bring the ACTIVE task's tab into view — but ONLY when the reveal id
+  // changed. Deliberately NOT keyed on activeTaskId or on sessions: those
+  // change on every status poll and whenever the operator clicks a tab
+  // they can already see, and re-centring then would yank the strip back
+  // under their cursor while they were reaching for a different tab. A
+  // scroll is intent too, and it has to win. Same rule the file-tab strip
+  // follows.
+  const lastRevealRef = useRef(revealRequestId);
+  useEffect(() => {
+    if (revealRequestId === lastRevealRef.current) { return; }
+    lastRevealRef.current = revealRequestId;
+    if (!activeTaskId || typeof document === 'undefined') { return; }
+    const node = document.querySelector(
+      `#tabs-pane [data-task-id="${CSS.escape(activeTaskId)}"]`,
+    );
+    // Guarded: jsdom has no scrollIntoView, and neither do a couple of
+    // older embedded browsers. Not being able to scroll is cosmetic — it
+    // must never take the strip down with it.
+    if (typeof node?.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    }
+  }, [revealRequestId, activeTaskId]);
+
   // Trailing actions live in their own pill so they stay visually
   // separated from the segments (and don't get swallowed by the
   // horizontal scroll).
   const trailingActions = (
     <div className="tabs-actions">
+      {/* Go to task. The Ctrl/Cmd+Shift+F shortcut is the fast path, but a
+          shortcut nobody is told about does not exist — with a strip full
+          of tasks (most scrolled out of sight) the only discoverable way
+          to reach one was to scroll and read every pill. The tooltip
+          names the shortcut so the button teaches it. */}
+      <button
+        type="button"
+        id="tabs-go-to-task"
+        className="tabs-action tooltip-below"
+        data-tooltip="Go to task (Ctrl+Shift+F) — search your open tasks by id or name and jump straight to one."
+        aria-label="Go to task"
+        onClick={onOpenTaskPalette}
+        disabled={typeof onOpenTaskPalette !== 'function'}
+      >
+        <Icon name="search" />
+      </button>
       <button
         type="button"
         id="tabs-add-task"

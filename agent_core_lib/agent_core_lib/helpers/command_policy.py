@@ -469,6 +469,63 @@ def git_revert_breadth(segment: str) -> str:
     return 'scoped'
 
 
+# Destructive FORMS of git verbs that are otherwise fine.
+#
+# ``stash``/``apply``/``reflog`` are permitted at the transport floor
+# because they are worktree operations, not branch-state ones. Each has one
+# or two shapes that genuinely destroy something, and denying the whole
+# verb to stop them cost far more than it bought — an operator could not
+# ask the agent to set changes aside or find a lost commit at all.
+#
+#   stash drop / stash clear  — throws away a stash. The stash was the
+#                               recovery path; dropping it removes the
+#                               reason stash is safer than a bare restore.
+#   reflog expire / delete    — destroys the very record used to find lost
+#                               commits.
+#   apply --unsafe-paths      — the one apply form that can write OUTSIDE
+#                               the worktree.
+_GIT_DESTRUCTIVE_FORMS = {
+    'stash': ({'drop', 'clear'}, 'discards a stash — the saved work in it is gone'),
+    'reflog': (
+        {'expire', 'delete'},
+        'destroys the reflog, which is what finding a lost commit depends on',
+    ),
+}
+_GIT_APPLY_UNSAFE = '--unsafe-paths'
+
+
+def _detect_git_destructive_form(segments) -> list:
+    for segment in segments:
+        head = _git_subcommand_head(segment)
+        if head is None:
+            continue
+        subcommand, rest = head
+        if subcommand == 'apply':
+            if any(token.split('=', 1)[0] == _GIT_APPLY_UNSAFE for token in rest):
+                return [_Candidate(
+                    RiskCategory.OUT_OF_SCOPE, False,
+                    'git apply --unsafe-paths can write outside the worktree',
+                    'fs.git_apply_unsafe',
+                )]
+            continue
+        forms = _GIT_DESTRUCTIVE_FORMS.get(subcommand)
+        if not forms:
+            continue
+        verbs, reason = forms
+        # The destructive verb is the first non-flag token after the
+        # subcommand: ``git stash drop`` / ``git reflog expire --all``.
+        for token in rest:
+            if token.startswith('-'):
+                continue
+            if token in verbs:
+                return [_Candidate(
+                    RiskCategory.DESTRUCTIVE_FS, False, reason,
+                    f'fs.git_{subcommand}_destructive',
+                )]
+            break
+    return []
+
+
 def _detect_git_whole_tree_revert(segments) -> list:
     for segment in segments:
         if git_revert_breadth(segment) == 'whole-tree':
@@ -916,6 +973,7 @@ def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
     candidates += _detect_escape(command)
     candidates += _detect_destructive_fs(deob, segments)
     candidates += _detect_git_whole_tree_revert(segments)
+    candidates += _detect_git_destructive_form(segments)
     candidates += _detect_credential_read(deob, cwd)
     candidates += _detect_persistence_command(deob)
     candidates += _out_of_scope_candidate(

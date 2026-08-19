@@ -1690,3 +1690,77 @@ class ModeRestrictionRespawnTests(unittest.TestCase):
         self.assertFalse(
             _plan_mode_change_needs_respawn(app, manager, 'T-1', images=None),
         )
+
+
+class ToolFloorChangeRespawnTests(unittest.TestCase):
+    """A task already in progress must pick up new tool permissions.
+
+    ``--disallowedTools`` is baked into the subprocess at spawn, so a
+    session started before a kato upgrade keeps the OLD floor for its whole
+    life. Reported from the field: "make sure the tasks that are already in
+    progress will also get these new permissions so they can continue to
+    use git" — without this they would go on refusing commands kato now
+    permits, with no way to tell why except restarting each task by hand.
+    """
+
+    def _session(self, disallowed, *, working=False, alive=True):
+        return SimpleNamespace(
+            disallowed_tools=disallowed,
+            is_alive=alive,
+            is_working=working,
+            permission_mode='acceptEdits',
+        )
+
+    def _needs_respawn(self, session):
+        from webserver.kato_webserver import app as app_module
+        flask_app = MagicMock()
+        flask_app.config = {}
+        manager = MagicMock()
+        manager.get_session.return_value = session
+        return app_module._tool_floor_change_needs_respawn(
+            flask_app, manager, 'T-1', None,
+        )
+
+    def _current_floor(self):
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
+        return ClaudeCliClient._merge_disallowed_with_floor('')
+
+    def test_a_session_on_the_CURRENT_floor_is_left_alone(self) -> None:
+        self.assertFalse(self._needs_respawn(self._session(self._current_floor())))
+
+    def test_a_session_on_a_STALE_floor_is_respawned(self) -> None:
+        # e.g. spawned before `git restore` was permitted.
+        stale = self._current_floor() + ',Bash(git restore:*)'
+        self.assertTrue(self._needs_respawn(self._session(stale)))
+
+    def test_a_TIGHTENED_floor_also_reaches_a_running_session(self) -> None:
+        # Symmetric on purpose: an upgrade that closes a hole must not
+        # leave every in-flight session still holding it open.
+        loose = ','.join(
+            entry for entry in self._current_floor().split(',')
+            if 'git push' not in entry
+        )
+        self.assertTrue(self._needs_respawn(self._session(loose)))
+
+    def test_order_does_not_count_as_a_change(self) -> None:
+        # The floor is a SET; a reordered CSV must not respawn every task.
+        shuffled = ','.join(reversed(self._current_floor().split(',')))
+        self.assertFalse(self._needs_respawn(self._session(shuffled)))
+
+    def test_a_working_session_is_not_interrupted(self) -> None:
+        # Losing an in-flight turn over a tool list the agent has not hit
+        # yet costs more than waiting for the next message.
+        stale = self._current_floor() + ',Bash(git restore:*)'
+        self.assertFalse(self._needs_respawn(self._session(stale, working=True)))
+
+    def test_a_dead_session_needs_no_respawn(self) -> None:
+        stale = self._current_floor() + ',Bash(git restore:*)'
+        self.assertFalse(self._needs_respawn(self._session(stale, alive=False)))
+
+    def test_an_unknown_floor_does_not_drop_the_conversation(self) -> None:
+        # An older session object with nothing recorded: respawning on a
+        # guess would throw away the operator's chat for no proven reason.
+        self.assertFalse(self._needs_respawn(self._session('')))
+
+    def test_no_live_session_is_not_a_respawn(self) -> None:
+        self.assertFalse(self._needs_respawn(None))

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
+import { deriveAgentStatus } from '../utils/agentStatus.js';
 import {
   filterTaskPalette,
   nextPaletteIndex,
 } from '../utils/taskPalette.js';
 
-// Ctrl/Cmd+P task palette — the VS Code "Go to File" gesture, for tasks.
+// Ctrl/Cmd+Shift+F task palette — "search every task", for tasks.
 //
 // Tab / Shift+Tab already walks the task strip, but that only helps when
 // the task you want is a step or two away. With a strip full of tasks
@@ -16,7 +17,9 @@ import {
 // Selecting a row activates that task in the existing strip — it does not
 // open a second surface. The palette is navigation, not a new place for
 // state to live.
-export default function TaskPalette({ sessions, nameFor, onSelect, onClose }) {
+export default function TaskPalette({
+  sessions, nameFor, onSelect, onClose, agentStatuses = {},
+}) {
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef(null);
@@ -46,6 +49,12 @@ export default function TaskPalette({ sessions, nameFor, onSelect, onClose }) {
       node.scrollIntoView({ block: 'nearest' });
     }
   }, [highlight, rows]);
+
+  // Live SSE state for the focused task, polled state for the rest —
+  // exactly what TabList feeds the tabs.
+  function statusFor(session) {
+    return deriveAgentStatus(session, agentStatuses[session.task_id] || null, false);
+  }
 
   function choose(taskId) {
     if (!taskId) { return; }
@@ -99,6 +108,11 @@ export default function TaskPalette({ sessions, nameFor, onSelect, onClose }) {
             rows[highlight] ? `task-palette-row-${rows[highlight].taskId}` : undefined
           }
           autoComplete="off"
+          // Both: the effect is what actually reliably lands focus after
+          // the dialog paints, the attribute covers the first paint. A
+          // palette that opens without focus makes the operator reach for
+          // the mouse to do the one thing it exists for.
+          autoFocus
           onChange={(event) => setQuery(event.target.value)}
         />
         <ul
@@ -108,7 +122,9 @@ export default function TaskPalette({ sessions, nameFor, onSelect, onClose }) {
           aria-label="Tasks"
           ref={listRef}
         >
-          {rows.map((row, index) => (
+          {rows.map((row, index) => {
+            const status = statusFor(row.session);
+            return (
             <li
               key={row.taskId}
               id={`task-palette-row-${row.taskId}`}
@@ -122,10 +138,18 @@ export default function TaskPalette({ sessions, nameFor, onSelect, onClose }) {
               onMouseMove={() => setHighlight(index)}
               onClick={() => choose(row.taskId)}
             >
+              {/* Same dot as the task tab, from the SAME derivation
+                  (utils/agentStatus.js) — a palette that computed
+                  "running" its own way would eventually disagree with
+                  the strip, and the operator would not know which to
+                  believe. ``title`` carries the wording the tab uses. */}
+              <span className={status.dotClass} title={status.title} />
               <span className="task-palette-id">{row.taskId}</span>
               <span className="task-palette-name">{row.displayName}</span>
+              <span className="task-palette-status">{status.label}</span>
             </li>
-          ))}
+            );
+          })}
           {rows.length === 0 && (
             <li className="task-palette-empty" role="option" aria-selected="false">
               No task matches “{query}”

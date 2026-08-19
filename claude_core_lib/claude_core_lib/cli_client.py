@@ -73,6 +73,11 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     # listed in both the colon-form (`Bash(git push:*)`) and bare-form
     # (`Bash(git push *)`) that different Claude versions accept.
     #
+    # ``restore``, ``stash``, ``apply`` and ``reflog`` are DELIBERATELY
+    # ABSENT — see the note under this list. They are file/worktree
+    # operations, not branch-state ones, and the destructive FORMS of each
+    # are caught by argv in Layer B rather than by denying the whole verb.
+    #
     # ``restore`` is DELIBERATELY ABSENT. Reverting a file to its committed
     # state is a routine, explicitly-requested part of implementing a task,
     # and blocking it left the agent telling operators "I can't, git is
@@ -87,8 +92,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     # blanket-refusing every revert.
     _GIT_MUTATING_SUBCOMMANDS = (
         'push', 'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch',
-        'cherry-pick', 'revert', 'am', 'apply', 'add', 'rm', 'mv',
-        'clean', 'stash', 'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
+        'cherry-pick', 'revert', 'am', 'add', 'rm', 'mv',
+        'clean', 'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
         'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
         'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',
         'sparse-checkout', 'bisect', 'notes', 'replace', 'fast-import',
@@ -100,8 +105,32 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         # additionally a whole-tree working-copy overwrite.
         'read-tree', 'write-tree', 'commit-tree', 'hash-object', 'mktree',
         'checkout-index', 'send-pack', 'receive-pack', 'index-pack',
-        'unpack-objects', 'pack-refs', 'reflog', 'bundle', 'prune-packed',
+        'unpack-objects', 'pack-refs', 'bundle', 'prune-packed',
     )
+    # WHY stash / apply / reflog are not in that list.
+    #
+    # The rule this floor encodes is "the orchestrator owns BRANCH STATE and
+    # PUBLISHING". Denying every verb that can write anything is a different,
+    # much broader rule, and it cost real work: an operator could not ask the
+    # agent to set changes aside, apply a patch, or find a commit it had
+    # lost, and the agent reported all of it as "git is forbidden".
+    #
+    #   stash  — moves uncommitted work aside and back. Recoverable by
+    #            construction (that is what a stash IS), unlike a bare
+    #            restore. ``stash drop`` / ``stash clear`` DO destroy, and
+    #            those forms go to the operator via Layer B.
+    #   apply  — applies a patch to the working tree. No ref moves. The one
+    #            dangerous form, ``--unsafe-paths`` (writes outside the
+    #            worktree), is caught in Layer B.
+    #   reflog — the tool for finding a commit that was lost. Reading it is
+    #            harmless; ``reflog expire`` / ``reflog delete`` destroy the
+    #            recovery data itself and go to the operator.
+    #
+    # ``add`` / ``rm`` / ``mv`` / ``clean`` / ``config`` / ``bisect`` stay
+    # denied on purpose: config is the hook/RCE surface, bisect moves HEAD,
+    # clean deletes untracked files with no recovery, and add/rm/mv have
+    # plain-shell equivalents while the orchestrator stages everything
+    # itself at commit time.
     GIT_DENY_PATTERNS = tuple(
         pattern
         for sub in _GIT_MUTATING_SUBCOMMANDS

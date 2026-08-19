@@ -1,4 +1,4 @@
-// The Ctrl/Cmd+P "go to task" palette.
+// The Ctrl/Cmd+Shift+F "go to task" palette.
 //
 // Tab/Shift+Tab already steps the task strip, but that only helps when the
 // task is a step or two away. With a full strip — most of it scrolled out
@@ -145,5 +145,71 @@ describe('TaskPalette', () => {
     fireEvent.change(input(), { target: { value: 'billing' } });
     fireEvent.keyDown(input(), { key: 'Enter' });
     expect(onSelect).toHaveBeenCalledWith('ABC-7');
+  });
+});
+
+describe('TaskPalette — task status', () => {
+  test('each row shows the agent status', () => {
+    // Which tasks are running is the thing an operator scans this list
+    // for — without it they have to open one to find out.
+    render(
+      <TaskPalette
+        sessions={[
+          { task_id: 'T-RUN', task_summary: 'busy', status: 'active', working: true },
+          { task_id: 'T-IDLE', task_summary: 'quiet', status: 'active', working: false },
+        ]}
+        nameFor={() => ''}
+        agentStatuses={{}}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const labels = screen.getAllByRole('option').map((row) => row.textContent);
+    expect(labels[0]).not.toEqual(labels[1]);
+  });
+
+  test('the dot uses the SAME derivation as the task tab', async () => {
+    // A palette that computed "running" its own way would eventually
+    // disagree with the strip, and the operator would not know which to
+    // believe. Assert against the shared helper, not a copied string.
+    const { deriveAgentStatus } = await import('../utils/agentStatus.js');
+    const session = { task_id: 'T-1', status: 'active', working: true };
+    render(
+      <TaskPalette
+        sessions={[session]}
+        nameFor={() => ''}
+        agentStatuses={{}}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const expected = deriveAgentStatus(session, null, false);
+    const row = screen.getByRole('option');
+    expect(row.textContent).toContain(expected.label);
+    expect(row.querySelector(`.${expected.dotClass.split(' ').join('.')}`)).toBeTruthy();
+  });
+
+  test('live SSE state wins over the polled record, as it does on the tab', () => {
+    const session = { task_id: 'T-1', status: 'active', working: false };
+    const { rerender } = render(
+      <TaskPalette
+        sessions={[session]}
+        nameFor={() => ''}
+        agentStatuses={{}}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const idle = screen.getByRole('option').textContent;
+    rerender(
+      <TaskPalette
+        sessions={[session]}
+        nameFor={() => ''}
+        agentStatuses={{ 'T-1': { lifecycle: 'streaming', turnInFlight: true } }}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('option').textContent).not.toEqual(idle);
   });
 });

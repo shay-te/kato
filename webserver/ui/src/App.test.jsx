@@ -106,7 +106,12 @@ vi.mock('./hooks/useResizable.js', () => ({
     onPointerDown: vi.fn(),
   })),
 }));
-vi.mock('./hooks/useSessionStream.js', () => ({
+vi.mock('./hooks/useSessionStream.js', async (importOriginal) => ({
+  // Partial mock: only the stream hook itself needs stubbing. The module
+  // also exports SESSION_LIFECYCLE, which utils/agentStatus.js reads to
+  // derive the status dot — the task palette pulls that in, so a blanket
+  // stub left it undefined and the whole App suite failed to import.
+  ...(await importOriginal()),
   clearTaskStreamCache: vi.fn(),
 }));
 
@@ -780,14 +785,16 @@ describe('App — chaos / random button mashing', () => {
   });
 });
 
-describe('App — Ctrl+P task palette', () => {
-  function ctrlP() {
+describe('App — task palette', () => {
+  // Ctrl+SHIFT+F, not Ctrl+P: RightPane already binds Ctrl/Cmd+P to focus
+  // the workspace FILE filter, so the palette on that key double-bound it.
+  function openPalette() {
     window.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'p', ctrlKey: true, bubbles: true, cancelable: true,
+      key: 'f', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
     }));
   }
 
-  test('Ctrl+P opens a searchable list of the open tasks', () => {
+  test('Ctrl+Shift+F opens a searchable list of the open tasks', () => {
     useSessions.mockReturnValue({
       sessions: [
         { task_id: 'UNA-2818', task_summary: 'elastic search variables' },
@@ -798,7 +805,7 @@ describe('App — Ctrl+P task palette', () => {
     render(<App />);
     expect(screen.queryByRole('combobox', { name: /search tasks/i })).toBeNull();
 
-    act(() => { ctrlP(); });
+    act(() => { openPalette(); });
     expect(screen.getByRole('combobox', { name: /search tasks/i })).toBeTruthy();
     expect(screen.getAllByRole('option')).toHaveLength(2);
   });
@@ -813,7 +820,7 @@ describe('App — Ctrl+P task palette', () => {
     render(<App />);
     expect(screen.getByText('active=none')).toBeInTheDocument();
 
-    act(() => { ctrlP(); });
+    act(() => { openPalette(); });
     const search = screen.getByRole('combobox', { name: /search tasks/i });
     fireEvent.change(search, { target: { value: 'T2' } });
     fireEvent.keyDown(search, { key: 'Enter' });
@@ -831,7 +838,7 @@ describe('App — Ctrl+P task palette', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
 
-    act(() => { ctrlP(); });
+    act(() => { openPalette(); });
     fireEvent.keyDown(
       screen.getByRole('combobox', { name: /search tasks/i }), { key: 'Escape' },
     );

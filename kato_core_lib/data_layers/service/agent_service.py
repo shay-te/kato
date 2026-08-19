@@ -432,6 +432,29 @@ class AgentService(MissionStepLoggerMixin, Service):
             raise ValueError('task id is required')
         self._task_state_service.move_task_to_done(normalized)
 
+    def discard_workspace_file_changes(
+        self, task_id: str, repository_id: str, relative_paths: list[str],
+    ) -> list[str]:
+        """Discard uncommitted changes to specific files in one task clone.
+
+        Backs the Files-tree right-click "Discard changes". An OPERATOR action, not
+        an agent one: it goes straight through kato's own git client, so it
+        neither waits on a session nor spends a turn asking the agent to do
+        it — and it works when no session is running at all.
+
+        Returns the paths that actually had something to discard, so the UI
+        can say "nothing to discard" rather than report a success that did
+        nothing. Raises when the repo is unknown or git refuses.
+        """
+        task = str(task_id or '').strip()
+        repository = str(repository_id or '').strip()
+        if not task or not repository:
+            raise ValueError('task id and repository id are required')
+        local_path = self._workspace_manager.repository_path(task, repository)
+        if not local_path or not os.path.isdir(local_path):
+            raise ValueError(f'no clone for repository {repository} in task {task}')
+        return self._repository_service.restore_paths(local_path, relative_paths)
+
     def forget_task_state(self, task_id: str) -> None:
         """Drop the registry state for a task the operator deleted.
 

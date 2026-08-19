@@ -279,6 +279,11 @@ export default function Tab({
       <li
         ref={liRef}
         className={className}
+        // Lets the strip find THIS pill in the DOM to scroll it into
+        // view when the operator selects the task from somewhere else
+        // (the go-to-task palette, a notification). Cheaper and less
+        // fragile than threading a ref down for one caller.
+        data-task-id={session.task_id}
         // Always applied: an untouched tab's cap equals the stylesheet's own
         // 260px, so this is a no-op until dragged. Gating it behind state made
         // pointerdown re-render mid-drag, which dropped pointer capture — the

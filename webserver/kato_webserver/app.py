@@ -2128,6 +2128,67 @@ def _register_http_routes(app: Flask) -> None:
             'diff': single['diff'],
         })
 
+    @app.post('/api/sessions/<task_id>/files/discard-changes')
+    def discard_session_file_changes(task_id: str):
+        """Discard uncommitted changes to one file in a task clone.
+
+        Backs the Files-tree right-click "Discard changes" — named for the
+        effect, not for a git subcommand: "revert" would read as ``git
+        revert`` (a NEW commit undoing an old one), which is a different
+        operation. This runs ``git restore``. Deliberately an
+        operator-driven git call rather than a message to the agent: it
+        works with no session running, costs no turn, and cannot be
+        reinterpreted by a model.
+
+        Body: ``{"repo_id": "...", "path": "<repo-relative path>"}``.
+
+        The path is validated twice on purpose — here against the task's
+        own workspace roots (so nothing outside the task can be named at
+        all), and again in ``GitClientMixin.restore_paths``, which refuses
+        anything that is not a plain repo-relative file path. This
+        DESTROYS uncommitted work, and the work is not committed until
+        publish, so there is nothing to recover it from.
+        """
+        body = request.get_json(silent=True) or {}
+        repo_id = str(body.get('repo_id', '') or '').strip()
+        raw_path = str(body.get('path', '') or '').strip()
+        if not raw_path:
+            return jsonify({'error': 'path is required'}), 400
+        service = app.config.get('AGENT_SERVICE')
+        if service is None or not hasattr(service, 'discard_workspace_file_changes'):
+            return jsonify({'error': 'not available'}), 503
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        repo_ids = _task_repository_ids(workspace_manager, task_id)
+        if repo_id and repo_id not in repo_ids:
+            return jsonify({'error': f'unknown repository {repo_id}'}), 404
+        # No repo named (older callers / a flat tree): find the clone the
+        # path actually lives in rather than guessing the first one.
+        candidates = [repo_id] if repo_id else list(repo_ids)
+        from pathlib import Path
+        for candidate in candidates:
+            cwd = _repository_cwd(workspace_manager, task_id, candidate)
+            if not cwd:
+                continue
+            try:
+                resolved = (Path(cwd) / raw_path).resolve()
+                root = Path(cwd).resolve()
+            except (OSError, ValueError):
+                continue
+            if not _is_inside(resolved, root):
+                return jsonify({'error': 'path is outside the task workspace'}), 403
+            if not repo_id and not resolved.exists():
+                continue
+            try:
+                discarded = service.discard_workspace_file_changes(
+                    task_id, candidate, [raw_path],
+                )
+            except ValueError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except Exception as exc:
+                return jsonify({'error': f'discard failed: {exc}'}), 500
+            return jsonify({'discarded': discarded, 'repo_id': candidate})
+        return jsonify({'error': 'file not found in this task workspace'}), 404
+
     @app.get('/api/sessions/<task_id>/file')
     def get_session_file(task_id: str):
         """Return the contents of a single tracked file in the task workspace.
@@ -3245,6 +3306,7 @@ def _register_post_message_route(app: Flask) -> None:
             _model_change_needs_respawn(app, manager, task_id, images)
             or _effort_change_needs_respawn(app, manager, task_id, images)
             or _plan_mode_change_needs_respawn(app, manager, task_id, images)
+            or _tool_floor_change_needs_respawn(app, manager, task_id, images)
         ):
             try:
                 manager.terminate_session(task_id, remove_record=False)
@@ -4053,6 +4115,68 @@ def _effort_change_needs_respawn(app: Flask, manager, task_id: str, images) -> b
     if bool(getattr(session, 'is_working', False)):
         return False  # don't interrupt a turn
     return str(getattr(session, 'effort', '') or '') != requested
+
+
+def _tool_floor_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bool:
+    """Respawn when kato's non-overridable tool floor changed under a session.
+
+    ``--disallowedTools`` is baked into the subprocess at spawn time, so a
+    session that started before a kato upgrade keeps the OLD floor for its
+    whole life. When the floor is LOOSENED — the git denylist being narrowed
+    to the commands the orchestrator actually owns, say — every task already
+    in progress would go on refusing commands kato now permits, and the
+    operator would have no way to tell why except restarting each one by
+    hand.
+
+    Compares what the live subprocess was spawned with against what a fresh
+    spawn would use, and respawns on the next message if they differ.
+    Deliberately symmetric: a TIGHTENED floor must reach a running session
+    too, or an upgrade that closes a hole would leave every in-flight
+    session still holding it open.
+
+    Mid-turn is left alone (like the model/effort checks): interrupting a
+    working agent to change a tool list it has not hit yet loses the turn
+    for nothing. It applies on the next message instead.
+    """
+    session = manager.get_session(task_id) if manager else None
+    if session is None or not getattr(session, 'is_alive', False):
+        return False
+    if getattr(session, 'is_working', False) or images:
+        return False
+    live = str(getattr(session, 'disallowed_tools', '') or '')
+    if not live:
+        # Nothing recorded (an older session object) — a respawn on a guess
+        # would drop the operator's conversation for no proven reason.
+        return False
+    try:
+        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
+        expected = ClaudeCliClient._merge_disallowed_with_floor(
+            _configured_disallowed_tools(app),
+            bypass_permissions=_session_is_bypass(session),
+        )
+    except Exception:
+        return False
+    return _tool_csv_set(live) != _tool_csv_set(expected)
+
+
+def _tool_csv_set(value: str) -> frozenset:
+    """Order-insensitive comparison — the floor is a SET, not a sequence."""
+    return frozenset(
+        entry.strip() for entry in str(value or '').split(',') if entry.strip()
+    )
+
+
+def _session_is_bypass(session) -> bool:
+    return str(getattr(session, 'permission_mode', '') or '') == 'bypassPermissions'
+
+
+def _configured_disallowed_tools(app: Flask) -> str:
+    """The operator's own disallowed-tools setting (empty when unset)."""
+    config = app.config.get('KATO_CONFIG') or {}
+    try:
+        return str(getattr(getattr(config, 'claude', None), 'disallowed_tools', '') or '')
+    except Exception:
+        return ''
 
 
 def _model_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bool:

@@ -236,6 +236,85 @@ class GitClientMixin:
         result = self._run_git(local_path, args, failure_message, repository)
         return result.stdout.strip()
 
+    def restore_paths(self, local_path: str, relative_paths: list[str]) -> list[str]:
+        """Discard uncommitted changes to specific files. Returns what changed.
+
+        ``git restore --`` rather than ``git checkout --``: restore is the
+        file-scoped command and cannot move HEAD or switch branches, so a
+        bug in a caller can damage files but never the branch state machine
+        this class also drives.
+
+        PATH-SCOPED BY CONSTRUCTION. Every entry is passed after ``--`` as
+        an explicit pathspec and refused if it is empty, absolute, escapes
+        the clone, or looks like a pathspec-magic / glob token. A
+        whole-tree discard here would throw away the entire task's
+        uncommitted work — which, since nothing is committed until publish,
+        is unrecoverable — so this method simply cannot express one.
+
+        Returns the paths that actually had changes to discard, so the
+        caller can tell the operator "nothing to discard" instead of
+        reporting a success that did nothing. An untracked file has no
+        committed state to restore to and is reported as unchanged rather
+        than deleted — deleting a file the operator never committed would
+        be a surprise, not a discard.
+        """
+        cleaned = self._safe_restore_pathspecs(relative_paths)
+        if not cleaned:
+            raise ValueError('no valid file path to revert')
+        dirty = self._dirty_paths(local_path, cleaned)
+        if not dirty:
+            return []
+        self._run_git(
+            local_path,
+            ['restore', '--source=HEAD', '--staged', '--worktree', '--', *dirty],
+            'failed to discard file changes',
+        )
+        return dirty
+
+    @staticmethod
+    def _safe_restore_pathspecs(relative_paths) -> list[str]:
+        """Keep only plain, repo-relative, non-magic file paths."""
+        safe: list[str] = []
+        for raw in relative_paths or []:
+            path = str(raw or '').strip().replace('\\', '/')
+            if not path or path.startswith((':', '-', '/', '~')):
+                continue
+            # ``.``/``..`` anywhere would widen the revert past the file the
+            # operator picked; glob characters would too.
+            if any(char in path for char in '*?['):
+                continue
+            parts = [part for part in path.split('/') if part]
+            if not parts or any(part in ('.', '..') for part in parts):
+                continue
+            if len(path) > 1 and path[1] == ':':   # windows drive letter
+                continue
+            safe.append('/'.join(parts))
+        return safe
+
+    def _dirty_paths(self, local_path: str, relative_paths: list[str]) -> list[str]:
+        """Which of ``relative_paths`` have changes git could discard.
+
+        Untracked files (``??``) are excluded: they have no committed
+        state, so ``git restore`` would fail on them and deleting them
+        would not be a revert.
+        """
+        status = self._git_stdout(
+            local_path,
+            ['status', '--porcelain', '--untracked-files=all', '--', *relative_paths],
+            'failed to read file status',
+        )
+        dirty: list[str] = []
+        for line in status.splitlines():
+            if len(line) < 4 or line[:2] == '??':
+                continue
+            entry = line[3:].strip().strip('"')
+            # A rename reports "old -> new"; the new path is what exists.
+            if ' -> ' in entry:
+                entry = entry.split(' -> ', 1)[1].strip().strip('"')
+            if entry:
+                dirty.append(entry)
+        return dirty
+
     def git_grep(
         self,
         local_path: str,

@@ -5,6 +5,7 @@ import { Tree } from 'react-arborist';
 import {
   fetchRepoCommits,
   recheckRepositoryPush,
+  discardWorkspaceFileChanges,
   syncTaskRepositories,
 } from './api.js';
 import { useTaskDiff, useTaskComments, useTaskTree, revalidate } from './stores/taskCache/index.js';
@@ -136,6 +137,8 @@ export default function FilesTab({
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [pathMenu, setPathMenu] = useState(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardNotice, setDiscardNotice] = useState('');
   const containerRef = useRef(null);
   const filterInputRef = useRef(null);
   // Last scroll offset the operator left the tree at. The 5s auto-poll
@@ -297,6 +300,44 @@ export default function FilesTab({
     closePathMenu();
     await copyRepoRelativePath(repoId, path);
   }
+  // Discard this file's uncommitted changes. Named the way GitHub Desktop
+  // and VS Code name it: "revert" reads as ``git revert`` (a NEW commit
+  // undoing an old one), which is a different operation and not one that
+  // usually applies here — the agent's work is uncommitted until publish,
+  // so what the operator is looking at IS the uncommitted change.
+  //
+  // Confirms first: unlike every other item in this menu it destroys work,
+  // and with nothing committed there is no commit or reflog to undo from.
+  async function discardPathMenuFileChanges() {
+    const repoId = String(pathMenu?.repoId || '').trim();
+    const path = String(pathMenu?.relativePath || '').trim();
+    closePathMenu();
+    if (!path) { return; }
+    const ok = typeof window !== 'undefined' && typeof window.confirm === 'function'
+      ? window.confirm(
+        `Discard changes to ${path}?\n\nThis throws away every uncommitted `
+        + 'change to that file and cannot be undone.',
+      )
+      : true;
+    if (!ok) { return; }
+    setDiscarding(true);
+    try {
+      const result = await discardWorkspaceFileChanges(taskId, { repoId, path });
+      if (!result.ok) {
+        setDiscardNotice(result.error || 'could not discard changes');
+        return;
+      }
+      // An empty list means git had nothing to discard — say so rather
+      // than claiming a discard that did not happen.
+      setDiscardNotice(
+        (result.discarded || []).length ? '' : `${path} had no changes to discard`,
+      );
+      revalidate(taskId, ['comments', 'diff', 'tree']);
+    } finally {
+      setDiscarding(false);
+    }
+  }
+
   async function copyPathMenuFileName() {
     const path = String(pathMenu?.relativePath || '').trim();
     closePathMenu();
@@ -535,6 +576,18 @@ export default function FilesTab({
   return (
     <div className="files-tab">
       {header}
+      {discardNotice && (
+        /* A discard that did nothing, or failed, has to say so — silently
+           doing nothing looks identical to silently succeeding. Dismissed
+           by clicking it, so it never sits there stale. */
+        <p
+          className="files-tab-message error files-tab-discard-notice"
+          role="status"
+          onClick={() => setDiscardNotice('')}
+        >
+          {discardNotice}
+        </p>
+      )}
       <div
         className="files-tab-body"
         ref={containerRef}
@@ -574,6 +627,18 @@ export default function FilesTab({
             role="menuitem"
           >
             Copy relative path
+          </button>
+          {/* Destructive, so it is visually separated and asks first. The
+              agent's work is not committed until publish, so there is no
+              commit and no reflog to recover a mistaken discard from. */}
+          <button
+            type="button"
+            className="files-tab-context-menu-item is-destructive"
+            onClick={discardPathMenuFileChanges}
+            role="menuitem"
+            disabled={discarding}
+          >
+            {discarding ? 'Discarding…' : 'Discard changes'}
           </button>
         </div>
       )}

@@ -425,3 +425,103 @@ describe('TabList — pinned cluster stacking', () => {
       .toBe(`${TAB_WIDTH + GAP}px`);
   });
 });
+
+describe('TabList — go-to-task button', () => {
+  function renderStrip(props = {}) {
+    render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2')]}
+        activeTaskId="A-1"
+        onSelect={() => {}}
+        {...props}
+      />,
+    );
+  }
+
+  test('renders a search action that opens the task palette', () => {
+    // The Ctrl+Shift+F shortcut is the fast path, but a shortcut nobody is told
+    // about does not exist — with a full strip the only discoverable way
+    // to reach a task was to scroll and read every pill.
+    const onOpenTaskPalette = vi.fn();
+    renderStrip({ onOpenTaskPalette });
+    fireEvent.click(screen.getByRole('button', { name: /go to task/i }));
+    expect(onOpenTaskPalette).toHaveBeenCalled();
+  });
+
+  test('the tooltip teaches the keyboard shortcut', () => {
+    renderStrip({ onOpenTaskPalette: vi.fn() });
+    const button = screen.getByRole('button', { name: /go to task/i });
+    expect(button.getAttribute('data-tooltip')).toMatch(/Ctrl\+Shift\+F/);
+  });
+
+  test('it is disabled when no handler is supplied', () => {
+    renderStrip({});
+    expect(screen.getByRole('button', { name: /go to task/i })).toBeDisabled();
+  });
+});
+
+describe('TabList — scroll the selected tab into view', () => {
+  function renderStrip(props = {}) {
+    return render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-3"
+        onSelect={() => {}}
+        {...props}
+      />,
+    );
+  }
+
+  test('each tab carries its task id so the strip can find it', () => {
+    renderStrip();
+    expect(document.querySelector('[data-task-id="A-3"]')).toBeTruthy();
+  });
+
+  test('bumping the reveal id scrolls the ACTIVE tab into view', () => {
+    // Picking a task from the palette must bring its pill into view —
+    // otherwise the operator lands on a task still scrolled off-screen
+    // with no visual confirmation of where they are.
+    const { rerender } = renderStrip({ revealRequestId: 1 });
+    const node = document.querySelector('[data-task-id="A-3"]');
+    node.scrollIntoView = vi.fn();
+    rerender(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-3"
+        onSelect={() => {}}
+        revealRequestId={2}
+      />,
+    );
+    expect(node.scrollIntoView).toHaveBeenCalled();
+  });
+
+  test('a re-render with the SAME reveal id does not move the strip', () => {
+    // Sessions re-render on every status poll. Re-centring then would
+    // yank the strip back under the operator's cursor while they were
+    // reaching for a different tab — a scroll is intent too.
+    const { rerender } = renderStrip({ revealRequestId: 1 });
+    const node = document.querySelector('[data-task-id="A-3"]');
+    node.scrollIntoView = vi.fn();
+    rerender(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3'), _session('A-4')]}
+        activeTaskId="A-3"
+        onSelect={() => {}}
+        revealRequestId={1}
+      />,
+    );
+    expect(node.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  test('a missing scrollIntoView (jsdom, old webviews) does not break the strip', () => {
+    const { rerender } = renderStrip({ revealRequestId: 1 });
+    expect(() => rerender(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-3"
+        onSelect={() => {}}
+        revealRequestId={2}
+      />,
+    )).not.toThrow();
+  });
+});

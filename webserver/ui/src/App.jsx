@@ -209,6 +209,15 @@ export default function App() {
   // pill. See hooks/useTaskPaletteShortcut.js for why this key.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const openTaskPalette = useCallback(() => setPaletteOpen(true), []);
+  // Picking a task from the palette must also bring its tab into view —
+  // otherwise the operator lands on a task whose pill is still scrolled
+  // off-screen, with no visual confirmation of where they are. Bumped
+  // ONLY on an explicit pick, so a status poll can never move the strip.
+  const [taskTabReveal, setTaskTabReveal] = useState(0);
+  const selectTaskAndReveal = useCallback((taskId) => {
+    setActiveTaskId(taskId);
+    setTaskTabReveal((value) => value + 1);
+  }, [setActiveTaskId]);
   const closeTaskPalette = useCallback(() => setPaletteOpen(false), []);
   useTaskPaletteShortcut(openTaskPalette);
   // The palette searches the operator's tab RENAMES too — that is the
@@ -724,9 +733,14 @@ export default function App() {
           activeTaskId={activeTaskId}
           attentionTaskIds={attentionTaskIds}
           agentStatuses={agentStatuses}
-          onSelect={setActiveTaskId}
+          // Clicking a partially-visible pill scrolls it fully into view,
+          // and so does picking a task from the palette. Both are explicit
+          // intent; a status poll never bumps this.
+          revealRequestId={taskTabReveal}
+          onSelect={selectTaskAndReveal}
           onForget={requestForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}
+          onOpenTaskPalette={openTaskPalette}
           onScanNow={handleScanNow}
           scanPending={scanPending}
         />
@@ -822,7 +836,8 @@ export default function App() {
         <TaskPalette
           sessions={sessions}
           nameFor={paletteNameFor}
-          onSelect={setActiveTaskId}
+          agentStatuses={agentStatuses}
+          onSelect={selectTaskAndReveal}
           onClose={closeTaskPalette}
         />
       )}

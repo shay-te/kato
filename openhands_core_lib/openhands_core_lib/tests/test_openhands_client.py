@@ -1380,7 +1380,11 @@ class OpenHandsClientPromptBuilderTests(unittest.TestCase):
         prompt = client._build_implementation_prompt(task)
         self.assertIn('Only modify these repositories:', prompt)
         self.assertIn('the orchestration layer already prepared branch UNA-222 from main', prompt)
-        self.assertIn('Stay on the current branch and do not run git checkout', prompt)
+        # Branch movement stays forbidden, and the prompt also states
+        # what git IS available — listing only prohibitions got read as
+        # a blanket git ban.
+        self.assertIn('git checkout', prompt)
+        self.assertIn('EVERYTHING ELSE IN GIT IS AVAILABLE', prompt)
 
     def test_testing_prompt_describes_separate_agent(self) -> None:
         client = OpenHandsClient('https://openhands.example', 'oh-token')
