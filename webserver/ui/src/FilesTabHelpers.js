@@ -1,4 +1,5 @@
 import { basenameOf } from './utils/basenameOf.js';
+import { fuzzyMatches } from './utils/fuzzyMatch.js';
 
 export function normalizeTrees(payload) {
   const trees = Array.isArray(payload?.trees) ? payload.trees : null;
@@ -108,59 +109,18 @@ export function activateTreeNode(node) {
   }
 }
 
-// Lenient, VS-Code / Cmd+P-style fuzzy match for the file search.
+// Node-shaped adapter over the shared matcher: a tree node matches when
+// the term hits its basename OR its relative path. The matcher itself
+// (substring + separator-insensitive subsequence) lives in
+// utils/fuzzyMatch.js so the task palette matches identically — two
+// hand-rolled copies would drift and the operator would see one surface
+// find "authpy" and the other not.
 //
-// Matching is checked against BOTH the basename and the full
-// relative path, and succeeds if EITHER:
-//
-//   1. a plain case-insensitive substring hit (fast path — also
-//      what makes "src/auth" find ``src/auth.py`` and "" match
-//      everything), OR
-//   2. a separator-insensitive subsequence: lowercase both sides,
-//      strip every non-alphanumeric character, then check the
-//      query's characters appear IN ORDER in the target.
-//
-// (2) is what makes the search forgiving the way the operator
-// expects:
-//   * "fileservice"  → matches ``file_service.py``  (underscore /
-//     dot / dash / slash differences don't matter)
-//   * "tmpd" / "TMPD" → matches ``TestMePleaseDude`` (initialism /
-//     camel-hump pickup falls out of subsequence-over-alnum)
-//   * "authpy"        → matches ``src/auth.py``      (ends-with /
-//     contains, not just starts-with)
-//
-// Empty / whitespace-only term matches everything. Folders only
-// need to match themselves — react-arborist already keeps the
-// ancestors of any matching descendant visible.
+// Folders only need to match themselves: react-arborist already keeps
+// the ancestors of any matching descendant visible.
 export function matchTreeNode(node, term) {
-  const raw = String(term || '').trim().toLowerCase();
-  if (!raw) { return true; }
   const data = node?.data || {};
-  const name = String(data.name || '').toLowerCase();
-  const relativePath = String(data.relativePath || '').toLowerCase();
-
-  // 1) Substring fast path — preserves the exact "type the path"
-  //    behaviour (``src/auth``) and is the cheapest common case.
-  if (name.includes(raw) || relativePath.includes(raw)) { return true; }
-
-  // 2) Separator-insensitive subsequence over alphanumerics.
-  const needle = raw.replace(/[^a-z0-9]/g, '');
-  if (!needle) { return true; }
-  return _isSubsequence(needle, name.replace(/[^a-z0-9]/g, ''))
-    || _isSubsequence(needle, relativePath.replace(/[^a-z0-9]/g, ''));
-}
-
-// True when every character of ``needle`` appears in ``haystack``
-// in order (not necessarily contiguously). O(haystack) and
-// allocation-free — runs per node on every keystroke.
-function _isSubsequence(needle, haystack) {
-  if (!needle) { return true; }
-  if (needle.length > haystack.length) { return false; }
-  let i = 0;
-  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
-    if (haystack[j] === needle[i]) { i += 1; }
-  }
-  return i === needle.length;
+  return fuzzyMatches(term, [data.name, data.relativePath]);
 }
 
 function relativePathForRepo(path, cwd) {

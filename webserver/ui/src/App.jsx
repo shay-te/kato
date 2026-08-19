@@ -17,6 +17,7 @@ import AgentVersionBanner from './components/AgentVersionBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import TabList from './components/TabList.jsx';
+import TaskPalette from './components/TaskPalette.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { forgetTaskWorkspace, triggerScan } from './api.js';
 import { toast } from './stores/toastStore.js';
@@ -41,6 +42,8 @@ import { clearFileContentCacheForTask } from './utils/fileContentCache.js';
 import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
+import { useTaskPaletteShortcut } from './hooks/useTaskPaletteShortcut.js';
+import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
 import { useRememberedToolDecisions } from './hooks/useRememberedToolDecisions.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
@@ -199,6 +202,23 @@ export default function App() {
   // against text fields + open dialogs so normal focus tabbing still
   // works there).
   useTaskTabShortcuts({ sessions, activeTaskId, onSelect: setActiveTaskId });
+
+  // Ctrl/Cmd+P — "go to task". Tab/Shift+Tab only helps when the task is
+  // a step or two away; with a full strip (most of it scrolled out of
+  // sight) the only way to reach a task was to scroll and read every
+  // pill. See hooks/useTaskPaletteShortcut.js for why this key.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const openTaskPalette = useCallback(() => setPaletteOpen(true), []);
+  const closeTaskPalette = useCallback(() => setPaletteOpen(false), []);
+  useTaskPaletteShortcut(openTaskPalette);
+  // The palette searches the operator's tab RENAMES too — that is the
+  // label they are looking at, so a search that ignored it would fail on
+  // the exact word they typed. Read on open rather than subscribed: the
+  // palette is short-lived and a rename mid-search is not a thing.
+  const paletteNameFor = useCallback(
+    (session) => tabNameFor(readTabNames(), session.task_id, session.task_summary),
+    [],
+  );
 
   // The tab "X" no longer forgets immediately — it stages the task
   // for a hard-confirm modal. Forgetting wipes the local clone and
@@ -798,6 +818,14 @@ export default function App() {
           live SSE). Surfaces the dialog no matter which task is in view and
           without a page refresh. */}
       <GlobalPermissionContainer />
+      {paletteOpen && (
+        <TaskPalette
+          sessions={sessions}
+          nameFor={paletteNameFor}
+          onSelect={setActiveTaskId}
+          onClose={closeTaskPalette}
+        />
+      )}
       {forgetCandidate && (
         <ForgetTaskModal
           session={forgetCandidate}

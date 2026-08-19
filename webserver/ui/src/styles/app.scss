@@ -10364,3 +10364,83 @@ body.kato-resizing {
   opacity: 1;
   border-color: $C-CYAN-52;
 }
+
+/* --- Ctrl/Cmd+P task palette --------------------------------------------
+   A "go to task" palette, not a dialog to read: it sits high on the screen
+   (where VS Code's Cmd+P sits) so the operator's eye is already there, and
+   it is narrower than a normal modal because every row is one short line. */
+.task-palette-modal {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.task-palette-card {
+  max-width: 560px;
+  padding: $SPACE-8;
+  gap: $SPACE-8;
+}
+
+.task-palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+  padding: $SPACE-10 $SPACE-12;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-14;
+}
+
+.task-palette-input:focus {
+  outline: none;
+  border-color: $C-CYAN-52;
+}
+
+.task-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  /* Bounded so a long task list scrolls INSIDE the palette rather than
+     growing the card past the viewport. */
+  max-height: 50vh;
+}
+
+.task-palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-10;
+  padding: $SPACE-8 $SPACE-10;
+  border-radius: $RADIUS-6;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* One highlight style for BOTH keyboard and mouse: the highlighted row is
+   also what Enter opens, so a separate :hover colour would let the mouse
+   and the keyboard disagree about what is selected. The component moves
+   the highlight on mousemove instead. */
+.task-palette-row.highlighted {
+  background: $C-NEUTRAL-16;
+}
+
+.task-palette-id {
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-12;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.task-palette-name {
+  color: $C-NEUTRAL-96-A65;
+  font-size: $TEXT-12;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-palette-empty {
+  padding: $SPACE-10;
+  color: $C-NEUTRAL-96-A65;
+  font-size: $TEXT-12;
+}

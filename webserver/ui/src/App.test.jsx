@@ -7,7 +7,7 @@
 // child's own test file; this file pins App's own glue.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('./api.js', () => ({
   forgetTaskWorkspace: vi.fn().mockResolvedValue({ ok: true }),
@@ -777,5 +777,65 @@ describe('App — chaos / random button mashing', () => {
       expect(activeTaskFromDom()).toBe('none');
     }
     expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+  });
+});
+
+describe('App — Ctrl+P task palette', () => {
+  function ctrlP() {
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'p', ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+  }
+
+  test('Ctrl+P opens a searchable list of the open tasks', () => {
+    useSessions.mockReturnValue({
+      sessions: [
+        { task_id: 'UNA-2818', task_summary: 'elastic search variables' },
+        { task_id: 'ABC-7', task_summary: 'payments rewrite' },
+      ],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    expect(screen.queryByRole('combobox', { name: /search tasks/i })).toBeNull();
+
+    act(() => { ctrlP(); });
+    expect(screen.getByRole('combobox', { name: /search tasks/i })).toBeTruthy();
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  test('choosing a task from the palette opens its tab', () => {
+    // The whole point: the palette is navigation into the EXISTING strip,
+    // not a second surface for task state to live in.
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    expect(screen.getByText('active=none')).toBeInTheDocument();
+
+    act(() => { ctrlP(); });
+    const search = screen.getByRole('combobox', { name: /search tasks/i });
+    fireEvent.change(search, { target: { value: 'T2' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByText('active=T2')).toBeInTheDocument();
+    // ...and the palette gets out of the way.
+    expect(screen.queryByRole('combobox', { name: /search tasks/i })).toBeNull();
+  });
+
+  test('Escape closes the palette without changing the active task', () => {
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+
+    act(() => { ctrlP(); });
+    fireEvent.keyDown(
+      screen.getByRole('combobox', { name: /search tasks/i }), { key: 'Escape' },
+    );
+    expect(screen.queryByRole('combobox', { name: /search tasks/i })).toBeNull();
+    expect(screen.getByText('active=T1')).toBeInTheDocument();
   });
 });
