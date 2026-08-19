@@ -4229,6 +4229,19 @@ code {
   flex-shrink: 0;
 }
 
+/* Drag-to-reorder feedback. The dragged tab fades so the strip reads as
+   "this one is in flight"; the drop target gets a leading edge marking
+   exactly where it will land — a highlight on the whole pill leaves the
+   operator guessing which side of it they are dropping on. */
+.file-tab.dragging {
+  opacity: 0.4;
+}
+
+.file-tab.drop-target {
+  box-shadow: inset 2px 0 0 0 $C-CYAN-52;
+}
+
+
 .file-tab:hover {
   background: $C-NEUTRAL-100-A06;
   color: $C-NEUTRAL-96-A85;

@@ -13,14 +13,20 @@ import DiffKindIcon from './DiffKindIcon.jsx';
 // no chevron buttons / click-and-hold scroll — just the shared
 // wheel-scroll remap (a mouse wheel would otherwise scroll the page,
 // not this strip) plus native drag-the-thumb scrolling for overflow.
+const NO_DRAG = { key: '', over: '' };
+
 export default function FileTabStrip({
   tabs, activeKey, onSelect, onClose, onToggleView,
-  onCloseAll, onCloseOthers, onTogglePin,
+  onCloseAll, onCloseOthers, onTogglePin, onReorder,
   // Bumped ONLY when the operator opened a file from the tree. Scrolling
   // the tab into view is a response to that click and nothing else — see
   // the effect below.
   revealRequestId = 0,
 }) {
+  // Drag-to-reorder state. ``key`` is the tab being dragged, ``over`` the
+  // one it is currently hovering — kept together so a single setState can
+  // never leave a stale highlight behind after a drop.
+  const [drag, setDrag] = useState(NO_DRAG);
   // Callback ref, not useRef + useEffect — this component returns
   // null (no DOM node at all) whenever tabs is empty, which a plain
   // useEffect-on-a-stable-ref-object would miss the very first time
@@ -62,6 +68,7 @@ export default function FileTabStrip({
   }, [menu]);
 
   if (!tabs || tabs.length === 0) { return null; }
+  const draggedTab = drag.key ? tabs.find((tab) => tab.key === drag.key) : null;
   return (
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
@@ -74,6 +81,30 @@ export default function FileTabStrip({
             onSelect={onSelect}
             onClose={onClose}
             onToggleView={onToggleView}
+            dragging={drag.key === tab.key}
+            dropTarget={drag.over === tab.key && drag.key !== tab.key}
+            // Pins are a block at the front of the strip, so a tab can only
+            // be dropped among its own group. Refusing the drop (rather than
+            // silently snapping it elsewhere) keeps the pinned block honest.
+            canDrop={
+              !!draggedTab
+              && draggedTab.key !== tab.key
+              && !!draggedTab.pinned === !!tab.pinned
+            }
+            onDragStart={(key) => setDrag({ key, over: '' })}
+            onDragEnd={() => setDrag(NO_DRAG)}
+            onDragOver={(key) => setDrag((prev) => (
+              prev.over === key ? prev : { ...prev, over: key }
+            ))}
+            onDragLeave={() => setDrag((prev) => (
+              prev.over ? { ...prev, over: '' } : prev
+            ))}
+            onDrop={(key) => {
+              if (drag.key && drag.key !== key && onReorder) {
+                onReorder(drag.key, key);
+              }
+              setDrag(NO_DRAG);
+            }}
             onContextMenu={(event) => {
               event.preventDefault();
               setMenu({ key: tab.key, tab, x: event.clientX, y: event.clientY });
@@ -169,6 +200,8 @@ function FileTabMenu({
 
 function FileTab({
   tab, active, nodeRef, onSelect, onClose, onToggleView, onContextMenu,
+  dragging, dropTarget, canDrop,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
   const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
   const title = tab.repoId ? `${tab.repoId}/${tab.relativePath}` : tab.relativePath;
@@ -198,6 +231,29 @@ function FileTab({
     event.preventDefault();
     onClose(tab.key);
   }
+  function handleDragStart(event) {
+    // The key travels in the dataTransfer payload so a drop knows what
+    // moved even though React state updates are async.
+    event.dataTransfer.effectAllowed = 'move';
+    try {
+      event.dataTransfer.setData('text/plain', tab.key);
+    } catch (_err) { /* older browsers restrict setData; state still carries it */ }
+    onDragStart(tab.key);
+  }
+  function handleDragOver(event) {
+    // Only a same-group drop is legal (pins stay a block at the front), so
+    // the cursor has to say "no" over an illegal target rather than letting
+    // the operator complete a drag that will be refused.
+    if (!canDrop) { return; }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    onDragOver(tab.key);
+  }
+  function handleDrop(event) {
+    if (!canDrop) { return; }
+    event.preventDefault();
+    onDrop(tab.key);
+  }
   function handleKeyDown(event) {
     // Ctrl/Cmd+W closes the focused tab — the standard "close this
     // tab" shortcut, scoped to when a file tab actually has focus so
@@ -212,12 +268,24 @@ function FileTab({
   return (
     <li
       ref={nodeRef}
-      className={cx('file-tab', active && 'active', tab.pinned && 'pinned')}
+      className={cx(
+        'file-tab',
+        active && 'active',
+        tab.pinned && 'pinned',
+        dragging && 'dragging',
+        dropTarget && 'drop-target',
+      )}
       title={title}
+      draggable
       onClick={handleSelect}
       onContextMenu={onContextMenu}
       onAuxClick={handleAuxClick}
       onKeyDown={handleKeyDown}
+      onDragStart={handleDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={handleDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={handleDrop}
       tabIndex={0}
     >
       {/* Leading icon is STATUS ONLY — how the file changed (+ / − / edit)

@@ -5,7 +5,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { closeTab, findTab, patchTab, tabKeyFor, upsertTab } from './fileTabs.js';
+import {
+  closeTab,
+  findTab,
+  moveTab,
+  patchTab,
+  sortPinnedFirst,
+  tabKeyFor,
+  togglePin,
+  upsertTab,
+} from './fileTabs.js';
 
 
 function info(overrides = {}) {
@@ -207,4 +216,78 @@ test('patchTab on an unknown key returns the same array reference (safe no-op)',
 test('findTab returns null when nothing matches', () => {
   assert.equal(findTab([], 'anything'), null);
   assert.equal(findTab(null, 'anything'), null);
+});
+
+// --- ordering: pinned-first + drag reorder --------------------------------
+
+const _t = (key, pinned = false) => ({ key, pinned, relativePath: key });
+
+test('sortPinnedFirst moves pinned tabs to the front', function () {
+  const out = sortPinnedFirst([_t('a'), _t('b', true), _t('c'), _t('d', true)]);
+  assert.deepEqual(out.map((tab) => tab.key), ['b', 'd', 'a', 'c']);
+});
+
+test('sortPinnedFirst is STABLE within each group', function () {
+  // Re-sorting on every render must never reshuffle tabs the operator
+  // arranged by hand — that would make drag-to-reorder useless.
+  const arranged = [_t('p1', true), _t('p2', true), _t('x'), _t('y'), _t('z')];
+  assert.deepEqual(sortPinnedFirst(arranged), arranged);
+});
+
+test('sortPinnedFirst returns the same array when nothing is pinned', function () {
+  const tabs = [_t('a'), _t('b')];
+  assert.equal(sortPinnedFirst(tabs), tabs);
+});
+
+test('togglePin moves the tab into the pinned block at the front', function () {
+  // A pin that left the tab where it was would be a badge, not a pin.
+  const out = togglePin([_t('a'), _t('b'), _t('c')], 'b');
+  assert.deepEqual(out.map((tab) => tab.key), ['b', 'a', 'c']);
+  assert.equal(out[0].pinned, true);
+});
+
+test('pinning a second tab sits BESIDE the first, not before it', function () {
+  const first = togglePin([_t('a'), _t('b'), _t('c')], 'b');
+  const second = togglePin(first, 'c');
+  assert.deepEqual(second.map((tab) => tab.key), ['b', 'c', 'a']);
+});
+
+test('unpinning drops the tab directly after the pins, not to the far right', function () {
+  // Sending a just-unpinned tab to the end of a long strip effectively
+  // hides the file the operator was looking at.
+  const pinned = [_t('p', true), _t('q', true), _t('a'), _t('b')];
+  const out = togglePin(pinned, 'q');
+  assert.deepEqual(out.map((tab) => tab.key), ['p', 'q', 'a', 'b']);
+  assert.equal(out[1].pinned, false);
+});
+
+test('togglePin on an unknown key is a no-op', function () {
+  const tabs = [_t('a')];
+  assert.equal(togglePin(tabs, 'nope'), tabs);
+});
+
+test('moveTab reorders within the unpinned group', function () {
+  const out = moveTab([_t('a'), _t('b'), _t('c')], 'a', 'c');
+  assert.deepEqual(out.map((tab) => tab.key), ['b', 'c', 'a']);
+});
+
+test('moveTab reorders within the pinned group', function () {
+  const out = moveTab([_t('a', true), _t('b', true), _t('c')], 'b', 'a');
+  assert.deepEqual(out.map((tab) => tab.key), ['b', 'a', 'c']);
+});
+
+test('moveTab REFUSES a cross-group drop instead of silently relocating', function () {
+  // Snapping the tab somewhere the operator did not drop it reads as a
+  // broken drag; leaving it put reads as "that is not allowed".
+  const tabs = [_t('p', true), _t('a'), _t('b')];
+  assert.equal(moveTab(tabs, 'a', 'p'), tabs);
+  assert.equal(moveTab(tabs, 'p', 'b'), tabs);
+});
+
+test('moveTab is a no-op for unknown keys or a self-drop', function () {
+  const tabs = [_t('a'), _t('b')];
+  assert.equal(moveTab(tabs, 'a', 'a'), tabs);
+  assert.equal(moveTab(tabs, 'nope', 'b'), tabs);
+  assert.equal(moveTab(tabs, 'a', 'nope'), tabs);
+  assert.equal(moveTab(tabs, '', 'b'), tabs);
 });

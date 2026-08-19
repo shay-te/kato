@@ -127,3 +127,68 @@ export function patchTab(tabs, key, patch) {
 export function findTab(tabs, key) {
   return (Array.isArray(tabs) ? tabs : []).find((tab) => tab.key === key) || null;
 }
+
+
+// --- ordering -------------------------------------------------------------
+//
+// Two rules, in this priority:
+//   1. Pinned tabs come first, in their own relative order.
+//   2. Within each group, the operator's explicit drag order is kept.
+//
+// Rule 1 is what makes pinning mean something. A pin that leaves the tab
+// wherever it was is just a badge: the reason to pin a file is to stop it
+// being pushed off-screen by the next dozen you open, which only works if
+// it moves to the front and stays there.
+
+// Stable partition: pinned tabs first, everything else after, each group
+// preserving its existing relative order. Stability is the whole contract —
+// re-sorting on every render must never reshuffle tabs the operator arranged.
+export function sortPinnedFirst(tabs) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  const pinned = list.filter((tab) => tab && tab.pinned);
+  if (pinned.length === 0 || pinned.length === list.length) { return list; }
+  return [...pinned, ...list.filter((tab) => !(tab && tab.pinned))];
+}
+
+// Pin/unpin ``key`` and re-apply the ordering.
+//
+// Pinning moves the tab to the END of the pinned group (rightmost pinned)
+// rather than the very front: pinning a second file should sit beside the
+// first, not leapfrog it. Unpinning drops the tab to the FRONT of the
+// unpinned group — directly after the pins — because sending it to the far
+// right of a long strip is effectively hiding a tab the operator was just
+// looking at.
+export function togglePin(tabs, key) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  const index = list.findIndex((tab) => tab.key === key);
+  if (index < 0) { return list; }
+  const target = { ...list[index], pinned: !list[index].pinned };
+  const rest = list.filter((tab) => tab.key !== key);
+  const pinned = rest.filter((tab) => tab.pinned);
+  const unpinned = rest.filter((tab) => !tab.pinned);
+  return target.pinned
+    ? [...pinned, target, ...unpinned]
+    : [...pinned, target, ...unpinned];
+}
+
+// Move the tab at ``fromKey`` so it lands at ``toKey``'s position — the
+// drag-and-drop reorder.
+//
+// The pinned/unpinned split is enforced, not merely re-applied afterwards:
+// a drop that would put an unpinned tab among the pins (or vice versa) is
+// REFUSED rather than silently corrected. Silently snapping the tab
+// somewhere else reads as a broken drag; refusing leaves it where it was,
+// which reads as "that isn't allowed" — and the operator can pin it first
+// if that's what they meant.
+export function moveTab(tabs, fromKey, toKey) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  if (!fromKey || !toKey || fromKey === toKey) { return list; }
+  const from = list.findIndex((tab) => tab.key === fromKey);
+  const to = list.findIndex((tab) => tab.key === toKey);
+  if (from < 0 || to < 0) { return list; }
+  if (!!list[from].pinned !== !!list[to].pinned) { return list; }
+  const next = [...list];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}

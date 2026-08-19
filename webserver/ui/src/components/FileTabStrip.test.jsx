@@ -363,3 +363,93 @@ describe('FileTabStrip — reveal and context menu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 });
+
+describe('FileTabStrip — drag to reorder', () => {
+  const t = (key, pinned = false) => ({
+    key, pinned, repoId: 'client', relativePath: key, absolutePath: `/w/${key}`,
+  });
+
+  function renderTabs(tabs, onReorder = vi.fn()) {
+    render(
+      <FileTabStrip
+        tabs={tabs}
+        activeKey={tabs[0].key}
+        onSelect={() => {}}
+        onClose={() => {}}
+        onReorder={onReorder}
+      />,
+    );
+    return onReorder;
+  }
+
+  const pill = (name) => screen.getByTitle(`client/${name}`);
+
+  function dragOnto(fromName, toName) {
+    const data = new Map();
+    const dataTransfer = {
+      effectAllowed: '', dropEffect: '',
+      setData: (k, v) => data.set(k, v),
+      getData: (k) => data.get(k) || '',
+    };
+    fireEvent.dragStart(pill(fromName), { dataTransfer });
+    fireEvent.dragOver(pill(toName), { dataTransfer });
+    fireEvent.drop(pill(toName), { dataTransfer });
+  }
+
+  test('every tab is draggable', () => {
+    renderTabs([t('a'), t('b')]);
+    expect(pill('a')).toHaveAttribute('draggable', 'true');
+  });
+
+  test('dropping one tab on another reports the reorder', () => {
+    const onReorder = renderTabs([t('a'), t('b'), t('c')]);
+    dragOnto('a', 'c');
+    expect(onReorder).toHaveBeenCalledWith('a', 'c');
+  });
+
+  test('an unpinned tab cannot be dropped into the pinned block', () => {
+    // Refusing beats silently relocating: a tab that lands somewhere the
+    // operator did not drop it reads as a broken drag.
+    const onReorder = renderTabs([t('p', true), t('a'), t('b')]);
+    dragOnto('a', 'p');
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  test('a pinned tab cannot be dropped among the unpinned tabs', () => {
+    const onReorder = renderTabs([t('p', true), t('a'), t('b')]);
+    dragOnto('p', 'b');
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
+  test('reordering WITHIN the pinned block is allowed', () => {
+    const onReorder = renderTabs([t('p', true), t('q', true), t('a')]);
+    dragOnto('q', 'p');
+    expect(onReorder).toHaveBeenCalledWith('q', 'p');
+  });
+
+  test('the dragged tab is marked so the strip shows what is in flight', () => {
+    renderTabs([t('a'), t('b')]);
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: () => {}, getData: () => '' };
+    fireEvent.dragStart(pill('a'), { dataTransfer });
+    expect(pill('a').className).toContain('dragging');
+  });
+
+  test('a completed drop clears the drag highlight', () => {
+    renderTabs([t('a'), t('b')]);
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: () => {}, getData: () => '' };
+    fireEvent.dragStart(pill('a'), { dataTransfer });
+    fireEvent.dragOver(pill('b'), { dataTransfer });
+    expect(pill('b').className).toContain('drop-target');
+    fireEvent.drop(pill('b'), { dataTransfer });
+    expect(pill('b').className).not.toContain('drop-target');
+    expect(pill('a').className).not.toContain('dragging');
+  });
+
+  test('an abandoned drag (dragEnd, no drop) clears the highlight too', () => {
+    renderTabs([t('a'), t('b')]);
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData: () => {}, getData: () => '' };
+    fireEvent.dragStart(pill('a'), { dataTransfer });
+    fireEvent.dragEnd(pill('a'), { dataTransfer });
+    expect(pill('a').className).not.toContain('dragging');
+  });
+});

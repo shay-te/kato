@@ -46,7 +46,9 @@ import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
-import { closeTab, findTab, patchTab, upsertTab } from './utils/fileTabs.js';
+import {
+  closeTab, findTab, moveTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
+} from './utils/fileTabs.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -490,12 +492,18 @@ export default function App() {
     // (same file, possibly toggling file<->diff view) or appends a
     // brand new tab right after the current one — it never replaces a
     // DIFFERENT file's tab (VS Code-style multi-file tabs).
-    const { tabs, activeKey } = upsertTab(
+    const upserted = upsertTab(
       openTabsRef.current,
       activeTabKeyRef.current,
       { ...info, openRequestId: openFileRequestRef.current },
       activeTaskId,
     );
+    // A new tab is inserted after the ACTIVE one, which would drop it into
+    // the middle of the pinned block whenever a pinned tab is active. Pins
+    // are only useful as a stable block at the front, so re-apply the split
+    // here; it is a stable partition, so nothing else moves.
+    const { activeKey } = upserted;
+    const tabs = sortPinnedFirst(upserted.tabs);
     openTabsRef.current = tabs;
     activeTabKeyRef.current = activeKey;
     rememberTabsView(activeTaskId, tabs, activeKey);
@@ -527,11 +535,19 @@ export default function App() {
     applyTabs(kept, kept.some((tab) => tab.key === key) ? key : (kept[0]?.key ?? null));
   }, [applyTabs]);
 
+  // Pinning REORDERS: the pinned tab moves into the block at the front of
+  // the strip. A pin that left the tab where it was would be a badge, not a
+  // pin — the reason to pin a file is to stop the next dozen you open from
+  // pushing it off-screen, which only works if it moves and stays put.
   const handleToggleFileTabPin = useCallback((key) => {
-    const tabs = openTabsRef.current.map(
-      (tab) => (tab.key === key ? { ...tab, pinned: !tab.pinned } : tab),
-    );
-    applyTabs(tabs, activeTabKeyRef.current);
+    applyTabs(togglePin(openTabsRef.current, key), activeTabKeyRef.current);
+  }, [applyTabs]);
+
+  // Drag-to-reorder. The model refuses a cross-group drop (pinned vs not)
+  // by returning the list unchanged, so an illegal drag is a no-op here
+  // rather than something that needs handling at every call site.
+  const handleReorderFileTabs = useCallback((fromKey, toKey) => {
+    applyTabs(moveTab(openTabsRef.current, fromKey, toKey), activeTabKeyRef.current);
   }, [applyTabs]);
 
   // Switch which already-open tab is active (file-tab-strip click).
@@ -664,6 +680,7 @@ export default function App() {
           onCloseAll={handleCloseAllFileTabs}
           onCloseOthers={handleCloseOtherFileTabs}
           onTogglePin={handleToggleFileTabPin}
+          onReorder={handleReorderFileTabs}
           // Only a tree click bumps this, so the strip scrolls the tab
           // into view then and never while the operator is scrolling.
           revealRequestId={tabRevealRequest}
