@@ -836,6 +836,9 @@ class DockerSandboxSpawnTests(unittest.TestCase):
         client = self._make_client()
         from sandbox_core_lib.sandbox_core_lib.manager import SandboxError
         with patch('sandbox_core_lib.sandbox_core_lib.manager.ensure_image'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+                   return_value=('stub-net', '10.255.255.2')), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.arm_container_watchdog'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.check_spawn_rate',
                    side_effect=SandboxError('too fast')):
             with self.assertRaises(RuntimeError) as ctx:
@@ -863,6 +866,9 @@ class DockerSandboxSpawnTests(unittest.TestCase):
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
                    return_value='codex-x'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+                   return_value=('stub-net', '10.255.255.2')), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.arm_container_watchdog'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                    side_effect=lambda c, **kw: c), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.record_spawn',
@@ -892,6 +898,9 @@ class DockerSandboxSpawnTests(unittest.TestCase):
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
                    return_value='codex-x'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+                   return_value=('stub-net', '10.255.255.2')), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.arm_container_watchdog'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                    side_effect=lambda c, **kw: c), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.record_spawn'), \
@@ -913,6 +922,9 @@ class DockerSandboxSpawnTests(unittest.TestCase):
              patch('sandbox_core_lib.sandbox_core_lib.manager.make_container_name',
                    return_value='sandbox-T-1-abcd'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.enforce_no_workspace_secrets'), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.start_task_egress_proxy',
+                   return_value=('stub-net', '10.255.255.2')), \
+             patch('sandbox_core_lib.sandbox_core_lib.manager.arm_container_watchdog'), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.wrap_command',
                    side_effect=lambda c, **kw: c), \
              patch('sandbox_core_lib.sandbox_core_lib.manager.record_spawn'), \

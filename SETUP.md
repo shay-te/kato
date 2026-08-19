@@ -198,7 +198,7 @@ Both paths work; pick by whether you want the Docker sandbox:
 | `kato up`, the planning UI, git, the Claude/Codex CLI | Works | Works |
 | `KATO_CLAUDE_DOCKER=true` (sandboxed agent) | **Refused** — the sandbox image is Linux, the workspace path validation assumes POSIX semantics, and `fcntl.flock` for the audit chain does not exist on Windows | Works, via Docker Desktop's WSL2 backend |
 | `KATO_CLAUDE_BYPASS_PERMISSIONS=true` | Refused (it requires Docker) | Works |
-| Sandbox layers | n/a | All of them as on Linux native, except gVisor — Docker Desktop cannot run it, so set `KATO_SANDBOX_ALLOW_NO_GVISOR=true`; the Hyper-V VM boundary is the substitute. See [SANDBOX_PROTECTIONS.md](sandbox_core_lib/SANDBOX_PROTECTIONS.md) |
+| Sandbox layers | n/a | **gVisor is required and there is no override.** Docker Desktop cannot run `runsc`, so sandbox mode does not start there — use a Linux host, or a Lima/Colima VM with `runsc` registered as a Docker runtime. The old `KATO_SANDBOX_ALLOW_NO_GVISOR` escape hatch was removed. See [SANDBOX_PROTECTIONS.md](sandbox_core_lib/SANDBOX_PROTECTIONS.md) |
 
 Running under WSL2 needs no kato-specific configuration — install Python 3.11+, the agent CLI and kato *inside* the distro, then `kato up`. The UI is reachable from a Windows browser at the usual `127.0.0.1:5050`; WSL2 forwards localhost, so you get the planning UI in a normal Windows window with no GUI plumbing at all. This is the path to recommend.
 

@@ -84,6 +84,97 @@ as a group; that's why kato refuses to start without Docker.)
 
 ## Recent changes
 
+2026-08-18 — a sandbox-to-host RCE was found, reproduced and closed, and
+the egress model was rebuilt. Summarised here because several of these
+changed what this document *promises*, not just how it is implemented.
+
+**The RCE (found by an external review, reproduced against this repo).**
+A workspace clone's `.git` is agent-writable and the HOST runs git
+against that same clone. Git config is a command-execution surface:
+`core.fsmonitor` in `.git/config` ran on the host the next time kato
+issued `git status`. `core.hooksPath=/dev/null` — the only hardening
+present — does not cover it, and neither does it cover `core.sshCommand`,
+external diff drivers, or content filters. Two fixes, deliberately at
+different levels:
+
+  - **`.git` is now mounted read-only** inside the sandbox (per clone,
+    overlaid on the writable workspace). This removes the *input* rather
+    than enumerating dangerous keys, which is the only approach that also
+    covers content filters, whose driver names are attacker-chosen.
+  - Every git invocation additionally pins the command-executing config
+    keys (`core.fsmonitor`, `core.sshCommand`, `core.gitProxy`,
+    `core.pager`, editors, `protocol.ext.allow`, `http.followRedirects`)
+    via `-c`, since command-line config beats repo config.
+
+`diff.external` is deliberately NOT among them: overriding it to empty
+makes git run an empty external differ and every patch comes back blank.
+It is handled with `--no-ext-diff` at the call sites that generate
+patches instead.
+
+**Credential scoping.** The provider token was injected as a bare
+`http.extraHeader`, which git sends to whatever host the remote resolves
+to — and the remote lives in that same agent-writable `.git/config`. It
+is now scoped to the configured URL, and every push first asks git which
+URL it would *actually* use (`ls-remote --get-url`, which reflects both a
+repointed `origin` and `url.*.insteadOf`) and refuses on drift.
+
+**Egress is now hostname-pinned, per task.** Each sandbox joins its own
+`--internal` two-member network — no route off that bridge exists — with
+its own SNI-reading proxy as the only peer. The proxy enforces the exact
+hostname from the TLS ClientHello and forwards bytes without terminating
+TLS (no key, no certificate). The previous IP allowlist could not
+distinguish tenants sharing a cloud address, and the client picks its own
+hostname. Consequence worth noting: the sandbox has nothing left to
+resolve, so **DNS is disabled entirely** — the rate-limited DNS
+exfiltration channel is gone rather than bounded. A host-side
+`DOCKER-USER` floor sits underneath as a second, unreachable-from-inside
+layer.
+
+**gVisor is required with no override** (see the cross-OS matrix).
+
+**Runtime state is now verified, not assumed.** The final step of the
+privilege drop reads `/proc/self/status` in the process that becomes the
+agent and fails closed on uid/gid, all five capability sets,
+`NoNewPrivs`, seccomp mode and securebits; it reports the LSM profile
+rather than assuming it. This caught a real defect immediately:
+`setpriv --bounding-set=-all` had never worked, because dropping bounding
+capabilities needs `CAP_SETPCAP` which was not granted — so the "bounding
+set wipe" this document described had never once executed.
+
+**Securebits** (`noroot`, `noroot_locked`, `no_setuid_fixup*`,
+`keep_caps_locked`) are now set during the drop, making the empty
+capability sets irreversible rather than a property of the current
+process.
+
+**Seccomp** is a vendored profile pinned by path (not the daemon's
+mutable default), tightened by removing `ptrace`, `process_vm_readv/writev`,
+`bpf`, `userfaultfd`, `keyctl`, `perf_event_open`, `io_uring*` and legacy
+AIO. `seccomp=builtin` was rejected: it only exists on Docker >= 25 and
+is read as a *filename* on older daemons.
+
+**Lifecycle.** A parent-loss watchdog holds the read end of a pipe whose
+write end lives in the owning process; however that process dies, the
+descriptor closes and the watchdog reaps the container (~1s), after
+re-verifying ownership labels so a reused name cannot cause it to kill an
+innocent container. `--rm` never covered this: it fires when the
+*container's* process exits, not when its launcher is killed. A boot
+sweep and an 8h lifetime cap back it up, and the same watchdog enforces
+workspace byte/inode ceilings — the per-file `fsize` ulimit only ever
+stopped one large file, not a million small ones.
+
+**Audit log entries are MAC'd** (HMAC-SHA256, key at
+`~/.kato/sandbox-audit.key`, 0600, outside the log directory) and
+verified at boot. A plain hash chain can be rewritten end-to-end by
+anyone who can write the file; the MAC means doing so also requires the
+key. Stated limit: this does not defeat an attacker who already has that
+user's filesystem access — that needs append-only shipping off-box.
+
+**Secret scanning is tri-state.** "No findings" from a scan that skipped
+unreadable or oversized files is now reported as *incomplete* and
+requires explicit acceptance, instead of being indistinguishable from
+clean.
+
+
 2026-05-03 (latest) — OG4 (TLS pin) lifecycle rewritten as TOFU by
 default. Previously the validator was strict-by-default: no env-var
 pin AND no opt-out → refuse at startup. Operators hit the refusal
@@ -230,13 +321,23 @@ Per-OS layer status (see linked file:line for the determining code):
 | L6 IPv6 disabled | Active | Active | Active | Active | Active | Refused | Unsupported |
 | L7 in-prompt git denylist | Active | Active | Active | Active | Active | Refused | Unsupported |
 | L8 operator visibility | Active | Active | Active | Active | Active | Refused | Unsupported |
-| **L9 gVisor (`runsc`) strict-by-default** | Active | **Override required**: `KATO_SANDBOX_ALLOW_NO_GVISOR=true`. Kernel-CVE escape risk degrades from Mitigated to Bounded (host kernel only). | Override required | **Override required.** Docker Desktop cannot run gVisor. The LinuxKit VM + macOS Hypervisor.framework boundary is the substitute — arguably stronger than no-gVisor on Linux because there are *two* kernels separated by a hypervisor. | **Override required.** Same shape on the WSL2 backend (Hyper-V Lightweight Utility VM provides the substitute). | Refused | Unsupported |
+| **L9 gVisor (`runsc`) — REQUIRED, no override** | Active | Required. | Required. | **Sandbox mode does not start.** Docker Desktop cannot run gVisor and the override was removed — run kato on Linux, or in a Lima/Colima VM where `runsc` can be registered. | **Does not start** (same reason on the WSL2 backend). | Refused | Unsupported |
 | Auth volume invariants (RO `/auth-src`, tmpfs target, allowlist copy, bidirectional manifest) | Active | Active | Active | Active | Active | Refused | Unsupported |
 | Audit log hash chain + `flock` | Active | Active | Active | Active (`fcntl` on macOS) | Active inside WSL2 | **Refused** (no `fcntl` on native Windows; refusal sidesteps the degradation) | Unsupported |
 
 **Where the refusal fires:** [`bypass_permissions_validator.py:validate_bypass_permissions`](kato_core_lib/validation/bypass_permissions_validator.py) — the platform check is decision step 2 in the module's docstring. See SECURITY.md for the full operator decision tree.
 
-**Substitute boundaries on macOS / WSL2 backend** — when AppArmor is no-op and gVisor is unavailable, the substitute is the **hypervisor + double-kernel separation**: the container runs in Docker Desktop's LinuxKit (or WSL2's lightweight VM) which has its own kernel, separated from the host (macOS / Windows) by a hypervisor (Apple `Hypervisor.framework` / Microsoft Hyper-V). This means a container escape on macOS / WSL2 backends has to break through a kernel boundary AND a hypervisor boundary to reach the host, which is why kato treats `KATO_SANDBOX_ALLOW_NO_GVISOR=true` as the intended path on those platforms. It is not equivalent to gVisor — gVisor's userspace kernel is a tighter syscall blockade — but it is materially better than no-gVisor on Linux native, where the host kernel is the only boundary.
+**Why there is no macOS / WSL2 substitute any more.** The hypervisor +
+double-kernel separation of Docker Desktop's LinuxKit VM *is* a real
+boundary, and this document used to treat it as an acceptable substitute
+via `KATO_SANDBOX_ALLOW_NO_GVISOR=true`. That override has been removed
+by operator decision. The reasoning: gVisor is the only layer here that
+survives a host-kernel bug, and the environments that reached for the
+waiver were exactly the ones relying on the sandbox hardest — a
+guarantee any environment can switch off is not a guarantee. The
+practical consequence is stated plainly rather than softened: **sandbox
+mode does not start on Docker Desktop.** Run kato on Linux, or in a
+Lima/Colima VM with `runsc` registered.
 
 **What this matrix does NOT promise**:
 
@@ -257,7 +358,7 @@ The default. You're already here.
 - **Blast radius:** your laptop. A successful container escape lands in the LinuxKit / WSL2 VM (which is itself isolated from your macOS/Windows host by the hypervisor). A successful workspace-side compromise is bounded to the per-task workspace folder.
 - **Setup checklist:**
   - [ ] Install Docker Desktop with the latest version
-  - [ ] Set `KATO_SANDBOX_ALLOW_NO_GVISOR=true` (Docker Desktop cannot run gVisor; the hypervisor + double-kernel separation is the substitute)
+  - [ ] Docker Desktop cannot run gVisor, which is required with no override — use Linux or a Lima/Colima VM with `runsc`
   - [ ] Run `make sandbox-build && make sandbox-login && make sandbox-verify` once before first use
   - [ ] Don't commit secrets to workspaces (the pre-spawn secret scan catches credential-shape names; arbitrary in-source secrets are residual)
 - **Tradeoff:** if your laptop has anything sensitive on it that you don't want correlated with your kato sessions, see Pattern B.
@@ -270,7 +371,7 @@ Stronger isolation between kato and your "real" work.
 - **Setup checklist:**
   - [ ] Install a stock Linux distro (Ubuntu 22.04+, Debian 12+, Fedora 38+) — modern enough for cgroup v2
   - [ ] Install Docker via the distro's package manager AND configure rootless mode: https://docs.docker.com/engine/security/rootless/
-  - [ ] Install gVisor: https://gvisor.dev/docs/user_guide/install/ (kato won't need the `KATO_SANDBOX_ALLOW_NO_GVISOR=true` override on this host)
+  - [ ] Install gVisor: https://gvisor.dev/docs/user_guide/install/ — required, and there is no override
   - [ ] Pin the sandbox base image: `export KATO_SANDBOX_BASE_IMAGE=node:22-bookworm-slim@sha256:<digest>`
   - [ ] Pin the Claude CLI version: `export KATO_SANDBOX_CLAUDE_CLI_VERSION=<version>` (closes the npm-side supply-chain channel)
   - [ ] Run kato as a non-root user (Layer 2 enforces this anyway)
@@ -322,7 +423,7 @@ runtime. These are the most common real-world escape paths.
 
 | # | Attack class | Defense | Kato status |
 |---|---|---|---|
-| 1 | **Kernel CVE exploitation** — container shares host kernel; a privileged-user kernel bug (dirty pipe, dirty cow, OverlayFS, io_uring) lets an inside process escalate to host root. Most common real-world escape. | gVisor (`runsc`) userspace kernel between container and host kernel; most kernel CVEs require breaking gVisor first. Update host kernel promptly. | **Mitigated** on Linux + gVisor (Layer 9, strict-by-default; override `KATO_SANDBOX_ALLOW_NO_GVISOR=true` for Docker Desktop / WSL2 where the hypervisor is the substitute boundary). |
+| 1 | **Kernel CVE exploitation** — container shares host kernel; a privileged-user kernel bug (dirty pipe, dirty cow, OverlayFS, io_uring) lets an inside process escalate to host root. Most common real-world escape. | gVisor (`runsc`) userspace kernel between container and host kernel; most kernel CVEs require breaking gVisor first. Update host kernel promptly. | **Mitigated** — gVisor (Layer 9) is required with no override, so every sandbox that starts has it. |
 | 2 | **Capability misconfiguration** — `--privileged`, `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_SYS_MODULE` left on. Direct path to host root. | `--cap-drop=ALL` then add only what's needed; `setpriv --bounding-set=-all` wipes capabilities permanently before the agent runs. | **Mitigated** (Layer 6; transient `NET_ADMIN`/`NET_RAW`/`SETUID`/`SETGID` are wiped from the bounding set before Claude exec). |
 | 3 | **Mounted Docker socket** (`/var/run/docker.sock`) — agent runs `docker run --privileged -v /:/host` and creates a sibling container with full host access. One-line escape. | Never mount `docker.sock`; validate workspace paths against a forbidden list. | **Mitigated** (workspace path validator's `forbidden-mount-subtree` includes `/var/run/docker.sock`, `/var/lib/docker`, `/var/lib/containerd`, `/run/docker.sock`, `/run/containerd`; pre-spawn workspace scan also refuses if a stray `docker.sock`/`containerd.sock` is found at workspace top-level). |
 | 4 | **Mounted sensitive host paths** — `/`, `/etc`, `/var/lib/docker`, `~/.ssh` bind-mounted in. Read/write to host without an exploit. | Workspace path validator with subtree-forbidden + exact-forbidden lists. | **Mitigated** (Layer 4 + the `forbidden-mount-subtree` / `forbidden-mount-exact` invariant blocks; refuses `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.gcp`, `~/.kube`, `~/.docker`, system roots, macOS sensitive subtrees, etc.). |
@@ -1058,12 +1159,14 @@ Mapping to the protections below:
   a userspace kernel sitting between the container and the host's
   Linux kernel, so most kernel-CVE escape paths require an attacker
   to break gVisor first. Install via
-  https://gvisor.dev/docs/user_guide/install/. The override
-  `KATO_SANDBOX_ALLOW_NO_GVISOR=true` exists for environments where
-  gVisor cannot be installed (most notably Docker Desktop on macOS /
-  Windows where the underlying VM is locked down) — operator
-  explicitly accepts the residual kernel-CVE risk; the other eight
-  sandbox layers still apply.
+  https://gvisor.dev/docs/user_guide/install/. **There is no override.**
+  An escape hatch (`KATO_SANDBOX_ALLOW_NO_GVISOR=true`) used to exist for
+  environments where gVisor cannot be installed — Docker Desktop most
+  notably — and it was removed: the environments that used it were the
+  ones relying on the sandbox hardest, and a layer any host can switch
+  off cannot be counted on. Where `runsc` is unavailable, sandbox mode
+  refuses to start rather than running with one fewer boundary than this
+  document claims.
 - **Rootless Docker** — recommended, not required. When the daemon
   runs in rootless mode, a container escape lands in the operator's
   user account, not in full host root. Kato logs a one-line info-

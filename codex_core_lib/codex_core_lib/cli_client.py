@@ -764,11 +764,13 @@ class CodexCliClient(CliAgentSharedBehaviour):
             if self._docker_mode_on:
                 from sandbox_core_lib.sandbox_core_lib.manager import (
                     SandboxError,
+                    arm_container_watchdog,
                     check_spawn_rate,
                     ensure_image,
                     enforce_no_workspace_secrets,
                     make_container_name,
                     record_spawn,
+                    start_task_egress_proxy,
                     wrap_command,
                 )
                 workspace_path = cwd or self._repository_root_path or os.getcwd()
@@ -791,11 +793,26 @@ class CodexCliClient(CliAgentSharedBehaviour):
                     raise RuntimeError(
                         f'sandbox spawn blocked: {exc}',
                     ) from exc
+                # Per-task egress proxy, exactly as the other CLI transport
+                # gets it. Without these two calls this path silently ran
+                # with the older, weaker egress rule (shared bridge +
+                # address allowlist) and no parent-loss watchdog — a
+                # difference nothing in the spawn output would show.
+                try:
+                    task_network, proxy_ip = start_task_egress_proxy(
+                        container_name, logger=self.logger,
+                    )
+                except SandboxError as exc:
+                    raise RuntimeError(
+                        f'sandbox egress setup failed: {exc}',
+                    ) from exc
                 command = wrap_command(
                     command,
                     workspace_path=workspace_path,
                     container_name=container_name,
                     task_id=task_id or 'unknown',
+                    task_network=task_network,
+                    proxy_ip=proxy_ip,
                 )
                 try:
                     record_spawn(
@@ -808,6 +825,10 @@ class CodexCliClient(CliAgentSharedBehaviour):
                     raise RuntimeError(
                         f'sandbox audit log required but failed: {exc}',
                     ) from exc
+                arm_container_watchdog(
+                    container_name, workspace_path=workspace_path,
+                    logger=self.logger,
+                )
                 spawn_cwd = None
             self.logger.info('Mission %s: invoking Codex CLI', log_label)
             try:
