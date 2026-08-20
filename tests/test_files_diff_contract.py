@@ -109,6 +109,9 @@ def _build_local_repo_with_task_branch(
     _git(work, 'push', '-u', 'origin', task_branch)
 
 
+from kato_webserver.app import TASK_FOLDER_TREE_ID
+
+
 class FilesDiffContractTests(unittest.TestCase):
     """End-to-end: real Flask + real workspace + real git → real JSON."""
 
@@ -181,7 +184,20 @@ class FilesDiffContractTests(unittest.TestCase):
         self.assertIn('trees', payload)
         trees = payload['trees']
         self.assertIsInstance(trees, list)
-        self.assertEqual(len(trees), 1, 'one repo configured')
+        # One repo clone, plus the pseudo-tree holding the TASK FOLDER's
+        # own files when the agent has written any there (a scratch page,
+        # pr_description.md). It is deliberately NOT in ``repository_ids``
+        # — nothing should run git or open a pull request against it.
+        repo_trees = [
+            tree for tree in trees
+            if tree.get('repo_id') != TASK_FOLDER_TREE_ID
+        ]
+        self.assertEqual(len(repo_trees), 1, 'one repo configured')
+        for tree in trees:
+            if tree.get('repo_id') == TASK_FOLDER_TREE_ID:
+                self.assertNotIn(
+                    TASK_FOLDER_TREE_ID, payload.get('repository_ids', []),
+                )
 
         entry = trees[0]
         # Required keys for normalizeTrees().
@@ -320,11 +336,11 @@ class FilesDiffContractTests(unittest.TestCase):
         """
         files_payload = _stabilize_cwd_payload(
             self._get_json(f'/api/sessions/{self.task_id}/files'),
-            repo_id=self.repo_id,
+            repo_id=self.repo_id, tmp_prefix=str(self.root),
         )
         diff_payload = _stabilize_cwd_payload(
             self._get_json(f'/api/sessions/{self.task_id}/diff'),
-            repo_id=self.repo_id,
+            repo_id=self.repo_id, tmp_prefix=str(self.root),
         )
         _stabilize_diff_text(diff_payload, tmp_prefix=str(self.root))
         commits_payload = self._get_json(
@@ -415,20 +431,41 @@ class FilesDiffContractTests(unittest.TestCase):
         self.assertEqual(roundtrip['expected']['repo_id'], self.repo_id)
 
 
-def _stabilize_cwd_payload(payload: dict, *, repo_id: str) -> dict:
-    """Rewrite tempdir ``cwd`` fields + tree paths to the stable token."""
+def _stabilize_cwd_payload(
+    payload: dict, *, repo_id: str, tmp_prefix: str = '',
+) -> dict:
+    """Rewrite tempdir ``cwd`` fields + tree paths to the stable token.
+
+    ``tmp_prefix`` covers trees whose paths do NOT sit under the repo id —
+    notably the TASK FOLDER pseudo-tree, whose files live beside the clones
+    rather than inside one. Without it those paths stayed absolute and the
+    fixture differed on every run and every machine.
+    """
     token = f'/__fixture__/{repo_id}'
     for tree in payload.get('trees', []):
         if tree.get('cwd'):
-            tree['cwd'] = token
-        _stabilize_tree_paths(tree.get('tree', []), repo_id=repo_id)
+            # The task-folder tree's cwd is the task root, not the clone.
+            tree['cwd'] = (
+                _stabilize_path(tree['cwd'], tmp_prefix)
+                if tree.get('repo_id') != repo_id else token
+            )
+        _stabilize_tree_paths(
+            tree.get('tree', []), repo_id=repo_id, tmp_prefix=tmp_prefix,
+        )
     for diff in payload.get('diffs', []):
         if diff.get('cwd'):
             diff['cwd'] = token
     if payload.get('cwd'):
         payload['cwd'] = token
-    _stabilize_tree_paths(payload.get('tree', []), repo_id=repo_id)
+    _stabilize_tree_paths(
+        payload.get('tree', []), repo_id=repo_id, tmp_prefix=tmp_prefix,
+    )
     return payload
+
+
+def _stabilize_path(value: str, tmp_prefix: str) -> str:
+    text = str(value or '')
+    return text.replace(tmp_prefix, '/__fixture__') if tmp_prefix else text
 
 
 def _stabilize_diff_text(payload: dict, *, tmp_prefix: str) -> None:
@@ -440,13 +477,17 @@ def _stabilize_diff_text(payload: dict, *, tmp_prefix: str) -> None:
         payload['diff'] = payload['diff'].replace(tmp_prefix, '/__fixture__')
 
 
-def _stabilize_tree_paths(nodes: list, *, repo_id: str) -> None:
+def _stabilize_tree_paths(
+    nodes: list, *, repo_id: str, tmp_prefix: str = '',
+) -> None:
     """Recursively rewrite absolute ``path`` fields to the stable token."""
     for node in nodes:
         if not isinstance(node, dict):
             continue
         path = node.get('path', '')
-        if isinstance(path, str) and '/' in path:
+        if isinstance(path, str) and tmp_prefix and path.startswith(tmp_prefix):
+            node['path'] = _stabilize_path(path, tmp_prefix)
+        elif isinstance(path, str) and '/' in path:
             # Keep only the portion after the repo_id segment so the
             # path is stable across machines.
             idx = path.find('/' + repo_id + '/')
@@ -456,7 +497,9 @@ def _stabilize_tree_paths(nodes: list, *, repo_id: str) -> None:
             elif path.endswith('/' + repo_id):
                 node['path'] = f'/__fixture__/{repo_id}'
         if isinstance(node.get('children'), list):
-            _stabilize_tree_paths(node['children'], repo_id=repo_id)
+            _stabilize_tree_paths(
+                node['children'], repo_id=repo_id, tmp_prefix=tmp_prefix,
+            )
 
 
 if __name__ == '__main__':

@@ -104,6 +104,7 @@ from kato_webserver.git_diff_utils import (
     has_origin_remote,
     list_branch_commits,
     resolve_base_ref,
+    task_folder_file_tree,
     tracked_file_tree,
 )
 from kato_webserver.prompt_attachment_store import save_attachment
@@ -2020,9 +2021,32 @@ def _register_http_routes(app: Flask) -> None:
                         repo_id, cwd, agent_service,
                     ),
                 })
+            # The task folder's OWN files, after the repo clones. The agent
+            # writes real deliverables here (a scratch page to open in a
+            # browser, pr_description.md) and nothing listed them, so the
+            # operator could not reach a file kato had just told them about.
+            task_root = _task_workspace_root(workspace_manager, task_id)
+            if task_root:
+                own_files = task_folder_file_tree(
+                    task_root, [t['cwd'] for t in trees],
+                )
+                if own_files:
+                    trees.append({
+                        'repo_id': TASK_FOLDER_TREE_ID,
+                        'cwd': task_root,
+                        'read_only': True,
+                        'tree': own_files,
+                        # Not a git repo — no diff base, so nothing to
+                        # colour and no conflicts to mark.
+                        'conflicted_files': [],
+                        'changed_files': [],
+                    })
             if trees:
                 return jsonify({
-                    'repository_ids': [t['repo_id'] for t in trees],
+                    'repository_ids': [
+                        t['repo_id'] for t in trees
+                        if t['repo_id'] != TASK_FOLDER_TREE_ID
+                    ],
                     'trees': trees,
                     # Back-compat: first repo doubles as the legacy
                     # ``cwd``/``tree`` pair so older clients still work.
@@ -2228,6 +2252,18 @@ def _register_http_routes(app: Flask) -> None:
             cwd = _repository_cwd(workspace_manager, task_id, repo_id)
             if cwd:
                 roots.append(cwd)
+        # The TASK FOLDER itself, not just the repo clones inside it. The
+        # agent writes real deliverables there — a scratch HTML page to try
+        # something in a browser, pr_description.md, plan.md — and the
+        # operator opening one got "path is outside the task workspace",
+        # which reads as kato refusing to show a file it just told them it
+        # created. It is the task's own folder, so it is in scope by
+        # definition; ``_task_workspace_root`` never derives it by walking
+        # up from a repo path, so this cannot widen to the operator's whole
+        # source root.
+        task_root = _task_workspace_root(workspace_manager, task_id)
+        if task_root:
+            roots.append(task_root)
         if not roots:
             manager = app.config['SESSION_MANAGER']
             legacy_cwd = _record_cwd_or_none(manager, task_id)
@@ -3721,6 +3757,11 @@ def _register_agent_version_upgrade_route(app: Flask) -> None:
 # context (e.g. a bare ``mvn``) must not silently ride through when
 # Action Guard now flags the SAME program name as touching credentials,
 # exfiltrating data, remote-executing, or escaping the sandbox.
+#: Label for the pseudo-repo holding the TASK FOLDER's own files. Not a
+#: repository id — kept out of ``repository_ids`` so nothing tries to run
+#: git, resolve a diff base, or open a pull request against it.
+TASK_FOLDER_TREE_ID = 'task files'
+
 _HIGH_RISK_ACTION_GUARD_CATEGORIES = frozenset({
     'credential_read', 'network_exfil', 'remote_exec', 'sandbox_escape',
 })

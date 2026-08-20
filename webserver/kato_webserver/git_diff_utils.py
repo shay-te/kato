@@ -258,6 +258,93 @@ def _branch_from_ls_remote(cwd: str) -> str:
     return ''
 
 
+#: Task-folder entries kato owns and the operator did not ask to see.
+#: Dot-prefixed by convention (``.kato-meta``, ``.kato-preflight``, ``.git``),
+#: so one predictable rule covers them: if it starts with a dot, it is
+#: plumbing. Everything else the agent wrote is the operator's.
+_TASK_FOLDER_HIDDEN_PREFIX = '.'
+
+
+def _looks_like_git_repo(path: Path) -> bool:
+    """Is ``path`` a git repository — working copy OR bare mirror?"""
+    try:
+        if (path / '.git').exists():
+            return True
+        # Bare repo: no .git, but the layout is at the top level.
+        return (path / 'HEAD').is_file() and (path / 'objects').is_dir()
+    except OSError:
+        return False
+
+
+def task_folder_file_tree(task_root: str, repo_dirs=()) -> list[dict[str, Any]]:
+    """Files the agent wrote in the TASK folder itself, as a tree.
+
+    Not a git repo, so ``git ls-files`` cannot see it — and nothing did:
+    the agent would write a scratch HTML page to try something in a
+    browser, tell the operator where it was, and the operator got "path is
+    outside the task workspace" when they clicked it. The file existed and
+    kato refused to show it.
+
+    Repo clones are excluded because each already renders as its own tree;
+    listing them again would duplicate every file in the task. Dot-prefixed
+    entries are kato's own plumbing and are hidden.
+    """
+    # Blank guard FIRST: ``Path('')`` is the current directory, so an empty
+    # task root would happily walk whatever kato was started from and list
+    # the operator's entire source tree in the Files tab.
+    text = str(task_root or '').strip()
+    if not text:
+        return []
+    root = Path(text)
+    if not root.is_dir():
+        return []
+    # Resolve BOTH sides before comparing: the caller passes clone paths
+    # straight from the workspace manager, and on macOS those come back
+    # under /var while ``iterdir`` yields /private/var. Comparing raw
+    # strings silently matched nothing, so every repo clone was listed
+    # twice — once as its own tree and once inside the task folder.
+    skip = set()
+    for entry in (repo_dirs or []):
+        try:
+            skip.add(str(Path(str(entry)).resolve()))
+        except OSError:
+            continue
+    nodes: list[dict[str, Any]] = []
+    try:
+        entries = sorted(root.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+    for entry in entries:
+        name = entry.name
+        if name.startswith(_TASK_FOLDER_HIDDEN_PREFIX):
+            continue
+        try:
+            if entry.is_dir() and str(entry.resolve()) in skip:
+                continue
+        except OSError:
+            continue
+        if entry.is_dir():
+            # Never walk into a git repository. A clone the caller did not
+            # list, or a bare ``*.git`` mirror sitting in the task folder,
+            # would otherwise unfold its entire object store into the Files
+            # tab — thousands of SHA-named directories the operator has no
+            # use for. (It also made the payload non-deterministic, since
+            # those names change with every commit.)
+            if _looks_like_git_repo(entry):
+                continue
+            children = task_folder_file_tree(str(entry), repo_dirs)
+            if children:
+                nodes.append({
+                    'name': name, 'relativePath': name, 'path': str(entry),
+                    'children': children,
+                })
+            continue
+        nodes.append({
+            'name': name, 'relativePath': name, 'path': str(entry),
+        })
+    return nodes
+
+
 def tracked_file_tree(cwd: str) -> list[dict[str, Any]]:
     """Tracked + untracked-but-not-ignored files as a nested tree.
 

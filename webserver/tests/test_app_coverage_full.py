@@ -449,8 +449,10 @@ class FileRouteTests(unittest.TestCase):
                 response = app.test_client().get(
                     '/api/sessions/T-1/file', query_string={'path': 'thing.txt'},
                 )
-            # No candidate landed inside any (unresolvable) root -> 403.
-            self.assertEqual(response.status_code, 403)
+            # No candidate landed inside any (unresolvable) root. The task
+            # folder is a root too now and IS resolvable, so the path is in
+            # scope and simply absent -> 404 rather than 403.
+            self.assertEqual(response.status_code, 404)
 
     def test_path_inside_root_but_missing_returns_404(self):
         # in_workspace set but file absent -> resolved stays None ->
@@ -473,12 +475,32 @@ class FileRouteTests(unittest.TestCase):
             target = repo / 'f.txt'
             target.write_text('hi', encoding='utf-8')
             real_stat = Path.stat
-            seen = {'n': 0}
+            # Learn how many stats the route makes on a healthy read, then
+            # fail the one after — the size read — without hardcoding it.
+            probe = {'n': 0}
 
+            def counting_probe(self, *a, **k):
+                if self.name == 'f.txt':
+                    probe['n'] += 1
+                return real_stat(self, *a, **k)
+
+            with patch.object(Path, 'stat', counting_probe):
+                app.test_client().get(
+                    '/api/sessions/T-1/file', query_string={'path': 'f.txt'},
+                )
+            seen = {'n': 0, 'probe_budget': max(probe['n'] - 1, 1)}
+
+            # Count-independent on purpose. The route stats the file
+            # several times before the size read (candidate probe, guard,
+            # then the read itself), and the exact number changes whenever
+            # the root list does — adding the task folder as a root broke
+            # a hardcoded "fail the 4th call". Fail every stat once the
+            # file has been positively identified instead: the size read is
+            # always after that, and the earlier probes are what set it.
             def counting_stat(self, *a, **k):
                 if self.name == 'f.txt':
                     seen['n'] += 1
-                    if seen['n'] >= 4:
+                    if seen['n'] > seen['probe_budget']:
                         raise OSError('stat boom')
                 return real_stat(self, *a, **k)
 
@@ -1290,13 +1312,45 @@ class MultiRepoAllMissingFallbackTests(unittest.TestCase):
         self.assertEqual(body['repository_ids'], [])
         self.assertEqual(body['diff'], 'D')
 
-    def test_file_route_no_workspace_roots_404(self):
-        # 1537->1535 + 1544-1545: no repo roots AND no legacy cwd -> 404.
+    def test_missing_file_in_an_existing_task_folder_is_file_not_found(self):
+        # The TASK FOLDER is a root now, even when every repo clone is
+        # gone — the agent writes real files there. So a missing file is
+        # "file not found", which is what actually happened, rather than
+        # "no workspace for this task", which is not true and sends the
+        # operator looking for the wrong problem.
         with tempfile.TemporaryDirectory() as tmp:
             app = self._app_all_missing(tmp, '/nonexistent/legacy')
             response = app.test_client().get(
                 '/api/sessions/T-1/file', query_string={'path': 'x.txt'},
             )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.get_json()['error'], 'file not found')
+
+    def test_a_file_in_the_task_folder_IS_readable(self):
+        # The reported bug: the agent wrote a scratch page into the task
+        # root, told the operator where it was, and opening it said "path
+        # is outside the task workspace".
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'embed_test.html').write_text('<html>', encoding='utf-8')
+            app = self._app_all_missing(tmp, '/nonexistent/legacy')
+            response = app.test_client().get(
+                '/api/sessions/T-1/file',
+                query_string={'path': 'embed_test.html'},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('<html>', response.get_json()['content'])
+
+    def test_no_task_folder_at_all_still_404s_with_no_workspace(self):
+        workspace = _WorkspaceManager(
+            records={'T-1': SimpleNamespace(repository_ids=[])},
+            repo_paths={},
+            workspace_paths={},
+        )
+        manager = _Manager(records=[_Record(task_id='T-1', cwd='/nonexistent')])
+        app = create_app(session_manager=manager, workspace_manager=workspace)
+        response = app.test_client().get(
+            '/api/sessions/T-1/file', query_string={'path': 'x.txt'},
+        )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.get_json()['error'], 'no workspace for this task')
 
