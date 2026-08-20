@@ -8,7 +8,7 @@ from kato_core_lib.data_layers.data.fields import (
     StatusFields,
 )
 from kato_core_lib.helpers.workspace_refusal_guidance import (
-    KATO_WORKSPACE_REFUSAL_GUIDANCE,
+    KATO_AGENT_GUIDANCE,
 )
 from kato_core_lib.helpers.review_comment_utils import (
     KATO_REVIEW_COMMENT_ANSWER_PREFIX,
@@ -190,7 +190,7 @@ class KatoCoreLibTests(unittest.TestCase):
                 'poll_interval_seconds': 2.0,
                 'max_poll_attempts': 900,
                 'model_smoke_test_enabled': True,
-                'workspace_refusal_guidance': KATO_WORKSPACE_REFUSAL_GUIDANCE,
+                'workspace_refusal_guidance': KATO_AGENT_GUIDANCE,
                 'self_reply_prefixes': (
                     KATO_REVIEW_COMMENT_FIXED_PREFIX,
                     KATO_REVIEW_COMMENT_REPLY_PREFIX,
@@ -217,7 +217,7 @@ class KatoCoreLibTests(unittest.TestCase):
                 'poll_interval_seconds': 2.0,
                 'max_poll_attempts': 900,
                 'model_smoke_test_enabled': False,
-                'workspace_refusal_guidance': KATO_WORKSPACE_REFUSAL_GUIDANCE,
+                'workspace_refusal_guidance': KATO_AGENT_GUIDANCE,
                 'self_reply_prefixes': (
                     KATO_REVIEW_COMMENT_FIXED_PREFIX,
                     KATO_REVIEW_COMMENT_REPLY_PREFIX,

@@ -2178,9 +2178,15 @@ def _register_http_routes(app: Flask) -> None:
                 return jsonify({'error': 'path is outside the task workspace'}), 403
             if not repo_id and not resolved.exists():
                 continue
+            # Anchor the discard on the SAME ref the Files tree colours
+            # against. Against HEAD, a change the agent had already committed
+            # on the task branch looked clean — the operator clicked Discard
+            # and watched nothing happen while the file stayed marked.
+            base = _resolve_diff_base(candidate, cwd, service)
+            base_ref, _is_local = resolve_base_ref(cwd, base)
             try:
                 discarded = service.discard_workspace_file_changes(
-                    task_id, candidate, [raw_path],
+                    task_id, candidate, [raw_path], source=base_ref,
                 )
             except ValueError as exc:
                 return jsonify({'error': str(exc)}), 400

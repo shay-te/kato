@@ -300,14 +300,16 @@ export default function FilesTab({
     closePathMenu();
     await copyRepoRelativePath(repoId, path);
   }
-  // Discard this file's uncommitted changes. Named the way GitHub Desktop
-  // and VS Code name it: "revert" reads as ``git revert`` (a NEW commit
-  // undoing an old one), which is a different operation and not one that
-  // usually applies here — the agent's work is uncommitted until publish,
-  // so what the operator is looking at IS the uncommitted change.
+  // Throw away this file's changes — measured against the SAME base branch
+  // the tree colours against, so it clears exactly what the tree is showing.
+  // Anchored on HEAD it silently did nothing whenever the agent had already
+  // committed the change on the task branch: the operator clicked and
+  // watched the file stay marked.
   //
-  // Confirms first: unlike every other item in this menu it destroys work,
-  // and with nothing committed there is no commit or reflog to undo from.
+  // Named the way GitHub Desktop and VS Code name it: "revert" reads as
+  // ``git revert`` (a NEW commit undoing an old one), a different operation.
+  //
+  // Confirms first — unlike every other item in this menu it destroys work.
   async function discardPathMenuFileChanges() {
     const repoId = String(pathMenu?.repoId || '').trim();
     const path = String(pathMenu?.relativePath || '').trim();
@@ -315,8 +317,9 @@ export default function FilesTab({
     if (!path) { return; }
     const ok = typeof window !== 'undefined' && typeof window.confirm === 'function'
       ? window.confirm(
-        `Discard changes to ${path}?\n\nThis throws away every uncommitted `
-        + 'change to that file and cannot be undone.',
+        `Discard changes to ${path}?\n\nThis throws away every change to `
+        + 'that file on this branch — committed as well as uncommitted — and '
+        + 'cannot be undone. A file added on this branch is deleted.',
       )
       : true;
     if (!ok) { return; }

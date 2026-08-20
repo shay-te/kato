@@ -236,8 +236,10 @@ class GitClientMixin:
         result = self._run_git(local_path, args, failure_message, repository)
         return result.stdout.strip()
 
-    def restore_paths(self, local_path: str, relative_paths: list[str]) -> list[str]:
-        """Discard uncommitted changes to specific files. Returns what changed.
+    def restore_paths(
+        self, local_path: str, relative_paths: list[str], source: str = 'HEAD',
+    ) -> list[str]:
+        """Discard a file's changes relative to ``source``. Returns what changed.
 
         ``git restore --`` rather than ``git checkout --``: restore is the
         file-scoped command and cannot move HEAD or switch branches, so a
@@ -260,16 +262,81 @@ class GitClientMixin:
         """
         cleaned = self._safe_restore_pathspecs(relative_paths)
         if not cleaned:
-            raise ValueError('no valid file path to revert')
-        dirty = self._dirty_paths(local_path, cleaned)
+            raise ValueError('no valid file path to discard')
+        anchor = str(source or 'HEAD').strip() or 'HEAD'
+        dirty = self._changed_against(local_path, anchor, cleaned)
         if not dirty:
             return []
-        self._run_git(
-            local_path,
-            ['restore', '--source=HEAD', '--staged', '--worktree', '--', *dirty],
-            'failed to discard file changes',
-        )
+        # A file that does not exist at ``anchor`` was ADDED on this branch,
+        # so ``git restore`` has nothing to restore it from and fails.
+        # Discarding the change to a new file means removing it — that is
+        # what "throw away my changes to this file" means, and what GitHub
+        # Desktop does. Split so the two groups get the right command.
+        existing, added = self._split_by_presence(local_path, anchor, dirty)
+        if existing:
+            self._run_git(
+                local_path,
+                ['restore', f'--source={anchor}', '--staged', '--worktree',
+                 '--', *existing],
+                'failed to discard file changes',
+            )
+        for path in added:
+            try:
+                os.remove(os.path.join(local_path, path))
+            except OSError:
+                pass
+        if added:
+            # Drop the index entry too, or a staged addition survives the
+            # file being gone and reappears as a deletion in the diff.
+            self._run_git(
+                local_path,
+                ['rm', '--cached', '--force', '--quiet', '--', *added],
+                'failed to unstage discarded new file(s)',
+            )
         return dirty
+
+    def _changed_against(
+        self, local_path: str, anchor: str, relative_paths: list[str],
+    ) -> list[str]:
+        """Which of ``relative_paths`` differ from ``anchor``.
+
+        Anchored on the SAME ref the Files tree colours against, not on
+        ``HEAD``. Against HEAD, a change the agent had already committed on
+        the task branch looked clean, so discarding it did nothing while the
+        tree went on showing the file as changed — the operator clicked and
+        watched nothing happen.
+
+        Untracked files are included here (unlike the HEAD-only check this
+        replaced): relative to the base branch a file the agent created IS a
+        change, and the tree colours it as one.
+        """
+        changed: set[str] = set()
+        diff = self._git_stdout(
+            local_path,
+            ['diff', '--no-ext-diff', '--name-only', anchor, '--', *relative_paths],
+            'failed to compare against the base branch',
+        )
+        changed.update(line.strip() for line in diff.splitlines() if line.strip())
+        untracked = self._git_stdout(
+            local_path,
+            ['ls-files', '--others', '--exclude-standard', '--', *relative_paths],
+            'failed to list untracked files',
+        )
+        changed.update(line.strip() for line in untracked.splitlines() if line.strip())
+        return sorted(changed)
+
+    def _split_by_presence(
+        self, local_path: str, anchor: str, relative_paths: list[str],
+    ) -> tuple[list[str], list[str]]:
+        """``(exists_at_anchor, added_on_this_branch)``."""
+        existing: list[str] = []
+        added: list[str] = []
+        for path in relative_paths:
+            result = self._run_git_subprocess(
+                local_path, ['cat-file', '-e', f'{anchor}:{path}'], None,
+            )
+            (existing if result.returncode == 0 else added).append(path)
+        return existing, added
 
     @staticmethod
     def _safe_restore_pathspecs(relative_paths) -> list[str]:

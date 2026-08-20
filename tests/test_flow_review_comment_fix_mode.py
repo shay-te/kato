@@ -36,7 +36,7 @@ from kato_core_lib.helpers.review_comment_utils import (
     review_comment_reply_body,
 )
 from kato_core_lib.helpers.workspace_refusal_guidance import (
-    KATO_WORKSPACE_REFUSAL_GUIDANCE,
+    KATO_AGENT_GUIDANCE,
 )
 
 
@@ -171,7 +171,7 @@ class FlowReviewCommentFixModeSpawnTests(unittest.TestCase):
             'feature/T1',
             workspace_path='/tmp/T1/repo',
             mode='fix',
-            workspace_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            workspace_refusal_guidance=KATO_AGENT_GUIDANCE,
             self_reply_prefixes=KATO_SELF_REPLY_PREFIXES,
         )
         self.assertEqual(captured_prompts[0], expected)
@@ -201,7 +201,7 @@ class FlowReviewCommentFixModeSpawnTests(unittest.TestCase):
 
         expected = ClaudeCliClient._build_review_comments_batch_prompt(
             comments, 'feature/T1', workspace_path='/tmp/T1/repo', mode='fix',
-            workspace_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            workspace_refusal_guidance=KATO_AGENT_GUIDANCE,
             self_reply_prefixes=KATO_SELF_REPLY_PREFIXES,
         )
         self.assertEqual(captured[0], expected)

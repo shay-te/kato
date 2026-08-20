@@ -43,3 +43,29 @@ KATO_WORKSPACE_REFUSAL_GUIDANCE = (
     'operator a complete diagnosis instead of forcing them to guess why a '
     'tag-already-on-the-task is being ignored.'
 )
+
+
+# The git-request channel. Same injection pattern and same reason as the
+# block above: it names kato product concepts (the task folder layout, the
+# Done button), so it lives here rather than in agent_core_lib, and is
+# threaded to the agent client as a parameter.
+#
+# It exists because a refusal with no next step is what an operator reads
+# as kato being broken: the agent hits the branch/publish floor and reports
+# "the orchestration layer forbids me from running any git command", when
+# kato would happily perform the operation on request.
+from kato_core_lib.helpers.git_request import agent_guidance_text
+
+KATO_GIT_REQUEST_GUIDANCE = agent_guidance_text()
+
+
+# The single value kato threads into every agent spawn as
+# ``workspace_refusal_guidance`` / ``extra_refusal_guidance``.
+#
+# Composed ONCE here rather than concatenated at each call site: the runner
+# has two spawn paths and the one-shot client a third, and a block added to
+# one of them but not the others is invisible until an agent misbehaves on
+# exactly the path that missed it.
+KATO_AGENT_GUIDANCE = (
+    f'{KATO_WORKSPACE_REFUSAL_GUIDANCE}\n\n{KATO_GIT_REQUEST_GUIDANCE}'
+)

@@ -41,7 +41,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
 from kato_core_lib.helpers.plan_mode_store import task_permission_mode
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.workspace_refusal_guidance import (
-    KATO_WORKSPACE_REFUSAL_GUIDANCE,
+    KATO_AGENT_GUIDANCE,
 )
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
@@ -317,7 +317,7 @@ class PlanningSessionRunner(object):
             # docker sandbox enforces, so the prompt and the container agree.
             scope = agent_prompt_utils.workspace_scope_block(
                 [workspace_root] if workspace_root else [],
-                extra_refusal_guidance=KATO_WORKSPACE_REFUSAL_GUIDANCE,
+                extra_refusal_guidance=KATO_AGENT_GUIDANCE,
             )
             first_turn = '\n\n'.join(
                 part for part in (definition, normalized_message) if part
@@ -500,10 +500,10 @@ class PlanningSessionRunner(object):
             KATO_SELF_REPLY_PREFIXES,
         )
         from kato_core_lib.helpers.workspace_refusal_guidance import (
-            KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            KATO_AGENT_GUIDANCE,
         )
         prompt_params = {
-            'workspace_refusal_guidance': KATO_WORKSPACE_REFUSAL_GUIDANCE,
+            'workspace_refusal_guidance': KATO_AGENT_GUIDANCE,
             'self_reply_prefixes': KATO_SELF_REPLY_PREFIXES,
         }
         prompt = (
