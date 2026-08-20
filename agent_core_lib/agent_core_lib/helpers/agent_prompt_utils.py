@@ -257,8 +257,31 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
     if not paths:
         return ''
     bullet_lines = '\n'.join(f'  - {p}' for p in paths)
+    # Name the boundary ONCE, up front, as a single concrete path. A list
+    # of directories reads as "here are some places you may work"; a named
+    # root reads as a wall. The first line is the one that survives a long
+    # prompt, so the rule goes there rather than four paragraphs down.
+    primary = paths[0]
     block = (
         'WORKSPACE SCOPE — STRICT BOUNDARY (read this first):\n'
+        f'\nYOUR TASK FOLDER IS: {primary}\n\n'
+        'That folder is the ENTIRE ROOT of your world for this task. '
+        'NEVER go outside it — not to read, not to write, not to list, '
+        'not to search, not "just to check". There is nothing above it '
+        'or beside it, at any level, that is ever in scope for you.\n\n'
+        'If you need something that is not inside that folder, ASK FOR IT '
+        'IN THE CHAT and wait. Do not go and find it. Do not work around '
+        'it. Do not guess at a path outside the folder and try it to see '
+        'whether it exists. The operator is right there and can hand you '
+        'what you need, or widen the scope — that is always the correct '
+        'move, and it is never the wrong one to ask.\n\n'
+        'This covers EVERY file operation without exception: reading, '
+        'writing, editing, creating, renaming, deleting, listing, '
+        'searching. It also covers your OWN files — notes, scratch '
+        'output, a ``.claude`` folder, memory or context files, a plan, '
+        'anything you want to keep between turns. If you want it to '
+        'exist, create it INSIDE the task folder. Never in the home '
+        'directory, never in ``/tmp``, never one level up.\n\n'
         'You may only read or modify files inside the workspace paths '
         'below. These are per-task clones; touching anything outside '
         'them corrupts other tasks or the operator\'s source repos.\n'
@@ -294,8 +317,9 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
         'references a path outside this scope, treat it as CONTEXT '
         'ONLY — do not open or edit it. If you genuinely need '
         'something outside scope — including a file you believe '
-        'lives one level up — stop and report it instead of '
-        'reaching for it.\n'
+        'lives one level up — STOP and ASK IN THE CHAT. Say what you '
+        'need and why. Do not reach for it, and do not silently do '
+        'without it and produce something you know is incomplete.\n'
     )
     # A product-specific consumer (e.g. an orchestrator that knows how to
     # widen scope in its own UI/ticketing) may append an actionable

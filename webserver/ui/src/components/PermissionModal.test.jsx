@@ -497,3 +497,69 @@ describe('PermissionModal — permission-changing tools are never remembered', (
     expect(onDecide.mock.calls[0][0].remember).toBe(false);
   });
 });
+
+describe('PermissionModal — Enter must not do two things at once', () => {
+  function envelope() {
+    return _raw({ request: { request_id: 'req-1', tool_name: 'Bash', input: {} } });
+  }
+
+  test('Enter while typing in a text field is left alone', () => {
+    // The reported bug: the popup appears over a half-written message
+    // without moving focus, so the operator's next Enter — meant to send
+    // that message — approved a request they had not read AND submitted
+    // the draft. Two decisions from one keystroke, neither intended.
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelope()} onDecide={onDecide} />);
+
+    const composer = document.createElement('textarea');
+    document.body.appendChild(composer);
+    composer.focus();
+    composer.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    }));
+
+    expect(onDecide).not.toHaveBeenCalled();
+    composer.remove();
+  });
+
+  test('Escape while typing is left alone too', () => {
+    // Escape in a composer usually means "clear/close what I am doing",
+    // not "deny the thing I have not read".
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelope()} onDecide={onDecide} />);
+
+    const composer = document.createElement('input');
+    document.body.appendChild(composer);
+    composer.focus();
+    composer.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Escape', bubbles: true, cancelable: true,
+    }));
+
+    expect(onDecide).not.toHaveBeenCalled();
+    composer.remove();
+  });
+
+  test('Enter outside a text field still approves', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelope()} onDecide={onDecide} />);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ allow: true }),
+    );
+  });
+
+  test('the keydown is stopped so nothing downstream sees it', () => {
+    // preventDefault alone only cancels the browser's default action —
+    // the same event still reached the composer's own handler and sent
+    // the draft. That was the second half of the double-fire.
+    render(<PermissionModal raw={envelope()} onDecide={vi.fn()} />);
+    const downstream = vi.fn();
+    document.body.addEventListener('keydown', downstream);
+    const event = new KeyboardEvent('keydown', {
+      key: 'Enter', bubbles: true, cancelable: true,
+    });
+    window.dispatchEvent(event);
+    expect(downstream).not.toHaveBeenCalled();
+    document.body.removeEventListener('keydown', downstream);
+  });
+});

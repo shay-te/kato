@@ -1,4 +1,5 @@
 import { useCallback } from 'react';
+import { useOperatorIsTyping } from '../hooks/useOperatorIsTyping.js';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import { postSession } from '../api.js';
 import { permissionStore } from '../stores/permissionStore.js';
@@ -23,6 +24,16 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 // through the store's audit-sink registry.
 export default function GlobalPermissionContainer() {
   const { list } = usePendingPermissions();
+  // Hold the dialog back while the operator is mid-sentence somewhere.
+  //
+  // It used to appear over whatever they were writing WITHOUT moving
+  // focus, so the next Enter — meant to send that message — approved a
+  // request they had never read and submitted the half-written prompt.
+  // Fixing the keystroke alone was not enough: a dialog that covers the
+  // screen the instant you start a sentence is the wrong behaviour even
+  // when the keys go to the right place. So it waits for a pause, and
+  // says it is waiting rather than sitting invisible.
+  const typing = useOperatorIsTyping();
   // Oldest ask first (store preserves insertion order).
   const current = list[0] || null;
   const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
@@ -55,6 +66,14 @@ export default function GlobalPermissionContainer() {
   }, [currentTaskId]);
 
   if (!current) { return null; }
+  if (typing) {
+    return (
+      <div className="permission-pending-hint" role="status">
+        <span className="permission-pending-dot" aria-hidden="true" />
+        Waiting for your approval — finish typing and it will open.
+      </div>
+    );
+  }
 
   return (
     <PermissionDecisionContainer

@@ -50,19 +50,35 @@ export default function PermissionModal({
 
   // Keyboard shortcuts: Esc = Deny, Enter = Allow once, Shift+Enter = Allow
   // always (falls back to Allow once when the remembered scope is withheld).
-  // Skipped while typing in the rationale textarea (Enter must stay a newline
-  // there) and for the AskUserQuestion form. Capture phase + preventDefault so
-  // a focused button's native Enter-activation can't ALSO fire — exactly one
-  // decision per keypress.
+  //
+  // NEVER claimed while the operator is typing somewhere else. The popup
+  // appears over whatever they are writing without moving focus, so their
+  // next Enter — meant to send the message they were halfway through — used
+  // to approve a request they had not read AND submit the half-written
+  // prompt. Two decisions from one keystroke, neither intended. The
+  // rationale box is excluded for the same reason (Enter is a newline
+  // there), and so is the AskUserQuestion form, which has its own controls.
+  //
+  // ``stopImmediatePropagation`` as well as ``preventDefault``: the latter
+  // only cancels the browser's default action, so without it the SAME
+  // keydown still reached the composer's own handler and sent the draft.
+  // That was the second half of the double-fire.
   useEffect(() => {
     if (!raw || askQuestions) { return undefined; }
     function onKeyDown(event) {
-      const inRationale = event.target && event.target.id === 'permission-rationale';
+      const target = event.target || document.activeElement;
+      const tag = target && target.tagName;
+      const inTextField = (
+        tag === 'INPUT' || tag === 'TEXTAREA' || !!(target && target.isContentEditable)
+      );
+      if (inTextField) { return; }
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopImmediatePropagation();
         onDecide({ allow: false, rationale, remember: false, requestId, toolName, command });
-      } else if (event.key === 'Enter' && !inRationale) {
+      } else if (event.key === 'Enter') {
         event.preventDefault();
+        event.stopImmediatePropagation();
         onDecide({
           allow: true, rationale, remember: event.shiftKey && !withholdAllowAlways,
           requestId, toolName, command,

@@ -104,7 +104,12 @@ class ExtraRefusalGuidanceParamTests(unittest.TestCase):
         self.assertIn(sentinel, block)
         # Appended AFTER the generic boundary/refusal text.
         self.assertLess(block.index('STRICT BOUNDARY'), block.index(sentinel))
-        self.assertLess(block.index('reaching for it'), block.index(sentinel))
+        # The generic refusal sentence now ends with the ASK instruction
+        # rather than "reaching for it" — the product guidance still comes
+        # after it, which is what this test is actually about.
+        self.assertLess(
+            block.index('STOP and ASK IN THE CHAT'), block.index(sentinel),
+        )
 
     def test_blank_guidance_is_ignored(self) -> None:
         base = workspace_scope_block(['/x/workspaces/PROJ-1/client'])
@@ -272,3 +277,67 @@ class MultiBackendGuidanceParityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TheBoundaryIsNamedAndAbsoluteTests(unittest.TestCase):
+    """The first prompt has to name the task folder and mean it.
+
+    A list of allowed directories reads as "here are some places you may
+    work". The operator's requirement is a wall: one named root, never
+    leave it, and if something is missing ASK rather than go looking.
+    That has to be the first thing in the block — it is the line that
+    survives a long prompt.
+    """
+
+    ROOT = '/Users/dev/.kato/workspaces/PROJ-123'
+
+    def _block(self) -> str:
+        return workspace_scope_block([self.ROOT])
+
+    def test_the_task_folder_is_named_up_front(self) -> None:
+        block = self._block()
+        self.assertIn(f'YOUR TASK FOLDER IS: {self.ROOT}', block)
+        # First 200 chars — not buried four paragraphs down.
+        self.assertIn(self.ROOT, block[:250])
+
+    def test_it_says_never_leave_it(self) -> None:
+        self.assertIn('NEVER go outside it', self._block())
+
+    def test_it_says_to_ask_in_the_chat_rather_than_go_looking(self) -> None:
+        block = self._block()
+        self.assertIn('ASK FOR IT IN THE CHAT', block)
+        self.assertIn('Do not go and find it', block)
+
+    def test_it_covers_every_file_operation_not_just_writes(self) -> None:
+        block = self._block()
+        for verb in ('reading', 'writing', 'editing', 'creating',
+                     'renaming', 'deleting', 'listing', 'searching'):
+            self.assertIn(verb, block)
+
+    def test_the_agents_OWN_files_are_covered_too(self) -> None:
+        # ``.claude``, memory/context files, scratch notes — the operator
+        # called these out specifically: if the agent wants it to exist,
+        # it goes inside the task folder, not the home directory.
+        block = self._block()
+        self.assertIn('.claude', block)
+        self.assertIn('memory', block)
+        self.assertIn('home directory', block)
+
+    def test_asking_is_still_the_instruction_at_the_end_of_the_block(self) -> None:
+        # The closing paragraph used to say "stop and report it", which an
+        # agent can satisfy by writing a sentence and carrying on without
+        # what it needed.
+        block = self._block()
+        self.assertIn('STOP and ASK IN THE CHAT', block)
+        self.assertIn('do not silently do', block)
+
+    def test_a_multi_repo_task_still_names_ONE_root(self) -> None:
+        block = workspace_scope_block([
+            f'{self.ROOT}/client', f'{self.ROOT}/backend',
+        ])
+        self.assertIn('YOUR TASK FOLDER IS:', block)
+        self.assertIn(f'{self.ROOT}/client', block)
+        self.assertIn(f'{self.ROOT}/backend', block)
+
+    def test_no_paths_still_renders_nothing(self) -> None:
+        self.assertEqual(workspace_scope_block([]), '')

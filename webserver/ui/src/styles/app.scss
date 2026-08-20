@@ -10474,3 +10474,42 @@ body.kato-resizing {
   color: $C-NEUTRAL-96-A65;
   font-size: $TEXT-12;
 }
+
+/* --- permission popup held back while the operator types ----------------
+   The dialog used to appear over a half-written message and claim the
+   keyboard without moving focus, so the next Enter approved a request the
+   operator had not read AND sent the draft. It now waits for a pause —
+   and says so, because a popup that is merely late is indistinguishable
+   from one that never came. */
+.permission-pending-hint {
+  position: fixed;
+  bottom: $SPACE-16;
+  right: $SPACE-16;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  padding: $SPACE-8 $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-04;
+  color: $C-NEUTRAL-96-A85;
+  font-size: $TEXT-12;
+  box-shadow: $SHADOW-13;
+  /* Never over the composer's own controls, and never grabbing a click. */
+  pointer-events: none;
+}
+
+.permission-pending-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: $C-CYAN-52;
+  flex-shrink: 0;
+  animation: permission-pending-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes permission-pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
