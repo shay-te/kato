@@ -522,3 +522,48 @@ test('formatMergeConflicts omits the task-id suffix when no taskId is given', ()
   );
   assert.equal(out.title, 'Merged master — conflicts to resolve');
 });
+
+test('a blocked branch switch is flagged with the warning marker', () => {
+  // ``blocked`` means git refused and NOTHING changed — the operator has
+  // to look. A bullet would read as routine.
+  const out = formatUpdateSourceResult({
+    ok: true,
+    body: {
+      updated: false,
+      pushed: {},
+      updated_repositories: [],
+      warnings: [
+        { warning: 'local changes would be overwritten', blocked: true },
+      ],
+    },
+  });
+  assert.match(out.message, /⚠ local changes would be overwritten/);
+});
+
+test('the pre-upgrade stash_conflict shape is still flagged', () => {
+  // An in-flight response from a kato that has not restarted yet must not
+  // be silently downgraded to a bullet.
+  const out = formatUpdateSourceResult({
+    ok: true,
+    body: {
+      updated: true,
+      pushed: {},
+      updated_repositories: [],
+      warnings: [{ warning: 'old shape', stash_conflict: true }],
+    },
+  });
+  assert.match(out.message, /⚠ old shape/);
+});
+
+test('a carried-changes note is routine, not a warning', () => {
+  const out = formatUpdateSourceResult({
+    ok: true,
+    body: {
+      updated: true,
+      pushed: {},
+      updated_repositories: ['client'],
+      warnings: [{ warning: 'changes carried across untouched', blocked: false }],
+    },
+  });
+  assert.match(out.message, /• changes carried across untouched/);
+});

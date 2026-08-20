@@ -2553,8 +2553,9 @@ class PullWorkspaceCloneTests(unittest.TestCase):
 class UpdateSourceToTaskBranchTests(unittest.TestCase):
     """``update_source_to_task_branch`` is the 'Update source' button path.
 
-    Switches the operator's live checkout to the task branch with safe
-    stash/pull/pop sequencing.
+    Switches the operator's live checkout to the task branch WITHOUT
+    stashing — see tests/test_update_source.py for why the stash round trip
+    had to go (it forced a dev-server restart on every branch switch).
     """
 
     def _service_with_stubs(self):
@@ -2579,49 +2580,66 @@ class UpdateSourceToTaskBranchTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'not a git repository'):
                 svc.update_source_to_task_branch(repository, 'feat/task')
 
-    def test_runs_full_pipeline_without_stash_on_clean_tree(self) -> None:
+    def test_a_clean_tree_runs_fetch_checkout_pull(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / '.git').mkdir()
             svc = self._service_with_stubs()
             repository = types.SimpleNamespace(id='c', local_path=tmp)
             result = svc.update_source_to_task_branch(repository, 'feat/task')
-            # 3 git calls: fetch, checkout, pull (no stash since tree was clean).
             self.assertEqual(svc._run_git.call_count, 3)
             self.assertTrue(result['updated'])
-            self.assertFalse(result['stashed'])
-            self.assertFalse(result['stash_reapplied'])
-            self.assertFalse(result['stash_conflict'])
+            self.assertFalse(result['blocked'])
+            self.assertFalse(result['carried_changes'])
 
-    def test_stashes_and_pops_on_dirty_tree(self) -> None:
+    def test_a_dirty_tree_runs_THE_SAME_THREE_commands(self) -> None:
+        # No extra stash push/pop. The count is the assertion: the
+        # operator's working files are never rewritten on the way through.
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / '.git').mkdir()
             svc = self._service_with_stubs()
             svc._working_tree_status.return_value = ' M file.txt\n'
             repository = types.SimpleNamespace(id='c', local_path=tmp)
             result = svc.update_source_to_task_branch(repository, 'feat/task')
-            # 5 git calls: stash push, fetch, checkout, pull, stash pop.
-            self.assertEqual(svc._run_git.call_count, 5)
-            self.assertTrue(result['stashed'])
-            self.assertTrue(result['stash_reapplied'])
-            self.assertFalse(result['stash_conflict'])
+            self.assertEqual(svc._run_git.call_count, 3)
+            verbs = [call.args[1][0] for call in svc._run_git.call_args_list]
+            self.assertEqual(verbs, ['fetch', 'checkout', 'pull'])
+            self.assertNotIn('stash', verbs)
+            self.assertTrue(result['carried_changes'])
 
-    def test_reports_stash_pop_conflict_without_raising(self) -> None:
-        # Stash pop conflict is a user-visible warning, not an error —
-        # the operator gets conflict markers in their working tree.
+    def test_a_local_change_refusal_reports_instead_of_raising(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / '.git').mkdir()
             svc = self._service_with_stubs()
             svc._working_tree_status.return_value = ' M file.txt\n'
-            # Sequence: stash push, fetch, checkout, pull, stash pop (fails).
             svc._run_git.side_effect = [
-                None, None, None, None, RuntimeError('merge conflict'),
+                None,
+                RuntimeError(
+                    'error: Your local changes to the following files would '
+                    'be overwritten by checkout:\n\tfile.txt\n'
+                    'Please commit your changes or stash them before you switch.'
+                ),
             ]
             repository = types.SimpleNamespace(id='c', local_path=tmp)
             result = svc.update_source_to_task_branch(repository, 'feat/task')
-            self.assertTrue(result['stashed'])
-            self.assertFalse(result['stash_reapplied'])
-            self.assertTrue(result['stash_conflict'])
-            self.assertIn('conflicts', result['warning'])
+            self.assertFalse(result['updated'])
+            self.assertTrue(result['blocked'])
+            self.assertEqual(result['blocking_paths'], ['file.txt'])
+            self.assertIn('Nothing was stashed', result['warning'])
+
+    def test_a_REAL_failure_still_raises(self) -> None:
+        # Removing the stash must not turn every git error into a friendly
+        # "your local changes are in the way" that names no files and hides
+        # the actual problem — a missing branch is not a local-change block.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._run_git.side_effect = [
+                None,
+                RuntimeError("pathspec 'feat/task' did not match any file(s)"),
+            ]
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            with self.assertRaises(RuntimeError):
+                svc.update_source_to_task_branch(repository, 'feat/task')
 
     def test_raises_when_status_inspection_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

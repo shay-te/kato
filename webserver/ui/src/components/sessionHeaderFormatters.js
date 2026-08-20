@@ -133,7 +133,12 @@ export function formatUpdateSourceResult(result) {
   for (const entry of (body.warnings || [])) {
     const text = String(entry.warning || '').trim();
     if (text) {
-      lines.push(`${entry.stash_conflict ? '⚠' : '•'} ${text}`);
+      // ``blocked`` = git refused and nothing changed, so the operator
+      // has to decide. ``stash_conflict`` is the old shape, still read so
+      // an in-flight response from a pre-upgrade kato is not silently
+      // downgraded to a bullet.
+      const needsAttention = !!(entry.blocked || entry.stash_conflict);
+      lines.push(`${needsAttention ? '⚠' : '•'} ${text}`);
     }
   }
   for (const entry of (body.skipped_repositories || [])) {

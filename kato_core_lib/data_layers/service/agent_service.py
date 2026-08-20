@@ -3101,8 +3101,12 @@ class AgentService(MissionStepLoggerMixin, Service):
                     warnings_per_repo.append({
                         'repository_id': repository.id,
                         'warning': warning,
-                        'stash_conflict': bool(
-                            update_result.get('stash_conflict', False),
+                        # ``blocked`` means git refused and NOTHING was
+                        # changed — the operator has to look. The UI marks
+                        # it with ⚠ rather than a bullet.
+                        'blocked': bool(update_result.get('blocked', False)),
+                        'blocking_paths': list(
+                            update_result.get('blocking_paths') or [],
                         ),
                     })
                 self.logger.info(

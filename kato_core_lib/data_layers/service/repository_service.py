@@ -200,34 +200,44 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         in the inventory, NOT in the per-task workspace) needs to be
         on that branch and up-to-date so it can be tested end-to-end.
 
+        NEVER STASHES. This used to stash → switch → pull → pop, which
+        looks safe and is not: the operator's source folder is a RUNNING
+        system, and the round trip rewrites their working files twice.
+        A local dev config would revert for the duration of the switch and
+        come back with a new mtime, so a running dev server picked up the
+        committed config mid-switch and had to be restarted by hand on
+        every single branch switch. Preserving the changes is not enough
+        when the file itself is what a process is watching.
+
+        Git does not need the stash here: ``git checkout`` carries
+        uncommitted changes across a branch switch on its own, and only
+        refuses when the switch would actually overwrite one of them.
+        That refusal is rare and it is exactly the case a human should
+        look at — so it is reported, not worked around.
+
         Steps:
           1. ``git fetch origin --prune``
-          2. If the working tree has uncommitted changes, ``git stash
-             push --include-untracked`` so the switch+pull doesn't
-             collide with them. The operator's work is preserved —
-             we never silently throw it away.
-          3. ``git checkout <branch_name>`` (auto-creates a tracking
-             branch from ``origin/<branch_name>`` when needed).
-          4. ``git pull --ff-only origin <branch_name>``.
-          5. If we stashed in step 2, ``git stash pop`` to put the
-             operator's changes back on top of the new branch. A
-             pop conflict is **not** a failure — the operator gets
-             conflict markers in the working tree to resolve when
-             they're ready, and the warning surfaces in the
-             returned status dict.
+          2. ``git checkout <branch_name>`` — uncommitted changes come
+             along untouched. If git refuses because the switch would
+             overwrite them, STOP: nothing is changed, and the blocking
+             files are named in the result for the operator.
+          3. ``git pull --ff-only origin <branch_name>``. Same rule: if
+             the fast-forward would overwrite local changes, git refuses
+             and we report which files rather than forcing it.
 
         Returns a status dict:
             {
-              'updated': True,
-              'stashed': bool,
-              'stash_reapplied': bool,
-              'stash_conflict': bool,
-              'warning': str,  # operator-readable note, may be empty
+              'updated': bool,   # False when a local change blocked it
+              'blocked': bool,   # local changes stood in the way
+              'blocking_paths': list[str],
+              'carried_changes': bool,   # had local edits and kept them
+              'warning': str,    # operator-readable note, may be empty
             }
 
         Raises ``RuntimeError`` only on truly catastrophic failures
-        (missing local_path, not a git repo, fetch / checkout / pull
-        failed against origin). Dirty tree is **not** a failure.
+        (missing local_path, not a git repo, fetch failed). A local
+        change blocking the switch is NOT an exception — it is a normal
+        answer the operator acts on.
         """
         local_path = str(getattr(repository, 'local_path', '') or '').strip()
         if not local_path:
@@ -240,84 +250,141 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 f'source folder for repository {repository.id} at '
                 f'{local_path} is not a git repository',
             )
-        # Inspect the tree. Dirty → stash so the upcoming switch+pull
-        # doesn't collide with the operator's in-progress work.
+        # What the operator has in flight. Kept for the message only —
+        # nothing is stashed, moved, or rewritten.
         try:
             status_output = self._working_tree_status(local_path)
         except Exception as exc:
             raise RuntimeError(
                 f'failed to inspect source folder for {repository.id}: {exc}',
             ) from exc
-        stashed = bool(status_output.strip())
-        if stashed:
-            self._run_git(
-                local_path,
-                [
-                    'stash', 'push',
-                    '--include-untracked',
-                    '--message', f'kato: pre-update-source {branch_name}',
-                ],
-                f'failed to stash uncommitted changes in {repository.id} '
-                f'source folder before switching branches',
-            )
-        # Step 1-4: fetch / checkout / pull.
+        carried_changes = bool(status_output.strip())
         self._run_git(
             local_path,
             ['fetch', 'origin', '--prune'],
             f'failed to fetch origin for {repository.id} source folder',
         )
-        self._run_git(
-            local_path,
-            ['checkout', branch_name],
-            f'failed to checkout branch {branch_name} in {repository.id} '
-            f'source folder',
-        )
-        self._run_git(
-            local_path,
-            ['pull', '--ff-only', 'origin', branch_name],
-            f'failed to fast-forward {branch_name} in {repository.id} '
-            f'source folder',
-        )
-        stash_reapplied = False
-        stash_conflict = False
+        # Checkout and pull are attempted WITHOUT touching the working
+        # tree first. Git carries uncommitted changes across on its own and
+        # refuses only when the operation would overwrite one of them —
+        # which is the case a human should see, not one to force past.
+        try:
+            self._run_git(
+                local_path,
+                ['checkout', branch_name],
+                f'failed to checkout branch {branch_name}',
+            )
+        except RuntimeError as exc:
+            if not self._is_local_change_refusal(exc):
+                raise
+            return self._blocked_by_local_changes(
+                repository, local_path, branch_name, exc, 'switching to',
+            )
+        try:
+            self._run_git(
+                local_path,
+                ['pull', '--ff-only', 'origin', branch_name],
+                f'failed to fast-forward {branch_name}',
+            )
+        except RuntimeError as exc:
+            if not self._is_local_change_refusal(exc):
+                raise
+            return self._blocked_by_local_changes(
+                repository, local_path, branch_name, exc, 'pulling',
+            )
         warning = ''
-        if stashed:
-            # Pop is best-effort: a conflict leaves the operator's
-            # changes in the working tree as conflict markers, which
-            # is exactly what we want — visible, fixable, no data
-            # loss. We do NOT raise.
-            try:
-                self._run_git(
-                    local_path,
-                    ['stash', 'pop'],
-                    'stash pop failed',
-                )
-                stash_reapplied = True
-                warning = (
-                    f'switched to {branch_name} in {repository.id} source '
-                    f'folder and reapplied your uncommitted changes via stash'
-                )
-            except RuntimeError as exc:
-                stash_conflict = True
-                warning = (
-                    f'switched to {branch_name} in {repository.id} source '
-                    f'folder; your uncommitted changes are in the stash but '
-                    f'reapplying produced conflicts. Resolve them in '
-                    f'{local_path} (or run ``git stash drop`` to discard). '
-                    f'Detail: {exc}'
-                )
-                self.logger.warning(
-                    'update-source: stash pop in %s failed (%s); '
-                    'changes preserved in the stash for manual resolution',
-                    local_path, exc,
-                )
+        if carried_changes:
+            # Said explicitly: the operator needs to know their edits are
+            # still there and were never round-tripped through a stash.
+            warning = (
+                f'switched {repository.id} to {branch_name} and pulled; your '
+                'uncommitted changes were carried across untouched (nothing '
+                'was stashed)'
+            )
         return {
             'updated': True,
-            'stashed': stashed,
-            'stash_reapplied': stash_reapplied,
-            'stash_conflict': stash_conflict,
+            'blocked': False,
+            'blocking_paths': [],
+            'carried_changes': carried_changes,
             'warning': warning,
         }
+
+    def _blocked_by_local_changes(
+        self, repository, local_path: str, branch_name: str,
+        exc: RuntimeError, action: str,
+    ) -> dict:
+        """Report a switch git refused, without changing anything.
+
+        The old code stashed up front so this could not happen. It can now,
+        and that is the point: it means the incoming branch genuinely
+        conflicts with what the operator has open, which is a decision for
+        them. Kato names the files and stops.
+        """
+        blocking = self._paths_from_git_refusal(str(exc))
+        self.logger.warning(
+            'update-source: %s %s in %s was blocked by local changes (%s)',
+            action, branch_name, local_path, ', '.join(blocking) or exc,
+        )
+        listed = ', '.join(blocking) if blocking else 'see the detail below'
+        return {
+            'updated': False,
+            'blocked': True,
+            'blocking_paths': blocking,
+            'carried_changes': True,
+            'warning': (
+                f'{repository.id}: kato did not finish {action} {branch_name} '
+                f'because your local changes would be overwritten ({listed}). '
+                f'Nothing was stashed or changed in {local_path} — your work '
+                'and your current branch are exactly as you left them. '
+                f'Detail: {exc}'
+            ),
+        }
+
+    @staticmethod
+    def _is_local_change_refusal(exc: Exception) -> bool:
+        """Did git refuse specifically because of UNCOMMITTED work?
+
+        Only that case is the operator's to decide about. A branch that
+        does not exist, a diverged fast-forward, an unreachable origin —
+        those are real failures and must keep raising, or removing the
+        stash would quietly convert every error into a friendly "your
+        local changes are in the way" that names no files and hides the
+        actual problem.
+        """
+        detail = str(exc or '').lower()
+        return any(marker in detail for marker in (
+            'would be overwritten',
+            'local changes to',
+            'your local changes',
+            'please commit your changes or stash them',
+            'not uptodate',
+        ))
+
+    @staticmethod
+    def _paths_from_git_refusal(detail: str) -> list[str]:
+        """Pull the file list out of git's "would be overwritten" message.
+
+        Git prints the offending paths on their own indented lines between
+        the refusal and the "Please commit or stash" advice. Naming them is
+        the difference between an operator knowing what to do and re-reading
+        a wall of git output.
+        """
+        paths: list[str] = []
+        collecting = False
+        for line in str(detail or '').splitlines():
+            lowered = line.strip().lower()
+            if 'would be overwritten' in lowered or 'local changes to' in lowered:
+                collecting = True
+                continue
+            if collecting:
+                if not line.startswith((' ', '\t')) or not line.strip():
+                    collecting = False
+                    continue
+                if lowered.startswith(('please', 'aborting', 'error', 'hint')):
+                    collecting = False
+                    continue
+                paths.append(line.strip())
+        return paths
 
     def publish_review_fix(
         self,
