@@ -186,10 +186,24 @@ class ReproducedBypassRegressionTests(unittest.TestCase):
         'git restore --pathspec-from-file=/tmp/all.txt # revert everything',
         'git restore --pathspec-from-file /tmp/all.txt',
         '(git restore .)',
-        'git checkout -- -s .',
-        'echo . | git checkout --pathspec-from-file=-',
         "sh -c 'git restore .'",
     )
+    # The two ``git checkout`` forms that used to live in PARSER_TRICKS are
+    # now BLOCKED outright rather than asked: checkout is orchestrator-owned
+    # (it moves HEAD), so it never reaches the pathspec-breadth rule. That
+    # is strictly stronger — see
+    # ``test_checkout_forms_are_blocked_before_breadth_is_considered``.
+    BLOCKED_CHECKOUT_TRICKS = (
+        'git checkout -- -s .',
+        'echo . | git checkout --pathspec-from-file=-',
+    )
+
+    def test_checkout_forms_are_blocked_before_breadth_is_considered(self) -> None:
+        for command in self.BLOCKED_CHECKOUT_TRICKS:
+            with self.subTest(command=command):
+                verdict = _verdict(command)
+                self.assertEqual(verdict.decision, Decision.BLOCK, command)
+                self.assertEqual(verdict.rule_id, 'git.orchestrator_owned')
 
     def _assert_all_ask(self, commands, why: str) -> None:
         for command in commands:

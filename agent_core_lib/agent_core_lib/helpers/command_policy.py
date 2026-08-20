@@ -309,7 +309,7 @@ _GIT_PRECOMMAND_VALUE_OPTIONS = frozenset({
 _GIT_REVERT_VALUE_OPTIONS = frozenset({'--source', '-s'})
 # We cannot read the file, so we cannot know the breadth — fail closed.
 _GIT_PATHSPEC_FROM_FILE = '--pathspec-from-file'
-_SHELL_PROGRAMS = frozenset({'sh', 'bash', 'zsh', 'dash', 'ksh', 'busybox'})
+_SHELL_PROGRAMS = frozenset({'sh', 'bash', 'zsh', 'dash', 'ksh', 'busybox', 'eval'})
 
 
 def _git_tokens(segment: str) -> list:
@@ -373,12 +373,19 @@ def _git_subcommand_head(segment: str):
     if index >= len(tokens):
         return None
     program = tokens[index].rsplit('/', 1)[-1]
-    # ``sh -c '…'`` / ``bash -c '…'`` wrap the real command in an argument.
+    # ``sh -c '…'`` / ``bash -c '…'`` wrap the real command in an argument;
+    # ``eval …`` takes the payload as its plain arguments, with no ``-c``.
+    # Missing that second shape is not academic — ``eval "git push"`` is
+    # three characters of shell around a command the floor denies.
     if program in _SHELL_PROGRAMS:
         for position in range(index + 1, len(tokens)):
-            if tokens[position] == '-c':
+            token = tokens[position]
+            # Short flags bundle: ``bash -lc '…'`` is as much a command
+            # shell as ``bash -c '…'``, and matching only the exact ``-c``
+            # missed it.
+            if token.startswith('-') and not token.startswith('--') and 'c' in token[1:]:
                 return _git_subcommand_head(' '.join(tokens[position + 1:]))
-        return None
+        return _git_subcommand_head(' '.join(tokens[index + 1:]))
     if program != 'git':
         return None
     index += 1
@@ -447,6 +454,118 @@ def _git_revert_pathspecs(segment: str):
                 continue
         pathspecs.append(token)
     return subcommand, pathspecs, opaque
+
+
+# ``git rm`` / ``git clean`` are the agent's to run — they are index and
+# working-tree operations, not branch state. But both have a whole-tree
+# form that erases work with no commit behind it:
+#
+#   git rm -r --cached .   unstages the entire index
+#   git rm -rf .           deletes the entire worktree
+#   git clean -fd          deletes every untracked file, including whatever
+#                          the agent just wrote and has not had committed
+#
+# Same shape as the restore rule: split on PATHSPEC BREADTH, and treat a
+# pathspec-less invocation as whole-tree. Denying the verbs outright to
+# stop these is what left the agent unable to delete a single file with git.
+_GIT_WORKTREE_WIPE_SUBCOMMANDS = frozenset({'rm', 'clean'})
+
+
+# Git that belongs to the ORCHESTRATOR, blocked here as well as at the
+# transport floor — because the floor alone does not hold.
+#
+# ``--disallowedTools`` matches the Bash command by PREFIX, so
+# ``git commit`` is refused but ``sh -c 'git commit'``, ``/usr/bin/git
+# commit`` and ``env git commit`` all sail past it: the string no longer
+# starts with the denied prefix. That is not a hypothetical — it is three
+# characters of shell. A guarantee that a wrapper defeats is not one.
+#
+# This rule is program-anchored instead of prefix-anchored: it resolves the
+# real program behind env assignments, wrappers (``env``/``timeout``/…) and
+# ``sh -c``/``eval`` payloads, then looks at the actual subcommand. Floor
+# severity — the operator can loosen a lot of this module, but not who owns
+# the branch, which is the same stance the transport floor takes.
+_GIT_ORCHESTRATOR_OWNED = frozenset({
+    # refs + commits
+    'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch', 'branch',
+    'cherry-pick', 'revert', 'am', 'tag', 'bisect',
+    # remotes
+    'push', 'pull', 'fetch', 'clone', 'remote', 'send-pack', 'receive-pack',
+    # history rewriting
+    'filter-branch', 'filter-repo', 'fast-import', 'replace',
+    # code execution + reach outside the clone
+    'config', 'worktree', 'submodule', 'sparse-checkout',
+    # plumbing that composes back into a commit or a ref
+    'commit-tree', 'write-tree', 'read-tree', 'mktree', 'hash-object',
+    'update-ref', 'update-index', 'symbolic-ref', 'checkout-index',
+})
+
+
+def _detect_git_orchestrator_owned(segments) -> list:
+    for segment in segments:
+        head = _git_subcommand_head(segment)
+        if head is None:
+            continue
+        subcommand, _rest = head
+        if subcommand in _GIT_ORCHESTRATOR_OWNED:
+            return [_Candidate(
+                RiskCategory.OUT_OF_SCOPE, True,
+                f'git {subcommand} belongs to the orchestrator, which owns '
+                'the branch state and publishing — ask it to do this instead '
+                'of running it here',
+                'git.orchestrator_owned',
+            )]
+        # A subcommand assembled at runtime (``git $CMD``) cannot be read
+        # statically. Ambiguity favours ASK over ALLOW here, exactly as it
+        # does everywhere else in this module.
+        if '$' in subcommand or '`' in subcommand:
+            return [_Candidate(
+                RiskCategory.OUT_OF_SCOPE, False,
+                'the git subcommand is built at runtime, so it cannot be told '
+                'apart from one the orchestrator owns',
+                'git.opaque_subcommand',
+            )]
+    return []
+
+
+def _detect_git_worktree_wipe(segments) -> list:
+    for segment in segments:
+        head = _git_subcommand_head(segment)
+        if head is None:
+            continue
+        subcommand, rest = head
+        if subcommand not in _GIT_WORKTREE_WIPE_SUBCOMMANDS:
+            continue
+        pathspecs: list = []
+        after_separator = False
+        dry_run = False
+        for token in rest:
+            if not after_separator:
+                if token == '--':
+                    after_separator = True
+                    continue
+                if token.startswith('-'):
+                    # A dry run deletes nothing. Prompting for it is noise,
+                    # and noise is what teaches an operator to click through
+                    # the prompt that matters. ``-n`` is dry-run for both
+                    # verbs; short flags bundle, so scan the cluster.
+                    if token == '--dry-run' or (
+                        not token.startswith('--') and 'n' in token[1:]
+                    ):
+                        dry_run = True
+                    continue
+            pathspecs.append(token)
+        if dry_run:
+            continue
+        # No pathspec at all is the whole tree for both verbs.
+        if not pathspecs or not all(_is_narrow_pathspec(p) for p in pathspecs):
+            return [_Candidate(
+                RiskCategory.DESTRUCTIVE_FS, False,
+                f'git {subcommand} across the whole working tree — this '
+                'erases work that has no commit behind it',
+                'fs.git_worktree_wipe',
+            )]
+    return []
 
 
 def git_revert_breadth(segment: str) -> str:
@@ -974,6 +1093,8 @@ def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
     candidates += _detect_destructive_fs(deob, segments)
     candidates += _detect_git_whole_tree_revert(segments)
     candidates += _detect_git_destructive_form(segments)
+    candidates += _detect_git_worktree_wipe(segments)
+    candidates += _detect_git_orchestrator_owned(segments)
     candidates += _detect_credential_read(deob, cwd)
     candidates += _detect_persistence_command(deob)
     candidates += _out_of_scope_candidate(

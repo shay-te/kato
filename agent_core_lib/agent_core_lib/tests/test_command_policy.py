@@ -245,9 +245,16 @@ class NetworkExfilTests(unittest.TestCase):
         self.assertEqual(v.decision, Decision.BLOCK)
         self.assertEqual(v.category, RiskCategory.NETWORK_EXFIL)
 
-    def test_ordinary_git_push_to_configured_origin_is_not_flagged(self):
+    def test_ordinary_git_push_is_not_flagged_as_EXFILTRATION(self):
+        # This test is about the exfil detector, which must fire only for a
+        # push to a FOREIGN remote. An ordinary push to the configured
+        # origin is now blocked for a different and correct reason — the
+        # orchestrator owns publishing — so assert the rule, not just the
+        # decision, or this stops testing exfil at all.
         for cmd in ('git push origin feature-branch', 'git push', 'git push -u origin HEAD'):
-            self.assertEqual(_verdict(cmd).decision, Decision.ALLOW, cmd)
+            verdict = _verdict(cmd)
+            self.assertNotEqual(verdict.rule_id, 'net.git_exfil', cmd)
+            self.assertEqual(verdict.rule_id, 'git.orchestrator_owned', cmd)
 
     def test_dns_exfil_with_command_substitution_is_blocked(self):
         for cmd in (

@@ -42,21 +42,28 @@ shell, fork bomb, `mkfs`, dd-to-device) can **never** be loosened below Block.
 
 ## Git: the orchestrator owns the branch, you own the files
 
-Kato drives the branch state machine — it prepares the branch, creates the
-commit, and publishes. That, and only that, is what the agent is denied:
-`git commit`, `push`, `pull`, `fetch`, `merge`, `rebase`, `reset`, `checkout`,
-`switch`, `branch` (plus the plumbing that reaches the same capabilities —
-`commit-tree`, `send-pack`, `update-ref` …) are hard-denied at layer 1, in
-**every** permission mode. `config` is denied too: it is the hook/RCE surface,
-not a branch concern.
+The line, stated once:
 
-**Everything else in git is available**, and that is deliberate. Denying every
-verb that can write anything is a much broader rule than "kato owns the
-branch", and it cost real work — an operator could not ask the agent to look
-up a file's history, undo a change, restore a file deleted three commits ago,
-set work aside, or find a lost commit. So `log`, `show`, `diff`, `blame`,
-`status`, `restore`, `stash`, `apply` and `reflog` all pass, subject to the
-normal approval prompt.
+> Kato owns **refs, commits, remotes, history and config**.
+> The agent owns the **index and the working tree**.
+
+So `git commit`, `push`, `pull`, `fetch`, `merge`, `rebase`, `reset`,
+`checkout`, `switch`, `branch`, `tag`, `remote`, `clone`, `cherry-pick` and
+`revert` are hard-denied at layer 1, in **every** permission mode — along with
+the plumbing that reaches the same capability under another name
+(`commit-tree`, `send-pack`, `update-ref` …). `config` is denied because it is
+the hook/RCE surface, `worktree` and `submodule` because they reach outside
+the clone, and `bisect` because it moves `HEAD`.
+
+**Everything else in git is the agent's**, and that is deliberate. Denying
+every verb that can write anything is a far broader rule than "kato owns the
+branch", and it cost real work: the agent could not look up a file's history,
+undo a change, restore a file deleted three commits ago, stage a file, delete
+one with git rather than the shell, set work aside, or find a lost commit — and
+it reported all of that as "git is forbidden", which reads as kato being
+broken. So `log`, `show`, `diff`, `blame`, `status`, `restore`, `add`, `rm`,
+`mv`, `clean`, `stash`, `apply` and `reflog` all pass, subject to the normal
+approval prompt.
 
 `git restore <path>` is deliberately allowed. Reverting a file to its committed
 state is ordinary editing, not branch movement, and blocking it meant the agent
@@ -65,9 +72,26 @@ the only file-scoped member of the family — it cannot move `HEAD` or switch
 branches — so allowing it can't race the orchestrator.
 
 The destructive FORMS of those verbs are caught by argv rather than by
-denying the verb: `git stash drop`/`clear`, `git reflog expire`/`delete`, and
-`git apply --unsafe-paths` (the one apply form that can write outside the
-worktree) each go to you for approval, while the ordinary forms pass.
+denying the verb — freeing the verb must not free the breadth:
+
+| Form | Why it asks |
+| --- | --- |
+| `git clean -fd` (no pathspec) | deletes every untracked file, including work with no commit behind it |
+| `git rm -rf .` | wipes the worktree (caught by the catastrophic-`rm` floor) |
+| `git stash drop` / `clear` | throws away the stash, which was the recovery path |
+| `git reflog expire` / `delete` | destroys the record used to find lost commits |
+| `git apply --unsafe-paths` | the one `apply` form that writes outside the worktree |
+
+Path-scoped versions of all of these pass, and a dry run (`git clean -n`)
+never prompts — a prompt for something that deletes nothing is the noise that
+teaches an operator to click through the prompt that matters.
+
+When the agent needs something kato owns, it does not just fail: it writes a
+`git_request.json` in the task folder saying what it needs and why, and kato
+performs the operation with its own hardened client. Anything that changes the
+branch or what ships is shown to you first, and **push / open-pull-request are
+not reachable through that channel at all** — publishing stays the Done
+button.
 
 A **whole-tree** revert (`git restore .`) is different and asks first: nothing
 is committed until Kato publishes, so discarding every uncommitted change

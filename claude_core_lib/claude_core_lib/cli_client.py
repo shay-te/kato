@@ -92,8 +92,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     # blanket-refusing every revert.
     _GIT_MUTATING_SUBCOMMANDS = (
         'push', 'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch',
-        'cherry-pick', 'revert', 'am', 'add', 'rm', 'mv',
-        'clean', 'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
+        'cherry-pick', 'revert', 'am',
+        'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
         'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
         'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',
         'sparse-checkout', 'bisect', 'notes', 'replace', 'fast-import',
@@ -126,11 +126,26 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     #            harmless; ``reflog expire`` / ``reflog delete`` destroy the
     #            recovery data itself and go to the operator.
     #
-    # ``add`` / ``rm`` / ``mv`` / ``clean`` / ``config`` / ``bisect`` stay
-    # denied on purpose: config is the hook/RCE surface, bisect moves HEAD,
-    # clean deletes untracked files with no recovery, and add/rm/mv have
-    # plain-shell equivalents while the orchestrator stages everything
-    # itself at commit time.
+    # THE LINE THIS LIST DRAWS, stated once so the next edit can check
+    # itself against it rather than guessing:
+    #
+    #   The orchestrator owns REFS, COMMITS, REMOTES, HISTORY and CONFIG.
+    #   The agent owns the INDEX and the WORKING TREE.
+    #
+    # So anything that moves HEAD or a branch, creates a commit, talks to a
+    # remote, rewrites history, or sets config (the hook/RCE surface) is
+    # denied — including the plumbing that reaches the same capability by
+    # another name. Everything else is the agent's: ``add``, ``rm``, ``mv``,
+    # ``clean``, ``restore``, ``stash``, ``apply``, ``reflog`` and every
+    # read-only command.
+    #
+    # ``add``/``rm``/``mv``/``clean`` were denied here for a long time on
+    # the reasoning that the orchestrator stages everything itself. True,
+    # but it does not follow: the agent was left unable to stage a file, or
+    # delete one with git rather than the shell, and reported the whole of
+    # git as forbidden. The destructive breadth of ``rm``/``clean`` is a
+    # PATHSPEC question, and Layer B answers it by argv — see
+    # ``fs.git_worktree_wipe``.
     GIT_DENY_PATTERNS = tuple(
         pattern
         for sub in _GIT_MUTATING_SUBCOMMANDS
