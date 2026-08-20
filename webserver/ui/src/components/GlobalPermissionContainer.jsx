@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useOperatorIsTyping } from '../hooks/useOperatorIsTyping.js';
+import { useTitleAlert } from '../hooks/useTitleAlert.js';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
 import { postSession } from '../api.js';
 import { permissionStore } from '../stores/permissionStore.js';
@@ -36,6 +37,17 @@ export default function GlobalPermissionContainer() {
   const typing = useOperatorIsTyping();
   // Oldest ask first (store preserves insertion order).
   const current = list[0] || null;
+  // Flash the browser tab title while anything is waiting. The desktop
+  // notification already fired, but notifications get missed — and an
+  // agent sits blocked for exactly as long as nobody notices, so the cost
+  // of a missed one is wall-clock time. Only flashes while the tab is in
+  // the background; with kato in front the dialog is already on screen.
+  useTitleAlert(
+    list.length > 0,
+    list.length > 1
+      ? `(${list.length}) Approval needed — kato`
+      : 'Approval needed — kato',
+  );
   const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
   const currentRequestId = current ? unpackPermissionEnvelope(current).requestId : '';
 

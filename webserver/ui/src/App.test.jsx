@@ -238,6 +238,7 @@ vi.mock('./components/ToastContainer.jsx', () => ({
 import { useSessions } from './hooks/useSessions.js';
 import { useResizable } from './hooks/useResizable.js';
 import { forgetTaskWorkspace } from './api.js';
+import { _resetLastActiveTask } from './utils/lastActiveTask.js';
 import App from './App.jsx';
 
 
@@ -248,6 +249,13 @@ beforeEach(() => {
     sessions: [],
     refresh: vi.fn(),
   });
+  // App now restores the last-viewed task from localStorage, which
+  // otherwise leaks between cases: one test selecting a tab would make
+  // an unrelated later test start on that tab instead of on nothing.
+  // BOTH halves are needed — the preference store caches at module level,
+  // so clearing storage alone leaves the old value being served.
+  try { localStorage.clear(); } catch (_) { /* jsdom */ }
+  _resetLastActiveTask();
 });
 
 
@@ -844,5 +852,86 @@ describe('App — task palette', () => {
     );
     expect(screen.queryByRole('combobox', { name: /search tasks/i })).toBeNull();
     expect(screen.getByText('active=T1')).toBeInTheDocument();
+  });
+});
+
+describe('App — the last-viewed task is restored', () => {
+  async function pref() {
+    return import('./utils/lastActiveTask.js');
+  }
+
+  test('reopening lands on the task you were last on', async () => {
+    // Before this, a refresh dropped the selection and the operator had to
+    // find their task in the strip again every single time.
+    const { writeLastActiveTask, _resetLastActiveTask } = await pref();
+    _resetLastActiveTask();
+    writeLastActiveTask('T2');
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    expect(screen.getByText('active=T2')).toBeInTheDocument();
+    _resetLastActiveTask();
+  });
+
+  test('a remembered task that no longer exists is not restored', async () => {
+    // Finished or forgotten from another window — restoring it would open
+    // a tab for something that is gone.
+    const { writeLastActiveTask, _resetLastActiveTask } = await pref();
+    _resetLastActiveTask();
+    writeLastActiveTask('GONE-9');
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    expect(screen.getByText('active=none')).toBeInTheDocument();
+    _resetLastActiveTask();
+  });
+
+  test('nothing remembered leaves the strip unselected', async () => {
+    const { _resetLastActiveTask } = await pref();
+    _resetLastActiveTask();
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    expect(screen.getByText('active=none')).toBeInTheDocument();
+  });
+
+  test('clicking a tab records it for next time', async () => {
+    const { readLastActiveTask, _resetLastActiveTask } = await pref();
+    _resetLastActiveTask();
+    useSessions.mockReturnValue({
+      sessions: [{ task_id: 'T1' }, { task_id: 'T2' }],
+      refresh: vi.fn(),
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    expect(readLastActiveTask()).toBe('T2');
+    _resetLastActiveTask();
+  });
+
+  test('a later poll does not yank the operator back to the remembered tab', async () => {
+    // ``sessions`` re-renders on every status poll. A restore keyed on
+    // that would fight the operator every few seconds.
+    const { writeLastActiveTask, _resetLastActiveTask } = await pref();
+    _resetLastActiveTask();
+    writeLastActiveTask('T2');
+    const sessions = [{ task_id: 'T1' }, { task_id: 'T2' }];
+    useSessions.mockReturnValue({ sessions, refresh: vi.fn() });
+    const { rerender } = render(<App />);
+    expect(screen.getByText('active=T2')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    expect(screen.getByText('active=T1')).toBeInTheDocument();
+
+    // Poll delivers a fresh array for the same sessions.
+    useSessions.mockReturnValue({ sessions: [...sessions], refresh: vi.fn() });
+    rerender(<App />);
+    expect(screen.getByText('active=T1')).toBeInTheDocument();
+    _resetLastActiveTask();
   });
 });

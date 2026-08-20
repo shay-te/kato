@@ -43,6 +43,11 @@ import { useStatusFeed } from './hooks/useStatusFeed.js';
 import { useTaskAttention } from './hooks/useTaskAttention.js';
 import { useTaskTabShortcuts } from './hooks/useTaskTabShortcuts.js';
 import { useTaskPaletteShortcut } from './hooks/useTaskPaletteShortcut.js';
+import {
+  clearLastActiveTask,
+  readLastActiveTask,
+  writeLastActiveTask,
+} from './utils/lastActiveTask.js';
 import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
 import { useRememberedToolDecisions } from './hooks/useRememberedToolDecisions.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
@@ -175,6 +180,9 @@ export default function App() {
   const setActiveTaskId = useCallback((taskId) => {
     userPickedTabRef.current = true;
     setActiveTaskIdState(taskId);
+    // Remembered so a refresh or an app relaunch comes back to the task
+    // the operator was actually working on, instead of nothing.
+    writeLastActiveTask(taskId);
     attention.clear(taskId);
     // Force a polled /api/sessions fetch on every tab switch. The
     // OUTGOING tab's SessionDetail unmounts immediately and clears its
@@ -187,6 +195,26 @@ export default function App() {
     // again"). The poll is cheap and only runs on an actual click.
     refresh();
   }, [attention, refresh]);
+
+  // Restore the last-viewed task once the session list arrives.
+  //
+  // Runs at most once per mount and only while nothing is selected, so it
+  // can never yank the operator off a tab they picked in the meantime —
+  // sessions re-render on every poll, and a restore keyed on that would
+  // fight them. The remembered id is checked against the CURRENT list: a
+  // task finished or forgotten from another window is simply not restored.
+  const restoredTabRef = useRef(false);
+  useEffect(() => {
+    if (restoredTabRef.current || activeTaskId || !sessions.length) { return; }
+    restoredTabRef.current = true;
+    const remembered = readLastActiveTask();
+    if (!remembered) { return; }
+    if (!sessions.some((session) => session.task_id === remembered)) { return; }
+    // Counts as an operator pick: they chose this tab before, so a
+    // background task going busy must not steal focus away from it.
+    userPickedTabRef.current = true;
+    setActiveTaskIdState(remembered);
+  }, [sessions, activeTaskId]);
 
   // Drive the per-task view-data cache: whenever the viewed task changes,
   // make it active so the cache retains the last few tasks' data (tree /
@@ -306,6 +334,10 @@ export default function App() {
     if (activeTaskId === taskId) {
       setActiveTaskIdState('');
       userPickedTabRef.current = false;
+      // Forgetting the task the operator was on must not leave it as the
+      // one to restore — the next launch would try to reopen a task that
+      // no longer exists.
+      clearLastActiveTask();
     }
     delete fileViewByTaskRef.current[taskId];
     if (openTabsRef.current.some((tab) => tab.taskId === taskId)) {

@@ -79,3 +79,38 @@ describe('GlobalPermissionContainer', () => {
     );
   });
 });
+
+describe('GlobalPermissionContainer — the tab title says something is waiting', () => {
+  beforeEach(() => {
+    document.title = 'Kato — Planning UI';
+    Object.defineProperty(document, 'hidden', {
+      configurable: true, get: () => true,
+    });
+  });
+  afterEach(() => { document.title = 'Kato — Planning UI'; });
+
+  test('a pending ask flashes the title while the tab is in the background', async () => {
+    // The desktop notification already fired, but notifications get
+    // missed — and the agent stays blocked for as long as nobody notices.
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2')] });
+    render(<GlobalPermissionContainer />);
+    await screen.findByRole('heading');
+    expect(document.title).toMatch(/Approval needed/);
+  });
+
+  test('the count is shown when more than one task is waiting', async () => {
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [_ask('POJ-1', 'r1'), _ask('POJ-2', 'r2')],
+    });
+    render(<GlobalPermissionContainer />);
+    await screen.findByRole('heading');
+    expect(document.title).toMatch(/^\(2\) Approval needed/);
+  });
+
+  test('no pending asks leaves the title alone', async () => {
+    fetchPendingPermissions.mockResolvedValue({ pending: [] });
+    render(<GlobalPermissionContainer />);
+    await waitFor(() => expect(fetchPendingPermissions).toHaveBeenCalled());
+    expect(document.title).toBe('Kato — Planning UI');
+  });
+});
