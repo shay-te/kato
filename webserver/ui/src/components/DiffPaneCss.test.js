@@ -34,6 +34,20 @@ test('DiffPane file cards clip diff rows inside rounded corners', () => {
   assertDeclaration(body, 'overflow', 'clip');
 });
 
+test('Inline comment widget fits the visible diff width, not the table width', () => {
+  // The widget lives in a <td colspan> of a ``width: max-content`` table,
+  // so it used to be as wide as the file's longest source line — which
+  // put its Cancel / Add comment buttons off the right edge of the pane.
+  // Measured in Chrome on a 598px pane: 1304px wide, submit button's
+  // right edge at 1296px. Sizing it off the scroller's own inline size
+  // brings it back to 598px with the buttons at 590px.
+  const bodyRule = ruleBody('.diff-pane .diff-file-body');
+  assertDeclaration(bodyRule, 'container-type', 'inline-size');
+  const host = ruleBody('.diff-line-comments-host');
+  assertDeclaration(host, 'width', '100cqi');
+  assertDeclaration(host, 'box-sizing', 'border-box');
+});
+
 test('Shared sticky section header utility owns sticky mechanics', () => {
   const body = ruleBody('.sticky-section-header');
   assertDeclaration(body, 'position', 'sticky');

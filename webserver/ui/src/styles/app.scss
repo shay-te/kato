@@ -4602,6 +4602,12 @@ code {
   overflow-y: hidden;
   content-visibility: auto;
   contain-intrinsic-size: auto $SPACE-720;
+  // Query container for the inline comment widget below. Because this
+  // element is the horizontal scroller, its INLINE SIZE is the visible
+  // width — not the table's max-content width — which is exactly the
+  // measurement ``.diff-line-comments-host`` needs to size itself to
+  // what the operator can actually see.
+  container-type: inline-size;
 }
 
 /* react-diff-view renders the body as ``<table class="diff">`` with
@@ -5961,7 +5967,31 @@ body.kato-resizing {
 
 /* Inline per-line comment widget host — stretches full width, no
  * horizontal padding so threads fill edge-to-edge like Bitbucket. */
+/* The inline comment widget sits in a ``<td colspan>`` of the diff
+ * table, so it inherited the TABLE's width — the widest source line in
+ * the file. A comment box on a file with 200-column lines rendered
+ * 200 columns wide, which put its Cancel / Add comment buttons off the
+ * right edge of the pane: the operator had to scroll sideways to submit
+ * a comment they were looking straight at.
+ *
+ * Size it to the VISIBLE width instead: ``100cqi`` is the inline size of
+ * the ``.diff-file-body`` query container (declared above), and because
+ * that element is the horizontal scroller its inline size is what the
+ * operator can see, not what the table measures. Comment threads get the
+ * same treatment — they were just as unreadable.
+ *
+ * NOT ``position: sticky; left: 0`` on top of this, which would also keep
+ * it in view while scrolling sideways: the bottom-rounding rule below
+ * (``.diff-file-body > :last-child``) gives the table ``overflow:
+ * hidden``, which makes the TABLE the nearest scrollport, and a sticky
+ * child of a box that never scrolls simply doesn't move (measured in
+ * Chrome — it tracked the content exactly as before). Not worth trading
+ * that rounding for: the gutter you click to open this form is at the
+ * left edge and isn't sticky either, so the form opens where the
+ * operator already is. */
 .diff-line-comments-host {
+  width: 100cqi;
+  box-sizing: border-box;
   background: $C-NEUTRAL-04;
   border-top: 1px solid $C-NEUTRAL-16;
   border-bottom: 1px solid $C-NEUTRAL-16;
