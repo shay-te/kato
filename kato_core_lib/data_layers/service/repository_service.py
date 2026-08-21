@@ -450,6 +450,14 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def branch_needs_push(self, repository, branch_name: str) -> bool:
         """True when ``Push`` would actually publish something.
 
+        The boolean face of :meth:`push_skip_reason` — an empty reason
+        means the push would do real work.
+        """
+        return not self.push_skip_reason(repository, branch_name)
+
+    def push_skip_reason(self, repository, branch_name: str) -> str:
+        """Why ``Push`` would do nothing here — ``''`` when it would push.
+
         The on-demand push path (``publish_review_fix``) refuses to
         proceed unless three preconditions hold; this check mirrors all
         three so the planning UI doesn't enable a button whose click
@@ -465,24 +473,40 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
            <branch>`` is missing or behind, OR the working tree is dirty
            (the new commit will move local past origin).
 
-        Best-effort: any git failure returns ``False`` so the button
-        stays disabled rather than promising a push that won't work.
+        It returns the REASON rather than a bare False because every
+        one of these failures used to reach the operator as the same
+        "nothing to push" line. A repo whose clone never got moved onto
+        the task branch (the classic symptom of a repo added mid-task)
+        is indistinguishable, in that wording, from a repo that is
+        genuinely in sync — so the work looked pushed when it was
+        sitting untouched on master. Callers surface this text.
+
+        Best-effort: any git failure yields a reason (never a push
+        promise), so the button stays disabled rather than promising a
+        push that won't work.
         """
         normalized_branch = (branch_name or '').strip()
+        if not normalized_branch:
+            return 'no task branch name'
         state = self._resolve_branch_state(repository, normalized_branch)
         if state is None:
-            return False
+            return 'workspace clone is missing or its branch is unreadable'
         local_path, current_branch = state
         # Precondition 1 — publish_review_fix asserts the workspace is
         # checked out on the task branch. If it isn't (e.g. workspace
-        # was reset to master after a prior publish), there's nothing
-        # the Push button can do without first checking out, so disable.
+        # was reset to master after a prior publish, or the clone was
+        # added mid-task and never branch-prepped), there's nothing the
+        # Push button can do without first checking out.
         if current_branch != normalized_branch:
-            return False
+            return (
+                f'clone is on {current_branch!r}, not the task branch '
+                f'{normalized_branch!r} — nothing was committed to the '
+                f'task branch, so there is nothing to push'
+            )
         try:
             is_dirty = bool(self._working_tree_status(local_path).strip())
         except Exception:
-            return False
+            return 'could not read the working tree'
         # Precondition 2 — branch must be (or become, after committing
         # dirty tree) ahead of the destination branch.
         try:
@@ -491,35 +515,37 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 local_path, destination_branch,
             )
         except Exception:
-            return False
+            return 'could not determine the destination branch'
         try:
             ahead_destination = self._ahead_count(
                 local_path, comparison_reference, normalized_branch,
             )
         except Exception:
-            return False
+            return 'could not compare the task branch with its destination'
         if ahead_destination == 0 and not is_dirty:
-            return False
+            return 'nothing to push — no commits on the task branch and a clean tree'
         # Precondition 3 — push must send something the remote doesn't
         # already have. Dirty tree → upcoming commit will exceed origin.
         if is_dirty:
-            return True
+            return ''
         remote_reference = f'origin/{normalized_branch}'
         try:
             remote_branch_exists = self._git_reference_exists(
                 local_path, remote_reference,
             )
         except Exception:
-            return False
+            return 'could not read the remote branch'
         if not remote_branch_exists:
-            return True
+            return ''
         try:
             ahead_remote, _behind = self._left_right_commit_counts(
                 local_path, normalized_branch, remote_reference,
             )
         except Exception:
-            return False
-        return ahead_remote > 0
+            return 'could not compare the task branch with origin'
+        if ahead_remote > 0:
+            return ''
+        return 'nothing to push — origin already has every commit'
 
     def workspace_has_task_changes(self, repository, branch_name: str) -> bool:
         """True when the workspace clone has commits on the task branch.

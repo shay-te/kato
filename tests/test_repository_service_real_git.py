@@ -189,6 +189,36 @@ class RepositoryServiceBranchNeedsPushRealTests(unittest.TestCase):
         self.assertFalse(self.service.branch_needs_push(self.repository, ''))
         self.assertFalse(self.service.branch_needs_push(self.repository, '   '))
 
+    def test_skip_reason_names_the_branch_the_clone_is_actually_on(self) -> None:
+        # The operator-facing half: a clone still sitting on the default
+        # branch (a repo added mid-task that never got branch-prepped)
+        # used to reach the Push toast as "nothing to push", which reads
+        # exactly like "already in sync". Name the real state instead.
+        reason = self.service.push_skip_reason(self.repository, 'PROJ-9')
+        self.assertIn("'main'", reason)
+        self.assertIn('PROJ-9', reason)
+
+    def test_skip_reason_is_empty_when_the_push_would_publish(self) -> None:
+        _git(self.clone, 'checkout', '-b', 'PROJ-9')
+        (self.clone / 'feat.txt').write_text('ship\n', encoding='utf-8')
+        _git(self.clone, 'add', 'feat.txt')
+        _git(self.clone, 'commit', '-m', 'local')
+        self.assertEqual(
+            self.service.push_skip_reason(self.repository, 'PROJ-9'), '',
+        )
+
+    def test_skip_reason_says_in_sync_for_a_clean_matching_branch(self) -> None:
+        reason = self.service.push_skip_reason(self.repository, 'main')
+        self.assertIn('nothing to push', reason)
+
+    def test_skip_reason_flags_a_missing_clone(self) -> None:
+        gone = _make_repository(
+            repo_id='gone',
+            local_path=self.root / 'never-existed',
+            remote_url=self.origin,
+        )
+        self.assertIn('missing', self.service.push_skip_reason(gone, 'main'))
+
 
 @unittest.skipUnless(
     shutil.which('git'), 'git binary not available on this system',

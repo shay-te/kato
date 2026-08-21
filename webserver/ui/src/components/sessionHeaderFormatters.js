@@ -30,7 +30,16 @@ export function formatPushSummary(pushed, options = {}) {
     return `✓ pushed ${pushedRepositories.length} repo(s): ${pushedRepositories.join(', ')}`;
   }
   if (skippedRepositories.length) {
-    return `• push skipped — already in sync (${skippedRepositories.length} repo(s))`;
+    // Name the repo and the backend's REASON. This used to claim
+    // "already in sync" for every skip, which is the one sentence an
+    // operator reads as "kato pushed my work" — including when the
+    // clone was sitting on master with the work never committed to the
+    // task branch at all.
+    return skippedRepositories
+      .map((entry) => (
+        `• push skipped ${entry.repository_id}: ${entry.reason || 'nothing to push'}`
+      ))
+      .join('\n');
   }
   if (failedRepositories.length) {
     const errs = failedRepositories
@@ -324,6 +333,14 @@ export function formatPushResult(result, taskId = '') {
   const suffix = trimmedTask ? ` (${trimmedTask})` : '';
 
   const lines = [];
+  // Repos the push pulled in from the task's tags on its way here (a
+  // repo added mid-task). Worth its own line: the operator added it
+  // somewhere else entirely and this is the confirmation it is now part
+  // of the task's workspace.
+  const synced = body.synced_repositories || [];
+  if (synced.length) {
+    lines.push(`+ added from the task's tags: ${synced.join(', ')}`);
+  }
   if (pushed.length) {
     lines.push(`✓ pushed ${pushed.length} repo(s)${onBranch}: ${pushed.join(', ')}`);
   }

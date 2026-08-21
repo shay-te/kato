@@ -104,6 +104,12 @@ from claude_core_lib.claude_core_lib.session.streaming import (
 )
 _COMMENT_RUN_MARKER_PREFIX = 'KATO_LOCAL_COMMENT_RUN:'
 
+# How long a tag→metadata repository reconcile stays fresh for one task.
+# Long enough that the Done button's push → PR pair costs a single ticket
+# lookup, short enough that adding a repo and immediately pressing Push
+# still picks it up.
+_REPO_RECONCILE_TTL_SECONDS = 20.0
+
 
 @dataclass(frozen=True)
 class _PublishTaskLite(object):
@@ -210,6 +216,9 @@ class AgentService(MissionStepLoggerMixin, Service):
         # reply to a comment is about a completely unrelated change).
         self._comment_dispatch_locks: dict[str, _threading.Lock] = {}
         self._comment_dispatch_locks_lock = _threading.Lock()
+        # task_id -> monotonic timestamp of its last tag→metadata
+        # repository reconcile (see ``reconcile_task_repositories``).
+        self._repository_reconcile_at: dict[str, float] = {}
         self._state_registry = state_registry or AgentStateRegistry()
         self._review_comment_service = review_comment_service or ReviewCommentService(
             self._task_service,
@@ -787,6 +796,16 @@ class AgentService(MissionStepLoggerMixin, Service):
         return self._review_comment_service.task_id_for_comment(comment)
 
     def process_assigned_task(self, task: Task) -> dict[str, object] | None:
+        # The ticket's ``kato:repo:`` tags are the durable statement of
+        # which repos this task touches, and this is where kato SEES them
+        # change. Fold any newly-tagged repo into the workspace metadata
+        # first — for a live chat task the scan stops at the short-circuit
+        # below, so without this the tag would never reach
+        # ``.kato-meta.json`` and the repo would be edited but never
+        # pushed. The task object is already in hand, so no extra
+        # ticket-platform call; a task with no workspace is a no-op.
+        self.reconcile_task_repositories(str(task.id), task=task)
+
         # No in-memory "already processed" short-circuit. The ticket system
         # (state + comments) is the single source of truth: successful tasks
         # have already been moved out of the scanned states, and skipped/
@@ -3467,8 +3486,12 @@ class AgentService(MissionStepLoggerMixin, Service):
             'sync': sync_result,
         }
 
-    def sync_task_repositories(self, task_id: str) -> dict[str, object]:
+    def sync_task_repositories(self, task_id: str, task=None) -> dict[str, object]:
         """Add any task repos missing from the workspace; never remove.
+
+        ``task`` is an already-fetched Task to resolve against — pass it
+        from a caller that has one (the scan loop) so the reconcile costs
+        no extra ticket-platform call. Omit it and the task is looked up.
 
         Drives the planning UI's "Sync repositories" icon on the Files
         tab. The flow:
@@ -3508,7 +3531,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'task_id': normalized,
                 'error': 'no workspace exists for this task yet',
             }
-        task_obj = self._lookup_task_for_sync(normalized)
+        task_obj = task if task is not None else self._lookup_task_for_sync(normalized)
         if task_obj is None:
             return {
                 'synced': False,
@@ -3683,6 +3706,78 @@ class AgentService(MissionStepLoggerMixin, Service):
                 return True
         return False
 
+    def reconcile_task_repositories(self, task_id: str, task=None) -> dict[str, object]:
+        """Fold the task's ``kato:repo:`` tags into the workspace metadata.
+
+        The tags on the ticket are the durable statement of which repos a
+        task touches. ``.kato-meta.json``'s ``repository_ids`` is what
+        every publish path actually reads (see
+        ``_resolve_publish_context``). Those two drift apart the moment a
+        repo is tagged mid-task — the agent says it needs one more repo,
+        the operator adds it — and until something re-runs the resolution
+        the publish paths keep working from the stale list: the new repo
+        gets cloned and edited, then push / PR / Update source walk right
+        past it. Nothing errors, so it reads as "kato pushed everything".
+
+        So every operator publish action calls this first. It is
+        :meth:`sync_task_repositories` (clone + task branch + metadata)
+        with its failures downgraded to a log line — a ticket platform
+        that is unreachable must not block pushing the repos kato already
+        knows about. Throttled per task (``_REPO_RECONCILE_TTL_SECONDS``)
+        so the Done button's push→PR pair costs one ticket lookup, not
+        two.
+
+        Returns the sync result (``{}`` when it could not run).
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {}
+        # No workspace yet = nothing to reconcile against. Checked here
+        # (locally) so a task that has not been provisioned doesn't log a
+        # failed sync on every scan tick.
+        if self._workspace_manager is None:
+            return {}
+        try:
+            if self._workspace_manager.get(normalized) is None:
+                return {}
+        except Exception:
+            return {}
+        now = time.monotonic()
+        last = self._repository_reconcile_at.get(normalized, 0.0)
+        if last and (now - last) < _REPO_RECONCILE_TTL_SECONDS:
+            return {}
+        self._repository_reconcile_at[normalized] = now
+        try:
+            result = self.sync_task_repositories(normalized, task=task) or {}
+        except Exception:
+            self.logger.exception(
+                'repository reconcile failed for task %s; continuing with '
+                'the repositories already in the workspace metadata',
+                normalized,
+            )
+            return {}
+        added = [str(r) for r in (result.get('added_repositories') or []) if r]
+        if added:
+            self.logger.info(
+                'task %s: tags name repository(ies) %s that the workspace '
+                'metadata was missing — cloned and recorded them',
+                normalized, ', '.join(added),
+            )
+            if result.get('requires_session_restart'):
+                # The CLI bakes its sandbox at spawn time, so a live chat
+                # cannot write into a clone that appeared after it started.
+                self.logger.info(
+                    'task %s: restart the chat tab for the agent to reach %s',
+                    normalized, ', '.join(added),
+                )
+        elif result.get('error'):
+            # Not fatal: the caller works from the metadata as it stands.
+            self.logger.warning(
+                'repository reconcile skipped for task %s: %s',
+                normalized, result.get('error'),
+            )
+        return result
+
     def _lookup_task_for_sync(self, task_id: str):
         """Return the live Task for ``task_id`` (or ``None``).
 
@@ -3705,6 +3800,10 @@ class AgentService(MissionStepLoggerMixin, Service):
         normalized = str(task_id or '').strip()
         if not normalized:
             return {'pushed': False, 'task_id': task_id, 'error': 'empty task id'}
+        # A repo tagged onto the task after the workspace was built is
+        # only in the ticket's tags, not yet in the metadata this reads —
+        # so fold the tags in FIRST or the newcomer is silently skipped.
+        reconciled = self.reconcile_task_repositories(normalized)
         repos, branch_name_for_task, _task = self._resolve_publish_context(normalized)
         if not repos:
             return {
@@ -3724,7 +3823,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             # ``_assert_branch_checked_out`` (workspace on master) or
             # ``RepositoryHasNoChangesError`` for them.
             try:
-                needs_push = self._repository_service.branch_needs_push(
+                skip_reason = self._repository_service.push_skip_reason(
                     repository, branch_name,
                 )
             except Exception:
@@ -3732,11 +3831,18 @@ class AgentService(MissionStepLoggerMixin, Service):
                     'branch-needs-push pre-check failed for task %s repository %s',
                     normalized, repository.id,
                 )
-                needs_push = False
-            if not needs_push:
+                skip_reason = 'push pre-check failed — see the kato log'
+            if skip_reason:
+                # The REAL reason, not a blanket "nothing to push": a
+                # clone still sitting on master (the classic mid-task
+                # repo) read exactly like one that was already in sync.
+                self.logger.info(
+                    'on-demand push for task %s: skipping %s — %s',
+                    normalized, repository.id, skip_reason,
+                )
                 skipped_repositories.append({
                     'repository_id': repository.id,
-                    'reason': 'nothing to push',
+                    'reason': skip_reason,
                 })
                 continue
             try:
@@ -3780,6 +3886,12 @@ class AgentService(MissionStepLoggerMixin, Service):
             'pushed_repositories': pushed_repositories,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,
+            # Repos the tag reconcile pulled in on the way here, so the
+            # toast can say the push covered a repo the operator only
+            # just added.
+            'synced_repositories': [
+                str(r) for r in (reconciled.get('added_repositories') or []) if r
+            ],
         }
 
     def pull_task(self, task_id: str) -> dict[str, object]:
@@ -4017,6 +4129,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         normalized = str(task_id or '').strip()
         if not normalized:
             return {'created': False, 'task_id': task_id, 'error': 'empty task id'}
+        # Same reason as push_task: open PRs for what the TAGS say the
+        # task touches, not for a metadata snapshot taken before the
+        # operator added a repo. Throttled, so the Done button (push →
+        # PR) still pays for only one ticket lookup.
+        self.reconcile_task_repositories(normalized)
         repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
         if not repos:
             return {

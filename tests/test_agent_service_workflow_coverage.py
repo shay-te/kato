@@ -843,7 +843,7 @@ class PushTaskTests(unittest.TestCase):
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.return_value = False
+        repo.push_skip_reason.return_value = 'nothing to push — clean tree'
         service = AgentService(**_kwargs(repository_service=repo))
         with patch.object(service, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
@@ -851,12 +851,18 @@ class PushTaskTests(unittest.TestCase):
             result = service.push_task('T1')
         self.assertFalse(result['pushed'])
         self.assertEqual(len(result['skipped_repositories']), 1)
+        # The repository service's REASON reaches the operator verbatim —
+        # a blanket "nothing to push" hid a clone still on master.
+        self.assertEqual(
+            result['skipped_repositories'][0]['reason'],
+            'nothing to push — clean tree',
+        )
 
     def test_pushes_repository_when_needed(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.return_value = True
+        repo.push_skip_reason.return_value = ''
         service = AgentService(**_kwargs(repository_service=repo))
         with patch.object(service, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
@@ -871,7 +877,7 @@ class PushTaskTests(unittest.TestCase):
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.return_value = True
+        repo.push_skip_reason.return_value = ''
         service = AgentService(**_kwargs(repository_service=repo))
         with patch.object(service, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
@@ -883,7 +889,7 @@ class PushTaskTests(unittest.TestCase):
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.side_effect = RuntimeError('git fail')
+        repo.push_skip_reason.side_effect = RuntimeError('git fail')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
         with patch.object(service, '_resolve_publish_context',
@@ -901,7 +907,7 @@ class PushTaskTests(unittest.TestCase):
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.return_value = True
+        repo.push_skip_reason.return_value = ''
         repo.publish_review_fix.side_effect = RepositoryHasNoChangesError(
             'race condition',
         )
@@ -917,7 +923,7 @@ class PushTaskTests(unittest.TestCase):
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
-        repo.branch_needs_push.return_value = True
+        repo.push_skip_reason.return_value = ''
         repo.publish_review_fix.side_effect = RuntimeError('git error')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
@@ -926,6 +932,82 @@ class PushTaskTests(unittest.TestCase):
                                         SimpleNamespace(id='T1'))):
             result = service.push_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
+
+    def test_reconciles_the_task_tags_into_the_metadata_first(self) -> None:
+        # A repo tagged onto the ticket mid-task is not in
+        # ``.kato-meta.json`` yet, and the publish context reads only that
+        # file — so without this the newcomer is cloned, edited, and then
+        # silently skipped by every push.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.push_skip_reason.return_value = ''
+        service = AgentService(**_kwargs(
+            repository_service=repo, workspace_manager=MagicMock(),
+        ))
+        with patch.object(service, 'sync_task_repositories',
+                          return_value={'added_repositories': ['r2']}) as sync, \
+             patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))):
+            result = service.push_task('T1')
+        sync.assert_called_once_with('T1', task=None)
+        self.assertEqual(result['synced_repositories'], ['r2'])
+
+    def test_push_survives_a_failing_reconcile(self) -> None:
+        # An unreachable ticket platform must not block pushing the repos
+        # the workspace already knows about.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.push_skip_reason.return_value = ''
+        service = AgentService(**_kwargs(
+            repository_service=repo, workspace_manager=MagicMock(),
+        ))
+        service.logger = MagicMock()
+        with patch.object(service, 'sync_task_repositories',
+                          side_effect=RuntimeError('youtrack down')), \
+             patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))):
+            result = service.push_task('T1')
+        self.assertTrue(result['pushed'])
+        self.assertEqual(result['synced_repositories'], [])
+
+    def test_reconcile_is_a_no_op_without_a_workspace(self) -> None:
+        # A task that was never provisioned has nothing to reconcile —
+        # and the scan loop calls this for EVERY assigned task, so it
+        # must not log a failed sync on every tick.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.push_skip_reason.return_value = ''
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service, 'sync_task_repositories') as sync, \
+             patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))):
+            service.push_task('T1')
+        sync.assert_not_called()
+
+    def test_reconcile_is_throttled_across_push_and_pull_request(self) -> None:
+        # ``finish_task_planning_session`` runs push then PR back to back;
+        # one ticket lookup covers both.
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.push_skip_reason.return_value = ''
+        service = AgentService(**_kwargs(
+            repository_service=repo, workspace_manager=MagicMock(),
+        ))
+        with patch.object(service, 'sync_task_repositories',
+                          return_value={'added_repositories': []}) as sync, \
+             patch.object(service, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))):
+            service.push_task('T1')
+            service.push_task('T1')
+        self.assertEqual(sync.call_count, 1)
 
 
 class PullTaskTests(unittest.TestCase):

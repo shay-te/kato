@@ -240,6 +240,39 @@ test('formatPushSummary surfaces failures with a "; "-joined detail string', () 
   assert.equal(out, '✗ push failed: a: auth; b: net');
 });
 
+test('formatPushSummary names each skipped repo and its real reason', () => {
+  // It used to collapse every skip to "already in sync (N repo(s))" —
+  // the one line that reads as "kato pushed my work" even when a clone
+  // was still on master with nothing committed to the task branch.
+  const out = formatPushSummary({
+    pushed_repositories: [],
+    skipped_repositories: [
+      { repository_id: 'lib', reason: "clone is on 'master', not the task branch 'UNA-9'" },
+      { repository_id: 'api', reason: 'nothing to push — clean tree' },
+    ],
+    failed_repositories: [],
+  });
+  assert.match(out, /lib: clone is on 'master'/);
+  assert.match(out, /api: nothing to push/);
+  assert.equal(out.split('\n').length, 2);
+});
+
+test('formatPushResult reports repos folded in from the task tags', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: {
+      pushed: true,
+      branch: 'UNA-9',
+      synced_repositories: ['assessment-core-lib'],
+      pushed_repositories: ['assessment-core-lib'],
+      skipped_repositories: [],
+      failed_repositories: [],
+    },
+  }, 'UNA-9');
+  assert.match(out.message, /added from the task's tags: assessment-core-lib/);
+  assert.match(out.message, /pushed 1 repo\(s\) to branch UNA-9/);
+});
+
 test('formatPushSummary returns null when nothing happened', () => {
   assert.equal(formatPushSummary({}), null);
 });
