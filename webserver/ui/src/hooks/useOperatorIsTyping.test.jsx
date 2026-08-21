@@ -17,6 +17,9 @@ function Harness() {
       <span data-testid="state">{typing ? 'typing' : 'idle'}</span>
       <textarea aria-label="composer" />
       <button type="button">elsewhere</button>
+      <div role="dialog">
+        <input aria-label="in-dialog" />
+      </div>
     </div>
   );
 }
@@ -93,6 +96,15 @@ describe('useOperatorIsTyping', () => {
     act(() => {
       composer.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
     });
+    expect(state()).toBe('idle');
+  });
+
+  test('typing INSIDE a dialog is not "busy elsewhere"', () => {
+    // The permission dialog holds itself back on this hook. Counting its own
+    // fields as typing made the first keystroke in the AskUserQuestion
+    // "Other" box close the dialog and drop the half-filled answer.
+    const { getByLabelText } = render(<Harness />);
+    typeIn(getByLabelText('in-dialog'));
     expect(state()).toBe('idle');
   });
 

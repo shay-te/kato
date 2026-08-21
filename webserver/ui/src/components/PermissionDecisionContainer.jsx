@@ -17,6 +17,7 @@ export default function PermissionDecisionContainer({
   onAuditBubble,
   taskCode = '',
   taskSummary = '',
+  queuedCount = 0,
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
 
@@ -50,6 +51,7 @@ export default function PermissionDecisionContainer({
       onDecide={handleDecide}
       taskCode={taskCode}
       taskSummary={taskSummary}
+      queuedCount={queuedCount}
     />
   );
 }

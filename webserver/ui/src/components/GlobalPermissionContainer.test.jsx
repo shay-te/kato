@@ -6,7 +6,7 @@
 //   3. A decision posts to the ASKING task and resolves the ask locally.
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
   fetchPendingPermissions: vi.fn(),
@@ -77,6 +77,39 @@ describe('GlobalPermissionContainer', () => {
       'POJ-2', 'permission',
       expect.objectContaining({ request_id: 'req-9', allow: true, remember: true }),
     );
+  });
+});
+
+describe('GlobalPermissionContainer — the open ask is never swapped out', () => {
+  // The dialog used to re-pick the list's head on every poll. The store
+  // rebuilds its map from the SERVER's list, so a second ask (or a reordered
+  // one) replaced the ask being answered — and an AskUserQuestion form the
+  // operator had half filled in was torn down with everything typed in it.
+
+  test('a second ask queues behind the one on screen', async () => {
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-1', 'r1')] });
+    render(<GlobalPermissionContainer />);
+    expect(await screen.findByRole('heading')).toHaveTextContent(/POJ-1/);
+
+    // The newcomer even arrives FIRST in the server's list.
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [_ask('POJ-2', 'r2'), _ask('POJ-1', 'r1')],
+    });
+    await act(async () => { await permissionStore.refresh(); });
+    expect(screen.getByRole('heading')).toHaveTextContent(/POJ-1/);
+    expect(screen.getByText(/1 more request waiting/i)).toBeInTheDocument();
+  });
+
+  test('the queued ask opens once the first is answered', async () => {
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [_ask('POJ-1', 'r1'), _ask('POJ-2', 'r2')],
+    });
+    render(<GlobalPermissionContainer />);
+    await screen.findByRole('heading');
+    fireEvent.click(screen.getByRole('button', { name: /allow once/i }));
+    await waitFor(() => {
+      expect(screen.getByRole('heading')).toHaveTextContent(/POJ-2/);
+    });
   });
 });
 

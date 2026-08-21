@@ -3678,6 +3678,19 @@ code {
   padding-bottom: $SPACE-10;
 }
 
+/* "2 more requests waiting" — the asks queued behind the open dialog. They
+   stay hidden until this one is answered (so a half-filled answer form is
+   never torn away), which is exactly why their existence has to be visible:
+   an unseen ask is an agent blocked until someone notices. Quiet, since the
+   decision on screen is the one that matters right now. */
+#permission-queued-note {
+  margin-left: auto;
+  flex: none;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+  white-space: nowrap;
+}
+
 // Two-line permission-modal title. Both lines share the same font-size /
 // colour / weight (whatever ``.modal-card h2`` declares) so the heading
 // stays a single visual unit; the first line stacks task identity, the

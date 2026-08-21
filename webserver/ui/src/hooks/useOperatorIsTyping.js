@@ -5,6 +5,17 @@ import { useEffect, useRef, useState } from 'react';
 // held back by it appears almost immediately once they stop.
 export const TYPING_IDLE_MS = 1500;
 
+// Typing INSIDE an open dialog is the operator answering that dialog, not
+// composing something the dialog would cover. Counting it as "busy" made the
+// permission popup hold ITSELF back: the first keystroke in the
+// AskUserQuestion form's "Other" box flipped this hook true, the container
+// swapped the modal for the waiting hint, and the half-filled form was
+// unmounted mid-word.
+function inOpenDialog(node) {
+  if (!node || typeof node.closest !== 'function') { return false; }
+  return !!node.closest('[role="dialog"]');
+}
+
 function isEditable(node) {
   if (!node) { return false; }
   const tag = node.tagName;
@@ -21,10 +32,11 @@ function isEditable(node) {
  * approved a permission request they had not read AND submitted the
  * half-written prompt. Two decisions from one keystroke, neither intended.
  *
- * True while focus is in a text field AND a key was pressed within
- * ``TYPING_IDLE_MS``. Both halves matter: focus alone would hold a popup
- * back indefinitely for a composer that merely has the cursor in it, and
- * a keystroke alone would fire for shortcuts pressed outside any field.
+ * True while focus is in a text field OUTSIDE any open dialog AND a key
+ * was pressed within ``TYPING_IDLE_MS``. Both halves matter: focus alone
+ * would hold a popup back indefinitely for a composer that merely has the
+ * cursor in it, and a keystroke alone would fire for shortcuts pressed
+ * outside any field.
  */
 export function useOperatorIsTyping(idleMs = TYPING_IDLE_MS) {
   const [typing, setTyping] = useState(false);
@@ -37,6 +49,9 @@ export function useOperatorIsTyping(idleMs = TYPING_IDLE_MS) {
     }
     function onKeyDown(event) {
       if (!isEditable(event.target) && !isEditable(document.activeElement)) {
+        return;
+      }
+      if (inOpenDialog(event.target) || inOpenDialog(document.activeElement)) {
         return;
       }
       // Modifier-only and navigation keys are not composing a message —

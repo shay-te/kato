@@ -29,6 +29,17 @@ export function commentDraftKey(taskId, repoId, path, lineSegment, replyTo) {
   return `${COMMENT_DRAFT_PREFIX}${taskId}|${repoId}|${path}|${lineSegment}|${replyTo || 'root'}`;
 }
 
+export const ASK_QUESTION_DRAFT_PREFIX = 'kato.askquestion.draft.';
+
+// Draft-storage key for one AskUserQuestion answer form, keyed by the
+// permission request id. The form is inside a modal that other UI can tear
+// down (a poll blip, a second ask arriving, a reload), and re-picking every
+// radio button plus retyping the "Other" text is exactly the work nobody
+// wants to redo — so the partial answer is mirrored here.
+export function askQuestionDraftKey(requestId) {
+  return requestId ? `${ASK_QUESTION_DRAFT_PREFIX}${requestId}` : '';
+}
+
 // Generic key-based variants. Used by callers that own their own
 // key shape (e.g. CommentForm: ``comment.<task>.<repo>.<path>.<line>.<replyTo>``).
 // The ``taskId``-shaped helpers below are thin wrappers that just

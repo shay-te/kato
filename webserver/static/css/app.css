@@ -3621,6 +3621,19 @@ code {
   padding-bottom: 10px;
 }
 
+/* "2 more requests waiting" — the asks queued behind the open dialog. They
+   stay hidden until this one is answered (so a half-filled answer form is
+   never torn away), which is exactly why their existence has to be visible:
+   an unseen ask is an agent blocked until someone notices. Quiet, since the
+   decision on screen is the one that matters right now. */
+#permission-queued-note {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  color: #a3a3a3;
+  white-space: nowrap;
+}
+
 .permission-modal-title-stack {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import {
+  askQuestionDraftKey, readDraftByKey, writeDraftByKey,
+} from '../utils/composerDraft.js';
 
 // Renders the agent's AskUserQuestion options as a real answer form — radio
 // (single-select) or checkboxes (multiSelect) per question, plus an always-
@@ -8,11 +11,25 @@ import { useState } from 'react';
 //
 // (The agent transports gate AskUserQuestion through the permission path, so
 // "answering" = replying to that pending request — see PermissionModal.)
-export default function AskUserQuestionForm({ questions, onAnswer, onDismiss }) {
+export default function AskUserQuestionForm({
+  questions, onAnswer, onDismiss, draftKey = '',
+}) {
   const qs = Array.isArray(questions) ? questions.filter(Boolean) : [];
-  const [answers, setAnswers] = useState(
-    () => qs.map(() => ({ choices: [], otherOn: false, other: '' })),
-  );
+  // Answers are mirrored to storage on every change and read back on mount,
+  // so a remount (the modal being torn down and rebuilt, a reload) cannot
+  // silently throw away a form the operator was halfway through filling in.
+  const storageKey = askQuestionDraftKey(draftKey);
+  const [answers, setAnswers] = useState(() => restoreAnswers(storageKey, qs.length));
+  useEffect(() => {
+    if (!storageKey) { return; }
+    writeDraftByKey(storageKey, JSON.stringify(answers));
+  }, [storageKey, answers]);
+
+  function finish(handler, value) {
+    // The ask is over — the draft would otherwise outlive it in storage.
+    if (storageKey) { writeDraftByKey(storageKey, ''); }
+    handler(value);
+  }
 
   function patch(i, next) {
     setAnswers((prev) => prev.map((a, idx) => (idx === i ? { ...a, ...next } : a)));
@@ -114,18 +131,37 @@ export default function AskUserQuestionForm({ questions, onAnswer, onDismiss }) 
       })}
       </div>
       <div className="modal-actions">
-        <button type="button" className="secondary" onClick={onDismiss}>
+        <button type="button" className="secondary" onClick={() => finish(onDismiss)}>
           Dismiss
         </button>
         <button
           type="button"
           className="primary"
           disabled={!answeredAll}
-          onClick={() => onAnswer(formatAnswer())}
+          onClick={() => finish(onAnswer, formatAnswer())}
         >
           Send answer
         </button>
       </div>
     </div>
   );
+}
+
+// Reads a stored partial answer back, or a blank set when there is none (or
+// when it no longer matches the questions being asked — a stale draft from a
+// different ask must never pre-fill this one).
+function restoreAnswers(storageKey, count) {
+  const blank = () => Array.from({ length: count }, () => (
+    { choices: [], otherOn: false, other: '' }
+  ));
+  if (!storageKey) { return blank(); }
+  let stored = null;
+  try { stored = JSON.parse(readDraftByKey(storageKey) || 'null'); }
+  catch (_) { return blank(); }
+  if (!Array.isArray(stored) || stored.length !== count) { return blank(); }
+  return stored.map((a) => ({
+    choices: Array.isArray(a?.choices) ? a.choices.filter((c) => typeof c === 'string') : [],
+    otherOn: !!a?.otherOn,
+    other: typeof a?.other === 'string' ? a.other : '',
+  }));
 }

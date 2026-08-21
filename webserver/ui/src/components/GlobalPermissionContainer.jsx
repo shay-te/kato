@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useOperatorIsTyping } from '../hooks/useOperatorIsTyping.js';
 import { useTitleAlert } from '../hooks/useTitleAlert.js';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -35,8 +35,21 @@ export default function GlobalPermissionContainer() {
   // when the keys go to the right place. So it waits for a pause, and
   // says it is waiting rather than sitting invisible.
   const typing = useOperatorIsTyping();
-  // Oldest ask first (store preserves insertion order).
-  const current = list[0] || null;
+  // Whichever ask is ALREADY on screen stays on screen until it is answered;
+  // everything else queues behind it. Without this the dialog re-picked the
+  // list's head on every poll, so a second ask arriving mid-decision replaced
+  // the one being answered — and an AskUserQuestion form the operator had
+  // half filled in was torn down with every radio button and typed word in it.
+  // (The store rebuilds its map from the server's list, so even the ORDER of
+  // two already-pending asks can flip under a running dialog.)
+  const shownRequestIdRef = useRef('');
+  const held = shownRequestIdRef.current
+    ? list.find((entry) => (
+      unpackPermissionEnvelope(entry).requestId === shownRequestIdRef.current
+    )) || null
+    : null;
+  // Oldest ask first (store preserves insertion order) unless one is held.
+  const current = held || list[0] || null;
   // Flash the browser tab title while anything is waiting. The desktop
   // notification already fired, but notifications get missed — and an
   // agent sits blocked for exactly as long as nobody notices, so the cost
@@ -50,6 +63,13 @@ export default function GlobalPermissionContainer() {
   );
   const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
   const currentRequestId = current ? unpackPermissionEnvelope(current).requestId : '';
+  // The typing gate only decides whether an ask may OPEN over what the
+  // operator is writing. Once it is open it stays open — including while
+  // they type into the dialog's own fields.
+  const open = !!current && (!typing || !!held);
+  useEffect(() => {
+    shownRequestIdRef.current = open ? currentRequestId : '';
+  }, [open, currentRequestId]);
 
   const submit = useCallback(async ({ requestId, allow, rationale, remember }) => {
     if (!currentTaskId) { return false; }
@@ -78,7 +98,7 @@ export default function GlobalPermissionContainer() {
   }, [currentTaskId]);
 
   if (!current) { return null; }
-  if (typing) {
+  if (!open) {
     return (
       <div className="permission-pending-hint" role="status">
         <span className="permission-pending-dot" aria-hidden="true" />
@@ -98,6 +118,10 @@ export default function GlobalPermissionContainer() {
       onAuditBubble={auditBubble}
       taskCode={currentTaskId}
       taskSummary={unpackPermissionEnvelope(current).taskSummary}
+      // Held-back asks are invisible until this one is answered, and an
+      // agent stays blocked for as long as nobody knows it is waiting —
+      // so the dialog says how many are queued behind it.
+      queuedCount={Math.max(0, list.length - 1)}
     />
   );
 }

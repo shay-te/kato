@@ -11,7 +11,7 @@ import AskUserQuestionForm from './AskUserQuestionForm.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
 
 export default function PermissionModal({
-  raw, onDecide, taskCode = '', taskSummary = '',
+  raw, onDecide, taskCode = '', taskSummary = '', queuedCount = 0,
 }) {
   const {
     taskId, taskSummary: envelopeSummary,
@@ -130,6 +130,13 @@ export default function PermissionModal({
   // requested" when the task is unknown — the old fallback). Line 2:
   // "wants permission <ToolName>". The tool line ALWAYS renders so the
   // operator never loses the tool name on the no-task-code path.
+  // Other asks queue behind this dialog instead of replacing it (see
+  // GlobalPermissionContainer), so say they are there — an unseen ask is an
+  // agent blocked for as long as nobody notices it.
+  const queuedNote = queuedCount > 0
+    ? `${queuedCount} more request${queuedCount > 1 ? 's' : ''} waiting — `
+      + 'you\'ll see them after this one'
+    : '';
   const title = (
     <span className="permission-modal-title-stack">
       <span className="permission-modal-title-line">
@@ -165,8 +172,14 @@ export default function PermissionModal({
         id="permission-modal"
         ariaLabelledBy="permission-modal-title"
         title={title}
+        subtitle={queuedNote}
+        subtitleId="permission-queued-note"
       >
         <AskUserQuestionForm
+          // Keyed by the ask so a NEW question always starts blank, and its
+          // partial answer is stored under that same id (see the form).
+          key={requestId}
+          draftKey={requestId}
           questions={askQuestions}
           onAnswer={(answerText) => onDecide({
             allow: false, rationale: answerText, remember: false,
@@ -187,6 +200,8 @@ export default function PermissionModal({
       id="permission-modal"
       ariaLabelledBy="permission-modal-title"
       title={title}
+      subtitle={queuedNote}
+      subtitleId="permission-queued-note"
     >
       {sandboxWarning}
       {actionGuardBanner}
