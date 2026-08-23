@@ -2182,6 +2182,22 @@ class StartNewChatTests(unittest.TestCase):
         self.assertEqual(persisted[AGENT_SESSION_ID], '')
         self.assertEqual(persisted['previous_session_ids'], [first_id])
 
+    def test_fresh_chat_resets_the_context_reading(self) -> None:
+        # The cost indicator divides the current reading by the chat's floor.
+        # Carrying the OLD chat's 490k into a brand-new conversation would
+        # report the fresh chat as instantly expensive — the exact signal it
+        # exists to give, inverted.
+        self.manager.start_session(task_id='PROJ-1')
+        record = self.manager.get_record('PROJ-1')
+        record.context_used_tokens = 490_000
+        record.context_baseline_tokens = 42_000
+
+        self.manager.start_new_chat('PROJ-1')
+
+        record = self.manager.get_record('PROJ-1')
+        self.assertEqual(record.context_used_tokens, 0)
+        self.assertEqual(record.context_baseline_tokens, 0)
+
     def test_next_spawn_after_fresh_chat_does_not_resume(self) -> None:
         first = self.manager.start_session(task_id='PROJ-1')
         first_id = first.agent_session_id

@@ -3573,7 +3573,7 @@ def _register_action_guard_audit_route(app: Flask) -> None:
         })
 
 
-def _context_usage_from_record(record) -> dict:
+def _context_usage_from_record(record, app: Flask | None = None) -> dict:
     """Last persisted context reading for a task (zeros when there is none).
 
     The live figure lives on the SUBPROCESS, so a sleeping session — or any
@@ -3581,22 +3581,35 @@ def _context_usage_from_record(record) -> dict:
     indicator disappeared entirely. The record keeps the last value a live
     turn produced so the reading outlives the process that measured it.
     """
-    empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': ''}
+    empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0}
     if record is None:
         return empty
     try:
         used = int(getattr(record, 'context_used_tokens', 0) or 0)
         model = str(getattr(record, 'context_model', '') or '')
+        baseline = int(getattr(record, 'context_baseline_tokens', 0) or 0)
     except (TypeError, ValueError):
         return empty
     if used <= 0 or not model:
         return empty
+    # A chat with a reading but no floor: recover it from the transcript and
+    # keep it. Doing this ONLY on the live-session path (where the reading is
+    # persisted) left a SLEEPING chat blank forever — and a sleeping chat is
+    # exactly the one nobody is watching, which is who this indicator is for.
+    if baseline <= 0 and app is not None:
+        baseline = _ensure_recovered_baseline(app, record)
     return {
         'used_tokens': used,
         'limit_tokens': widen_window_to_observed(
             context_window_tokens(model), used,
         ),
         'model': model,
+        # What this chat cost on its first measured turn. The UI divides
+        # ``used`` by it to say how much more this session costs than
+        # starting a fresh one — the signal the "% left" meter can't give:
+        # a session at 490k of a 1M window looks half empty while charging
+        # 490k on every single turn.
+        'baseline_tokens': baseline,
     }
 
 
@@ -3604,33 +3617,82 @@ def _session_context_usage(app: Flask, session, record=None) -> dict:
     """Context-window usage for the composer indicator.
 
     Always the same shape so the UI has one branch, not three:
-    ``{used_tokens, limit_tokens, model}``. Falls back to the last PERSISTED
+    ``{used_tokens, limit_tokens, model, baseline_tokens}``. Falls back to the last PERSISTED
     reading when there is no live subprocess, so the indicator survives a
     sleeping session instead of blinking out between turns. Zeros only when
     nothing has ever been measured, which the UI renders as "unknown" —
     never as 0% used, which would read as "plenty of room".
     """
-    empty = {'used_tokens': 0, 'limit_tokens': 0, 'model': ''}
     if session is None:
-        return _context_usage_from_record(record)
+        return _context_usage_from_record(record, app)
     reader = getattr(session, 'context_usage', None)
     if not callable(reader):
-        return _context_usage_from_record(record)
+        return _context_usage_from_record(record, app)
     try:
         usage = reader()
     except Exception:
         app.logger.exception('failed to read session context usage')
-        return _context_usage_from_record(record)
+        return _context_usage_from_record(record, app)
     if not isinstance(usage, dict):
-        return _context_usage_from_record(record)
+        return _context_usage_from_record(record, app)
     # A live session that has not seen an assistant turn YET (just spawned,
     # or resumed after a restart) reports zeros — fall back rather than blank
     # the indicator, then persist any real reading so it outlives this
     # subprocess.
     if int(usage.get('used_tokens', 0) or 0) <= 0:
-        return _context_usage_from_record(record)
+        return _context_usage_from_record(record, app)
     _persist_context_usage(app, record, usage)
+    # The baseline lives on the record (the session object only knows the
+    # current turn), so stamp it onto the live reading the UI receives.
+    usage = dict(usage)
+    usage['baseline_tokens'] = int(
+        getattr(record, 'context_baseline_tokens', 0) or 0,
+    )
     return usage
+
+
+# What a FRESH chat can plausibly cost on its first turn: system prompt +
+# project instructions + whatever docs are injected. Comfortably above any
+# real floor (those run to tens of thousands of tokens) and far below a
+# conversation already in progress. A genuinely huge first turn simply gets
+# no cost reading, which is the safe direction.
+_MAX_PLAUSIBLE_BASELINE_TOKENS = 150_000
+
+
+def _ensure_recovered_baseline(app: Flask, record) -> int:
+    """Recover a missing floor from the transcript and persist it (or 0)."""
+    recovered = _recovered_chat_floor(app, record)
+    if recovered <= 0:
+        return 0
+    try:
+        record.context_baseline_tokens = recovered
+        manager = app.config.get('SESSION_MANAGER')
+        saver = getattr(manager, 'save_record', None) or getattr(
+            manager, 'update_record', None,
+        )
+        if callable(saver):
+            saver(record)
+    except Exception:
+        # Not persisting just means we recover it again next time.
+        app.logger.exception('failed to persist a recovered chat floor')
+    return recovered
+
+
+def _recovered_chat_floor(app: Flask, record) -> int:
+    """First-turn context size for an in-progress chat, from its transcript."""
+    try:
+        from claude_core_lib.claude_core_lib.helpers.chat_floor import (
+            chat_floor_tokens,
+        )
+        return chat_floor_tokens(
+            str(getattr(record, 'agent_session_id', '') or ''),
+            str(getattr(record, 'cwd', '') or ''),
+        )
+    except Exception:
+        # Best-effort by design: the indicator hides itself when the floor
+        # is unknown, which is the safe direction.
+        app.logger.exception('failed to recover the chat floor from a transcript')
+        return 0
 
 
 def _persist_context_usage(app: Flask, record, usage: dict) -> None:
@@ -3641,14 +3703,40 @@ def _persist_context_usage(app: Flask, record, usage: dict) -> None:
     model = str(usage.get('model', '') or '')
     if used <= 0 or not model:
         return
+    # The FIRST reading of a chat is its floor: system prompt + project
+    # instructions + injected docs, i.e. what a fresh chat would cost. Set
+    # once per chat (start_new_chat clears it), never raised afterwards —
+    # a later, larger reading is the growth we exist to report.
+    #
+    # …but ONLY if that first reading could actually BE a floor. A chat that
+    # was already 490k tokens deep when this feature arrived would otherwise
+    # adopt 490k as its baseline and report itself at 1.0x — a green light on
+    # the single most expensive chat on the machine. Above the ceiling we
+    # record nothing, the multiple stays unknown, and the indicator shows no
+    # dot at all: "we cannot tell" is an honest answer, "safe" is not.
+    baseline = int(getattr(record, 'context_baseline_tokens', 0) or 0)
+    if baseline > 0:
+        new_baseline = min(baseline, used)
+    elif used <= _MAX_PLAUSIBLE_BASELINE_TOKENS:
+        new_baseline = used
+    else:
+        # A chat already in progress. Its floor is not this reading — it is
+        # the first turn of its own transcript, which the CLI has been
+        # writing all along. Recovering it is what lets an EXISTING chat get
+        # a cost reading instead of sitting blank until the operator starts a
+        # new one. Still 0 when the transcript can't be found or read, and 0
+        # means "show nothing", never "safe".
+        new_baseline = _recovered_chat_floor(app, record)
     if (
         int(getattr(record, 'context_used_tokens', 0) or 0) == used
         and str(getattr(record, 'context_model', '') or '') == model
+        and baseline == new_baseline
     ):
         return  # unchanged — don't rewrite the record on every poll
     try:
         record.context_used_tokens = used
         record.context_model = model
+        record.context_baseline_tokens = new_baseline
         manager = app.config.get('SESSION_MANAGER')
         saver = getattr(manager, 'save_record', None) or getattr(
             manager, 'update_record', None,

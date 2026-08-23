@@ -65,13 +65,6 @@ vi.mock('./hooks/useTaskAttention.js', () => ({
     clear: vi.fn(),
   })),
 }));
-vi.mock('./hooks/useRememberedToolDecisions.js', () => ({
-  useRememberedToolDecisions: vi.fn(() => ({
-    recall: vi.fn().mockReturnValue(null),
-    refresh: vi.fn(),
-    decisions: [],
-  })),
-}));
 vi.mock('./hooks/useSafetyState.js', () => ({
   useSafetyState: vi.fn(() => null),
 }));

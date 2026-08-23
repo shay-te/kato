@@ -121,6 +121,17 @@ def _export_agent_env_from_kato_config() -> None:
     ignored = os.environ.get('KATO_IGNORED_REPOSITORY_FOLDERS', '').strip()
     if ignored:
         os.environ.setdefault('AGENT_IGNORED_REPOSITORY_FOLDERS', ignored)
+    # Read-dedupe (claude_core_lib/helpers/read_dedupe.py): blocks the agent
+    # re-reading a file it already has in context. Off unless the operator
+    # sets KATO_DEDUPE_READS. Its per-session state lives in kato's state dir.
+    dedupe = os.environ.get('KATO_DEDUPE_READS', '').strip()
+    if dedupe:
+        os.environ.setdefault('AGENT_READ_DEDUPE_ENABLED', dedupe)
+    from kato_core_lib.helpers.kato_paths_utils import kato_home_path
+    os.environ.setdefault(
+        'AGENT_READ_DEDUPE_STATE_DIR',
+        str(kato_home_path('read-dedupe', env_key='KATO_READ_DEDUPE_STATE_DIR')),
+    )
 
 
 class KatoCoreLib(CoreLib):

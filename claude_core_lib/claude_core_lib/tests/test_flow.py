@@ -370,9 +370,36 @@ class SessionManagerLifecycleFlowTest(unittest.TestCase):
             created_at_epoch=1000.0,
             updated_at_epoch=2000.0,
             cwd='/tmp/rt',
+            # The context reading is the whole reason the record persists at
+            # all between subprocesses; ``from_dict`` used to drop all three
+            # fields, so every reload silently reset the indicator to unknown.
+            context_used_tokens=490_000,
+            context_model='claude-opus-5',
+            context_baseline_tokens=42_000,
         )
         restored = PlanningSessionRecord.from_dict(original.to_dict())
         self.assertEqual(restored, original)
+
+    def test_context_reading_survives_a_reload(self) -> None:
+        # Explicit, because a round-trip equality check passes just as
+        # happily when BOTH sides default to zero.
+        original = PlanningSessionRecord(
+            task_id='PROJ-RT-2', context_used_tokens=490_000,
+            context_model='claude-opus-5', context_baseline_tokens=42_000,
+        )
+        restored = PlanningSessionRecord.from_dict(original.to_dict())
+        self.assertEqual(restored.context_used_tokens, 490_000)
+        self.assertEqual(restored.context_model, 'claude-opus-5')
+        self.assertEqual(restored.context_baseline_tokens, 42_000)
+
+    def test_a_corrupt_context_reading_loads_as_unknown(self) -> None:
+        restored = PlanningSessionRecord.from_dict({
+            'task_id': 'PROJ-RT-3',
+            'context_used_tokens': 'not-a-number',
+            'context_baseline_tokens': -5,
+        })
+        self.assertEqual(restored.context_used_tokens, 0)
+        self.assertEqual(restored.context_baseline_tokens, 0)
 
 
 # ---------------------------------------------------------------------------

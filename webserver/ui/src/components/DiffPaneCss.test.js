@@ -170,11 +170,16 @@ test('Changed-file tree guide line stays out of the chevron lane', () => {
   assert.match(body, /background-image\s*:\s*repeating-linear-gradient\(/);
 });
 
-test('Changed-file tree gives folders lighter weight than files', () => {
+test('Changed-file tree rows are plain weight, like a normal file explorer', () => {
+  // Every row used to be bold (700 base, 750 files, 600 folders), which
+  // leaves no emphasis to spend — the pane read as one dense block. Colour
+  // and the git indicators carry the meaning; weight carried none of it.
+  const rowBody = ruleBody('.diff-file-tree-row');
   const folderBody = ruleBody('.files-changed-tree-folder');
   const fileBody = ruleBody('.files-changed-tree-label');
-  assertDeclaration(folderBody, 'font-weight', '600');
-  assertDeclaration(fileBody, 'font-weight', '750');
+  assert.match(rowBody, /font\s*:\s*400 /);
+  assertDeclaration(folderBody, 'font-weight', '400');
+  assertDeclaration(fileBody, 'font-weight', '400');
 });
 
 test('Changed-file tree hover and selected states use opaque backgrounds', () => {

@@ -210,3 +210,69 @@ class RepositoryScopeTextBranchTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HelperScriptDirectoryTests(unittest.TestCase):
+    """The scope block names WHERE scripts go, not just where they don't.
+
+    The block always forbade ``/tmp``, and agents kept writing scripts there
+    anyway: a prohibition with no destination loses to habit, because an agent
+    that needs somewhere to put a one-off script still needs somewhere. Naming
+    the place is the fix.
+    """
+
+    def test_it_names_a_helper_script_directory(self) -> None:
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        self.assertIn('YOUR HELPER-SCRIPT DIRECTORY IS:', block)
+        self.assertIn('/wks/PROJ-1/helper_scripts', block)
+
+    def test_it_sits_beside_the_repositories_not_inside_one(self) -> None:
+        # Anything inside a repository clone is swept into the task's commit
+        # by the publishing side, so a scratch dir there would ship the
+        # agent's junk in the pull request. The collapsed parent is the task
+        # folder; that is where it must land.
+        block = workspace_scope_block(['/wks/PROJ-1/repo-a', '/wks/PROJ-1'])
+        self.assertIn('/wks/PROJ-1/helper_scripts', block)
+        self.assertNotIn('/wks/PROJ-1/repo-a/helper_scripts', block)
+
+    def test_it_tells_the_agent_NOT_to_delete_its_own_scripts(self) -> None:
+        # Not merely "you needn't tidy": keeping them is the instruction. A
+        # helper written three turns ago is usually the thing needed two
+        # turns later, and the workspace removal is the only cleanup there
+        # is, so deleting early only costs a rewrite.
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        self.assertIn('Do NOT delete anything from it', block)
+        self.assertIn('need again', block)
+        self.assertIn('removes this task', block)
+
+    def test_it_covers_what_scripts_PRODUCE_not_just_scripts(self) -> None:
+        # Measured from real sessions: the agent put test databases
+        # (/tmp/*_tests.db), backups (/tmp/*.bak) and its own notes outside
+        # the workspace, not only scripts. Naming scripts alone leaves every
+        # one of those without a home.
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        for need in ('test databases', 'backups', 'notes'):
+            self.assertIn(need, block)
+
+    def test_running_installed_tools_is_not_a_boundary_violation(self) -> None:
+        # The old wording ("NEVER go outside it — not to read, not to
+        # write, not to list") also forbade ``2>/dev/null`` and running the
+        # system python. A rule that cannot be followed gets discounted
+        # wholesale, so the carve-out is what keeps the rest credible.
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        self.assertIn('/dev/null', block)
+        self.assertIn('PROJECT', block)
+
+    def test_it_says_to_ask_for_a_repository_rather_than_find_it(self) -> None:
+        # Measured: 4 Edits and 4 Reads landed in the operator's own source
+        # tree — the agent went looking for a repo the task did not have.
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        self.assertIn('Ask for the repository to be added', block)
+
+    def test_the_forbidden_locations_are_still_spelled_out(self) -> None:
+        block = workspace_scope_block(['/wks/PROJ-1'])
+        for path in ('/tmp', '/var/tmp', '$TMPDIR'):
+            self.assertIn(path, block)
+
+    def test_no_directory_line_without_a_resolved_workspace(self) -> None:
+        self.assertEqual(workspace_scope_block([]), '')

@@ -50,6 +50,7 @@ import { fetchDraft, saveDraft, uploadAttachment } from '../api.js';
 import ComposerActionsMenu from './ComposerActionsMenu.jsx';
 import ComposerModeMenu from './ComposerModeMenu.jsx';
 import ContextMeter from './ContextMeter.jsx';
+import ChatCostDot from './ChatCostDot.jsx';
 
 // Composer state (the textarea contents + attached images) lives
 // INSIDE this component on purpose — typing should not re-render
@@ -734,6 +735,7 @@ const MessageForm = forwardRef(function MessageForm({
           />
         </div>
         <div className="composer-toolbar-right">
+          <ChatCostDot usage={contextUsage} />
           <ContextMeter usage={contextUsage} />
           <ComposerModeMenu
             mode={agentMode}

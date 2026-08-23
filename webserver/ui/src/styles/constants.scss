@@ -62,6 +62,13 @@ $C-NEUTRAL-07-A75: rgba(16, 16, 18, 0.75);
 $C-NEUTRAL-100-A06: rgba(255, 255, 255, 0.06);
 $C-NEUTRAL-100-A10: rgba(255, 255, 255, 0.1);
 $C-NEUTRAL-11-A62: rgba(28, 28, 30, 0.62);
+/* The app's reading surface — panels and the chat. Sits between the page
+ * (#0a0a0a, too dark to read a long answer on) and the hover/border grey
+ * (#2a2a2a): #1f1f1f read as washed-out, this keeps the lift without the
+ * wash. Matches VS Code Dark Modern's sidebar/panel value. Kept as its own
+ * base rather than reusing $C-NEUTRAL-16, because a surface painted in the
+ * hover colour makes every hover state vanish. */
+$C-NEUTRAL-09: #181818;
 $C-NEUTRAL-16: #2a2a2a;
 $C-NEUTRAL-19: #303134;
 $C-NEUTRAL-23-A98: rgba(56, 56, 60, 0.98);
@@ -73,6 +80,12 @@ $C-NEUTRAL-64: #a3a3a3;
 $C-NEUTRAL-75: #b6c2cf;
 $C-NEUTRAL-79: #c8c8cd;
 $C-NEUTRAL-96: #f5f5f7;
+/* Reading grey for long-form text on a dark surface. Near-white (#f5f5f7)
+ * at 16:1 against the panel makes glyphs bloom — the halation that reads as
+ * "harder to read" even though the contrast number says otherwise. This is
+ * still 12:1, far above AA, with the glare gone. Headings and labels keep
+ * the brighter value; this is for paragraphs. */
+$C-NEUTRAL-83: #d4d4d4;
 $C-NEUTRAL-96-A28: rgba(245, 245, 247, 0.28);
 $C-NEUTRAL-96-A42: rgba(245, 245, 247, 0.42);
 $C-NEUTRAL-96-A65: rgba(245, 245, 247, 0.65);

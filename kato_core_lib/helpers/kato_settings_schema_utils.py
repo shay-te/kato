@@ -218,6 +218,13 @@ SETTINGS_SCHEMA: list[dict] = [
              'cleanup. 0 = disable TTL cleanup.', {}),
             ('KATO_OPERATOR_EMAIL', 'text', 'Operator email',
              'Recorded as approved_by on approvals. Audit only.', {}),
+            ('KATO_DEDUPE_READS', 'bool',
+             'Skip re-reading unchanged files',
+             'When the agent asks to read a file it already read in this '
+             'chat, and the file has not changed, tell it so instead of '
+             'sending the contents again. Measured at ~13% of everything '
+             'tools put in context. It can always force a re-read by asking '
+             'for a line range. Off by default.', {}),
             ('KATO_ARCHITECTURE_DOC_PATH', 'text',
              'Architecture doc path',
              'Markdown file appended to Claude\'s system prompt on '

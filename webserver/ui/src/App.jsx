@@ -49,7 +49,6 @@ import {
   writeLastActiveTask,
 } from './utils/lastActiveTask.js';
 import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
-import { useRememberedToolDecisions } from './hooks/useRememberedToolDecisions.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
@@ -100,15 +99,6 @@ export default function App() {
   // same value as the header chip (UNA-2492).
   const [agentStatuses, setAgentStatuses] = useState({});
   useEffect(() => agentStatusStore.subscribe(setAgentStatuses), []);
-  // Remembered "Allow always"/"Deny always" decisions are backend-owned
-  // (kato_core_lib/helpers/tool_decision_store.py) — the server
-  // auto-resolves a matching pending ask before it ever reaches the
-  // tab-attention feed, the permission modal, or the per-task SSE
-  // stream. This read-only cache of the backend's decisions is only
-  // needed for the status-feed notification de-dup hint (see
-  // useNotificationRouting) — a log line that fires before that
-  // server-side check runs.
-  const rememberedToolDecisions = useRememberedToolDecisions();
   // "+ Add task" picker open/closed state — owned by App so the
   // modal sits above the layout (not inside TabList) and can fire
   // a ``refresh()`` of the session list once an adoption succeeds.
@@ -387,10 +377,7 @@ export default function App() {
     onTaskClick: onTaskClickFromNotification,
   });
 
-  const routing = useNotificationRouting(notifications.notify, {
-    recallToolDecision: rememberedToolDecisions.recall,
-    activeTaskId,
-  });
+  const routing = useNotificationRouting(notifications.notify, { activeTaskId });
 
   const handleStatusEntry = useCallback((entry) => {
     routing.onStatusEntry(entry);

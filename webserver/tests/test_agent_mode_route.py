@@ -117,7 +117,9 @@ class SessionContextUsageTests(unittest.TestCase):
         body = app.test_client().get('/api/sessions/T1').get_json()
         self.assertEqual(
             body['context_usage'],
-            {'used_tokens': 0, 'limit_tokens': 0, 'model': ''},
+            # ``baseline_tokens`` (the cost indicator's floor) is part of the
+            # one shape every path returns — zeros here, same as the rest.
+            {'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0},
         )
 
 

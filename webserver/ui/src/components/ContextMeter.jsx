@@ -13,7 +13,13 @@
  * a guessed window would be worse than no bar — it would send someone into a
  * needless compaction, or let them hit the wall mid-task believing they had
  * room.
+ *
+ * It answers ONE question — how close is the window to full. What the chat
+ * COSTS per turn is a different question with its own indicator; see
+ * ChatCostDot.jsx.
  */
+import { formatTokens } from '../utils/chatCost.js';
+
 export default function ContextMeter({ usage }) {
   const used = toCount(usage?.used_tokens);
   const limit = toCount(usage?.limit_tokens);
@@ -29,7 +35,10 @@ export default function ContextMeter({ usage }) {
 
   return (
     <div
-      className={`context-meter context-meter--${level}`}
+      // ``tooltip-above tooltip-end``: this sits at the bottom-right corner of
+      // the composer, where the default (below, centred) tooltip renders
+      // underneath the chat input and off the right edge — unreadable.
+      className={`context-meter context-meter--${level} tooltip-above tooltip-end`}
       role="status"
       aria-label={
         `Context window: ${remainingPct}% remaining, `
@@ -47,6 +56,9 @@ export default function ContextMeter({ usage }) {
     </div>
   );
 }
+
+
+
 
 // Warn early enough to act. Compacting takes a turn, so "act now" has to fire
 // while there is still room to run it.
@@ -72,11 +84,3 @@ function toCount(value) {
   return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
 }
 
-function formatTokens(count) {
-  if (count >= 1_000_000) {
-    const millions = count / 1_000_000;
-    return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;
-  }
-  if (count >= 1_000) { return `${Math.round(count / 1_000)}k`; }
-  return String(count);
-}

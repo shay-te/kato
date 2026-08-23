@@ -1,4 +1,16 @@
-/* AUTO-GENERATED from webserver/ui/src/styles/app.scss — do NOT edit   this file directly. Edit the .scss sources and run   `npm run build:css` (in webserver/ui) to recompile. */ /* AUTO-GENERATED from webserver/ui/src/styles/app.scss — do NOT edit   this file directly. Edit the .scss sources and run   `npm run build:css` (in webserver/ui) to recompile. */
+/* AUTO-GENERATED from webserver/ui/src/styles/app.scss — do NOT edit   this file directly. Edit the .scss sources and run   `npm run build:css` (in webserver/ui) to recompile. */
+/* The app's reading surface — panels and the chat. Sits between the page
+ * (#0a0a0a, too dark to read a long answer on) and the hover/border grey
+ * (#2a2a2a): #1f1f1f read as washed-out, this keeps the lift without the
+ * wash. Matches VS Code Dark Modern's sidebar/panel value. Kept as its own
+ * base rather than reusing $C-NEUTRAL-16, because a surface painted in the
+ * hover colour makes every hover state vanish. */
+/* Reading grey for long-form text on a dark surface. Near-white (#f5f5f7)
+ * at 16:1 against the panel makes glyphs bloom — the halation that reads as
+ * "harder to read" even though the contrast number says otherwise. This is
+ * still 12:1, far above AA, with the glare gone. Headings and labels keep
+ * the brighter value; this is for paragraphs. */
+/* AUTO-GENERATED from webserver/ui/src/styles/app.scss — do NOT edit   this file directly. Edit the .scss sources and run   `npm run build:css` (in webserver/ui) to recompile. */
 * {
   box-sizing: border-box;
 }
@@ -92,6 +104,14 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   background: #0a0a0a;
   color: #f5f5f7;
+  /* THE dark-theme rendering fix, and it was simply missing. macOS defaults
+   * to subpixel antialiasing, which is tuned for dark-on-light; run it the
+   * other way and every glyph gains weight and a soft edge, so the whole UI
+   * reads a half-step bolder and slightly blurred. Grayscale AA renders the
+   * same fonts thinner and crisper — the visible difference people describe
+   * as "the font should be thinner". */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   display: flex;
   flex-direction: column;
 }
@@ -509,7 +529,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   min-height: 0;
   border: 1px solid #2a2a2a;
   border-radius: 12px;
-  background: #0a0a0a;
+  /* One reading surface across the app. The chat moved to this value for
+   * legibility; leaving the file tree and the other panels at near-black
+   * made the two panes look like two different applications sitting side
+   * by side. Same grey everywhere, so the eye crossing from tree to chat
+   * doesn't re-adapt. */
+  background: #181818;
   /* Positioning context for the resize handle, which anchors itself
    * into the gutter beside the card. */
   position: relative;
@@ -1791,6 +1816,12 @@ header .chats-menu button:not(.header-status) {
   flex: 1;
   overflow-y: auto;
   position: relative;
+  /* The chat is the surface an operator reads for hours, so it gets the
+   * value they read code on all day, a shade above the page itself.
+   * Painting only the assistant's own card left every gap around it — tool
+   * bubbles, spacing, the run of the pane — at near-black, which is what
+   * "still black" meant: the card was an island. The surface is the pane. */
+  background: #181818;
   /* No top padding: a sticky prompt sticks to the scrollport's
    * CONTENT box, so any top padding becomes a dead strip between
    * the header and the pinned prompt (content scrolls visibly
@@ -2334,6 +2365,38 @@ header .chats-menu button:not(.header-status) {
  * because Claude's long answers (the "what changed" summaries with
  * dense inline-code spans on every line) doubled the bubble height
  * at the previous 1.5/8px values — see the operator screenshot. */
+/* Long prose needs a surface, not a void. The page is #0a0a0a and the
+ * assistant's text sat directly on it with no boundary, so a multi-paragraph
+ * answer read as text floating in black — the operator's "hard to read".
+ * A faint raise plus padding gives the eye an edge to track down the left
+ * side and a measurable line start. Same idiom as the panel surfaces
+ * elsewhere; deliberately subtle, because a strong card around every reply
+ * would fight the code blocks nested inside it. */
+.bubble.assistant .bubble-content {
+  /* Paragraph grey, not near-white — see $C-NEUTRAL-83. Bold phrases and
+   * headings inside still resolve to the brighter colour, so emphasis keeps
+   * working; it is the body copy that stops glaring. */
+  color: #d4d4d4;
+  /* No background of its own: #event-log now paints the surface, and a card
+   * in the same colour is an outline around nothing. What is left is the
+   * padding — the text still needs a margin from the pane edge. */
+  padding: 2px 0;
+  /* Cap the MEASURE, not the pane. Typography's rule of thumb is 45-75
+   * characters per line; a wide pane was giving these paragraphs well over
+   * 100, and the eye loses the line start on the return sweep — which is
+   * what reads as "dense" long before the words are at fault. Code blocks
+   * inside still scroll on their own, so nothing is squeezed. */
+  max-width: 74ch;
+}
+
+/* The inline chips are the reason the paragraph looked busy: orange on
+ * near-black inside a hard border, several per line. Same weight as the
+ * prose around them, a quieter surface, and no full border — they mark a
+ * word as code without interrupting the sentence. */
+.bubble.assistant .bubble-content .md-inline-code {
+  font-weight: 400;
+}
+
 .bubble.assistant .bubble-content > :first-child {
   margin-top: 0;
 }
@@ -2343,8 +2406,14 @@ header .chats-menu button:not(.header-status) {
 }
 
 .bubble.assistant .bubble-content p {
-  margin: 0 0 4px;
-  line-height: 1.4;
+  margin: 0 0 8px;
+  /* 1.4 is tight for a 74ch measure; 1.55 gives the return sweep a clear
+   * target and is what turns a wall of text into scannable paragraphs. */
+  line-height: 1.55;
+}
+
+.bubble.assistant .bubble-content p:last-child {
+  margin-bottom: 0;
 }
 
 .bubble.assistant .bubble-content h1,
@@ -2380,7 +2449,23 @@ header .chats-menu button:not(.header-status) {
 .bubble.assistant .bubble-content ul,
 .bubble.assistant .bubble-content ol {
   margin: 0 0 4px;
-  padding-left: 20px;
+  padding-left: 16px;
+}
+
+.bubble.assistant .bubble-content ol > li::marker {
+  color: #a3a3a3;
+}
+
+/* 700 next to 400 body text is a shout; at 600 an emphasised phrase still
+ * reads as emphasis without turning a paragraph with three of them into a
+ * checkerboard. */
+.bubble.assistant .bubble-content strong,
+.bubble.assistant .bubble-content b {
+  font-weight: 600;
+  /* Emphasis is the one place the brighter value earns its keep: against
+   * the calmer body grey it now reads as emphasis by CONTRAST rather than
+   * by weight alone, which is why 600 is enough. */
+  color: #f5f5f7;
 }
 
 .bubble.assistant .bubble-content li {
@@ -2440,6 +2525,11 @@ header .chats-menu button:not(.header-status) {
   border-top: 1px solid #2a2a2a;
 }
 
+/* Calmer chips. With five or six per sentence, a saturated orange inside a
+ * hard border stops marking words and starts competing with the prose for
+ * attention — the reported "visually dominant". The pale amber carries the
+ * same "this is code" cue at a fraction of the weight, and dropping the
+ * border removes five outlines per line. */
 .bubble.assistant .bubble-content .md-inline-code {
   font-family: ui-monospace, monospace;
   font-size: 12.5px;
@@ -2449,10 +2539,10 @@ header .chats-menu button:not(.header-status) {
    * (the operator-screenshot scenario: every list item had 3-5
    * ``code`` chips per line). */
   padding: 0 5px;
-  background: #0a0a0a;
-  border: 1px solid #2a2a2a;
+  background: rgba(245, 158, 11, 0.1);
+  border: 0;
   border-radius: 3px;
-  color: #f59e0b;
+  color: #fde68a;
 }
 
 .bubble.assistant .bubble-content .md-code-block {
@@ -3878,7 +3968,16 @@ code {
   line-height: 1.45;
 }
 
+/* Full width of the question block, and it grows with the text. As a
+ * single-line input at the browser's default width this held about 25
+ * characters — an operator writing a sentence of reasoning watched the start
+ * of it scroll out of sight. Indented to sit under the option label, capped
+ * so a long answer scrolls inside the box rather than pushing the modal's
+ * Send button off screen. */
 .ask-question-other-input {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 22px);
   margin: 4px 0 0 22px;
   padding: 8px 10px;
   border: 1px solid #2a2a2a;
@@ -3886,6 +3985,17 @@ code {
   background: #0a0a0a;
   color: #f5f5f7;
   font-size: 13px;
+  font-family: inherit;
+  line-height: 1.45;
+  min-height: 62px;
+  max-height: 220px;
+  overflow-y: auto;
+  resize: vertical;
+}
+
+.ask-question-other-input:focus {
+  outline: none;
+  border-color: #2563eb;
 }
 
 .modal-raw {
@@ -6215,7 +6325,11 @@ body.kato-resizing {
   border-radius: 4px;
   background: transparent;
   color: #a3a3a3;
-  font: 700 14px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Normal weight, like every file explorer the operator already uses. A
+   * tree where EVERY row is bold has no emphasis left to spend: it reads as
+   * one dense block and nothing stands out. Meaning is carried by colour and
+   * the git indicators instead, which survive this unchanged. */
+  font: 400 14px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-align: left;
 }
 
@@ -6286,11 +6400,14 @@ body.kato-resizing {
 .files-changed-tree-folder {
   color: #a3a3a3;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
+/* Files sat at 750 against folders at 600 — a distinction nobody asked to
+ * read, at a weight that made the whole pane shout. Both plain now; the
+ * folder/file difference is already carried by the chevron and the icon. */
 .files-changed-tree-label {
-  font-weight: 750;
+  font-weight: 400;
 }
 
 .files-changed-tree-row.kind-add .files-changed-tree-label {
@@ -6574,7 +6691,11 @@ body.kato-resizing {
   position: relative;
   border-radius: 4px;
   color: #a3a3a3;
-  font: 700 14px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Plain weight — see .diff-file-tree-row. This is the project tree, the
+   * one the operator stares at longest; every row bold made a 60-repo list
+   * read as a wall of headings. The git colours and indicators are what
+   * should stand out, and they still do. */
+  font: 400 14px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   transition: background 90ms ease;
 }
 
@@ -6625,6 +6746,25 @@ body.kato-resizing {
 
 .tree-row-kind {
   flex-shrink: 0;
+}
+
+/* Folders bright, files quiet. With every row now at normal weight, this is
+ * what gives the tree its hierarchy — you scan the folder names to navigate
+ * and read the file names once you are inside.
+ *
+ * The two ``:not()``s are load-bearing, not defensive. Every state rule is
+ * ``.tree-row.<state> .tree-row-name`` — LOWER specificity than a plain
+ * ``.tree-row.is-folder .tree-row-name`` would be — so brightening folders
+ * naively would have silently overridden the selected cyan and the
+ * conflicted orange. Excluding those two keeps them winning without
+ * touching their rules.
+ *
+ * ``changed`` / ``changed-ancestor`` are deliberately NOT excluded: they
+ * paint the same grey as the default (the change signal in this tree is the
+ * orange badge and the line stats, not the name colour), so excluding them
+ * would leave a folder-with-changes looking like a file. */
+.tree-row.is-folder:not(.selected):not(.conflicted) .tree-row-name {
+  color: #f5f5f7;
 }
 
 .tree-row-name {
@@ -10064,6 +10204,44 @@ body.kato-resizing {
 
 .context-meter--unknown .context-meter-track {
   opacity: 0.35;
+}
+
+/* Chat-cost traffic light. A CIRCLE, not a number: the question it answers
+ * ("is this chat costing too much to keep going?") has three answers and one
+ * action, so an operator should be able to read it without doing arithmetic.
+ * Sits beside the context meter but is deliberately separate from it — "% left"
+ * is a different question and the two routinely disagree (a chat at 51% left
+ * can be re-reading 490k tokens every turn). */
+.chat-cost-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #34d399;
+  cursor: default;
+}
+
+/* Narrower than the shared tooltip default. The anchor is a 9px dot at the
+ * bottom-right of a pane that is often narrow, and a CSS tooltip has no way
+ * to detect an edge and reflow — it just gets clipped by whichever ancestor
+ * hides overflow (the operator's screenshot: the left third of the text
+ * sliced off at the pane boundary). A smaller box plus the short text in
+ * ChatCostDot.jsx keeps it inside. */
+.chat-cost-dot[data-tooltip]:hover::after,
+.chat-cost-dot[data-tooltip]:focus-visible::after {
+  max-width: 190px;
+}
+
+.chat-cost-dot--moderate {
+  background: #fde68a;
+}
+
+/* Red gets a soft halo — this one is asking for an action, and it has to be
+ * findable in a toolbar the operator is not looking at. */
+.chat-cost-dot--expensive {
+  background: #f87171;
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.35);
 }
 
 /* "Show full diff" — the escape hatch from the server's oversized-diff

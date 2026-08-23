@@ -67,6 +67,25 @@ describe('ContextMeter', () => {
     expect(screen.getByText('0% left')).toBeInTheDocument();
   });
 
+  test('it reports the window only — cost is a separate indicator', () => {
+    // Two different questions. A chat at 51% left can still be re-reading
+    // half a million tokens a turn; that lives in ChatCostDot.
+    render(<ContextMeter usage={{
+      used_tokens: 490_000, limit_tokens: 1_000_000, baseline_tokens: 40_000,
+    }} />);
+    expect(screen.getByText(/51% left/)).toBeInTheDocument();
+    expect(screen.queryByText(/fresh|expensive/)).toBeNull();
+  });
+
+  test('the tooltip opens upward and right-aligned', () => {
+    const { container } = render(<ContextMeter usage={{
+      used_tokens: 100_000, limit_tokens: 1_000_000,
+    }} />);
+    const meter = container.querySelector('.context-meter');
+    expect(meter.className).toContain('tooltip-above');
+    expect(meter.className).toContain('tooltip-end');
+  });
+
   test('junk values render nothing rather than NaN', () => {
     const { container } = render(
       <ContextMeter usage={{ used_tokens: 'lots', limit_tokens: null }} />,

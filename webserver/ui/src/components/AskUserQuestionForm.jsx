@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useAutoSizeTextarea } from '../hooks/useAutoSizeTextarea.js';
 import {
   askQuestionDraftKey, readDraftByKey, writeDraftByKey,
 } from '../utils/composerDraft.js';
@@ -118,12 +119,9 @@ export default function AskUserQuestionForm({
               </span>
             </label>
             {a.otherOn && (
-              <input
-                type="text"
-                className="ask-question-other-input"
-                placeholder="Type your answer…"
+              <OtherAnswer
                 value={a.other}
-                onChange={(e) => patch(i, { other: e.target.value })}
+                onChange={(value) => patch(i, { other: value })}
               />
             )}
           </fieldset>
@@ -144,6 +142,28 @@ export default function AskUserQuestionForm({
         </button>
       </div>
     </div>
+  );
+}
+
+// The free-text box for "Other". A one-line ``<input>`` (what this was) is
+// the wrong shape for the answers people actually type here — a sentence of
+// reasoning, sometimes several — and it scrolled the beginning out of sight
+// while they wrote. A textarea that grows with the text, full width of the
+// question block, keeps the whole answer readable while it is being written.
+// Its own component so it can own the ref the auto-size hook needs; hooks
+// cannot be called from inside the questions map.
+function OtherAnswer({ value, onChange }) {
+  const ref = useRef(null);
+  useAutoSizeTextarea(ref, value);
+  return (
+    <textarea
+      ref={ref}
+      className="ask-question-other-input"
+      placeholder="Type your answer…"
+      rows={2}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    />
   );
 }
 

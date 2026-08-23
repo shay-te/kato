@@ -66,6 +66,28 @@ describe('AskUserQuestionForm', () => {
     expect(onAnswer.mock.calls[0][0]).toContain('Other: a third option');
   });
 
+  test('Other is a multi-line box, not a one-line input', () => {
+    // It held ~25 characters as an <input>, so a sentence of reasoning
+    // scrolled its own beginning out of sight while being typed.
+    render(<AskUserQuestionForm questions={SINGLE} onAnswer={vi.fn()} onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByText('Other'));
+    const box = screen.getByPlaceholderText(/type your answer/i);
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box).toHaveClass('ask-question-other-input');
+  });
+
+  test('a long multi-line answer round-trips intact', () => {
+    const onAnswer = vi.fn();
+    render(<AskUserQuestionForm questions={SINGLE} onAnswer={onAnswer} onDismiss={vi.fn()} />);
+    fireEvent.click(screen.getByText('Other'));
+    const long = 'keep the column but rename it\nas we do in other places';
+    fireEvent.change(screen.getByPlaceholderText(/type your answer/i), {
+      target: { value: long },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /send answer/i }));
+    expect(onAnswer.mock.calls[0][0]).toContain(long);
+  });
+
   test('Dismiss fires onDismiss', () => {
     const onDismiss = vi.fn();
     render(<AskUserQuestionForm questions={SINGLE} onAnswer={vi.fn()} onDismiss={onDismiss} />);

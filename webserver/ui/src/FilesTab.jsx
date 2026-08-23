@@ -1428,6 +1428,11 @@ function Node({
     && folderContainsChange(relativePath, changedFiles);
   const rowClass = [
     'tree-row',
+    // Folders read brighter than files (see app.scss). The tree lost its
+    // weight distinction when every row went to normal weight; colour is
+    // what carries the hierarchy now, so the stylesheet needs to know which
+    // rows are folders.
+    isFolder ? 'is-folder' : 'is-file',
     node.isSelected ? 'selected' : '',
     isConflicted ? 'conflicted' : '',
     isChanged ? 'changed' : '',

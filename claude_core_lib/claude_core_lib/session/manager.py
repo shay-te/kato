@@ -55,6 +55,14 @@ SUPPORTED_SESSION_STATUSES = frozenset(
 )
 
 
+def _non_negative_int(value) -> int:
+    """``int(value)`` clamped at 0; 0 for anything unparseable."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class PlanningSessionRecord(object):
     """On-disk metadata for one planning session.
@@ -78,6 +86,13 @@ class PlanningSessionRecord(object):
     # turn — this just lets the last known value outlive the subprocess.
     context_used_tokens: int = 0
     context_model: str = ''
+    # What THIS chat cost on its first measured turn — the floor a fresh
+    # chat would start from (system prompt + project instructions + any
+    # injected docs). Every later turn re-reads the whole context, so
+    # ``context_used_tokens / context_baseline_tokens`` is what a session
+    # costs relative to starting over, which is the number that tells an
+    # operator when to open a new chat. Reset by ``start_new_chat``.
+    context_baseline_tokens: int = 0
     status: str = SESSION_STATUS_ACTIVE
     created_at_epoch: float = field(default_factory=time.time)
     updated_at_epoch: float = field(default_factory=time.time)
@@ -107,6 +122,15 @@ class PlanningSessionRecord(object):
             cwd=text_from_mapping(payload, 'cwd'),
             expected_branch=str(payload.get('expected_branch', '') or ''),
             previous_session_ids=session_id_list(payload.get('previous_session_ids')),
+            # Restored, not defaulted: ``to_dict`` has always written these,
+            # but this reader dropped them, so the reading the docstring
+            # promises would "outlive the subprocess" actually died on the
+            # next load and the indicator blanked after every restart.
+            context_used_tokens=_non_negative_int(payload.get('context_used_tokens')),
+            context_model=str(payload.get('context_model', '') or ''),
+            context_baseline_tokens=_non_negative_int(
+                payload.get('context_baseline_tokens'),
+            ),
         )
 
 
@@ -1054,6 +1078,11 @@ class ClaudeSessionManager(object):
                 record.previous_session_ids = history
                 record.agent_session_id = target_id
                 record.updated_at_epoch = time.time()
+                # The old chat's readings describe a conversation the
+                # operator just left. Keeping them would have the cost
+                # indicator report the NEW chat as instantly expensive.
+                record.context_used_tokens = 0
+                record.context_baseline_tokens = 0
                 # Clear the workspace mirror BEFORE persisting: if the orchestrator dies
                 # between the two steps, the record still holds the old id
                 # (chat unchanged, mirror re-syncs on the next persist) —

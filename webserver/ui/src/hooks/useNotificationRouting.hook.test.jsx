@@ -3,12 +3,37 @@
 // is the bridge between the status feed / session stream and the
 // notification surface; a bug here silently drops notifications.
 
-import { describe, test, expect, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { renderHook, waitFor } from '@testing-library/react';
+
+vi.mock('../api.js', () => ({ fetchPendingPermissions: vi.fn() }));
+
+import { fetchPendingPermissions } from '../api.js';
 
 import { useNotificationRouting } from './useNotificationRouting.js';
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import { CLAUDE_EVENT } from '../constants/claudeEvent.js';
+
+// Never sleep for real: the retry below is a 1.5s wall-clock wait.
+const NO_WAIT = { wait: () => Promise.resolve() };
+
+function _pending(taskId) {
+  return { pending: [{ task_id: taskId, request_id: 'r1', request: { tool_name: 'WebFetch' } }] };
+}
+
+// The status line's ping is decided in a promise chain, so a negative
+// assertion has to wait for that chain to settle — not just for the
+// synchronous call to return.
+async function _settled(calls = 2) {
+  await waitFor(() => expect(fetchPendingPermissions).toHaveBeenCalledTimes(calls));
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+beforeEach(() => {
+  fetchPendingPermissions.mockReset();
+  fetchPendingPermissions.mockResolvedValue({ pending: [] });
+});
 
 
 describe('useNotificationRouting — onStatusEntry', () => {
@@ -60,39 +85,102 @@ describe('useNotificationRouting — onStatusEntry', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  test('status-feed permission ask for a BACKGROUND task with a saved decision is SUPPRESSED', () => {
-    // The operator-reported leak: a remembered tool still pinged via the
-    // status feed even though the decision auto-resolves silently.
+  test('a BACKGROUND ask the backend already auto-approved does NOT ping', async () => {
+    // The operator-reported leak: "I get a browser notification, switch to
+    // the kato tab, and it was already approved." The status line is
+    // emitted BEFORE the webserver's auto-resolve runs, so it fires for
+    // asks that never need a human. /api/permissions/pending lists only
+    // what does — and it lists nothing here.
     const notify = vi.fn();
-    const recallToolDecision = vi.fn().mockReturnValue('allow');
     const { result } = renderHook(() => useNotificationRouting(notify, {
-      recallToolDecision,
-      activeTaskId: 'OTHER',
+      activeTaskId: 'OTHER', ...NO_WAIT,
     }));
 
     result.current.onStatusEntry({
       message: 'task PROJ-8: claude is asking permission to run WebFetch',
     });
 
+    await _settled();
     expect(notify).not.toHaveBeenCalled();
-    // Recalled by bare tool name — the status line has no command.
-    expect(recallToolDecision).toHaveBeenCalledWith('WebFetch', '');
   });
 
-  test('status-feed permission ask for a BACKGROUND task with NO saved decision still notifies', () => {
+  test('a BACKGROUND ask still waiting on a human DOES ping', async () => {
     const notify = vi.fn();
-    const recallToolDecision = vi.fn().mockReturnValue(null);
+    fetchPendingPermissions.mockResolvedValue(_pending('PROJ-8'));
     const { result } = renderHook(() => useNotificationRouting(notify, {
-      recallToolDecision,
-      activeTaskId: 'OTHER',
+      activeTaskId: 'OTHER', ...NO_WAIT,
     }));
 
     result.current.onStatusEntry({
       message: 'task PROJ-8: claude is asking permission to run WebFetch',
     });
 
-    expect(notify).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     expect(notify.mock.calls[0][0].taskId).toBe('PROJ-8');
+    // One look was enough — no retry needed.
+    expect(fetchPendingPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  test('an ask not registered yet is caught by the second look', async () => {
+    // The status line can land before the session records the ask.
+    const notify = vi.fn();
+    fetchPendingPermissions
+      .mockResolvedValueOnce({ pending: [] })
+      .mockResolvedValueOnce(_pending('PROJ-8'));
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'OTHER', ...NO_WAIT,
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+  });
+
+  test('a pending ask on a DIFFERENT task does not ping for this one', async () => {
+    const notify = vi.fn();
+    fetchPendingPermissions.mockResolvedValue(_pending('SOMEONE-ELSE'));
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'OTHER', ...NO_WAIT,
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    await _settled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  test('an unreachable backend pings anyway', async () => {
+    // Fail LOUD: a false ping costs a glance, a missed one costs an agent
+    // every minute it sits blocked with nobody watching.
+    const notify = vi.fn();
+    fetchPendingPermissions.mockRejectedValue(new Error('offline'));
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'OTHER', ...NO_WAIT,
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+  });
+
+  test('the focused task never even asks the backend', async () => {
+    const notify = vi.fn();
+    const { result } = renderHook(() => useNotificationRouting(notify, {
+      activeTaskId: 'PROJ-8', ...NO_WAIT,
+    }));
+
+    result.current.onStatusEntry({
+      message: 'task PROJ-8: claude is asking permission to run WebFetch',
+    });
+
+    expect(fetchPendingPermissions).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
   });
 
   test('non-permission status entries are NEVER suppressed by the focused-task gate', () => {
@@ -133,7 +221,7 @@ describe('useNotificationRouting — onSessionEvent', () => {
     expect(arg.title.toLowerCase()).toContain('approval');
   });
 
-  test('PERMISSION_REQUEST always notifies regardless of recallToolDecision', () => {
+  test('PERMISSION_REQUEST from the live stream always notifies', () => {
     // The webserver already auto-resolves a matching pending request
     // against a remembered decision before it's ever published over
     // SSE (see _maybe_auto_resolve_live_event in kato_webserver/app.py)

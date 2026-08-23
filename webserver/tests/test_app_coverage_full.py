@@ -1868,9 +1868,10 @@ class ContextUsageSurvivesIdleSessionTests(unittest.TestCase):
     """
 
     @staticmethod
-    def _record(used=0, model=''):
+    def _record(used=0, model='', baseline=0):
         return SimpleNamespace(
             task_id='T1', context_used_tokens=used, context_model=model,
+            context_baseline_tokens=baseline,
         )
 
     def _app(self):
@@ -1891,7 +1892,9 @@ class ContextUsageSurvivesIdleSessionTests(unittest.TestCase):
         # Zeros, NOT a guessed window — the UI renders unknown rather than
         # "0% used", which would read as plenty of room.
         usage = app_module._session_context_usage(self._app(), None, self._record())
-        self.assertEqual(usage, {'used_tokens': 0, 'limit_tokens': 0, 'model': ''})
+        self.assertEqual(usage, {
+            'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0,
+        })
 
     def test_a_live_reading_is_persisted_for_later(self) -> None:
         app = self._app()
@@ -1904,6 +1907,71 @@ class ContextUsageSurvivesIdleSessionTests(unittest.TestCase):
         self.assertEqual(record.context_used_tokens, 50_000)
         self.assertEqual(record.context_model, 'claude-opus-5')
         app.config['SESSION_MANAGER'].save_record.assert_called_once_with(record)
+
+    def test_the_first_reading_of_a_chat_becomes_its_baseline(self) -> None:
+        # The floor a fresh chat starts from — system prompt + project
+        # instructions + injected docs. Everything above it is history the
+        # session is paying to re-read on every turn.
+        app = self._app()
+        record = self._record()
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 42_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        usage = app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 42_000)
+        self.assertEqual(usage['baseline_tokens'], 42_000)
+
+    def test_the_baseline_never_rises_with_the_conversation(self) -> None:
+        # Otherwise it would chase ``used`` and every session would report
+        # itself as cheap forever.
+        app = self._app()
+        record = self._record(42_000, 'claude-opus-5', baseline=42_000)
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 500_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        usage = app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 42_000)
+        self.assertEqual(usage['used_tokens'], 500_000)
+
+    def test_a_lower_reading_lowers_the_baseline(self) -> None:
+        # A compaction can shrink the context below the first reading; that
+        # smaller number is the truer floor.
+        app = self._app()
+        record = self._record(500_000, 'claude-opus-5', baseline=42_000)
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 31_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 31_000)
+
+    def test_a_SLEEPING_chat_recovers_its_floor_too(self) -> None:
+        # Recovering only on the live path left a sleeping chat blank forever
+        # — and the chat nobody is watching is precisely who this is for.
+        app = self._app()
+        record = self._record(800_772, 'claude-opus-5')
+        with patch.object(app_module, '_recovered_chat_floor', return_value=30_788):
+            usage = app_module._session_context_usage(app, None, record)
+        self.assertEqual(usage['baseline_tokens'], 30_788)
+        # Persisted, so the transcript is not re-read on every fetch.
+        self.assertEqual(record.context_baseline_tokens, 30_788)
+        app.config['SESSION_MANAGER'].save_record.assert_called_once_with(record)
+
+    def test_an_unrecoverable_floor_leaves_a_sleeping_chat_blank(self) -> None:
+        app = self._app()
+        record = self._record(800_772, 'claude-opus-5')
+        with patch.object(app_module, '_recovered_chat_floor', return_value=0):
+            usage = app_module._session_context_usage(app, None, record)
+        self.assertEqual(usage['baseline_tokens'], 0)
+        app.config['SESSION_MANAGER'].save_record.assert_not_called()
+
+    def test_the_persisted_baseline_is_reported_without_a_live_session(self) -> None:
+        usage = app_module._session_context_usage(
+            self._app(), None, self._record(490_000, 'claude-opus-5', baseline=40_000),
+        )
+        self.assertEqual(usage['baseline_tokens'], 40_000)
 
     def test_a_live_session_with_no_turn_yet_uses_the_persisted_value(self) -> None:
         # Just spawned / resumed: the subprocess has seen no assistant turn,
@@ -1927,10 +1995,71 @@ class ContextUsageSurvivesIdleSessionTests(unittest.TestCase):
 
     def test_an_unchanged_reading_is_not_rewritten_every_poll(self) -> None:
         app = self._app()
-        record = self._record(50_000, 'claude-opus-5')
+        record = self._record(50_000, 'claude-opus-5', baseline=50_000)
         session = SimpleNamespace(context_usage=lambda: {
             'used_tokens': 50_000, 'limit_tokens': 1_000_000,
             'model': 'claude-opus-5',
         })
         app_module._session_context_usage(app, session, record)
         app.config['SESSION_MANAGER'].save_record.assert_not_called()
+
+    def test_a_chat_already_in_progress_never_adopts_its_own_size(self) -> None:
+        # The one that would have bitten on the very first restart: a chat
+        # already 490k deep adopting 490k as its floor reports 1.0x — a green
+        # light on the most expensive chat on the machine.
+        app = self._app()
+        record = self._record()
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 490_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        with patch.object(app_module, '_recovered_chat_floor', return_value=0):
+            usage = app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 0)
+        self.assertEqual(usage['baseline_tokens'], 0)
+        self.assertEqual(usage['used_tokens'], 490_000)
+
+    def test_an_in_progress_chat_gets_its_floor_from_the_transcript(self) -> None:
+        # So an EXISTING chat shows a reading instead of sitting blank until
+        # the operator happens to start a new one.
+        app = self._app()
+        record = self._record()
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 490_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        with patch.object(app_module, '_recovered_chat_floor', return_value=30_788):
+            usage = app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 30_788)
+        self.assertEqual(usage['baseline_tokens'], 30_788)
+
+    def test_a_transcript_read_that_blows_up_leaves_the_floor_unknown(self) -> None:
+        app = self._app()
+        record = SimpleNamespace(
+            task_id='T1', context_used_tokens=0, context_model='',
+            context_baseline_tokens=0, agent_session_id='sess', cwd='/nope',
+        )
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.chat_floor.chat_floor_tokens',
+            side_effect=RuntimeError('boom'),
+        ):
+            self.assertEqual(app_module._recovered_chat_floor(app, record), 0)
+        app.logger.exception.assert_called()
+
+    def test_a_record_predating_the_baseline_is_backfilled_once(self) -> None:
+        # Records written before the cost indicator existed carry a reading
+        # but no floor. Backfill it on the next poll (so the indicator works
+        # for sessions already running), then go quiet.
+        app = self._app()
+        record = self._record(50_000, 'claude-opus-5')
+        session = SimpleNamespace(context_usage=lambda: {
+            'used_tokens': 50_000, 'limit_tokens': 1_000_000,
+            'model': 'claude-opus-5',
+        })
+        app_module._session_context_usage(app, session, record)
+        self.assertEqual(record.context_baseline_tokens, 50_000)
+        app.config['SESSION_MANAGER'].save_record.assert_called_once()
+        app.config['SESSION_MANAGER'].save_record.reset_mock()
+        app_module._session_context_usage(app, session, record)
+        app.config['SESSION_MANAGER'].save_record.assert_not_called()
+

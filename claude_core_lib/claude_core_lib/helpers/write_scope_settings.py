@@ -33,10 +33,23 @@ The post-hoc warning (``_maybe_warn_out_of_sandbox_write`` in
 from __future__ import annotations
 
 import json
+import os
+import sys
 
 from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
     effective_sandbox_roots,
 )
+
+_READ_DEDUPE_MODULE = 'claude_core_lib.claude_core_lib.helpers.read_dedupe'
+# Generic (product-agnostic) switch; the orchestrator bridges its own config
+# name onto it. Off unless explicitly turned on — the hook withholds content
+# from the agent, which is not a default anyone should get by surprise.
+READ_DEDUPE_ENABLED_ENV = 'AGENT_READ_DEDUPE_ENABLED'
+
+
+def read_dedupe_enabled() -> bool:
+    value = str(os.environ.get(READ_DEDUPE_ENABLED_ENV, '') or '').strip().lower()
+    return value in ('1', 'true', 'yes', 'on')
 
 # File-mutating tools that ``acceptEdits`` auto-accepts. Bash is NOT here: it
 # already routes through the permission callback under ``acceptEdits``, so an
@@ -66,21 +79,56 @@ def out_of_workspace_write_ask_rules() -> list[str]:
     return list(_WRITE_TOOLS)
 
 
+def read_dedupe_hook_settings() -> dict:
+    """``PreToolUse`` hook that blocks re-reads of unchanged files.
+
+    See ``helpers/read_dedupe.py`` for the measurement that motivates it and
+    the escape hatches. Opt-in: the caller decides whether to include this,
+    because it changes what the agent can retrieve.
+
+    Invoked as ``<this interpreter> -m <module>`` so the hook runs in the
+    same environment as the caller, with no separate script file to install
+    or keep in sync.
+    """
+    return {'hooks': {'PreToolUse': [{
+        'matcher': 'Read',
+        'hooks': [{
+            'type': 'command',
+            'command': f'{sys.executable} -m {_READ_DEDUPE_MODULE}',
+        }],
+    }]}}
+
+
 def out_of_workspace_write_settings(
-    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
+    cwd: str = '',
+    additional_dirs: tuple[str, ...] | list[str] = (),
+    dedupe_reads: bool | None = None,
 ) -> dict:
-    """Settings dict that forces approval for out-of-workspace file writes."""
-    return {'permissions': {
+    """Settings dict that forces approval for out-of-workspace file writes.
+
+    ``dedupe_reads`` includes the read-dedupe ``PreToolUse`` hook; ``None``
+    (the default) defers to ``AGENT_READ_DEDUPE_ENABLED``, which is off
+    unless an operator turns it on — the hook withholds content from the
+    agent, so nobody should get it by surprise.
+    """
+    if dedupe_reads is None:
+        dedupe_reads = read_dedupe_enabled()
+    settings = {'permissions': {
         'allow': in_workspace_write_allow_rules(cwd, additional_dirs),
         'ask': out_of_workspace_write_ask_rules(),
     }}
+    if dedupe_reads:
+        settings.update(read_dedupe_hook_settings())
+    return settings
 
 
 def out_of_workspace_write_settings_json(
-    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
+    cwd: str = '',
+    additional_dirs: tuple[str, ...] | list[str] = (),
+    dedupe_reads: bool | None = None,
 ) -> str:
     """The settings as a compact JSON string for ``claude --settings``."""
     return json.dumps(
-        out_of_workspace_write_settings(cwd, additional_dirs),
+        out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads),
         separators=(',', ':'),
     )
