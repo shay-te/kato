@@ -56,9 +56,12 @@ describe('ChatCostDot', () => {
     const tooltip = dot.getAttribute('data-tooltip');
     expect(tooltip).toMatch(/490k\/turn/);
     expect(tooltip).toMatch(/12x a fresh chat/);
-    expect(tooltip).toMatch(/Start a new chat/);
+    // Names the control, not just the action — "start a new chat" is
+    // useless if you cannot find the button.
+    expect(tooltip).toMatch(/Chats menu/);
+    expect(tooltip).toMatch(/New chat/);
     // The hesitation it has to answer: "will I lose my work?"
-    expect(tooltip).toMatch(/work is untouched/);
+    expect(tooltip).toMatch(/history is kept/);
   });
 
   test('the tooltip stays short enough not to be clipped', () => {

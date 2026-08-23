@@ -2079,7 +2079,9 @@ header .chats-menu button:not(.header-status) {
 
 .chat-sticky-prompt-label {
   flex-shrink: 0;
-  font-size: $TEXT-10;
+  /* Caption, but not a squint: 10px uppercase with letter-spacing is at the
+   * edge of legible on a laptop screen. */
+  font-size: $TEXT-11;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2088,7 +2090,7 @@ header .chats-menu button:not(.header-status) {
 
 // When the prompt was asked — date + local time, dimmer than the label.
 .chat-sticky-prompt-time {
-  font-size: $TEXT-10;
+  font-size: $TEXT-11;
   color: $C-NEUTRAL-64;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -2124,7 +2126,10 @@ header .chats-menu button:not(.header-status) {
 
 .chat-sticky-prompt-text {
   display: block;
-  font-size: $TEXT-12_5;
+  /* Same size as the chat body. At 12.5px against the reply's 14px, the
+   * operator's OWN words were the smallest text on the screen — and this is
+   * the line they re-read most, to check what they actually asked for. */
+  font-size: $TEXT-14;
   line-height: 1.5;
   color: $C-NEUTRAL-96;
   white-space: pre-wrap;

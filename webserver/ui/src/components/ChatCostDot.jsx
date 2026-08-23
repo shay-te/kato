@@ -51,7 +51,10 @@ function ariaLabel(level, multiple) {
 function tooltip(level, used, multiple) {
   const cost = `${formatTokens(used)}/turn — ${formatCostMultiple(multiple)}x a fresh chat.`;
   if (level === 'safe') { return `${cost} Nothing to do.`; }
-  if (level === 'moderate') { return `${cost} Worth a new chat when this piece of work ends.`; }
-  return `${cost} Start a new chat — your work is untouched by it.`;
+  // Name the CONTROL, not just the action. "Start a new chat" left the
+  // operator asking where — the button is a comment icon in the task
+  // header, which is not a thing anyone guesses.
+  if (level === 'moderate') { return `${cost} New chat (Chats menu) when this ends.`; }
+  return `${cost} Chats menu → New chat. Your history is kept.`;
 }
 
