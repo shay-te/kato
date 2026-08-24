@@ -131,7 +131,10 @@ def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
     optimisation.
     """
     logger = configure_logger(__name__)
-    batch_method = getattr(service, 'process_review_comment_batch', None)
+    # ``comments`` first (the subsystem's own object), then the service
+    # itself: a stub that predates the extraction still answers directly.
+    holder = getattr(service, 'comments', service)
+    batch_method = getattr(holder, 'process_review_comment_batch', None)
     if callable(batch_method):
         try:
             result = batch_method(comments)
@@ -152,7 +155,10 @@ def _process_review_comment_batch_best_effort(service, comments) -> list[dict]:
     results: list[dict] = []
     for comment in comments:
         try:
-            single = service.process_review_comment(comment)
+            # ``holder`` is the comment subsystem when the service has
+            # one, so the singular fallback lands on the same object the
+            # batch attempt used.
+            single = getattr(holder, 'process_review_comment')(comment)
         except Exception:
             # Same diagnostic gap as the batch path: a silent skip
             # leaves the operator with no signal that a particular
@@ -208,7 +214,7 @@ def _dispatch_review_comments(service) -> list[dict]:
     (preserves the single-worker / mocked-test path).
     """
     runner = getattr(service, 'parallel_task_runner', None)
-    comments = service.get_new_pull_request_comments()
+    comments = service.comments.get_new_pull_request_comments()
     grouped = _group_review_comments_by_pull_request(comments)
     if not _runner_has_real_concurrency(runner):
         results: list[dict] = []
@@ -219,7 +225,7 @@ def _dispatch_review_comments(service) -> list[dict]:
         return results
     submitted_futures = []
     for batch in grouped:
-        task_id = service.task_id_for_review_comment(batch[0])
+        task_id = service.comments.task_id_for_review_comment(batch[0])
         if not task_id:
             results = _process_review_comment_batch_best_effort(service, batch)
             for result in results:
@@ -266,7 +272,10 @@ def _task_has_active_local_comment(service, task_id: str) -> bool:
     ``MagicMock`` returns another Mock, not ``True``) — the ``is True``
     identity check keeps this a no-op for those, same style as
     ``_runner_has_real_concurrency``'s ``isinstance`` guard."""
-    checker = getattr(service, 'has_local_comment_in_progress', None)
+    checker = getattr(
+        getattr(service, 'comment_runs', service),
+        'has_local_comment_in_progress', None,
+    )
     if not callable(checker):
         return False
     try:

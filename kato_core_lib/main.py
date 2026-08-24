@@ -768,7 +768,7 @@ def _cleanup_done_tasks_at_boot(app) -> None:
     continues (the scan-loop cleanup is still the backstop).
     """
     service = getattr(app, 'service', None)
-    cleanup = getattr(service, 'cleanup_done_tasks', None)
+    cleanup = getattr(getattr(service, 'cleanup', None), 'cleanup_done_tasks', None)
     if not callable(cleanup):
         return
     try:
@@ -1333,7 +1333,7 @@ def _requeue_stuck_comments(app) -> None:
     a failure here must never abort boot.
     """
     service = getattr(app, 'service', None)
-    requeue = getattr(service, 'requeue_stuck_in_progress_comments', None)
+    requeue = getattr(getattr(service, 'comment_runs', service), 'requeue_stuck_in_progress_comments', None)
     if not callable(requeue):
         return
     try:
@@ -1398,7 +1398,7 @@ def _start_pending_comment_work(app) -> None:
     scan loop's own drain remains the backstop.
     """
     service = getattr(app, 'service', None)
-    drain = getattr(service, 'drain_all_queued_task_comments', None)
+    drain = getattr(getattr(service, 'comment_runs', service), 'drain_all_queued_task_comments', None)
     if not callable(drain):
         return
     try:

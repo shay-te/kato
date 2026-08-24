@@ -44,10 +44,16 @@ GUARDRAIL_ROUTES = (GUARDRAIL_HELPER, COMMENT_PROMPT_INTERFACE)
 
 # Every module that builds an agent prompt asking for code changes.
 PROMPT_MODULES = (
-    'claude_core_lib.claude_core_lib.cli_client',
-    'codex_core_lib.codex_core_lib.cli_client',
+    # The CLI transports no longer assemble prompts at all — the shared mixin
+    # does, once, for every one of them. Naming the clients here would guard
+    # modules that build nothing while the real builder went unchecked.
+    'agent_core_lib.agent_core_lib.cli_agent_shared',
     'openhands_core_lib.openhands_core_lib.openhands_client',
-    'kato_core_lib.data_layers.service.agent_service',
+    # Was ``agent_service``, then ``task_comment_service``: the comment-run
+    # prompt followed the run engine out of both. This list must name
+    # wherever prompts are actually assembled, or the parity check silently
+    # guards nothing.
+    'kato_core_lib.data_layers.service.task_comment_run_service',
 )
 
 

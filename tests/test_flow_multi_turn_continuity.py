@@ -230,11 +230,11 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
 
         # Seed a record with no session id.
         from claude_core_lib.claude_core_lib.session.manager import (
-            PlanningSessionRecord, SESSION_STATUS_TERMINATED,
+            AgentSessionRecord, SESSION_STATUS_TERMINATED,
         )
         # Manually inject the empty-id record into the manager.
         with manager._lock:
-            manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('T1')] = AgentSessionRecord(
                 task_id='T1',
                 task_summary='hung first spawn',
                 agent_session_id='',
@@ -264,10 +264,10 @@ class FlowMultiTurnContinuityTests(unittest.TestCase):
         runner = self._make_runner(manager)
 
         from claude_core_lib.claude_core_lib.session.manager import (
-            PlanningSessionRecord, SESSION_STATUS_TERMINATED,
+            AgentSessionRecord, SESSION_STATUS_TERMINATED,
         )
         with manager._lock:
-            manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('T1')] = AgentSessionRecord(
                 task_id='T1',
                 agent_session_id='   ',  # whitespace only
                 status=SESSION_STATUS_TERMINATED,

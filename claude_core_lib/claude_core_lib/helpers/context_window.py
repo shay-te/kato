@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import re
 
+from agent_core_lib.agent_core_lib.helpers.context_accounting import (
+    sum_usage_tokens,
+    widen_window_to_observed as _widen_window_to_observed,
+)
+
 # Prompt-side usage keys. Together these are the conversation as the model saw
 # it this turn: fresh input plus whatever was served from / written to cache.
 # ``output_tokens`` is deliberately absent — what the model wrote lands in the
@@ -110,29 +115,16 @@ def _window_for(family: str, version: tuple[int, int] | None) -> int:
 
 
 def widen_window_to_observed(limit: object, used: object) -> int:
-    """Raise an assumed window that the session has already disproved.
+    """Raise an assumed window that this session has already disproved.
 
-    A turn cannot use more prompt tokens than the window holds. So if observed
-    usage exceeds the limit we derived from the model id, the derivation is
-    provably wrong and reporting "0% left" on it would be a false alarm — the
-    backstop for a model id this module has not learned yet.
-
-    Returns ``limit`` unchanged in the normal case (including an unknown ``0``
-    window, which must stay unknown rather than being invented from usage).
+    Claude's binding of the shared rule: the ceiling is the largest window
+    Claude ships. The backstop matters here because the window is derived from
+    the model id, and a model id this module has not learned yet would
+    otherwise read as "0% left" on a healthy chat.
     """
-    limit_tokens = _positive_int(limit)
-    used_tokens = _positive_int(used)
-    if limit_tokens <= 0 or used_tokens <= limit_tokens:
-        return limit_tokens
-    if used_tokens <= _LONG_CONTEXT_TOKENS:
-        return _LONG_CONTEXT_TOKENS
-    return used_tokens
-
-
-def _positive_int(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return 0
-    return int(value) if value > 0 else 0
+    return _widen_window_to_observed(
+        limit, used, ceiling=_LONG_CONTEXT_TOKENS,
+    )
 
 
 def resolved_model_of_event(raw: object) -> str:
@@ -154,17 +146,11 @@ def resolved_model_of_event(raw: object) -> str:
 
 
 def prompt_tokens_from_usage(usage: object) -> int:
-    """Prompt-side token total from a CLI ``usage`` payload (``0`` if absent)."""
-    if not isinstance(usage, dict):
-        return 0
-    total = 0
-    for key in _CONTEXT_USAGE_KEYS:
-        value = usage.get(key)
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, (int, float)):
-            total += int(value)
-    return max(0, total)
+    """Prompt-side token total from a Claude ``usage`` payload (``0`` if absent).
+
+    The key names are Anthropic's; the guarded summation is shared.
+    """
+    return sum_usage_tokens(usage, _CONTEXT_USAGE_KEYS)
 
 
 def usage_of_event(raw: object) -> dict:

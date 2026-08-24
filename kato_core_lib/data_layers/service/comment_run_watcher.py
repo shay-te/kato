@@ -110,7 +110,7 @@ class CommentRunWatcher(object):
         if service is None:
             return 0
         changes = 0
-        advance = getattr(service, 'advance_finished_comment_runs', None)
+        advance = getattr(getattr(service, 'comment_runs', service), 'advance_finished_comment_runs', None)
         if callable(advance):
             try:
                 changes += len(advance() or [])
@@ -118,7 +118,7 @@ class CommentRunWatcher(object):
                 self.logger.exception(
                     'comment-run watcher: advance-finished pass failed',
                 )
-        requeue = getattr(service, 'requeue_orphaned_in_progress_comments', None)
+        requeue = getattr(getattr(service, 'comment_runs', service), 'requeue_orphaned_in_progress_comments', None)
         if callable(requeue):
             try:
                 changes += len(requeue() or [])
@@ -126,7 +126,7 @@ class CommentRunWatcher(object):
                 self.logger.exception(
                     'comment-run watcher: orphan-requeue pass failed',
                 )
-        drain = getattr(service, 'drain_all_queued_task_comments', None)
+        drain = getattr(getattr(service, 'comment_runs', service), 'drain_all_queued_task_comments', None)
         if callable(drain):
             try:
                 changes += len(drain() or [])

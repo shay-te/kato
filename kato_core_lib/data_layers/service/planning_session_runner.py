@@ -22,9 +22,11 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     read_session_id_from,
 )
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-from claude_core_lib.claude_core_lib.session.manager import (
+from agent_core_lib.agent_core_lib.session.record import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
+)
+from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
 )
 from kato_core_lib.data_layers.data.fields import ImplementationFields

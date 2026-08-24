@@ -61,6 +61,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
         # Defensive: the scan loop must tolerate the no-work case
         # rather than crashing or paging out.
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = None
         service.get_assigned_tasks.return_value = []
 
@@ -70,6 +74,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
 
     def test_flow_pickup_single_task_processed_inline(self) -> None:
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = None
         service.get_assigned_tasks.return_value = [_task('T1')]
         service.process_assigned_task.return_value = {
@@ -87,6 +95,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
         # order would change which task gets the "first message"
         # comment.
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = None
         service.get_assigned_tasks.return_value = [
             _task('T1'), _task('T2'), _task('T3'),
@@ -108,6 +120,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
         # dispatch must filter those out of the results list (since
         # they have nothing to log).
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = None
         service.get_assigned_tasks.return_value = [_task('T1'), _task('T2')]
         service.process_assigned_task.side_effect = [
@@ -127,6 +143,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
         # path and TypeError. The guard makes the inline path the
         # safe default.
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         # max_workers IS a Mock — not an int.
         service.parallel_task_runner = MagicMock()
         service.get_assigned_tasks.return_value = [_task('T1')]
@@ -144,6 +164,10 @@ class FlowPickupInlineDispatchTests(unittest.TestCase):
         # concurrency. The guard treats this as inline to keep
         # behavior identical to the legacy path.
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = SimpleNamespace(
             max_workers=1,
             submit=MagicMock(),
@@ -164,6 +188,10 @@ class FlowPickupParallelDispatchTests(unittest.TestCase):
 
     def _make_service_with_parallel_runner(self, max_workers=4):
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = SimpleNamespace(
             max_workers=max_workers,
             submit=MagicMock(),
@@ -259,10 +287,14 @@ class FlowPickupScanCycleCompositionTests(unittest.TestCase):
 
     def test_flow_pickup_scan_cycle_combines_tasks_and_review_comments(self) -> None:
         service = MagicMock()
+        # The double stands in for BOTH the service and its comment
+        # subsystem: production reads ``service.comments.x``, and the
+        # assertions below watch the same recorded calls.
+        service.comments = service
         service.parallel_task_runner = None
         service.get_assigned_tasks.return_value = [_task('T1')]
         service.process_assigned_task.return_value = {'status': 'updated', 'tag': 'task'}
-        service.get_new_pull_request_comments.return_value = [
+        service.comments.get_new_pull_request_comments.return_value = [
             SimpleNamespace(
                 pull_request_id='PR-1', repository_id='r',
                 comment_id='c1', body='Add a check.', task_id='T2',
@@ -270,7 +302,7 @@ class FlowPickupScanCycleCompositionTests(unittest.TestCase):
                 line_type='ADDED', commit_sha='abc',
             ),
         ]
-        service.process_review_comment.return_value = {'status': 'reviewed', 'tag': 'rc'}
+        service.comments.process_review_comment.return_value = {'status': 'reviewed', 'tag': 'rc'}
 
         results = collect_processing_results(service)
         # Composition: task result + review-comment result.

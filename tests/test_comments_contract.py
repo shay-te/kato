@@ -63,7 +63,7 @@ class CommentsContractTests(unittest.TestCase):
         # to launch Claude. Everything else (store, workspace,
         # serialization, validation) is real.
         self._run_patch = patch.object(
-            self.agent_service, '_run_comment_agent', return_value=True,
+            self.agent_service.comment_runs, '_run_comment_agent', return_value=True,
         )
         self._run_patch.start()
         self.addCleanup(self._run_patch.stop)

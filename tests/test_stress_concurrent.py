@@ -266,7 +266,7 @@ class DrainQueuedCommentsUnderConcurrentSubmissionTests(unittest.TestCase):
     on the same on-disk JSON file.
 
     NOTE — known production behaviour: ``LocalCommentStore`` uses a
-    per-instance RLock, and ``AgentService._comment_store_for`` builds
+    per-instance RLock, and ``TaskCommentService._comment_store_for`` builds
     a fresh instance per call. Two threads adding through different
     instances of the same workspace's store can lose updates (read /
     read / append / write / write — second writer overwrites first).
@@ -289,9 +289,9 @@ class DrainQueuedCommentsUnderConcurrentSubmissionTests(unittest.TestCase):
         # cycles. (The lost-update race that happens when each call
         # builds a fresh instance is covered separately in
         # ``test_cross_instance_writes_can_lose_updates``.)
-        with patch.object(service, '_comment_store_for',
+        with patch.object(service.comments, 'comment_store',
                           return_value=shared_store), \
-             patch.object(service, '_run_comment_agent', return_value=True):
+             patch.object(service.comment_runs, '_run_comment_agent', return_value=True):
             stop = threading.Event()
             inserted_ids: list[str] = []
             inserted_lock = threading.Lock()
@@ -315,7 +315,7 @@ class DrainQueuedCommentsUnderConcurrentSubmissionTests(unittest.TestCase):
             def drainer():
                 deadline = time.time() + 10.0
                 while time.time() < deadline:
-                    service.drain_all_queued_task_comments()
+                    service.comment_runs.drain_all_queued_task_comments()
                     # Strict one-at-a-time: only one comment is dispatched
                     # (IN_PROGRESS) at a time and nothing completes its turn
                     # in this harness, so the queue never empties. Exit once

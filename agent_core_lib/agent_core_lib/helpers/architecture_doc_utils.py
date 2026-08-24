@@ -23,8 +23,9 @@ _LIVING_DOC_DIRECTIVE_TEMPLATE = (
     'section, or add a new section if none fits. Do not duplicate '
     'content already documented; do not restate what the code shows. '
     'The document is a navigation aid and a contract registry, not '
-    'a mirror of the source. The orchestration layer commits and pushes the file (you '
-    'must NEVER run git); just edit.\n'
+    'a mirror of the source. Just edit the file and stop — you must '
+    'NEVER run git. Whether the edit is committed depends on where the '
+    'operator keeps this document, and that is their call, not yours.\n'
 )
 
 

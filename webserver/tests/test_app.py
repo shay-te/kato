@@ -536,7 +536,7 @@ class WebserverAppTests(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        agent_service.capture_prompt_lesson_candidate.assert_called_once_with(
+        agent_service.lessons.capture_prompt_lesson_candidate.assert_called_once_with(
             'PROJ-1',
             'please learn from this prompt',
         )
@@ -825,21 +825,21 @@ class WebserverAppTests(unittest.TestCase):
 
     def test_drain_queued_task_comment_uses_agent_service(self):
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = {
+        service.comment_runs.drain_next_queued_task_comment.return_value = {
             'ok': True, 'started': True, 'comment_id': 'c1',
         }
 
         started = _drain_queued_task_comment(service, 'PROJ-1')
 
         self.assertTrue(started)
-        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+        service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
     def test_drain_queued_task_comment_handles_missing_service(self):
         self.assertFalse(_drain_queued_task_comment(None, 'PROJ-1'))
 
     def test_idle_event_stream_drains_queued_comment_before_idle(self):
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = {
+        service.comment_runs.drain_next_queued_task_comment.return_value = {
             'ok': True, 'started': False, 'comment_id': 'c1',
         }
 
@@ -848,7 +848,7 @@ class WebserverAppTests(unittest.TestCase):
         ))
 
         self.assertTrue(any('session_idle' in frame for frame in frames))
-        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+        service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
     def test_live_follow_drains_queue_after_result_event(self):
         session = MagicMock()
@@ -858,7 +858,7 @@ class WebserverAppTests(unittest.TestCase):
             ([], 1),
         ]
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = {
+        service.comment_runs.drain_next_queued_task_comment.return_value = {
             'ok': True, 'started': True, 'comment_id': 'c1',
         }
 
@@ -867,7 +867,7 @@ class WebserverAppTests(unittest.TestCase):
         ))
 
         self.assertTrue(any('session_closed' in frame for frame in frames))
-        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+        service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
     def test_result_event_completes_then_drains(self):
         event = SimpleNamespace(
@@ -876,13 +876,13 @@ class WebserverAppTests(unittest.TestCase):
         )
         service = MagicMock()
         _advance_task_comments_after_result(event, service, 'PROJ-1')
-        service.complete_in_progress_task_comments.assert_called_once_with(
+        service.comment_runs.complete_in_progress_task_comments.assert_called_once_with(
             'PROJ-1',
             success=True,
             result_text='Done.',
             result_received_at_epoch=0.0,
         )
-        service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+        service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
     def test_errored_result_completes_with_success_false(self):
         event = SimpleNamespace(
@@ -890,7 +890,7 @@ class WebserverAppTests(unittest.TestCase):
         )
         service = MagicMock()
         _advance_task_comments_after_result(event, service, 'PROJ-1')
-        service.complete_in_progress_task_comments.assert_called_once_with(
+        service.comment_runs.complete_in_progress_task_comments.assert_called_once_with(
             'PROJ-1',
             success=False,
             result_text='',
@@ -901,8 +901,8 @@ class WebserverAppTests(unittest.TestCase):
         event = SimpleNamespace(event_type='assistant', raw={'type': 'assistant'})
         service = MagicMock()
         _advance_task_comments_after_result(event, service, 'PROJ-1')
-        service.complete_in_progress_task_comments.assert_not_called()
-        service.drain_next_queued_task_comment.assert_not_called()
+        service.comment_runs.complete_in_progress_task_comments.assert_not_called()
+        service.comment_runs.drain_next_queued_task_comment.assert_not_called()
 
     def test_complete_helper_tolerates_missing_method_and_errors(self):
         # Service without the method (older stub) → no raise.
@@ -930,8 +930,8 @@ class WebserverAppTests(unittest.TestCase):
         # The UI still gets every backlog event…
         self.assertEqual(len(frames), 2)
         # …but completion is never triggered from replayed events.
-        service.complete_in_progress_task_comments.assert_not_called()
-        service.drain_next_queued_task_comment.assert_not_called()
+        service.comment_runs.complete_in_progress_task_comments.assert_not_called()
+        service.comment_runs.drain_next_queued_task_comment.assert_not_called()
 
 
 class _FakeWorkspaceRecord:
@@ -1691,6 +1691,41 @@ class ChatEffortDefaultTests(unittest.TestCase):
         # No override was set, so the spawn must still carry a concrete level.
         self.assertEqual(runner.calls[0]['effort'], DEFAULT_CHAT_EFFORT)
 
+
+
+class TaskChatsCarryTheirBackendTests(unittest.TestCase):
+    """Each chat says which CLI produced it — read from the RECORD.
+
+    An operator who switches backends keeps their older conversations, and
+    each one resumes through the CLI that wrote it. Labelling chats from the
+    CURRENT setting would mislabel every one of them after a switch.
+    """
+
+    def _client(self, record):
+        manager = MagicMock()
+        manager.get_record.return_value = record
+        app = create_app(session_manager=manager, agent_service=MagicMock())
+        return app.test_client()
+
+    def test_the_backend_is_reported_per_chat(self) -> None:
+        record = SimpleNamespace(
+            task_id='PROJ-1', agent_session_id='sid-1',
+            previous_session_ids=[], agent_backend='codex',
+        )
+        body = self._client(record).get('/api/sessions/PROJ-1/chats').get_json()
+
+        self.assertTrue(body['chats'])
+        self.assertEqual(body['chats'][0]['agent_backend'], 'codex')
+
+    def test_a_record_without_a_backend_reports_empty_not_a_guess(self) -> None:
+        # Records written before kato tracked this exist on every operator's
+        # disk; the UI shows no chip rather than inventing one.
+        record = SimpleNamespace(
+            task_id='PROJ-1', agent_session_id='sid-1', previous_session_ids=[],
+        )
+        body = self._client(record).get('/api/sessions/PROJ-1/chats').get_json()
+
+        self.assertEqual(body['chats'][0]['agent_backend'], '')
 
 if __name__ == '__main__':
     unittest.main()

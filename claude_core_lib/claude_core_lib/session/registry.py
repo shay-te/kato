@@ -30,18 +30,20 @@ release degrades back to today's behaviour, it must not block a spawn.
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import time
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.helpers.process_liveness import (
+    coerce_pid as _coerce_pid,
+    image_name as _image_name,
+    kill_process_tree as _kill_process_tree,
+    pid_alive as _pid_alive,
+)
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     fix_session_id,
     same_session_id,
 )
 
-
-_IS_WINDOWS = os.name == 'nt'
 
 # Image names a registry pid may legitimately have. The registry is
 # written by the CLI itself, so a live holder is node (npm install),
@@ -195,50 +197,17 @@ def release_session_holders(
     return not find()
 
 
+
+
 def kill_process_tree(pid: int, *, logger=None) -> bool:
-    """Force-kill ``pid`` AND its children. True when the kill landed.
+    """Force-kill a leftover Claude process and its children.
 
-    Windows needs the tree semantics explicitly: ``TerminateProcess``
-    (which is all ``Popen.kill``/``send_signal(SIGTERM)`` can do there)
-    kills exactly one process, and the npm ``claude.cmd`` shim makes
-    the real CLI a *child* of the process the caller holds — killing the
-    wrapper orphans it. ``taskkill /T`` walks the child tree.
-
-    POSIX has no wrapper problem (the shim is a shebang script, so the
-    spawned process IS the CLI) — a plain SIGKILL suffices.
+    Claude's binding of the shared cross-platform kill: the tree semantics
+    matter here because the npm ``claude.cmd`` shim makes the real CLI a child
+    of the process the caller holds. See
+    ``agent_core_lib.helpers.process_liveness``.
     """
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    if _IS_WINDOWS:
-        try:
-            completed = subprocess.run(
-                ['taskkill', '/T', '/F', '/PID', str(pid)],
-                capture_output=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            if logger is not None:
-                logger.exception('taskkill /T /F /PID %s failed to run', pid)
-            return False
-        # 128 = "process not found" — already dead counts as success.
-        return completed.returncode in (0, 128)
-    import signal
-    # ``SIGKILL`` does not exist on Windows; the getattr keeps this
-    # branch importable there (tests patch ``_IS_WINDOWS`` to exercise
-    # both paths on one platform).
-    sigkill = getattr(signal, 'SIGKILL', signal.SIGTERM)
-    try:
-        os.kill(pid, sigkill)
-    except ProcessLookupError:
-        return True
-    except OSError:
-        return False
-    return True
+    return _kill_process_tree(pid, logger=logger, label='claude')
 
 
 # ----- internals -----
@@ -254,85 +223,9 @@ def _read_registry_entry(path: Path) -> dict | None:
     return payload
 
 
-def _coerce_pid(value) -> int | None:
-    try:
-        pid = int(value)
-    except (TypeError, ValueError):
-        return None
-    return pid if pid > 0 else None
 
 
-def _pid_alive(pid: int) -> bool:
-    """Is ``pid`` a currently-running process?
-
-    Windows must NOT use ``os.kill(pid, 0)`` — on Windows that calls
-    ``TerminateProcess`` with exit code 0, i.e. it would KILL the
-    process we only meant to probe. Query the exit code instead.
-    """
-    if _IS_WINDOWS:
-        return _pid_alive_windows(pid)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
-def _pid_alive_windows(pid: int) -> bool:
-    import ctypes
-
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    STILL_ACTIVE = 259
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.OpenProcess(
-        PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid),
-    )
-    if not handle:
-        return False
-    try:
-        exit_code = ctypes.c_ulong()
-        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-            return False
-        return exit_code.value == STILL_ACTIVE
-    finally:
-        kernel32.CloseHandle(handle)
 
 
-def _image_name(pid: int) -> str:
-    """Executable image name for ``pid`` ('' when unknown).
-
-    Used as the don't-kill-recycled-pids gate. Windows asks tasklist;
-    Linux reads ``/proc/<pid>/comm``; anywhere else returns '' (the
-    caller treats unknown as killable — on POSIX the registry pid was
-    written by the CLI itself moments ago, and pid recycling within a
-    session's lifetime is not a realistic Windows-style hazard there).
-    """
-    if _IS_WINDOWS:
-        try:
-            completed = subprocess.run(
-                ['tasklist', '/FI', f'PID eq {int(pid)}', '/FO', 'CSV', '/NH'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            return ''
-        first_line = (completed.stdout or '').strip().splitlines()
-        if not first_line:
-            return ''
-        first_field = first_line[0].split('","')[0].strip('"')
-        # "INFO: No tasks are running..." lands here when the pid is
-        # gone; a real row's first CSV field is the image name.
-        if not first_field.lower().endswith('.exe'):
-            return ''
-        return first_field
-    try:
-        comm = Path(f'/proc/{int(pid)}/comm').read_text(encoding='utf-8')
-    except (OSError, ValueError, UnicodeDecodeError):
-        return ''
-    return comm.strip()

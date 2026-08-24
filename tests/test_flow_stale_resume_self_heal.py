@@ -303,14 +303,14 @@ class FlowStaleResumePersistenceTests(unittest.TestCase):
         # previous process rejected --resume, the active id still stays
         # pinned; fresh-session fallback is not allowed.
         from claude_core_lib.claude_core_lib.session.manager import (
-            ClaudeSessionManager, PlanningSessionRecord,
+            ClaudeSessionManager, AgentSessionRecord,
             SESSION_STATUS_TERMINATED,
         )
         with tempfile.TemporaryDirectory() as state_dir:
             mgr = ClaudeSessionManager(
                 state_dir=state_dir, session_factory=lambda **_: None,
             )
-            record = PlanningSessionRecord(
+            record = AgentSessionRecord(
                 task_id='T1',
                 agent_session_id='dead-id',
                 status=SESSION_STATUS_TERMINATED,
@@ -344,14 +344,14 @@ class FlowStaleResumePersistenceTests(unittest.TestCase):
         # Negative case: healthy existing session, no marker, no
         # stale-resume handling. The resume id must come back unchanged.
         from claude_core_lib.claude_core_lib.session.manager import (
-            ClaudeSessionManager, PlanningSessionRecord,
+            ClaudeSessionManager, AgentSessionRecord,
             SESSION_STATUS_TERMINATED,
         )
         with tempfile.TemporaryDirectory() as state_dir:
             mgr = ClaudeSessionManager(
                 state_dir=state_dir, session_factory=lambda **_: None,
             )
-            record = PlanningSessionRecord(
+            record = AgentSessionRecord(
                 task_id='T1',
                 agent_session_id='healthy-id',
                 status=SESSION_STATUS_TERMINATED,
@@ -388,14 +388,14 @@ class FlowStaleResumePersistenceTests(unittest.TestCase):
         # stale-resume handling can't fire — return the id as-is and let the SPAWN
         # path detect a runtime failure.
         from claude_core_lib.claude_core_lib.session.manager import (
-            ClaudeSessionManager, PlanningSessionRecord,
+            ClaudeSessionManager, AgentSessionRecord,
             SESSION_STATUS_TERMINATED,
         )
         with tempfile.TemporaryDirectory() as state_dir:
             mgr = ClaudeSessionManager(
                 state_dir=state_dir, session_factory=lambda **_: None,
             )
-            record = PlanningSessionRecord(
+            record = AgentSessionRecord(
                 task_id='T1',
                 agent_session_id='not-yet-validated',
                 status=SESSION_STATUS_TERMINATED,

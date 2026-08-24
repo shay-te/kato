@@ -1288,7 +1288,6 @@ function ChangedFilesTreeNode({
           onClick={() => onToggleFolder(node.key)}
           onContextMenu={(event) => onOpenPathMenu(event, folderPath, repoId)}
         >
-          <span className="diff-file-tree-guide" />
           <span className="diff-file-tree-chevron"><Icon name={chevron} /></span>
           <span className="diff-file-tree-label files-changed-tree-folder">
             {node.name}
@@ -1330,7 +1329,6 @@ function ChangedFilesTreeNode({
       onClick={() => onSelectFile(file)}
       onContextMenu={(event) => onOpenPathMenu(event, path, repoId)}
     >
-      <span className="diff-file-tree-guide" />
       <DiffKindIcon kind={kind} extraClass="tree-row-kind" />
       {conflictBadge}
       <span className="diff-file-tree-label files-changed-tree-label">
@@ -1495,7 +1493,6 @@ function Node({
       onContextMenu={onContextMenu}
       title={tooltip}
     >
-      <span className="tree-row-level-guides" aria-hidden="true" />
       {folderChevron}
       {fileSpacer}
       {fileIcon}

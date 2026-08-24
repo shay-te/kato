@@ -53,7 +53,7 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
 )
-from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
@@ -490,8 +490,22 @@ class StreamingClaudeSession(object):
 
     @property
     def is_alive(self) -> bool:
-        with self._proc_lock:
-            return self._proc is not None and self._proc.poll() is None
+        """Is the subprocess still running? NEVER blocks.
+
+        Deliberately lock-free. ``_proc_lock`` is held across operations that
+        can block for a long time on an unresponsive CLI — ``terminate``'s
+        wait-and-escalate, and ``_write_stdin_line``'s ``flush()`` into a pipe
+        whose reader has stopped draining it. Taking the lock here meant a
+        wedged CLI froze every liveness check in the process, and because
+        ``ClaudeSessionManager.get_session`` probes liveness under its own
+        global lock, that froze the session manager — and with it every git
+        action in the UI, none of which have anything to do with the agent.
+
+        Reading the handle into a local makes the concurrent ``_proc = None``
+        assignment harmless, and ``poll()`` is safe to call from any thread.
+        """
+        proc = self._proc
+        return proc is not None and proc.poll() is None
 
     @property
     def is_working(self) -> bool:

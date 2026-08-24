@@ -904,7 +904,9 @@ class CleanupDoneTasksAtBootTests(unittest.TestCase):
         cleanup = Mock()
         app = types.SimpleNamespace(
             logger=Mock(),
-            service=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+            service=types.SimpleNamespace(
+                cleanup=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+            ),
         )
         _cleanup_done_tasks_at_boot(app)
         cleanup.assert_called_once_with()
@@ -923,7 +925,9 @@ class CleanupDoneTasksAtBootTests(unittest.TestCase):
         cleanup = Mock(side_effect=RuntimeError('platform down'))
         app = types.SimpleNamespace(
             logger=Mock(),
-            service=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+            service=types.SimpleNamespace(
+                cleanup=types.SimpleNamespace(cleanup_done_tasks=cleanup),
+            ),
         )
         _cleanup_done_tasks_at_boot(app)  # must NOT raise — boot continues
         app.logger.exception.assert_called()
@@ -1085,16 +1089,18 @@ class RequeueStuckCommentsBootTests(unittest.TestCase):
 
     def test_delegates_and_logs_when_comments_requeued(self) -> None:
         service = types.SimpleNamespace(
-            requeue_stuck_in_progress_comments=Mock(return_value=[
-                {'task_id': 'UNA-1', 'comment_id': 'c1'},
-                {'task_id': 'UNA-2', 'comment_id': 'c2'},
-            ]),
+            comment_runs=types.SimpleNamespace(
+                requeue_stuck_in_progress_comments=Mock(return_value=[
+                    {'task_id': 'UNA-1', 'comment_id': 'c1'},
+                    {'task_id': 'UNA-2', 'comment_id': 'c2'},
+                ]),
+            ),
         )
         app = types.SimpleNamespace(logger=Mock(), service=service)
 
         _requeue_stuck_comments(app)
 
-        service.requeue_stuck_in_progress_comments.assert_called_once_with()
+        service.comment_runs.requeue_stuck_in_progress_comments.assert_called_once_with()
         app.logger.info.assert_called_once_with(
             'requeued %d comment(s) stuck in-progress from the previous '
             'run; _start_pending_comment_work will dispatch them next',
@@ -1103,7 +1109,9 @@ class RequeueStuckCommentsBootTests(unittest.TestCase):
 
     def test_silent_when_nothing_requeued(self) -> None:
         service = types.SimpleNamespace(
-            requeue_stuck_in_progress_comments=Mock(return_value=[]),
+            comment_runs=types.SimpleNamespace(
+                requeue_stuck_in_progress_comments=Mock(return_value=[]),
+            ),
         )
         app = types.SimpleNamespace(logger=Mock(), service=service)
 
@@ -1155,16 +1163,18 @@ class StartPendingCommentWorkBootTests(unittest.TestCase):
 
     def test_delegates_and_logs_started_count(self) -> None:
         service = types.SimpleNamespace(
-            drain_all_queued_task_comments=Mock(return_value=[
-                {'task_id': 'UNA-1', 'started': True, 'comment_id': 'c1'},
-                {'task_id': 'UNA-2', 'started': True, 'comment_id': 'c2'},
-            ]),
+            comment_runs=types.SimpleNamespace(
+                drain_all_queued_task_comments=Mock(return_value=[
+                    {'task_id': 'UNA-1', 'started': True, 'comment_id': 'c1'},
+                    {'task_id': 'UNA-2', 'started': True, 'comment_id': 'c2'},
+                ]),
+            ),
         )
         app = types.SimpleNamespace(logger=Mock(), service=service)
 
         _start_pending_comment_work(app)
 
-        service.drain_all_queued_task_comments.assert_called_once_with()
+        service.comment_runs.drain_all_queued_task_comments.assert_called_once_with()
         app.logger.info.assert_called_once_with(
             'started agent work on %d task(s) with queued comments at boot',
             2,
@@ -1172,7 +1182,9 @@ class StartPendingCommentWorkBootTests(unittest.TestCase):
 
     def test_silent_when_nothing_queued(self) -> None:
         service = types.SimpleNamespace(
-            drain_all_queued_task_comments=Mock(return_value=[]),
+            comment_runs=types.SimpleNamespace(
+                drain_all_queued_task_comments=Mock(return_value=[]),
+            ),
         )
         app = types.SimpleNamespace(logger=Mock(), service=service)
 

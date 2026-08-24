@@ -15,7 +15,7 @@ The tests below exercise both layers:
 * ``RepositoryService.update_source_to_task_branch`` — the per-repo
   git operations against a real on-disk repository (origin + local
   clone, both initialized via ``git init``).
-* ``AgentService.update_source_for_task`` — the orchestration that
+* ``TaskPublishService.update_source_for_task`` — the orchestration that
   iterates the task's repositories and aggregates per-repo results.
 * ``POST /api/sessions/<task_id>/update-source`` — the Flask route
   that wraps the agent-service method.
@@ -405,7 +405,7 @@ class WorkspaceHasTaskChangesTests(unittest.TestCase):
 
 
 class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
-    """``AgentService.update_source_for_task`` aggregates per-repo results.
+    """``TaskPublishService.update_source_for_task`` aggregates per-repo results.
 
     Mocks the underlying ``RepositoryService`` to focus on the
     orchestration logic — push first, then iterate inventory repos,
@@ -417,16 +417,29 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         # don't drag in 14 collaborator services. Every test sets the
         # attributes it needs and exercises one method.
         from kato_core_lib.data_layers.service.agent_service import AgentService
+        from kato_core_lib.data_layers.service.task_publish_service import (
+            TaskPublishService,
+        )
 
         # Bypass __init__ — we only test methods, not construction.
-        self.agent = AgentService.__new__(AgentService)
-        self.agent.logger = MagicMock()
-        self.agent._workspace_manager = MagicMock()
-        self.agent._repository_service = MagicMock()
-        self.agent._task_service = MagicMock()
+        # Build the publish service directly. It used to be a half-built
+        # AgentService via ``__new__`` with the collaborators poked in; now
+        # that publishing owns its object, real construction says exactly
+        # what this code depends on — which is the point of the split.
+        self._workspace_manager = MagicMock()
+        self._repository_service = MagicMock()
+        self._task_service = MagicMock()
+        self.agent = TaskPublishService(
+            repository_service=self._repository_service,
+            task_service=self._task_service,
+            task_state_service=MagicMock(),
+            task_publisher=MagicMock(),
+            workspace_manager=self._workspace_manager,
+            logger=MagicMock(),
+        )
 
         # Workspace returns two repo IDs for our test task.
-        wm = self.agent._workspace_manager
+        wm = self._workspace_manager
         wm.get.return_value = types.SimpleNamespace(
             task_id='UNA-1234',
             task_summary='Fix the thing',
@@ -439,7 +452,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         # Each call to get_repository returns a stub with a distinct
         # source-side ``local_path`` so we can tell which repo the
         # update was attempted for.
-        rs = self.agent._repository_service
+        rs = self._repository_service
         rs.get_repository.side_effect = lambda repo_id: types.SimpleNamespace(
             id=repo_id,
             local_path=f'/fake/source/{repo_id}',
@@ -453,7 +466,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         self.assertIn('empty task id', result.get('error', ''))
 
     def test_returns_no_workspace_when_workspace_missing(self) -> None:
-        self.agent._workspace_manager.get.return_value = None
+        self._workspace_manager.get.return_value = None
 
         # push_task short-circuits on missing workspace too.
         with patch.object(self.agent, 'push_task') as push_mock:
@@ -483,7 +496,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         push_mock.assert_called_once_with('UNA-1234')
         # update_source_to_task_branch invoked once per inventory repo
         # with the task-id branch.
-        calls = self.agent._repository_service.update_source_to_task_branch.call_args_list
+        calls = self._repository_service.update_source_to_task_branch.call_args_list
         self.assertEqual(len(calls), 2)
         for call in calls:
             self.assertEqual(call.kwargs.get('branch_name', call.args[1]), 'UNA-1234')
@@ -512,7 +525,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
 
     def test_partial_failure_reports_per_repo(self) -> None:
         # Source-update succeeds for client, fails for backend.
-        rs = self.agent._repository_service
+        rs = self._repository_service
 
         def _fake_update(repo, branch):
             if repo.id == 'backend':
@@ -538,7 +551,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         # configured kato without REPOSITORY_ROOT_PATH, or the entry
         # was added manually without a path). Skip with a clear
         # reason rather than crashing on the empty path.
-        rs = self.agent._repository_service
+        rs = self._repository_service
 
         def _lookup(repo_id):
             return types.SimpleNamespace(
@@ -590,7 +603,7 @@ class UpdateSourceEndpointTests(unittest.TestCase):
 
     def test_returns_payload_when_update_succeeds(self) -> None:
         agent = MagicMock()
-        agent.update_source_for_task.return_value = {
+        agent.publish.update_source_for_task.return_value = {
             'updated': True,
             'task_id': 'UNA-1234',
             'updated_repositories': ['client', 'backend'],
@@ -605,11 +618,11 @@ class UpdateSourceEndpointTests(unittest.TestCase):
         body = response.get_json()
         self.assertTrue(body['updated'])
         self.assertEqual(body['updated_repositories'], ['client', 'backend'])
-        agent.update_source_for_task.assert_called_once_with('UNA-1234')
+        agent.publish.update_source_for_task.assert_called_once_with('UNA-1234')
 
     def test_returns_404_when_no_workspace_context(self) -> None:
         agent = MagicMock()
-        agent.update_source_for_task.return_value = {
+        agent.publish.update_source_for_task.return_value = {
             'updated': False,
             'task_id': 'UNA-1234',
             'error': 'no workspace context for this task',

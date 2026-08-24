@@ -116,7 +116,7 @@ class SyncRepositoriesContractTests(unittest.TestCase):
         UI consumes ``error`` for the toast.
         """
         with patch.object(
-            self.agent_service, '_lookup_task_for_sync',
+            self.agent_service.repositories, '_lookup_task_for_sync',
             return_value=None,
         ):
             status, payload = self._post(
@@ -137,7 +137,7 @@ class SyncRepositoriesContractTests(unittest.TestCase):
         """
         from types import SimpleNamespace
         with patch.object(
-            self.agent_service, '_lookup_task_for_sync',
+            self.agent_service.repositories, '_lookup_task_for_sync',
             return_value=SimpleNamespace(id=self.task_id, tags=[]),
         ), patch.object(
             self.agent_service._repository_service,
@@ -160,14 +160,14 @@ class SyncRepositoriesContractTests(unittest.TestCase):
         from types import SimpleNamespace
         _, ghost = self._post('/api/sessions/GHOST-TASK/sync-repositories')
         with patch.object(
-            self.agent_service, '_lookup_task_for_sync',
+            self.agent_service.repositories, '_lookup_task_for_sync',
             return_value=None,
         ):
             _, lookup_fail = self._post(
                 f'/api/sessions/{self.task_id}/sync-repositories',
             )
         with patch.object(
-            self.agent_service, '_lookup_task_for_sync',
+            self.agent_service.repositories, '_lookup_task_for_sync',
             return_value=SimpleNamespace(id=self.task_id, tags=[]),
         ), patch.object(
             self.agent_service._repository_service,

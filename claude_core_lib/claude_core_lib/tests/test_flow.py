@@ -19,11 +19,13 @@ from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
-from claude_core_lib.claude_core_lib.session.manager import (
+from agent_core_lib.agent_core_lib.session.record import (
+    AgentSessionRecord,
     SESSION_STATUS_DONE,
     SESSION_STATUS_TERMINATED,
+)
+from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
-    PlanningSessionRecord,
 )
 from claude_core_lib.claude_core_lib.session.history import (
     find_session_file,
@@ -362,7 +364,7 @@ class SessionManagerLifecycleFlowTest(unittest.TestCase):
         self.assertIn('FLOW-9', ids)
 
     def test_record_round_trip(self) -> None:
-        original = PlanningSessionRecord(
+        original = AgentSessionRecord(
             task_id='PROJ-RT-1',
             task_summary='summary',
             agent_session_id='sess-rt',
@@ -377,23 +379,23 @@ class SessionManagerLifecycleFlowTest(unittest.TestCase):
             context_model='claude-opus-5',
             context_baseline_tokens=42_000,
         )
-        restored = PlanningSessionRecord.from_dict(original.to_dict())
+        restored = AgentSessionRecord.from_dict(original.to_dict())
         self.assertEqual(restored, original)
 
     def test_context_reading_survives_a_reload(self) -> None:
         # Explicit, because a round-trip equality check passes just as
         # happily when BOTH sides default to zero.
-        original = PlanningSessionRecord(
+        original = AgentSessionRecord(
             task_id='PROJ-RT-2', context_used_tokens=490_000,
             context_model='claude-opus-5', context_baseline_tokens=42_000,
         )
-        restored = PlanningSessionRecord.from_dict(original.to_dict())
+        restored = AgentSessionRecord.from_dict(original.to_dict())
         self.assertEqual(restored.context_used_tokens, 490_000)
         self.assertEqual(restored.context_model, 'claude-opus-5')
         self.assertEqual(restored.context_baseline_tokens, 42_000)
 
     def test_a_corrupt_context_reading_loads_as_unknown(self) -> None:
-        restored = PlanningSessionRecord.from_dict({
+        restored = AgentSessionRecord.from_dict({
             'task_id': 'PROJ-RT-3',
             'context_used_tokens': 'not-a-number',
             'context_baseline_tokens': -5,

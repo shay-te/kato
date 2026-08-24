@@ -1159,7 +1159,7 @@ def classify_action(
     """Return the :class:`GuardVerdict` for one tool call.
 
     ``command_sandbox_classifier`` / ``tool_input_sandbox_classifier`` are the
-    workspace out-of-scope classifiers from ``claude_core_lib.sandbox_scope``,
+    workspace out-of-scope classifiers from ``sandbox_scope``,
     injected so this engine stays free of the transport's workspace layout.
     When omitted, out-of-scope detection is simply skipped.
 

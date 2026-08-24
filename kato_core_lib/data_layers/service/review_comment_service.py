@@ -424,7 +424,7 @@ class ReviewCommentService(Service):
         # records/workspaces are lowercased). A case-sensitive ``in`` test
         # silently fails to skip a forgotten task — the "it keeps coming back
         # after I deleted it" bug — so normalise both sides (matches
-        # AgentService._norm_task_id).
+        # utils_core_lib.text_utils.normalized_lower_text).
         forgotten = {fid.lower() for fid in forgotten_task_ids()}
         skipped_forgotten: list[str] = []
         for task in self._task_service.get_review_tasks():

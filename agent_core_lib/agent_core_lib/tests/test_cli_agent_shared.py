@@ -20,12 +20,21 @@ from unittest.mock import patch
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 
 # Every hook the mixin declares abstract, with a call that reaches it.
+# The implementation and testing prompts USED to be abstract, and both
+# transports then implemented them identically — which is how a fix to one
+# left the other broken for months. They are concrete on the mixin now; what
+# stays abstract is only what genuinely differs per CLI.
 ABSTRACT_HOOKS = {
-    '_run_prompt_result': lambda c: c._run_prompt_result(prompt='p', cwd='/w'),
-    '_build_implementation_prompt': lambda c: c._build_implementation_prompt(object()),
-    '_build_testing_prompt': lambda c: c._build_testing_prompt(object()),
+    # ``_run_prompt_result`` is concrete now — it calls this, which is the
+    # half that genuinely differs per CLI.
+    '_run_prompt': lambda c: c._run_prompt_result(prompt='p', cwd='/w'),
     '_run_model_access_validation': lambda c: c._run_model_access_validation(),
     'fix_review_comments': lambda c: c.fix_review_comments([], 'branch'),
+    # Security-relevant: the delimiter framing lives in sandbox_core_lib, which
+    # this lib may not import, so each transport must bind it. Defaulting to
+    # identity here would silently feed the model unframed issue text.
+    '_wrap_untrusted': lambda c: c._wrap_untrusted('text', source_path='task:T1'),
+    '_tool_guardrails_text': lambda c: c._tool_guardrails_text(),
 }
 
 
@@ -51,6 +60,14 @@ class AbstractHookTests(unittest.TestCase):
                     call(client)
                 self.assertIn(name, str(ctx.exception),
                               'the error must name the hook the transport forgot')
+
+    def test_the_shared_prompts_are_no_longer_per_transport(self) -> None:
+        # Concrete on the mixin: a transport that overrides nothing still gets
+        # the same implementation and testing prompts as every other one.
+        for hook in ('_build_implementation_prompt', '_build_testing_prompt'):
+            with self.subTest(hook=hook):
+                self.assertNotIn(hook, ABSTRACT_HOOKS)
+                self.assertTrue(callable(getattr(_BareTransport, hook)))
 
     def test_the_spawn_hook_is_reached_through_implement_task(self) -> None:
         # The containment-critical path: a transport with no _run_prompt_result

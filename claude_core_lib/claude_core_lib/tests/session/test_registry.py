@@ -298,66 +298,6 @@ class ReleaseSessionHoldersTests(unittest.TestCase):
             self.assertTrue(root.joinpath('101.json').exists())
 
 
-class KillProcessTreeTests(unittest.TestCase):
-    def test_rejects_non_numeric_and_non_positive_pids(self) -> None:
-        self.assertFalse(registry.kill_process_tree('NaN'))
-        self.assertFalse(registry.kill_process_tree(0))
-        self.assertFalse(registry.kill_process_tree(-5))
-
-    def test_windows_uses_taskkill_tree_force(self) -> None:
-        completed = mock.Mock(returncode=0)
-        with mock.patch.object(registry, '_IS_WINDOWS', True), \
-                mock.patch.object(
-                    registry.subprocess, 'run', return_value=completed,
-                ) as run:
-            self.assertTrue(registry.kill_process_tree(4242))
-        argv = run.call_args[0][0]
-        self.assertEqual(argv, ['taskkill', '/T', '/F', '/PID', '4242'])
-
-    def test_windows_treats_process_not_found_as_success(self) -> None:
-        completed = mock.Mock(returncode=128)
-        with mock.patch.object(registry, '_IS_WINDOWS', True), \
-                mock.patch.object(
-                    registry.subprocess, 'run', return_value=completed,
-                ):
-            self.assertTrue(registry.kill_process_tree(4242))
-
-    def test_windows_other_exit_codes_report_failure(self) -> None:
-        completed = mock.Mock(returncode=1)
-        with mock.patch.object(registry, '_IS_WINDOWS', True), \
-                mock.patch.object(
-                    registry.subprocess, 'run', return_value=completed,
-                ):
-            self.assertFalse(registry.kill_process_tree(4242))
-
-    def test_windows_taskkill_launch_failure_is_false(self) -> None:
-        with mock.patch.object(registry, '_IS_WINDOWS', True), \
-                mock.patch.object(
-                    registry.subprocess, 'run', side_effect=OSError('no taskkill'),
-                ):
-            self.assertFalse(
-                registry.kill_process_tree(4242, logger=mock.Mock()),
-            )
-
-    def test_posix_kills_with_sigkill(self) -> None:
-        with mock.patch.object(registry, '_IS_WINDOWS', False), \
-                mock.patch.object(registry.os, 'kill') as kill:
-            self.assertTrue(registry.kill_process_tree(4242))
-        self.assertEqual(kill.call_args[0][0], 4242)
-
-    def test_posix_already_dead_counts_as_success(self) -> None:
-        with mock.patch.object(registry, '_IS_WINDOWS', False), \
-                mock.patch.object(
-                    registry.os, 'kill', side_effect=ProcessLookupError,
-                ):
-            self.assertTrue(registry.kill_process_tree(4242))
-
-    def test_posix_permission_error_is_failure(self) -> None:
-        with mock.patch.object(registry, '_IS_WINDOWS', False), \
-                mock.patch.object(
-                    registry.os, 'kill', side_effect=PermissionError,
-                ):
-            self.assertFalse(registry.kill_process_tree(4242))
 
 
 if __name__ == '__main__':

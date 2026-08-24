@@ -1,10 +1,10 @@
-"""Unit tests for ``claude_one_shot``.
+"""Unit tests for ``one_shot``.
 
 The subprocess is mocked. Locks the contract:
   * Returns stdout on success.
-  * Raises ``ClaudeOneShotError`` on non-zero exit.
-  * Raises ``ClaudeOneShotError`` on timeout.
-  * Raises ``ClaudeOneShotError`` when the binary is missing.
+  * Raises ``OneShotError`` on non-zero exit.
+  * Raises ``OneShotError`` on timeout.
+  * Raises ``OneShotError`` when the binary is missing.
   * Model flag is forwarded only when set.
 """
 
@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import subprocess
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-    ClaudeOneShotError,
-    claude_one_shot,
-    make_claude_one_shot,
+    OneShotError,
+    one_shot,
+    make_one_shot,
 )
 
 
@@ -31,17 +31,17 @@ class _CompletedProcess:
 class ClaudeOneShotTests(unittest.TestCase):
     def test_returns_stdout_on_success(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, 'the response'),
         ):
-            self.assertEqual(claude_one_shot('hello'), 'the response')
+            self.assertEqual(one_shot('hello'), 'the response')
 
     def test_passes_prompt_via_stdin(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, 'ok'),
         ) as mock_run:
-            claude_one_shot('the prompt content')
+            one_shot('the prompt content')
         kwargs = mock_run.call_args.kwargs
         self.assertEqual(kwargs['input'], 'the prompt content')
         self.assertTrue(kwargs['text'])
@@ -49,39 +49,39 @@ class ClaudeOneShotTests(unittest.TestCase):
 
     def test_command_includes_p_flag(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x')
+            one_shot('x')
         cmd = mock_run.call_args.args[0]
         self.assertEqual(cmd[0], 'claude')
         self.assertIn('-p', cmd)
 
     def test_model_flag_added_when_set(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x', model='claude-haiku-4-5-20251001')
+            one_shot('x', model='claude-haiku-4-5-20251001')
         cmd = mock_run.call_args.args[0]
         self.assertIn('--model', cmd)
         self.assertIn('claude-haiku-4-5-20251001', cmd)
 
     def test_model_flag_omitted_when_empty(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x', model='')
+            one_shot('x', model='')
         cmd = mock_run.call_args.args[0]
         self.assertNotIn('--model', cmd)
 
     def test_custom_binary_used(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x', binary='/usr/local/bin/claude')
+            one_shot('x', binary='/usr/local/bin/claude')
         cmd = mock_run.call_args.args[0]
         self.assertEqual(cmd[0], '/usr/local/bin/claude')
 
@@ -89,66 +89,66 @@ class ClaudeOneShotTests(unittest.TestCase):
         # Isolated scratch cwd so the throwaway transcript doesn't pollute the
         # caller's repo history.
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x', cwd='/tmp/lesson-cwd')
+            one_shot('x', cwd='/tmp/lesson-cwd')
         self.assertEqual(mock_run.call_args.kwargs['cwd'], '/tmp/lesson-cwd')
 
     def test_cwd_none_when_empty(self) -> None:
         # Empty cwd -> None, so the subprocess inherits the caller's cwd
         # (unchanged legacy behaviour).
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, ''),
         ) as mock_run:
-            claude_one_shot('x')
+            one_shot('x')
         self.assertIsNone(mock_run.call_args.kwargs['cwd'])
 
     def test_nonzero_exit_raises(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(1, '', 'auth required'),
         ):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'auth required'):
-                claude_one_shot('x')
+            with self.assertRaisesRegex(OneShotError, 'auth required'):
+                one_shot('x')
 
     def test_nonzero_exit_uses_stdout_when_stderr_empty(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(
                 1,
                 'API Error: Server is temporarily limiting requests\nRate limited',
                 '',
             ),
         ):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'Rate limited'):
-                claude_one_shot('x')
+            with self.assertRaisesRegex(OneShotError, 'Rate limited'):
+                one_shot('x')
 
     def test_timeout_raises(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             side_effect=subprocess.TimeoutExpired(cmd='claude', timeout=10),
         ):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'within'):
-                claude_one_shot('x', timeout_seconds=10)
+            with self.assertRaisesRegex(OneShotError, 'within'):
+                one_shot('x', timeout_seconds=10)
 
     def test_missing_binary_raises(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             side_effect=OSError('no such file'),
         ):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'failed to invoke'):
-                claude_one_shot('x', binary='nonexistent')
+            with self.assertRaisesRegex(OneShotError, 'failed to invoke'):
+                one_shot('x', binary='nonexistent')
 
 
 class MakeClaudeOneShotTests(unittest.TestCase):
     def test_closure_forwards_config(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, 'response'),
         ) as mock_run:
-            fn = make_claude_one_shot(
+            fn = make_one_shot(
                 binary='claude-bin',
                 model='claude-x',
                 timeout_seconds=42,
@@ -161,10 +161,10 @@ class MakeClaudeOneShotTests(unittest.TestCase):
 
     def test_closure_forwards_cwd(self) -> None:
         with patch(
-            'claude_core_lib.claude_core_lib.helpers.one_shot_utils.subprocess.run',
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
             return_value=_CompletedProcess(0, 'response'),
         ) as mock_run:
-            fn = make_claude_one_shot(binary='claude-bin', cwd='/srv/lessons-cwd')
+            fn = make_one_shot(binary='claude-bin', cwd='/srv/lessons-cwd')
             fn('prompt-text')
         self.assertEqual(mock_run.call_args.kwargs['cwd'], '/srv/lessons-cwd')
 

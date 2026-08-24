@@ -49,7 +49,7 @@ class BugSilentBatchFailureTests(unittest.TestCase):
         # Important: logger attribute on service should receive the
         # exception. Either explicitly or via the module's logger.
         boom = RuntimeError('simulated transient network failure')
-        service.process_review_comment_batch.side_effect = boom
+        service.comments.process_review_comment_batch.side_effect = boom
 
         # Capture logs at WARNING/ERROR level from the workflow logger
         # (kato uses a non-propagating workflow logger; root won't see

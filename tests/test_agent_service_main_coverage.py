@@ -16,6 +16,8 @@ import os
 import tempfile
 import time
 import unittest
+
+from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -154,8 +156,8 @@ class GetNewPullRequestCommentsTests(unittest.TestCase):
         review.state_registry = MagicMock()
         review.get_new_pull_request_comments.return_value = ['c1']
         service = AgentService(**_kwargs(review_comment_service=review))
-        with patch.object(service, '_cleanup_done_task_conversations') as cleanup:
-            result = service.get_new_pull_request_comments()
+        with patch.object(service.cleanup, 'cleanup_done_task_conversations') as cleanup:
+            result = service.comments.get_new_pull_request_comments()
         cleanup.assert_called_once()
         self.assertEqual(result, ['c1'])
 
@@ -221,12 +223,12 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
 
     def test_boot_cleanup_never_deletes_workspace(self) -> None:
         service, _session, workspace = self._service_with_one_stale_task()
-        service.cleanup_done_tasks()
+        service.cleanup.cleanup_done_tasks()
         workspace.delete.assert_not_called()
 
     def test_boot_cleanup_never_removes_session_record(self) -> None:
         service, session, _workspace = self._service_with_one_stale_task()
-        service.cleanup_done_tasks()
+        service.cleanup.cleanup_done_tasks()
         # ``terminate_session`` would kill the live subprocess; with
         # ``remove_record=True`` it ALSO wipes the on-disk record so
         # the tab vanishes. Neither variant is allowed from a boot /
@@ -238,12 +240,12 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
         # 30s/180s scan tick (called from ``get_new_pull_request_comments``).
         # Same no-delete invariant must hold.
         service, _session, workspace = self._service_with_one_stale_task()
-        service._cleanup_done_task_conversations()
+        service.cleanup.cleanup_done_task_conversations()
         workspace.delete.assert_not_called()
 
     def test_scan_tick_cleanup_never_removes_session_record(self) -> None:
         service, session, _workspace = self._service_with_one_stale_task()
-        service._cleanup_done_task_conversations()
+        service.cleanup.cleanup_done_task_conversations()
         session.terminate_session.assert_not_called()
 
     def test_stale_workspace_gets_marked_done_for_grey_circle(self) -> None:
@@ -253,7 +255,7 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
             WORKSPACE_STATUS_DONE,
         )
         service, _session, workspace = self._service_with_one_stale_task()
-        service.cleanup_done_tasks()
+        service.cleanup.cleanup_done_tasks()
         workspace.update_status.assert_called_with(
             'UNA-STALE', WORKSPACE_STATUS_DONE,
         )
@@ -264,7 +266,7 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
         # no matter what the manager would do if invoked.
         workspace = MagicMock()
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        service._delete_workspace_silent('T1')
+        service.cleanup._delete_workspace_silent('T1')
         workspace.delete.assert_not_called()
 
     def test_shutdown_kills_subprocesses_without_removing_records(self) -> None:
@@ -338,7 +340,7 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
         ))
         service._review_workspace_ttl_seconds = 60
         service.logger = MagicMock()
-        service.cleanup_done_tasks()
+        service.cleanup.cleanup_done_tasks()
         # Neither old-provider workspace is deleted or its session record removed.
         workspace.delete.assert_not_called()
         session.terminate_session.assert_not_called()
@@ -354,8 +356,8 @@ class NoAutoDeletePolicyTests(unittest.TestCase):
 class CleanupDoneTasksBootEntrypointTests(unittest.TestCase):
     def test_public_cleanup_delegates_to_internal(self) -> None:
         service = AgentService(**_kwargs())
-        with patch.object(service, '_cleanup_done_task_conversations') as c:
-            service.cleanup_done_tasks()
+        with patch.object(service.cleanup, 'cleanup_done_task_conversations') as c:
+            service.cleanup.cleanup_done_tasks()
         c.assert_called_once_with()
 
     def test_done_task_with_stale_session_record_is_marked_done_not_deleted(self) -> None:
@@ -390,7 +392,7 @@ class CleanupDoneTasksBootEntrypointTests(unittest.TestCase):
             review_comment_service=review_svc,
         ))
         service.logger = MagicMock()
-        service.cleanup_done_tasks()
+        service.cleanup.cleanup_done_tasks()
         session.terminate_session.assert_not_called()
         workspace.delete.assert_not_called()
         workspace.update_status.assert_called_with(
@@ -404,7 +406,7 @@ class CleanupDoneTaskConversationsTests(unittest.TestCase):
         task_service.get_review_tasks.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(task_service=task_service))
         service.logger = MagicMock()
-        service._cleanup_done_task_conversations()
+        service.cleanup.cleanup_done_task_conversations()
         service.logger.warning.assert_called()
 
     def test_swallows_delete_conversation_exception(self) -> None:
@@ -423,7 +425,7 @@ class CleanupDoneTaskConversationsTests(unittest.TestCase):
             review_comment_service=review,
         ))
         service.logger = MagicMock()
-        service._cleanup_done_task_conversations()
+        service.cleanup.cleanup_done_task_conversations()
         # The conversation-delete failure is logged at WARNING.
         service.logger.warning.assert_called()
 
@@ -432,7 +434,7 @@ class CleanupDonePlanningSessionsTests(unittest.TestCase):
     def test_returns_early_when_no_managers(self) -> None:
         service = AgentService(**_kwargs())
         # No raise.
-        service._cleanup_done_planning_sessions({'T1'})
+        service.cleanup._cleanup_done_planning_sessions({'T1'})
 
     def test_swallows_assigned_tasks_exception(self) -> None:
         task_service = MagicMock()
@@ -442,7 +444,7 @@ class CleanupDonePlanningSessionsTests(unittest.TestCase):
             session_manager=MagicMock(),
         ))
         service.logger = MagicMock()
-        service._cleanup_done_planning_sessions({'T1'})
+        service.cleanup._cleanup_done_planning_sessions({'T1'})
         service.logger.warning.assert_called()
 
     def test_marks_stale_workspaces_done_without_deleting(self) -> None:
@@ -468,7 +470,7 @@ class CleanupDonePlanningSessionsTests(unittest.TestCase):
             workspace_manager=workspace,
         ))
         service.logger = MagicMock()
-        service._cleanup_done_planning_sessions(set())
+        service.cleanup._cleanup_done_planning_sessions(set())
         # No delete, no record removal, no subprocess kill.
         session.terminate_session.assert_not_called()
         workspace.delete.assert_not_called()
@@ -484,7 +486,7 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
         session.list_records.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(session_manager=session))
         service.logger = MagicMock()
-        result = service._stale_planning_task_ids({'T1'})
+        result = service.cleanup._stale_planning_task_ids({'T1'})
         self.assertEqual(result, set())
         service.logger.exception.assert_called()
 
@@ -493,7 +495,7 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
         workspace.list_workspaces.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(workspace_manager=workspace))
         service.logger = MagicMock()
-        result = service._stale_planning_task_ids({'T1'})
+        result = service.cleanup._stale_planning_task_ids({'T1'})
         # No raise; just an empty result.
         self.assertEqual(result, set())
 
@@ -516,7 +518,7 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
         ]
         service = AgentService(**_kwargs(workspace_manager=workspace))
         # live_task_ids is empty — STALE-1 is fully eligible.
-        result = service._stale_planning_task_ids(set())
+        result = service.cleanup._stale_planning_task_ids(set())
         self.assertIn('STALE-1', result)
         self.assertNotIn('ACTIVE-1', result)
 
@@ -546,7 +548,7 @@ class StalePlanningTaskIdsTests(unittest.TestCase):
         ))
         # Even when the ticket is absent from this scan's fetch, the
         # review clone on disk must stay protected by status.
-        result = service._stale_planning_task_ids(set())
+        result = service.cleanup._stale_planning_task_ids(set())
         self.assertNotIn('OLD-REVIEW', result)
 
 
@@ -593,7 +595,7 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
         # The UNA-1201 bug: active, ticket not live, no live session,
         # last touched > grace ago → MUST be stale now.
         svc = self._service([self._ws()])
-        result = svc._stale_planning_task_ids(set())  # ticket not live
+        result = svc.cleanup._stale_planning_task_ids(set())  # ticket not live
         self.assertIn('UNA-1201', result)
 
     def test_fresh_active_task_is_protected(self) -> None:
@@ -601,7 +603,7 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
         # it — workspace updated seconds ago. Must NOT be cleaned
         # even though it's momentarily not in assigned/review.
         svc = self._service([self._ws(updated_at_epoch=time.time() - 5)])
-        result = svc._stale_planning_task_ids(set())
+        result = svc.cleanup._stale_planning_task_ids(set())
         self.assertNotIn('UNA-1201', result)
 
     def test_active_with_live_session_is_protected_even_when_cold(self) -> None:
@@ -610,7 +612,7 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
         svc = self._service(
             [self._ws()], live_session_for='UNA-1201',
         )
-        result = svc._stale_planning_task_ids(set())
+        result = svc.cleanup._stale_planning_task_ids(set())
         self.assertNotIn('UNA-1201', result)
 
     def test_ttl_zero_keeps_legacy_protect_all_active(self) -> None:
@@ -627,21 +629,21 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
             session_manager=session,
             review_workspace_ttl_seconds=0.0,
         ))
-        result = svc._stale_planning_task_ids(set())
+        result = svc.cleanup._stale_planning_task_ids(set())
         self.assertNotIn('UNA-1201', result)
 
     def test_cold_active_but_ticket_still_live_is_kept(self) -> None:
         # Even cold + no session: if the ticket IS still in the
         # assigned/review bucket, the live-norm subtraction keeps it.
         svc = self._service([self._ws()])
-        result = svc._stale_planning_task_ids({svc._norm_task_id('UNA-1201')})
+        result = svc.cleanup._stale_planning_task_ids({normalized_lower_text('UNA-1201')})
         self.assertNotIn('UNA-1201', result)
 
     def test_missing_timestamp_active_is_protected(self) -> None:
         # No recorded updated_at (legacy record) → treated as fresh
         # so we never nuke a timestamp-less active workspace.
         svc = self._service([self._ws(updated_at_epoch=0.0)])
-        result = svc._stale_planning_task_ids(set())
+        result = svc.cleanup._stale_planning_task_ids(set())
         self.assertNotIn('UNA-1201', result)
 
     def test_get_session_raising_is_treated_as_no_live_session(self) -> None:
@@ -651,7 +653,7 @@ class ColdActiveWorkspaceCleanupTests(unittest.TestCase):
         # leftover whose ticket isn't live is still cleaned.
         svc = self._service([self._ws()])  # cold active, ticket not live
         svc._session_manager.get_session.side_effect = RuntimeError('boom')
-        result = svc._stale_planning_task_ids(set())
+        result = svc.cleanup._stale_planning_task_ids(set())
         self.assertIn('UNA-1201', result)
 
 
@@ -665,7 +667,7 @@ class DeleteWorkspaceSilentTests(unittest.TestCase):
         workspace = MagicMock()
         service = AgentService(**_kwargs(workspace_manager=workspace))
         service.logger = MagicMock()
-        service._delete_workspace_silent('T1')
+        service.cleanup._delete_workspace_silent('T1')
         workspace.delete.assert_not_called()
         service.logger.exception.assert_not_called()
 
@@ -673,7 +675,7 @@ class DeleteWorkspaceSilentTests(unittest.TestCase):
 class MarkWorkspaceDoneSilentTests(unittest.TestCase):
     def test_noop_when_workspace_manager_none(self) -> None:
         service = AgentService(**_kwargs())
-        service._mark_workspace_done_silent('T1')  # no raise
+        service.cleanup._mark_workspace_done_silent('T1')  # no raise
 
     def test_flips_status_to_done(self) -> None:
         from kato_core_lib.data_layers.service.workspace_manager import (
@@ -681,7 +683,7 @@ class MarkWorkspaceDoneSilentTests(unittest.TestCase):
         )
         workspace = MagicMock()
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        service._mark_workspace_done_silent('T1')
+        service.cleanup._mark_workspace_done_silent('T1')
         workspace.update_status.assert_called_with('T1', WORKSPACE_STATUS_DONE)
 
     def test_swallows_update_status_exception(self) -> None:
@@ -689,7 +691,7 @@ class MarkWorkspaceDoneSilentTests(unittest.TestCase):
         workspace.update_status.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(workspace_manager=workspace))
         service.logger = MagicMock()
-        service._mark_workspace_done_silent('T1')
+        service.cleanup._mark_workspace_done_silent('T1')
         service.logger.exception.assert_called()
 
     def test_skips_when_manager_has_no_update_status(self) -> None:
@@ -697,7 +699,7 @@ class MarkWorkspaceDoneSilentTests(unittest.TestCase):
         # method) must not blow up — silent no-op.
         workspace = SimpleNamespace()  # no ``update_status`` attr
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        service._mark_workspace_done_silent('T1')  # no raise
+        service.cleanup._mark_workspace_done_silent('T1')  # no raise
 
 
 class UpdateWorkspaceStatusAfterPublishTests(unittest.TestCase):
@@ -754,7 +756,7 @@ class ThinDelegatesTests(unittest.TestCase):
         review.handle_pull_request_comment.return_value = {'ok': True}
         service = AgentService(**_kwargs(review_comment_service=review))
         self.assertEqual(
-            service.handle_pull_request_comment({'p': 1}), {'ok': True},
+            service.comments.handle_pull_request_comment({'p': 1}), {'ok': True},
         )
 
     def test_process_review_comment_delegates(self) -> None:
@@ -763,7 +765,7 @@ class ThinDelegatesTests(unittest.TestCase):
         review.process_review_comment.return_value = {'ok': True}
         service = AgentService(**_kwargs(review_comment_service=review))
         self.assertEqual(
-            service.process_review_comment(SimpleNamespace()), {'ok': True},
+            service.comments.process_review_comment(SimpleNamespace()), {'ok': True},
         )
 
     def test_process_review_comment_batch_delegates(self) -> None:
@@ -772,7 +774,7 @@ class ThinDelegatesTests(unittest.TestCase):
         review.process_review_comment_batch.return_value = [{'ok': True}]
         service = AgentService(**_kwargs(review_comment_service=review))
         self.assertEqual(
-            service.process_review_comment_batch([SimpleNamespace()]),
+            service.comments.process_review_comment_batch([SimpleNamespace()]),
             [{'ok': True}],
         )
 
@@ -782,7 +784,7 @@ class ThinDelegatesTests(unittest.TestCase):
         review.task_id_for_comment.return_value = 'PROJ-1'
         service = AgentService(**_kwargs(review_comment_service=review))
         self.assertEqual(
-            service.task_id_for_review_comment(SimpleNamespace()), 'PROJ-1',
+            service.comments.task_id_for_review_comment(SimpleNamespace()), 'PROJ-1',
         )
 
 
@@ -893,11 +895,11 @@ class PauseForPushApprovalTests(unittest.TestCase):
 class ApprovePushTests(unittest.TestCase):
     def test_returns_none_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertIsNone(service.approve_push(''))
+        self.assertIsNone(service.publish.approve_push(''))
 
     def test_returns_none_when_no_pending_publish(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertIsNone(service.approve_push('T1'))
+        self.assertIsNone(service.publish.approve_push('T1'))
 
     def test_publishes_pending_task(self) -> None:
         from kato_core_lib.data_layers.data.task import Task
@@ -913,35 +915,35 @@ class ApprovePushTests(unittest.TestCase):
         service._pending_publish['T1'] = (
             Task(id='T1'), prepared, {'success': True},
         )
-        result = service.approve_push('T1')
+        result = service.publish.approve_push('T1')
         self.assertEqual(result, {'status': 'published'})
 
 
 class IsAwaitingPushApprovalTests(unittest.TestCase):
     def test_returns_false_for_blank_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.is_awaiting_push_approval(''))
+        self.assertFalse(service.publish.is_awaiting_push_approval(''))
 
     def test_returns_true_when_pending(self) -> None:
         service = AgentService(**_kwargs())
         service._pending_publish['T1'] = ('task', 'prep', 'exec')
-        self.assertTrue(service.is_awaiting_push_approval('T1'))
+        self.assertTrue(service.publish.is_awaiting_push_approval('T1'))
 
 
 class CommentStoreForTests(unittest.TestCase):
     def test_returns_none_when_workspace_manager_missing(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertIsNone(service._comment_store_for('T1'))
+        self.assertIsNone(service.comments.comment_store('T1'))
 
     def test_returns_none_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs(workspace_manager=MagicMock()))
-        self.assertIsNone(service._comment_store_for(''))
+        self.assertIsNone(service.comments.comment_store(''))
 
     def test_returns_none_on_workspace_path_exception(self) -> None:
         workspace = MagicMock()
         workspace.workspace_path.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        self.assertIsNone(service._comment_store_for('T1'))
+        self.assertIsNone(service.comments.comment_store('T1'))
 
     def test_returns_none_when_workspace_dir_missing(self) -> None:
         workspace = MagicMock()
@@ -949,7 +951,7 @@ class CommentStoreForTests(unittest.TestCase):
         workspace_dir.is_dir.return_value = False
         workspace.workspace_path.return_value = workspace_dir
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        self.assertIsNone(service._comment_store_for('T1'))
+        self.assertIsNone(service.comments.comment_store('T1'))
 
     def test_returns_local_comment_store_when_workspace_exists(self) -> None:
         import tempfile
@@ -959,14 +961,14 @@ class CommentStoreForTests(unittest.TestCase):
             workspace = MagicMock()
             workspace.workspace_path.return_value = Path(td)
             service = AgentService(**_kwargs(workspace_manager=workspace))
-            store = service._comment_store_for('T1')
+            store = service.comments.comment_store('T1')
         self.assertIsNotNone(store)
 
 
 class ListTaskCommentsTests(unittest.TestCase):
     def test_returns_empty_when_store_missing(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertEqual(service.list_task_comments('T1'), [])
+        self.assertEqual(service.comments.list_task_comments('T1'), [])
 
     def test_returns_per_repo_when_repo_id_given(self) -> None:
         from kato_core_lib.comment_core_lib import CommentRecord
@@ -977,8 +979,8 @@ class ListTaskCommentsTests(unittest.TestCase):
             id='c1', body='hi', repo_id='r1', author='a', source='local',
         )
         store.list_for_repo.return_value = [record]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.list_task_comments('T1', 'r1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.list_task_comments('T1', 'r1')
         self.assertEqual(len(result), 1)
         store.list_for_repo.assert_called_once_with('r1')
 
@@ -991,8 +993,8 @@ class ListTaskCommentsTests(unittest.TestCase):
             id='c1', body='hi', repo_id='r1', author='a', source='local',
         )
         store.list.return_value = [record]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.list_task_comments('T1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.list_task_comments('T1')
         self.assertEqual(len(result), 1)
         store.list.assert_called_once()
 
@@ -1012,10 +1014,11 @@ class ListTaskCommentsTests(unittest.TestCase):
             file_path='f.py', line=3,
         )
         store.list.return_value = [gone, here]
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_file_lines',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(
+service.comments, '_file_lines',
                           return_value=['line'] * 10):
-            result = service.list_task_comments('T1')
+            result = service.comments.list_task_comments('T1')
         by_id = {c['id']: c for c in result}
         self.assertTrue(by_id['c1']['outdated'])
         self.assertFalse(by_id['c2']['outdated'])
@@ -1034,9 +1037,10 @@ class ListTaskCommentsTests(unittest.TestCase):
             file_path='f.py', line=5,
         )
         store.list.return_value = [file_level, unreadable]
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_file_lines', return_value=None):
-            result = service.list_task_comments('T1')
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(
+service.comments, '_file_lines', return_value=None):
+            result = service.comments.list_task_comments('T1')
         # File-level never outdated; unreadable file => conservative False.
         self.assertFalse(result[0]['outdated'])
         self.assertFalse(result[1]['outdated'])
@@ -1050,19 +1054,19 @@ class ListTaskCommentsTests(unittest.TestCase):
             CommentRecord(
                 id='c1', body='x', repo_id='r1', author='a', source='local',
                 file_path='f.py', line=2,
-                anchor_line_hash=service._comment_anchor_line_hash('two'),
+                anchor_line_hash=service.comments._comment_anchor_line_hash('two'),
             ),
             CommentRecord(
                 id='c2', body='y', repo_id='r1', author='a', source='local',
                 file_path='f.py', line=3,
-                anchor_line_hash=service._comment_anchor_line_hash('three'),
+                anchor_line_hash=service.comments._comment_anchor_line_hash('three'),
             ),
         ]
-        with patch.object(service, '_comment_store_for', return_value=store), \
+        with patch.object(service.comments, 'comment_store', return_value=store), \
              patch.object(
-                 service, '_file_lines', return_value=['one', 'two', 'three'],
+service.comments, '_file_lines', return_value=['one', 'two', 'three'],
              ) as file_lines:
-            result = service.list_task_comments('T1')
+            result = service.comments.list_task_comments('T1')
         self.assertFalse(result[0]['outdated'])
         self.assertFalse(result[1]['outdated'])
         file_lines.assert_called_once_with('T1', 'r1', 'f.py')
@@ -1071,7 +1075,7 @@ class ListTaskCommentsTests(unittest.TestCase):
 class AddTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.add_task_comment(
+        result = service.comments.add_task_comment(
             'T1', repo_id='r1', file_path='f.py', body='comment',
         )
         self.assertFalse(result['ok'])
@@ -1081,8 +1085,8 @@ class AddTaskCommentTests(unittest.TestCase):
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.add.side_effect = ValueError('bad body')
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.add_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.add_task_comment(
                 'T1', repo_id='r1', file_path='f.py', body='',
             )
         self.assertFalse(result['ok'])
@@ -1105,10 +1109,10 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store.add.return_value = reply
         store.get.side_effect = lambda cid: {'c0': root}.get(cid)
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run',
                           return_value=True) as trigger:
-            result = service.add_task_comment(
+            result = service.comments.add_task_comment(
                 'T1', repo_id='r1', file_path='f.py',
                 body='no, do it differently', parent_id='c0',
             )
@@ -1131,10 +1135,10 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store.add.return_value = persisted
         store.get.return_value = persisted
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run',
                           return_value=True) as trigger:
-            result = service.add_task_comment(
+            result = service.comments.add_task_comment(
                 'T1', repo_id='r1', file_path='f.py', body='comment',
             )
         self.assertTrue(result['ok'])
@@ -1152,12 +1156,12 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store.add.return_value = persisted
         store.get.return_value = persisted
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_file_line_text',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comments, '_file_line_text',
                           return_value='original line'), \
-             patch.object(service, '_maybe_trigger_comment_run',
+             patch.object(service.comment_runs, 'trigger_comment_run',
                           return_value=True):
-            result = service.add_task_comment(
+            result = service.comments.add_task_comment(
                 'T1', repo_id='r1', file_path='f.py',
                 line=2, body='comment',
             )
@@ -1165,7 +1169,7 @@ class AddTaskCommentTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertEqual(
             added.anchor_line_hash,
-            service._comment_anchor_line_hash('original line'),
+            service.comments._comment_anchor_line_hash('original line'),
         )
 
     def test_comment_prompt_includes_thread_replies(self) -> None:
@@ -1184,8 +1188,8 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [root, reply]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            prompt = service._comment_agent_prompt('T1', root)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            prompt = service.comment_runs._comment_agent_prompt('T1', root)
         self.assertIn('fix this', prompt)
         self.assertIn('no, do it differently', prompt)
         self.assertIn('Operator:', prompt)
@@ -1213,8 +1217,8 @@ class AddTaskCommentTests(unittest.TestCase):
             )
             store = MagicMock()
             store.list.return_value = [root]
-            with patch.object(service, '_comment_store_for', return_value=store):
-                prompt = service._comment_agent_prompt('T1', root)
+            with patch.object(service.comments, 'comment_store', return_value=store):
+                prompt = service.comment_runs._comment_agent_prompt('T1', root)
         # The line the comment anchors to is actually shown to the agent...
         self.assertIn('line 5', prompt)
         # ...framed as untrusted repo content, same as the PR-review path.
@@ -1236,8 +1240,8 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [root]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            prompt = service._comment_agent_prompt('T1', root)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            prompt = service.comment_runs._comment_agent_prompt('T1', root)
         self.assertIn('Make the smallest possible change', prompt)
         self.assertNotIn('repo-file:', prompt)
 
@@ -1260,8 +1264,8 @@ class AddTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [root]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            prompt = service._comment_agent_prompt('T1', root)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            prompt = service.comment_runs._comment_agent_prompt('T1', root)
         self.assertNotIn('repo-file:', prompt)
         self.assertNotIn('Code at line', prompt)
         # ...and the narrow-edit guardrail is still there, snippet or not.
@@ -1271,15 +1275,15 @@ class AddTaskCommentTests(unittest.TestCase):
 class ResolveTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.resolve_task_comment('T1', 'c1')
+        result = service.comments.resolve_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_returns_error_when_comment_not_found(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.update_status.return_value = None
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.resolve_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.resolve_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_resolves_local_comment_without_remote_sync(self) -> None:
@@ -1294,8 +1298,8 @@ class ResolveTaskCommentTests(unittest.TestCase):
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.update_status.return_value = record
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.resolve_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.resolve_task_comment('T1', 'c1')
         self.assertTrue(result['ok'])
         self.assertFalse(result['remote_sync']['attempted'])
 
@@ -1303,30 +1307,30 @@ class ResolveTaskCommentTests(unittest.TestCase):
 class MarkCommentAddressedTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.mark_comment_addressed('T1', 'c1')
+        result = service.comments.mark_comment_addressed('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_returns_error_when_comment_not_found(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.update_kato_status.return_value = None
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.mark_comment_addressed('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.mark_comment_addressed('T1', 'c1')
         self.assertFalse(result['ok'])
 
 
 class ReopenTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.reopen_task_comment('T1', 'c1')
+        result = service.comments.reopen_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_returns_error_when_comment_not_found(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.update_status.return_value = None
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.reopen_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.reopen_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_reopen_succeeds_when_comment_present(self) -> None:
@@ -1341,10 +1345,10 @@ class ReopenTaskCommentTests(unittest.TestCase):
         store = MagicMock()
         store.update_status.return_value = record
         store.get.return_value = record
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run',
                           return_value=True) as trigger:
-            result = service.reopen_task_comment('T1', 'c1')
+            result = service.comments.reopen_task_comment('T1', 'c1')
         self.assertTrue(result['ok'])
         self.assertTrue(result['triggered_immediately'])
         store.update_kato_status.assert_called_once_with(
@@ -1362,9 +1366,9 @@ class ReopenTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.update_status.return_value = record
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run') as trigger:
-            result = service.reopen_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run') as trigger:
+            result = service.comments.reopen_task_comment('T1', 'c1')
         self.assertTrue(result['ok'])
         self.assertNotIn('triggered_immediately', result)
         store.update_kato_status.assert_not_called()
@@ -1374,15 +1378,15 @@ class ReopenTaskCommentTests(unittest.TestCase):
 class RetryTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.retry_task_comment('T1', 'c1')
+        result = service.comments.retry_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_returns_error_when_comment_not_found(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.get.return_value = None
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.retry_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.retry_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_refuses_to_retry_a_non_failed_comment(self) -> None:
@@ -1397,9 +1401,9 @@ class RetryTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.get.return_value = record
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run') as trigger:
-            result = service.retry_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run') as trigger:
+            result = service.comments.retry_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
         store.update_kato_status.assert_not_called()
         trigger.assert_not_called()
@@ -1417,10 +1421,10 @@ class RetryTaskCommentTests(unittest.TestCase):
         )
         store = MagicMock()
         store.get.return_value = record
-        with patch.object(service, '_comment_store_for', return_value=store), \
-             patch.object(service, '_maybe_trigger_comment_run',
+        with patch.object(service.comments, 'comment_store', return_value=store), \
+             patch.object(service.comment_runs, 'trigger_comment_run',
                           return_value=True) as trigger:
-            result = service.retry_task_comment('T1', 'c1')
+            result = service.comments.retry_task_comment('T1', 'c1')
         self.assertTrue(result['ok'])
         self.assertTrue(result['triggered_immediately'])
         store.update_status.assert_called_once_with(
@@ -1435,23 +1439,23 @@ class RetryTaskCommentTests(unittest.TestCase):
 class DeleteTaskCommentTests(unittest.TestCase):
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.delete_task_comment('T1', 'c1')
+        result = service.comments.delete_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
     def test_returns_ok_true_when_delete_succeeds(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.delete.return_value = True
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.delete_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.delete_task_comment('T1', 'c1')
         self.assertTrue(result['ok'])
 
     def test_returns_ok_false_when_delete_returns_false(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.delete.return_value = False
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.delete_task_comment('T1', 'c1')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.delete_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
 
@@ -1486,15 +1490,15 @@ class EditTaskCommentTests(unittest.TestCase):
 
     def test_returns_error_when_no_workspace(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.edit_task_comment('T1', 'c1', kato_status='editing')
+        result = service.comments.edit_task_comment('T1', 'c1', kato_status='editing')
         self.assertFalse(result['ok'])
 
     def test_returns_error_when_comment_missing(self) -> None:
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.list.return_value = []
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment('T1', 'c1', kato_status='editing')
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment('T1', 'c1', kato_status='editing')
         self.assertFalse(result['ok'])
         self.assertIn('not found', result['error'])
 
@@ -1505,8 +1509,8 @@ class EditTaskCommentTests(unittest.TestCase):
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.list.return_value = [self._remote_queued()]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'r1', kato_status='editing',
             )
         self.assertFalse(result['ok'])
@@ -1520,8 +1524,8 @@ class EditTaskCommentTests(unittest.TestCase):
         record = self._local_queued()
         record.kato_status = self._Status.IN_PROGRESS.value
         store.list.return_value = [record]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'c1', kato_status='editing',
             )
         self.assertFalse(result['ok'])
@@ -1531,8 +1535,8 @@ class EditTaskCommentTests(unittest.TestCase):
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.list.return_value = [self._local_queued()]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'c1', kato_status='in_progress',
             )
         self.assertFalse(result['ok'])
@@ -1542,8 +1546,8 @@ class EditTaskCommentTests(unittest.TestCase):
         service = AgentService(**_kwargs())
         store = MagicMock()
         store.list.return_value = [self._local_queued()]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'c1', kato_status='editing',
             )
         self.assertTrue(result['ok'])
@@ -1558,8 +1562,8 @@ class EditTaskCommentTests(unittest.TestCase):
         editing = self._local_queued()
         editing.kato_status = self._Status.EDITING.value
         store.list.return_value = [editing]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'c1', body='new text', kato_status='queued',
             )
         self.assertTrue(result['ok'])
@@ -1574,8 +1578,8 @@ class EditTaskCommentTests(unittest.TestCase):
         editing = self._local_queued()
         editing.kato_status = self._Status.EDITING.value
         store.list.return_value = [editing]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            result = service.edit_task_comment(
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            result = service.comments.edit_task_comment(
                 'T1', 'c1', kato_status='queued',
             )
         self.assertTrue(result['ok'])
@@ -1588,13 +1592,13 @@ class EditTaskCommentTests(unittest.TestCase):
 class TaskHasBusyTurnTests(unittest.TestCase):
     def test_returns_false_when_no_session_manager(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
 
     def test_returns_false_on_session_exception(self) -> None:
         session = MagicMock()
         session.get_session.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
 
     def test_returns_false_when_session_dead(self) -> None:
         session = MagicMock()
@@ -1602,7 +1606,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             is_alive=False, is_working=True,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
 
     def test_returns_true_when_session_working(self) -> None:
         session = MagicMock()
@@ -1610,7 +1614,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             is_alive=True, is_working=True,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertTrue(service._task_has_busy_turn('T1'))
+        self.assertTrue(service.comment_runs._task_has_busy_turn('T1'))
 
     def test_returns_true_when_user_message_sent_but_no_result_yet(self) -> None:
         # Regression: there is a real race window between
@@ -1634,7 +1638,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             result_events_received=0,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertTrue(service._task_has_busy_turn('T1'))
+        self.assertTrue(service.comment_runs._task_has_busy_turn('T1'))
 
     def test_returns_false_when_sends_match_results(self) -> None:
         # Truly idle: every sent message has been answered with a
@@ -1647,14 +1651,14 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             result_events_received=3,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
 
 
 class TaskPullRequestIdTests(unittest.TestCase):
     def test_returns_empty_for_blank_input(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertEqual(service._task_pull_request_id('', 'r'), '')
-        self.assertEqual(service._task_pull_request_id('T', ''), '')
+        self.assertEqual(service.comments._task_pull_request_id('', 'r'), '')
+        self.assertEqual(service.comments._task_pull_request_id('T', ''), '')
 
     def test_returns_pr_id_from_registry(self) -> None:
         registry = MagicMock()
@@ -1664,7 +1668,7 @@ class TaskPullRequestIdTests(unittest.TestCase):
         review = MagicMock()
         review.state_registry = registry
         service = AgentService(**_kwargs(review_comment_service=review))
-        result = service._task_pull_request_id('T1', 'r1')
+        result = service.comments._task_pull_request_id('T1', 'r1')
         self.assertEqual(result, '17')
 
     def test_swallows_registry_exception(self) -> None:
@@ -1678,7 +1682,7 @@ class TaskPullRequestIdTests(unittest.TestCase):
             review_comment_service=review,
             repository_service=repo,
         ))
-        result = service._task_pull_request_id('T1', 'r1')
+        result = service.comments._task_pull_request_id('T1', 'r1')
         self.assertEqual(result, '')
 
 
@@ -1696,8 +1700,8 @@ class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
     match case-sensitively).
     """
 
-    def test_norm_task_id_canonicalises_case_and_blanks(self) -> None:
-        n = AgentService._norm_task_id
+    def test_task_id_key_canonicalises_case_and_blanks(self) -> None:
+        n = normalized_lower_text
         self.assertEqual(n('UNA-232'), n('una-232'))
         self.assertEqual(n('  UNA-232  '), n('una-232'))
         self.assertEqual(n(None), '')
@@ -1738,7 +1742,7 @@ class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
             assigned_ids=[],
             record_ids=['una-232'],
         )
-        svc._cleanup_done_task_conversations()
+        svc.cleanup.cleanup_done_task_conversations()
         session.terminate_session.assert_not_called()
         workspace.delete.assert_not_called()
 
@@ -1756,7 +1760,7 @@ class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
             assigned_ids=[],
             record_ids=['una-1201'],
         )
-        svc._cleanup_done_task_conversations()
+        svc.cleanup.cleanup_done_task_conversations()
         session.terminate_session.assert_not_called()
         workspace.delete.assert_not_called()
         workspace.update_status.assert_called_with(
@@ -1775,7 +1779,7 @@ class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
             assigned_ids=[],
             record_ids=['UNA-Mixed-99'],
         )
-        svc._cleanup_done_task_conversations()
+        svc.cleanup.cleanup_done_task_conversations()
         session.terminate_session.assert_not_called()
         workspace.update_status.assert_called_with(
             'UNA-Mixed-99', WORKSPACE_STATUS_DONE,
@@ -1789,7 +1793,7 @@ class CleanupCaseInsensitivityRegressionTests(unittest.TestCase):
             assigned_ids=['UNA-555'],
             record_ids=['UNA-555'.lower()],
         )
-        svc._cleanup_done_task_conversations()
+        svc.cleanup.cleanup_done_task_conversations()
         session.terminate_session.assert_not_called()
 
 

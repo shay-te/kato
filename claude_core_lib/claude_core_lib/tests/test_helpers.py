@@ -328,11 +328,19 @@ class ReadArchitectureDocTests(unittest.TestCase):
         with _arch_cache_lock:
             self.assertIn(str(path), _arch_cache)
 
-    def test_orchestration_layer_not_orchestrator_in_directive(self) -> None:
+    def test_the_directive_never_promises_the_edit_gets_committed(self) -> None:
+        # It used to say the orchestration layer "commits and pushes the
+        # file". Nothing does: the doc path is operator-configured and may
+        # sit outside every repo, so the agent was told its edit would be
+        # published when it might never be. What must survive is the hard
+        # rule (never run git) without the false promise attached.
         path = Path(self._tmp.name) / 'arch3.md'
         path.write_text('# A\n', encoding='utf-8')
+
         result = read_architecture_doc(str(path))
-        self.assertIn('orchestration layer', result)
+
+        self.assertIn('NEVER run git', result)
+        self.assertNotIn('commits and pushes', result)
         self.assertNotIn('orchestrator commits', result)
 
     def test_directory_path_returns_empty(self) -> None:

@@ -1,8 +1,7 @@
 """Classify whether an agent tool call reaches outside its sandbox.
 
-A the orchestrator Claude session is spawned with a containment sandbox: the
-per-task workspace clone (the ``cwd``) plus an explicit ``--add-dir``
-set. When the agent asks permission to touch a filesystem path that
+An agent session is spawned with a containment sandbox: the per-task
+workspace clone (the ``cwd``) plus an explicit extra-directory set. When the agent asks permission to touch a filesystem path that
 escapes ALL of those roots, the planning UI must (a) shout a warning
 and (b) refuse to offer a *remembered* approval — an "allow always"
 for an out-of-sandbox path would silently hand the agent standing

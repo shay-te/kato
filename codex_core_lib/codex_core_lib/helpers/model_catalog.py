@@ -18,7 +18,7 @@ from pathlib import Path
 # Fallback only — used when the codex cache file can't be read/parsed (offline
 # tests, codex not yet run). Matches the catalog shipped at the time of writing;
 # discovery from the live cache supersedes it.
-FALLBACK_CODEX_MODELS = (
+FALLBACK_MODELS = (
     {'id': 'gpt-5.5', 'label': 'GPT-5.5', 'default': True},
     {'id': 'gpt-5.4', 'label': 'GPT-5.4'},
     {'id': 'gpt-5.4-mini', 'label': 'GPT-5.4-Mini'},
@@ -28,37 +28,43 @@ _cache: dict[str, tuple[int, list[dict]]] = {}
 _cache_lock = threading.Lock()
 
 
-def codex_models_cache_path() -> Path:
+def _models_cache_path() -> Path:
     """Path to the codex CLI's model cache, honouring ``$CODEX_HOME``."""
     home = os.environ.get('CODEX_HOME') or str(Path.home() / '.codex')
     return Path(home) / 'models_cache.json'
 
 
-def discover_codex_models() -> list[dict]:
+def discover_models(force: bool = False) -> list[dict]:
     """Return ``[{id, label[, default]}]`` for the codex model picker.
 
     Parsed from the codex cache (slug → id, display_name → label), keeping only
     user-listable models supported in the API, ordered by codex's own priority.
     Cached on (path, mtime) so a refreshed cache is picked up. Always non-empty,
     never raises.
+
+    ``force`` re-reads even when the mtime is unchanged. Signature-identical to
+    every other transport's ``discover_models`` on purpose: the catalog factory
+    calls them the same way, and a backend that quietly took different
+    arguments would fail only at runtime, on the operator's picker.
     """
-    path = codex_models_cache_path()
+    path = _models_cache_path()
     key = str(path)
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = 0
-    with _cache_lock:
-        cached = _cache.get(key)
-        if cached is not None and cached[0] == mtime:
-            return [dict(m) for m in cached[1]]
-    models = _parse_cache(path) or [dict(m) for m in FALLBACK_CODEX_MODELS]
+    if not force:
+        with _cache_lock:
+            cached = _cache.get(key)
+            if cached is not None and cached[0] == mtime:
+                return [dict(m) for m in cached[1]]
+    models = _parse_cache(path) or [dict(m) for m in FALLBACK_MODELS]
     with _cache_lock:
         _cache[key] = (mtime, [dict(m) for m in models])
     return [dict(m) for m in models]
 
 
-def reset_codex_models_cache() -> None:
+def reset_models_cache() -> None:
     """Clear the discovery cache (tests / a CLI catalog refresh mid-process)."""
     with _cache_lock:
         _cache.clear()

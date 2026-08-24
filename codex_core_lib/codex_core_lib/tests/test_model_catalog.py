@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from codex_core_lib.codex_core_lib.helpers import model_discovery
+from codex_core_lib.codex_core_lib.helpers import model_catalog
 
 
 def _cache(models):
@@ -33,8 +33,8 @@ _SAMPLE = [
 
 class CodexModelDiscoveryTests(unittest.TestCase):
     def setUp(self) -> None:
-        model_discovery.reset_codex_models_cache()
-        self.addCleanup(model_discovery.reset_codex_models_cache)
+        model_catalog.reset_models_cache()
+        self.addCleanup(model_catalog.reset_models_cache)
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.home = Path(self._tmp.name)
@@ -47,7 +47,7 @@ class CodexModelDiscoveryTests(unittest.TestCase):
 
     def test_parses_listed_api_models_sorted_by_priority(self) -> None:
         self._write_cache(_SAMPLE)
-        models = model_discovery.discover_codex_models()
+        models = model_catalog.discover_models()
         self.assertEqual(
             [m['id'] for m in models], ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'],
         )
@@ -57,51 +57,51 @@ class CodexModelDiscoveryTests(unittest.TestCase):
 
     def test_first_by_priority_is_default(self) -> None:
         self._write_cache(_SAMPLE)
-        models = model_discovery.discover_codex_models()
+        models = model_catalog.discover_models()
         self.assertEqual([m['id'] for m in models if m.get('default')], ['gpt-5.5'])
 
     def test_hidden_and_non_api_models_excluded(self) -> None:
         self._write_cache(_SAMPLE)
-        ids = [m['id'] for m in model_discovery.discover_codex_models()]
+        ids = [m['id'] for m in model_catalog.discover_models()]
         self.assertNotIn('codex-auto-review', ids)
         self.assertNotIn('gpt-legacy', ids)
 
     def test_unsorted_input_is_ordered_by_priority(self) -> None:
         self._write_cache(list(reversed(_SAMPLE)))
-        ids = [m['id'] for m in model_discovery.discover_codex_models()]
+        ids = [m['id'] for m in model_catalog.discover_models()]
         self.assertEqual(ids, ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'])
 
     def test_missing_file_falls_back(self) -> None:
-        models = model_discovery.discover_codex_models()
-        self.assertEqual(list(models), list(model_discovery.FALLBACK_CODEX_MODELS))
+        models = model_catalog.discover_models()
+        self.assertEqual(list(models), list(model_catalog.FALLBACK_MODELS))
 
     def test_malformed_json_falls_back(self) -> None:
         (self.home / 'models_cache.json').write_text('not json{', encoding='utf-8')
-        models = model_discovery.discover_codex_models()
-        self.assertEqual(list(models), list(model_discovery.FALLBACK_CODEX_MODELS))
+        models = model_catalog.discover_models()
+        self.assertEqual(list(models), list(model_catalog.FALLBACK_MODELS))
 
     def test_models_field_not_a_list_falls_back(self) -> None:
         (self.home / 'models_cache.json').write_text('{"models": "nope"}', encoding='utf-8')
-        models = model_discovery.discover_codex_models()
-        self.assertEqual(list(models), list(model_discovery.FALLBACK_CODEX_MODELS))
+        models = model_catalog.discover_models()
+        self.assertEqual(list(models), list(model_catalog.FALLBACK_MODELS))
 
     def test_no_listable_models_falls_back(self) -> None:
         self._write_cache([
             {'slug': 'hidden', 'display_name': 'H', 'visibility': 'hide',
              'supported_in_api': True, 'priority': 1},
         ])
-        models = model_discovery.discover_codex_models()
-        self.assertEqual(list(models), list(model_discovery.FALLBACK_CODEX_MODELS))
+        models = model_catalog.discover_models()
+        self.assertEqual(list(models), list(model_catalog.FALLBACK_MODELS))
 
     def test_codex_home_override_is_honored(self) -> None:
         self.assertEqual(
-            model_discovery.codex_models_cache_path(),
+            model_catalog._models_cache_path(),
             self.home / 'models_cache.json',
         )
 
     def test_cache_refreshes_on_mtime_change(self) -> None:
         self._write_cache(_SAMPLE)
-        first = model_discovery.discover_codex_models()
+        first = model_catalog.discover_models()
         self.assertEqual(len(first), 3)
         # Rewrite with a single model and a bumped mtime → re-read.
         os.utime(self.home / 'models_cache.json', ns=(2, 2))
@@ -110,14 +110,14 @@ class CodexModelDiscoveryTests(unittest.TestCase):
              'supported_in_api': True, 'priority': 1},
         ])
         os.utime(self.home / 'models_cache.json', ns=(99, 99))
-        second = model_discovery.discover_codex_models()
+        second = model_catalog.discover_models()
         self.assertEqual([m['id'] for m in second], ['gpt-6'])
 
     def test_result_is_a_copy(self) -> None:
         self._write_cache(_SAMPLE)
-        models = model_discovery.discover_codex_models()
+        models = model_catalog.discover_models()
         models[0]['label'] = 'mutated'
-        self.assertEqual(model_discovery.discover_codex_models()[0]['label'], 'GPT-5.5')
+        self.assertEqual(model_catalog.discover_models()[0]['label'], 'GPT-5.5')
 
 
 if __name__ == '__main__':

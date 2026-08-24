@@ -1295,7 +1295,7 @@ class AgentServiceTests(unittest.TestCase):
             }
         ]
 
-        result = self.service.handle_pull_request_comment(build_review_comment_payload())
+        result = self.service.comments.handle_pull_request_comment(build_review_comment_payload())
 
         self.assertEqual(
             result,
@@ -1341,7 +1341,7 @@ class AgentServiceTests(unittest.TestCase):
             }
         ]
 
-        service.process_review_comment(
+        service.comments.process_review_comment(
             ReviewComment(
                 pull_request_id='17',
                 comment_id='99',
@@ -1382,7 +1382,7 @@ class AgentServiceTests(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(RuntimeError, 'push failed'):
-            service.process_review_comment(
+            service.comments.process_review_comment(
                 ReviewComment(
                     pull_request_id='17',
                     comment_id='99',
@@ -1400,7 +1400,7 @@ class AgentServiceTests(unittest.TestCase):
 
     def test_handle_pull_request_comment_rejects_unknown_pull_request(self) -> None:
         with self.assertRaisesRegex(ValueError, 'unknown pull request id'):
-            self.service.handle_pull_request_comment(build_review_comment_payload())
+            self.service.comments.handle_pull_request_comment(build_review_comment_payload())
 
     def test_handle_pull_request_comment_rejects_ambiguous_pull_request(self) -> None:
         self.service._state_registry.pull_request_context_map['17'] = [
@@ -1415,7 +1415,7 @@ class AgentServiceTests(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, 'ambiguous pull request id across repositories'):
-            self.service.handle_pull_request_comment(build_review_comment_payload())
+            self.service.comments.handle_pull_request_comment(build_review_comment_payload())
 
     def test_handle_pull_request_comment_uses_repository_id_to_resolve_ambiguity(self) -> None:
         self.service._state_registry.pull_request_context_map['17'] = [
@@ -1431,7 +1431,7 @@ class AgentServiceTests(unittest.TestCase):
         payload = build_review_comment_payload()
         payload[PullRequestFields.REPOSITORY_ID] = 'backend'
 
-        result = self.service.handle_pull_request_comment(payload)
+        result = self.service.comments.handle_pull_request_comment(payload)
 
         self.assertEqual(result[PullRequestFields.REPOSITORY_ID], 'backend')
 
@@ -1447,7 +1447,7 @@ class AgentServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, 'failed to address review comment batch \\(99\\)',
         ):
-            self.service.handle_pull_request_comment(build_review_comment_payload())
+            self.service.comments.handle_pull_request_comment(build_review_comment_payload())
 
     def test_get_new_pull_request_comments_returns_unprocessed_comments_with_context(self) -> None:
         self.repository_service.resolve_task_repositories.return_value = [self.client_repo]
@@ -1485,7 +1485,7 @@ class AgentServiceTests(unittest.TestCase):
         service._state_registry.mark_review_comment_processed('client', '17', '98')
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
 
-        comments = service.get_new_pull_request_comments()
+        comments = service.comments.get_new_pull_request_comments()
 
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0].comment_id, '99')
@@ -1551,7 +1551,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.task_client.get_assigned_tasks.return_value = [build_task(task_id='PROJ-1')]
 
-        comments = service.get_new_pull_request_comments()
+        comments = service.comments.get_new_pull_request_comments()
 
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0].comment_id, '99')
@@ -1582,7 +1582,7 @@ class AgentServiceTests(unittest.TestCase):
             self.notification_service,
         )
 
-        comments = service.get_new_pull_request_comments()
+        comments = service.comments.get_new_pull_request_comments()
 
         self.assertEqual(comments, [])
         self.repository_service.get_repository.assert_called_once_with('client')
@@ -1612,7 +1612,7 @@ class AgentServiceTests(unittest.TestCase):
             )
         ]
 
-        comments = self.service.get_new_pull_request_comments()
+        comments = self.service.comments.get_new_pull_request_comments()
 
         self.assertEqual(len(comments), 1)
         self.assertEqual(comments[0].comment_id, '98')

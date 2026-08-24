@@ -26,10 +26,11 @@ import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
+from agent_core_lib.agent_core_lib.session.record import (
+    SESSION_STATUS_TERMINATED,
+)
 from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
-    PlanningSessionRecord,
-    SESSION_STATUS_TERMINATED,
 )
 from claude_core_lib.claude_core_lib.session.index import (
     CLAUDE_SESSIONS_ROOT_ENV_KEY,

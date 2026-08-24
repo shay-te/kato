@@ -20,17 +20,14 @@ Public surface:
                              the planning UI's chat tab.
     ClaudeSessionManager   - per-task lifecycle management for
                              streaming sessions.
+
+The session RECORD (``AgentSessionRecord``) and its status constants are not
+here: they are backend-agnostic and live in
+``agent_core_lib.session.record``, which every transport reads.
 """
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-from claude_core_lib.claude_core_lib.session.manager import (
-    SESSION_STATUS_ACTIVE,
-    SESSION_STATUS_DONE,
-    SESSION_STATUS_REVIEW,
-    SESSION_STATUS_TERMINATED,
-    ClaudeSessionManager,
-    PlanningSessionRecord,
-)
+from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
 from claude_core_lib.claude_core_lib.session.streaming import (
     SessionEvent,
     StreamingClaudeSession,

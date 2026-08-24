@@ -29,6 +29,8 @@ so the test pins exactly what's being read / written.
 """
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.session.record import AgentSessionRecord
+
 import os
 import tempfile
 import unittest
@@ -39,7 +41,6 @@ from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
-    PlanningSessionRecord,
 )
 
 from kato_core_lib.data_layers.service.agent_service import AgentService
@@ -136,13 +137,13 @@ class _RestartPreservesIdTests(unittest.TestCase):
     def test_record_loaded_from_disk_keeps_session_id(self):
         # Round-trip through to_dict / from_dict (what `_load_persisted_records`
         # does) must not lose the session id.
-        original = PlanningSessionRecord(
+        original = AgentSessionRecord(
             task_id='PROJ-1',
             agent_session_id=_ORIGINAL_ID,
             cwd='/x/wks/PROJ-1/repo',
             expected_branch='feature/proj-1',
         )
-        restored = PlanningSessionRecord.from_dict(original.to_dict())
+        restored = AgentSessionRecord.from_dict(original.to_dict())
         self.assertEqual(restored.agent_session_id, _ORIGINAL_ID)
         self.assertEqual(restored, original)
 
@@ -159,7 +160,7 @@ class _RestartPreservesIdTests(unittest.TestCase):
             )
             # Simulate "kato just restarted": pre-seed a record on
             # disk + in memory (the loader does this at boot).
-            seeded = PlanningSessionRecord(
+            seeded = AgentSessionRecord(
                 task_id='PROJ-1',
                 agent_session_id=_ORIGINAL_ID,
             )
@@ -189,7 +190,7 @@ class _RestartPreservesIdTests(unittest.TestCase):
                     state_dir=root / 'state',
                     session_factory=_FakeStreamingSession,
                 )
-                seeded = PlanningSessionRecord(
+                seeded = AgentSessionRecord(
                     task_id='PROJ-1',
                     agent_session_id=_ORIGINAL_ID,
                     cwd='/x/wks/PROJ-1/repo',
@@ -213,7 +214,7 @@ class _RestartPreservesIdTests(unittest.TestCase):
                 state_dir=Path(td),
                 session_factory=_FreshIdDespiteResumeSession,
             )
-            seeded = PlanningSessionRecord(
+            seeded = AgentSessionRecord(
                 task_id='PROJ-1',
                 agent_session_id=_ORIGINAL_ID,
                 cwd='/x/wks/PROJ-1/repo',
@@ -247,7 +248,7 @@ class _SyncRepositoriesPreservesIdTests(unittest.TestCase):
             state_dir=Path(manager_dir),
             session_factory=_FakeStreamingSession,
         )
-        manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
+        manager._records[manager._lookup_key('T1')] = AgentSessionRecord(
             task_id='T1',
             agent_session_id=_ORIGINAL_ID,
             cwd='/x/wks/T1/client',
@@ -281,10 +282,10 @@ class _SyncRepositoriesPreservesIdTests(unittest.TestCase):
                 repos_after_sync=['client'], manager_dir=td,
             )
             with patch.object(
-                service, '_lookup_task_for_sync',
+                service.repositories, '_lookup_task_for_sync',
                 return_value=SimpleNamespace(id='T1', tags=[], description=''),
             ):
-                service.sync_task_repositories('T1')
+                service.repositories.sync_task_repositories('T1')
             self.assertEqual(
                 manager.get_record('T1').agent_session_id, _ORIGINAL_ID,
             )
@@ -298,7 +299,7 @@ class _SyncRepositoriesPreservesIdTests(unittest.TestCase):
                 repos_after_sync=['client', 'new-repo'], manager_dir=td,
             )
             with patch.object(
-                service, '_lookup_task_for_sync',
+                service.repositories, '_lookup_task_for_sync',
                 return_value=SimpleNamespace(id='T1', tags=[], description=''),
             ), patch(
                 'kato_core_lib.data_layers.service.workspace_provisioning_service.'
@@ -308,7 +309,7 @@ class _SyncRepositoriesPreservesIdTests(unittest.TestCase):
                     SimpleNamespace(id='new-repo', local_path='/x/new-repo'),
                 ],
             ):
-                service.sync_task_repositories('T1')
+                service.repositories.sync_task_repositories('T1')
             self.assertEqual(
                 manager.get_record('T1').agent_session_id, _ORIGINAL_ID,
             )
@@ -325,7 +326,7 @@ class _AddRepoPreservesIdTests(unittest.TestCase):
             manager = ClaudeSessionManager(
                 state_dir=Path(td), session_factory=_FakeStreamingSession,
             )
-            manager._records[manager._lookup_key('T1')] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('T1')] = AgentSessionRecord(
                 task_id='T1', agent_session_id=_ORIGINAL_ID,
             )
             manager._persist_record(
@@ -346,13 +347,13 @@ class _AddRepoPreservesIdTests(unittest.TestCase):
             ))
             existing_task = SimpleNamespace(id='T1', tags=[])
             with patch.object(
-                service, '_lookup_task_for_sync',
+                service.repositories, '_lookup_task_for_sync',
                 return_value=existing_task,
             ), patch.object(
-                service, 'sync_task_repositories',
+                service.repositories, 'sync_task_repositories',
                 return_value={'synced': True},
             ):
-                service.add_task_repository('T1', 'new-repo')
+                service.repositories.add_task_repository('T1', 'new-repo')
             self.assertEqual(
                 manager.get_record('T1').agent_session_id, _ORIGINAL_ID,
             )
@@ -366,7 +367,7 @@ class _StaleResumeIdStaysPinnedTests(unittest.TestCase):
         # marker. Kato must retry the same id, not silently drift fresh.
         with tempfile.TemporaryDirectory() as td:
             manager = ClaudeSessionManager(state_dir=Path(td))
-            previous_record = PlanningSessionRecord(
+            previous_record = AgentSessionRecord(
                 task_id='PROJ-1',
                 agent_session_id=_ORIGINAL_ID,
             )
@@ -407,7 +408,7 @@ class _StaleResumeIdStaysPinnedTests(unittest.TestCase):
             manager = ClaudeSessionManager(
                 state_dir=Path(td), session_factory=factory,
             )
-            manager._records[manager._lookup_key('PROJ-1')] = PlanningSessionRecord(
+            manager._records[manager._lookup_key('PROJ-1')] = AgentSessionRecord(
                 task_id='PROJ-1', agent_session_id=_ORIGINAL_ID,
             )
             manager._persist_record(
@@ -439,7 +440,7 @@ class _HappyPathResumeKeepsIdAcrossMultipleScenariosTests(unittest.TestCase):
             manager = ClaudeSessionManager(
                 state_dir=Path(td), session_factory=_FakeStreamingSession,
             )
-            seeded = PlanningSessionRecord(
+            seeded = AgentSessionRecord(
                 task_id='T1', agent_session_id=_ORIGINAL_ID,
                 cwd='/x/wks/T1/client',
             )

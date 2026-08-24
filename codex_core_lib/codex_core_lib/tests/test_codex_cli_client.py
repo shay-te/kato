@@ -12,18 +12,19 @@ throughout.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    repository_local_paths,
+)
 from codex_core_lib.codex_core_lib.cli_client import (
     CodexCliClient,
     _extract_error_text,
     _readable_message_from_envelope,
-    _repository_local_paths,
     _unwrap_backend_error_envelope,
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
@@ -1262,17 +1263,17 @@ class ReadableMessageFromEnvelopeTests(unittest.TestCase):
 
 class RepositoryLocalPathsTests(unittest.TestCase):
     def test_none_prepared_task_returns_empty(self) -> None:
-        self.assertEqual(_repository_local_paths(None), [])
+        self.assertEqual(repository_local_paths(None), [])
 
     def test_no_repos_returns_empty(self) -> None:
-        self.assertEqual(_repository_local_paths(SimpleNamespace(repositories=[])), [])
+        self.assertEqual(repository_local_paths(SimpleNamespace(repositories=[])), [])
 
     def test_collects_local_paths(self) -> None:
         prepared = SimpleNamespace(repositories=[
             SimpleNamespace(local_path='/a'),
             SimpleNamespace(local_path='/b'),
         ])
-        self.assertEqual(_repository_local_paths(prepared), ['/a', '/b'])
+        self.assertEqual(repository_local_paths(prepared), ['/a', '/b'])
 
     def test_skips_blank_local_paths(self) -> None:
         prepared = SimpleNamespace(repositories=[
@@ -1280,7 +1281,7 @@ class RepositoryLocalPathsTests(unittest.TestCase):
             SimpleNamespace(local_path='   '),
             SimpleNamespace(local_path='/real'),
         ])
-        self.assertEqual(_repository_local_paths(prepared), ['/real'])
+        self.assertEqual(repository_local_paths(prepared), ['/real'])
 
 
 # ---------------------------------------------------------------------------

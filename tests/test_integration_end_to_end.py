@@ -239,7 +239,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
         )
         self.assertIn('PROJ-1', agent_service._state_registry.processed_task_map)
 
-        new_comments = agent_service.get_new_pull_request_comments()
+        new_comments = agent_service.comments.get_new_pull_request_comments()
 
         self.assertEqual(len(new_comments), 1)
         self.assertEqual(new_comments[0].comment_id, '99')
@@ -248,7 +248,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'test-repo',
         )
 
-        review_result = agent_service.process_review_comment(new_comments[0])
+        review_result = agent_service.comments.process_review_comment(new_comments[0])
 
         self.assertEqual(review_result[StatusFields.STATUS], StatusFields.UPDATED)
         repository_service.publish_review_fix.assert_called_once_with(
@@ -268,7 +268,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             'Kato addressed review comment 99 on pull request 17.',
         )
 
-        repeated_comments = agent_service.get_new_pull_request_comments()
+        repeated_comments = agent_service.comments.get_new_pull_request_comments()
 
         self.assertEqual(repeated_comments, [])
         self.assertEqual(repository_service.list_pull_request_comments.call_count, 2)
@@ -380,7 +380,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             skip_testing=True,
         )
 
-        new_comments = restarted_agent_service.get_new_pull_request_comments()
+        new_comments = restarted_agent_service.comments.get_new_pull_request_comments()
 
         self.assertEqual(len(new_comments), 1)
         self.assertEqual(new_comments[0].comment_id, '99')
@@ -394,7 +394,7 @@ class TestAgentEndToEndIntegration(unittest.TestCase):
             title_prefix='PROJ-1 ',
         )
 
-        review_result = restarted_agent_service.process_review_comment(new_comments[0])
+        review_result = restarted_agent_service.comments.process_review_comment(new_comments[0])
 
         self.assertEqual(review_result[StatusFields.STATUS], StatusFields.UPDATED)
         repository_service.publish_review_fix.assert_called_once_with(

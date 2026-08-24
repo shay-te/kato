@@ -48,8 +48,11 @@ class ReviewCommentSwitchRouteTests(unittest.TestCase):
         # of the real process env once the test ends.
         self.addCleanup(os.environ.pop, KEY, None)
         os.environ.pop(KEY, None)
+        # Stopping in-flight review runs belongs to the COMMENT subsystem, so
+        # the route reaches it through the namespace the service really has.
+        # Configuring it on the facade would pass here and no-op in production.
         self.agent_service = Mock()
-        self.agent_service.stop_review_comment_work = Mock(return_value=[])
+        self.agent_service.comments.stop_review_comment_work = Mock(return_value=[])
 
     def _app(self):
         return create_app(
@@ -67,13 +70,13 @@ class ReviewCommentSwitchRouteTests(unittest.TestCase):
         return json.loads(self.settings_path.read_text(encoding='utf-8'))
 
     def test_turning_off_persists_and_stops_in_flight_runs(self) -> None:
-        self.agent_service.stop_review_comment_work.return_value = ['PROJ-1']
+        self.agent_service.comments.stop_review_comment_work.return_value = ['PROJ-1']
 
         resp = self._post(False)
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(self._saved()[KEY], 'false')
-        self.agent_service.stop_review_comment_work.assert_called_once_with()
+        self.agent_service.comments.stop_review_comment_work.assert_called_once_with()
         body = resp.get_json()
         # The switch applies live — telling the operator to restart would be
         # a lie, and would leave them unsure whether it took effect.
@@ -92,11 +95,11 @@ class ReviewCommentSwitchRouteTests(unittest.TestCase):
         resp = self._post(True)
 
         self.assertEqual(self._saved()[KEY], 'true')
-        self.agent_service.stop_review_comment_work.assert_not_called()
+        self.agent_service.comments.stop_review_comment_work.assert_not_called()
         self.assertFalse(resp.get_json()['restart_required'])
 
     def test_a_failing_teardown_does_not_fail_the_save(self) -> None:
-        self.agent_service.stop_review_comment_work.side_effect = RuntimeError('boom')
+        self.agent_service.comments.stop_review_comment_work.side_effect = RuntimeError('boom')
 
         resp = self._post(False)
 
@@ -115,7 +118,7 @@ class ReviewCommentSwitchRouteTests(unittest.TestCase):
         )
 
         body = resp.get_json()
-        self.agent_service.stop_review_comment_work.assert_called_once_with()
+        self.agent_service.comments.stop_review_comment_work.assert_called_once_with()
         self.assertEqual(self._saved()[KEY], 'false')
         self.assertTrue(body['restart_required'])
         self.assertIn('stopped pulling', body['message'])
@@ -126,7 +129,7 @@ class ReviewCommentSwitchRouteTests(unittest.TestCase):
             '/api/all-settings', json={'updates': {'KATO_LOG_LEVEL': 'debug'}},
         )
         self.assertTrue(resp.get_json()['restart_required'])
-        self.agent_service.stop_review_comment_work.assert_not_called()
+        self.agent_service.comments.stop_review_comment_work.assert_not_called()
 
     def test_unset_renders_as_on(self) -> None:
         resp = self._app().test_client().get('/api/all-settings')

@@ -78,8 +78,10 @@ class CommentRunWatcherRunLoopTests(unittest.TestCase):
     def test_builder_with_autostart_starts_thread_then_stops(self) -> None:
         watcher = build_and_start_comment_run_watcher(
             service=SimpleNamespace(
-                advance_finished_comment_runs=lambda: [],
-                drain_all_queued_task_comments=lambda: [],
+                comments=SimpleNamespace(
+                    advance_finished_comment_runs=lambda: [],
+                    drain_all_queued_task_comments=lambda: [],
+                ),
             ),
             tick_seconds=0.5,
             autostart=True,

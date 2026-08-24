@@ -4,7 +4,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from claude_core_lib.claude_core_lib.session.manager import (
+from agent_core_lib.agent_core_lib.session.record import (
     SESSION_STATUS_REVIEW,
     SESSION_STATUS_TERMINATED,
 )

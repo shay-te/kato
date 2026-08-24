@@ -18,63 +18,63 @@ class OneShotUtilsTests(unittest.TestCase):
 
     def test_claude_one_shot_returns_stdout_on_success(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot,
+            one_shot,
         )
         completed = MagicMock(returncode=0, stdout='answer text', stderr='')
         with patch('subprocess.run', return_value=completed):
-            result = claude_one_shot('prompt', binary='claude', model='haiku')
+            result = one_shot('prompt', binary='claude', model='haiku')
         self.assertEqual(result, 'answer text')
 
     def test_claude_one_shot_no_model_omits_model_flag(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot,
+            one_shot,
         )
         completed = MagicMock(returncode=0, stdout='ok', stderr='')
         with patch('subprocess.run', return_value=completed) as run:
-            claude_one_shot('prompt', binary='claude')
+            one_shot('prompt', binary='claude')
         cmd = run.call_args.args[0]
         self.assertNotIn('--model', cmd)
 
     def test_claude_one_shot_raises_on_timeout(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot, ClaudeOneShotError,
+            one_shot, OneShotError,
         )
         with patch(
             'subprocess.run',
             side_effect=subprocess.TimeoutExpired(cmd=['claude'], timeout=120),
         ):
-            with self.assertRaises(ClaudeOneShotError):
-                claude_one_shot('prompt')
+            with self.assertRaises(OneShotError):
+                one_shot('prompt')
 
     def test_claude_one_shot_raises_on_oserror(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot, ClaudeOneShotError,
+            one_shot, OneShotError,
         )
         with patch('subprocess.run', side_effect=OSError('claude not found')):
-            with self.assertRaises(ClaudeOneShotError):
-                claude_one_shot('prompt')
+            with self.assertRaises(OneShotError):
+                one_shot('prompt')
 
     def test_claude_one_shot_raises_on_nonzero_returncode(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot, ClaudeOneShotError,
+            one_shot, OneShotError,
         )
         completed = MagicMock(returncode=1, stdout='', stderr='auth error')
         with patch('subprocess.run', return_value=completed):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'auth error'):
-                claude_one_shot('prompt')
+            with self.assertRaisesRegex(OneShotError, 'auth error'):
+                one_shot('prompt')
 
     def test_claude_one_shot_handles_no_stderr_text(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot, ClaudeOneShotError,
+            one_shot, OneShotError,
         )
         completed = MagicMock(returncode=1, stdout='', stderr='')
         with patch('subprocess.run', return_value=completed):
-            with self.assertRaisesRegex(ClaudeOneShotError, '<no output>'):
-                claude_one_shot('prompt')
+            with self.assertRaisesRegex(OneShotError, '<no output>'):
+                one_shot('prompt')
 
     def test_claude_one_shot_uses_stdout_when_stderr_empty(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            claude_one_shot, ClaudeOneShotError,
+            one_shot, OneShotError,
         )
         completed = MagicMock(
             returncode=1,
@@ -82,14 +82,14 @@ class OneShotUtilsTests(unittest.TestCase):
             stderr='',
         )
         with patch('subprocess.run', return_value=completed):
-            with self.assertRaisesRegex(ClaudeOneShotError, 'Rate limited'):
-                claude_one_shot('prompt')
+            with self.assertRaisesRegex(OneShotError, 'Rate limited'):
+                one_shot('prompt')
 
     def test_make_claude_one_shot_returns_closure(self) -> None:
         from claude_core_lib.claude_core_lib.helpers.one_shot_utils import (
-            make_claude_one_shot,
+            make_one_shot,
         )
-        closure = make_claude_one_shot(binary='claude', model='haiku')
+        closure = make_one_shot(binary='claude', model='haiku')
         completed = MagicMock(returncode=0, stdout='done', stderr='')
         with patch('subprocess.run', return_value=completed):
             result = closure('hello')

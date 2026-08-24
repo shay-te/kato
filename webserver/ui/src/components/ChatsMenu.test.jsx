@@ -234,4 +234,34 @@ describe('ChatsMenu', () => {
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     });
   });
+
+  it('shows which CLI produced each chat', async () => {
+    // The operator can switch backends between chats; the menu must say
+    // which one each conversation belongs to, not which one is configured.
+    fetchTaskChats.mockResolvedValue({
+      chats: [
+        { agent_session_id: 'a1', active: true, agent_backend: 'claude',
+          first_user_message: 'fix the tabs', turn_count: 3 },
+        { agent_session_id: 'b2', active: false, agent_backend: 'codex',
+          first_user_message: 'try codex', turn_count: 1 },
+      ],
+    });
+    render(<ChatsMenu taskId="PROJ-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+
+    expect(await screen.findByText('Claude')).toBeTruthy();
+    expect(screen.getByText('Codex')).toBeTruthy();
+  });
+
+  it('shows no chip for a chat recorded before kato tracked the backend', async () => {
+    fetchTaskChats.mockResolvedValue({
+      chats: [{ agent_session_id: 'old', active: true, first_user_message: 'old chat' }],
+    });
+    render(<ChatsMenu taskId="PROJ-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+
+    await screen.findByText('old chat');
+    expect(screen.queryByText('Claude')).toBeNull();
+    expect(screen.queryByText('Codex')).toBeNull();
+  });
 });

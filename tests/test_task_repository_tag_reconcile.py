@@ -56,7 +56,7 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
 
     def test_reconcile_writes_the_new_repo_into_the_metadata_file(self) -> None:
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
-        result = self.service.reconcile_task_repositories(self.task_id, task=task)
+        result = self.service.repositories.reconcile_task_repositories(self.task_id, task=task)
         self.assertEqual(result.get('added_repositories'), ['repo-b'])
         self.assertEqual(
             self._metadata_on_disk()['repository_ids'], ['repo-a', 'repo-b'],
@@ -66,7 +66,7 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         # Metadata alone is not enough: a clone left on master has nothing
         # committed to the task branch, so push skips it just as quietly.
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
-        self.service.reconcile_task_repositories(self.task_id, task=task)
+        self.service.repositories.reconcile_task_repositories(self.task_id, task=task)
         self.service._repository_service.prepare_task_branches.assert_called_once()
         prepared, branches = (
             self.service._repository_service.prepare_task_branches.call_args[0]
@@ -79,15 +79,15 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         # a per-task lookup there is exactly the provider load the 180s
         # cadence exists to avoid.
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
-        with patch.object(self.service, '_lookup_task_for_sync') as lookup:
-            self.service.reconcile_task_repositories(self.task_id, task=task)
+        with patch.object(self.service.repositories, '_lookup_task_for_sync') as lookup:
+            self.service.repositories.reconcile_task_repositories(self.task_id, task=task)
         lookup.assert_not_called()
 
     def test_reconcile_looks_the_task_up_when_not_given_one(self) -> None:
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
-        with patch.object(self.service, '_lookup_task_for_sync',
+        with patch.object(self.service.repositories, '_lookup_task_for_sync',
                           return_value=task) as lookup:
-            self.service.reconcile_task_repositories(self.task_id)
+            self.service.repositories.reconcile_task_repositories(self.task_id)
         lookup.assert_called_once_with(self.task_id)
 
     def test_unchanged_tags_leave_the_metadata_alone(self) -> None:
@@ -95,14 +95,14 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
             _repo('repo-a'),
         ]
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
-        result = self.service.reconcile_task_repositories(self.task_id, task=task)
+        result = self.service.repositories.reconcile_task_repositories(self.task_id, task=task)
         self.assertEqual(result.get('added_repositories'), [])
         self.assertEqual(self._metadata_on_disk()['repository_ids'], ['repo-a'])
 
     def test_a_task_with_no_workspace_is_a_no_op(self) -> None:
         task = SimpleNamespace(id='PROJ-NONE', summary='s', description='')
-        with patch.object(self.service, 'sync_task_repositories') as sync:
-            result = self.service.reconcile_task_repositories('PROJ-NONE', task=task)
+        with patch.object(self.service.repositories, 'sync_task_repositories') as sync:
+            result = self.service.repositories.reconcile_task_repositories('PROJ-NONE', task=task)
         self.assertEqual(result, {})
         sync.assert_not_called()
 
@@ -113,7 +113,7 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
         self.service._task_preflight_service = MagicMock()
         self.service._task_preflight_service.prepare_task_execution_context.return_value = None
-        with patch.object(self.service, '_lookup_task_for_sync') as lookup:
+        with patch.object(self.service.repositories, '_lookup_task_for_sync') as lookup:
             self.service.process_assigned_task(task)
         lookup.assert_not_called()
         self.assertEqual(

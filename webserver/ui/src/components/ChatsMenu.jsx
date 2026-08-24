@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import AgentBackendChip from './AgentBackendChip.jsx';
 import { fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
@@ -157,7 +158,10 @@ export default function ChatsMenu({
             : 'Switch back to this chat — the next message resumes it.'}
         >
           <span className="chats-menu-row-title">{title}</span>
-          <span className="chats-menu-row-meta">{meta}</span>
+          <span className="chats-menu-row-meta">
+            <AgentBackendChip backend={chat.agent_backend} />
+            {meta}
+          </span>
         </button>
       );
     });

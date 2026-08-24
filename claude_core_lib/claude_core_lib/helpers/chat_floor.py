@@ -23,6 +23,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from claude_core_lib.claude_core_lib.helpers.context_window import (
+    prompt_tokens_from_usage,
+)
 from claude_core_lib.claude_core_lib.session.index import claude_project_dir_for_cwd
 
 # How far into the transcript to look for the first assistant turn. The
@@ -30,24 +33,6 @@ from claude_core_lib.claude_core_lib.session.index import claude_project_dir_for
 # appeared within this many lines is not worth hunting for — the caller simply
 # gets no floor, and the indicator shows nothing rather than something wrong.
 _MAX_LINES = 200
-
-
-def _usage_total(usage: dict) -> int:
-    """Tokens the model READ for one turn — the size of the context then.
-
-    Cache reads count: they are the same prompt, billed at a different rate.
-    Output tokens do not — they are what the turn produced, not what it cost
-    to send.
-    """
-    total = 0
-    for key in (
-        'input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
-    ):
-        try:
-            total += max(0, int(usage.get(key, 0) or 0))
-        except (TypeError, ValueError):
-            continue
-    return total
 
 
 def first_turn_tokens(transcript: Path) -> int:
@@ -69,7 +54,7 @@ def first_turn_tokens(transcript: Path) -> int:
                 usage = message.get('usage')
                 if not isinstance(usage, dict):
                     continue
-                total = _usage_total(usage)
+                total = prompt_tokens_from_usage(usage)
                 if total > 0:
                     return total
     except OSError:

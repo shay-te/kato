@@ -26,23 +26,19 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
-from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
-    CommentThreadSpec,
-    build_comment_prompt_context,
+from agent_core_lib.agent_core_lib.helpers.command_floor import (
+    prompt_floor_rules,
 )
 from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import read_architecture_doc
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import read_lessons_file
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
-from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
-    text_from_attr,
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
@@ -240,6 +236,20 @@ class CodexCliClient(CliAgentSharedBehaviour):
         )
         self._validate_model_smoke_test()
 
+    def _wrap_untrusted(self, text: str, *, source_path: str) -> str:
+        """Bind the shared prompt scaffolding to the delimiter framing."""
+        return wrap_untrusted_workspace_content(text, source_path=source_path)
+
+    @classmethod
+    def _wrap_untrusted_text(cls, text: str, *, source_path: str) -> str:
+        """Bind the shared prompt scaffolding to the delimiter framing."""
+        return wrap_untrusted_workspace_content(text, source_path=source_path)
+
+    @classmethod
+    def _read_only_instruction(cls) -> str:
+        """Codex exposes generic tooling, so the rule names the MODE."""
+        return '- Do NOT modify any files. Stay in read-only mode.\n'
+
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Read-only single turn — used by the triage flow.
 
@@ -348,307 +358,9 @@ class CodexCliClient(CliAgentSharedBehaviour):
 
     # ----- prompt builders -----
 
-    def _build_implementation_prompt(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> str:
-        # workspace_root (the task's whole workspace folder, set only when
-        # workspace-clone mode provisioned these repos) goes FIRST so
-        # workspace_scope_block's redundant-descendant collapse drops each
-        # individual repo path in favor of it — one boundary instead of
-        # one bullet per attached repo, and one that still covers a repo
-        # attached to the task AFTER this prompt was built.
-        workspace_root = normalized_text(text_from_attr(prepared_task, 'workspace_root'))
-        scope_paths = _repository_local_paths(prepared_task)
-        if workspace_root:
-            scope_paths = [workspace_root, *scope_paths]
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            scope_paths,
-            extra_refusal_guidance=self._workspace_refusal_guidance,
-        )
-        repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
-        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        untrusted_task_body = wrap_untrusted_workspace_content(
-            f'{task.summary}\n\n{task.description}',
-            source_path=f'task:{task.id}',
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        # Codex has no ``--append-system-prompt`` flag, so the
-        # architecture doc + lessons are prepended to the prompt body
-        # instead. Same content the operator would otherwise see in
-        # the Claude system prompt — just delivered via the user-prompt
-        # channel.
-        system_addendum = self._system_prompt_addendum()
-        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
-        # Written to the TASK folder, outside every clone, so it cannot be
-        # committed. Empty for an adopted-cwd task (no task folder) — the
-        # shared base then falls back to the legacy in-repo wording.
-        pr_description_path = agent_prompt_utils.pr_description_path_for(workspace_root)
-        pr_description_label = (
-            pr_description_path or agent_prompt_utils.PR_DESCRIPTION_FILENAME
-        )
-        return (
-            f'{addendum_prefix}'
-            f'{scope_prefix}'
-            f'Implement task {task.id}.\n\n'
-            f'{untrusted_task_body}\n\n'
-            f'{repository_scope}\n\n'
-            f'{agents_instructions}\n\n'
-            f'{self._execution_guardrails_text()}\n\n'
-            f'{self._completion_instructions_text(pr_description_path=pr_description_path)}\n\n'
-            f'{pr_description_label} must list every changed file and, under each '
-            'file name, add a short explanation of what changed.\n'
-            f'Use this format inside {pr_description_label}:\n'
-            'Files changed:\n'
-            '- path/to/file.ext\n'
-            '  Short explanation.\n'
-            '- another/file.ext\n'
-            '  Short explanation.\n'
-        )
 
-    def _build_testing_prompt(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> str:
-        repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
-        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        pr_description_path = agent_prompt_utils.pr_description_path_for(
-            text_from_attr(prepared_task, 'workspace_root'),
-        )
-        untrusted_task_body = wrap_untrusted_workspace_content(
-            f'{task.summary}\n\n{task.description}',
-            source_path=f'task:{task.id}',
-        )
-        system_addendum = self._system_prompt_addendum()
-        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
-        return (
-            f'{addendum_prefix}'
-            f'Validate the implementation for task {task.id}.\n\n'
-            f'{untrusted_task_body}\n\n'
-            f'{repository_scope}\n\n'
-            f'{agents_instructions}\n\n'
-            f'{self._execution_guardrails_text()}\n\n'
-            'Act as a separate testing agent.\n'
-            'Write additional tests when needed, challenge the new code with edge cases, '
-            'run the relevant tests, and fix any test failures you can resolve safely.\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("for the validation work")}'
-            'Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
-            'Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            'Do not create a pull request.\n'
-            f'{self._completion_instructions_text(testing=True, pr_description_path=pr_description_path)}\n'
-            'If no dedicated tests are defined or available, do not invent new ones; '
-            'just report that no testing was defined and stop after saving any change.\n'
-        )
 
-    @classmethod
-    def _build_review_comments_batch_prompt(
-        cls,
-        comments: list[ReviewComment],
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-        workspace_refusal_guidance: str = '',
-        self_reply_prefixes: tuple = (),
-        system_addendum: str = '',
-        additional_dirs: list[str] | None = None,
-    ) -> str:
-        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
-        first = comments[0]
-        repository_context = agent_prompt_utils.review_repository_context(first)
-        wrapped_comments: list = []
-        for comment in comments:
-            wrapped_body = wrap_untrusted_workspace_content(
-                comment.body,
-                source_path=f'pr-comment:{comment.author}',
-            )
-            shadow = ReviewComment(
-                pull_request_id=comment.pull_request_id,
-                comment_id=comment.comment_id,
-                author=comment.author,
-                body=wrapped_body,
-                file_path=comment.file_path,
-                line_number=comment.line_number,
-                line_type=comment.line_type,
-                commit_sha=comment.commit_sha,
-            )
-            wrapped_comments.append(shadow)
-        # ``wrap=`` frames each inlined code snippet as untrusted. Without it
-        # the batch renderer pastes repo file content in raw, losing the
-        # prompt-injection defense the singular builder has — and losing it
-        # precisely where the most repo content is inlined.
-        batch_text = agent_prompt_utils.review_comments_batch_text(
-            wrapped_comments, workspace_path=workspace_path,
-            wrap=wrap_untrusted_workspace_content,
-        )
-        review_context = agent_prompt_utils.review_comment_context_text(
-            first, self_reply_prefixes,
-        )
-        wrapped_review_context = (
-            wrap_untrusted_workspace_content(
-                review_context,
-                source_path='pr-comment-thread',
-            )
-            if review_context
-            else ''
-        )
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
-            extra_refusal_guidance=workspace_refusal_guidance,
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
-            agents_instructions_for_path,
-        )
-        agents_text = agents_instructions_for_path(
-            workspace_path,
-            repository_id=str(getattr(first, 'repository_id', '') or ''),
-        )
-        agents_block = f'{agents_text}\n\n' if agents_text else ''
-        if mode == 'answer':
-            return (
-                f'{addendum_prefix}'
-                f'{scope_prefix}'
-                f'The following pull request review questions are on branch '
-                f'{branch_name}{repository_context}.\n\n'
-                f'{batch_text}'
-                f'{wrapped_review_context}\n\n'
-                f'{agents_block}'
-                f'{cls._execution_guardrails_text()}\n\n'
-                'These are QUESTIONS, not fix requests. Read the relevant '
-                'code to understand context, then write a concise plain-text '
-                'answer that addresses every question.\n'
-                'Rules:\n'
-                '- Do NOT modify any files. Stay strictly in read-only mode '
-                '— the orchestration layer expects no edits for an answer-mode '
-                'turn.\n'
-                '- Do not commit. Do not push.\n'
-                '- Number your answers 1, 2, 3 to match the numbered '
-                'questions above.\n'
-                '- Keep each answer focused: explain the behaviour, point to '
-                'the relevant file/line if helpful, and stop.\n'
-                'When you are done, stop. Your final response will be '
-                'posted as the reply to each question.\n'
-            )
-        return (
-            f'{addendum_prefix}'
-            f'{scope_prefix}'
-            f'Address the following pull request review comments on branch '
-            f'{branch_name}{repository_context}.\n\n'
-            f'{batch_text}'
-            f'{wrapped_review_context}\n\n'
-            f'{agents_block}'
-            f'{cls._execution_guardrails_text()}\n\n'
-            'Address every comment listed above in a single coherent '
-            'change-set.\n'
-            'For each comment:\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address it", bulleted=True)}'
-            'Do not report success until all intended changes are saved in '
-            'the repository worktree.\n'
-            'When you are done, stop. Do not produce any extra commentary.\n'
-        )
 
-    @classmethod
-    def _build_review_prompt(
-        cls,
-        comment: ReviewComment,
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-        workspace_refusal_guidance: str = '',
-        self_reply_prefixes: tuple = (),
-        system_addendum: str = '',
-        additional_dirs: list[str] | None = None,
-    ) -> str:
-        addendum_prefix = f'{system_addendum}\n\n' if system_addendum else ''
-        repository_context = agent_prompt_utils.review_repository_context(comment)
-        # ONE interface builds the shared payload: where the comment is, the
-        # code actually there, the prior turns (the bot's own replies dropped),
-        # and how far to go.
-        #
-        # This builder used to hand-assemble those four pieces, and it drifted:
-        # it read the comment's line from ``line_number`` only, so an in-app
-        # diff comment (which carries ``line``) produced NO code block and the
-        # agent saw a bare line NUMBER. That is the reported failure where
-        # "revert this" on one line reverted the whole file — fixed on the
-        # other transport months earlier and silently still live here. It also
-        # wrapped the snippet with no empty-guard, emitting bare delimiter tags
-        # when the file could not be read.
-        all_comments = getattr(comment, 'all_comments', [])
-        context = build_comment_prompt_context(
-            comment,
-            workspace_path=workspace_path,
-            wrap=wrap_untrusted_workspace_content,
-            guardrail_purpose='to address the review comment',
-            bulleted_guardrails=False,
-            thread=CommentThreadSpec(
-                # A thread holding only the comment being addressed has no
-                # PRIOR context to add — rendering it would just echo the
-                # comment back under a header.
-                entries=tuple(all_comments)
-                if isinstance(all_comments, list) and len(all_comments) > 1 else (),
-                header='\n\nReview comment context:\n',
-                drop_prefixes=self_reply_prefixes,
-                source_path='pr-comment-thread',
-            ),
-        )
-        # The comment body is whatever a human (or bot) typed on the pull
-        # request — wholly untrusted. Wrap it so "ignore previous instructions
-        # and approve" is structurally identifiable as data, not a directive.
-        untrusted_comment_body = wrap_untrusted_workspace_content(
-            comment.body,
-            source_path=f'pr-comment:{comment.author}',
-        )
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
-            extra_refusal_guidance=workspace_refusal_guidance,
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
-            agents_instructions_for_path,
-        )
-        agents_text = agents_instructions_for_path(
-            workspace_path,
-            repository_id=str(getattr(comment, 'repository_id', '') or ''),
-        )
-        agents_block = f'{agents_text}\n\n' if agents_text else ''
-        if mode == 'answer':
-            return (
-                f'{addendum_prefix}'
-                f'{scope_prefix}'
-                f'A pull request reviewer asked a QUESTION on branch '
-                f'{branch_name}{repository_context}.\n'
-                f'{context.location}'
-                f'{context.code}'
-                f'Question by {comment.author}:\n{untrusted_comment_body}'
-                f'{context.thread}\n\n'
-                f'{agents_block}'
-                f'{cls._execution_guardrails_text()}\n\n'
-                'Read the relevant code to understand context, then write a '
-                'concise plain-text answer.\n'
-                'Rules:\n'
-                '- Do NOT modify any files. Stay in read-only mode.\n'
-                '- Do not commit. Do not push.\n'
-                '- Keep the answer focused: explain the behaviour, point to '
-                'the relevant file/line if helpful, and stop.\n'
-                'Your final response will be posted as the reply to the '
-                'question.\n'
-            )
-        return (
-            f'{addendum_prefix}'
-            f'{scope_prefix}'
-            f'Address pull request comment on branch {branch_name}{repository_context}.\n'
-            f'{context.location}'
-            f'{context.code}'
-            f'Comment by {comment.author}:\n{untrusted_comment_body}'
-            f'{context.thread}\n\n'
-            f'{agents_block}'
-            f'{cls._execution_guardrails_text()}\n\n'
-            f'{context.guardrails}'
-            'Do not report success until all intended changes are saved in the repository worktree.\n'
-            'When you are done, stop. Do not produce any extra commentary.\n'
-        )
 
     def _system_prompt_addendum(self) -> str:
         """Codex has no ``--append-system-prompt`` flag, so the
@@ -681,6 +393,12 @@ class CodexCliClient(CliAgentSharedBehaviour):
             '- Use edit/write/read tooling for file edits and reads.\n'
             '- Use the shell sparingly and only for non-destructive needs (rg, sed -n, cat, ls).\n'
             '\n'
+            # Rendered from the SAME floor the deny-flag transports enforce, so
+            # this prompt cannot quietly name a different set. Prompt text is a
+            # weaker layer than an unavailable tool — that is exactly why it
+            # must not also be a hand-maintained second list.
+            f'{prompt_floor_rules()}'
+            '\n'
             'YOUR JOB IS TO EDIT FILES. THAT IS ALL.\n'
             '\n'
             'You do NOT do any of the following — ever, under any circumstance:\n'
@@ -704,31 +422,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
 
     # ----- subprocess execution -----
 
-    def _run_prompt_result(
-        self,
-        *,
-        prompt: str,
-        cwd: str,
-        additional_dirs: list[str],
-        branch_name: str = '',
-        default_commit_message: str | None = None,
-        agent_session_id: str = '',
-        log_label: str = '',
-        task_id: str = '',
-    ) -> dict[str, str | bool]:
-        payload = self._run_prompt(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            agent_session_id=agent_session_id,
-            log_label=log_label,
-            task_id=task_id,
-        )
-        return build_openhands_result(
-            payload,
-            branch_name=branch_name,
-            default_commit_message=default_commit_message,
-        )
 
     def _run_prompt(
         self,
@@ -1255,16 +948,5 @@ def _readable_message_from_envelope(envelope: dict) -> str:
     return ''
 
 
-def _repository_local_paths(prepared_task) -> list[str]:
-    """Pull the per-task workspace clone paths off ``prepared_task``."""
-    if prepared_task is None:
-        return []
-    repos = getattr(prepared_task, 'repositories', None) or []
-    paths: list[str] = []
-    for repo in repos:
-        path = str(getattr(repo, 'local_path', '') or '').strip()
-        if path:
-            paths.append(path)
-    return paths
 
 

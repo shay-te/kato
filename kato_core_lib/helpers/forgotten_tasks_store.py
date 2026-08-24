@@ -62,7 +62,7 @@ def _normalize(task_id: object) -> str:
     (``una-1495``). A case-sensitive test silently fails to skip a forgotten
     task and resurrects it on the next scan, so every membership check
     compares on this ``.strip().lower()`` key (the same policy as
-    ``AgentService._norm_task_id``). The ORIGINAL case is what's stored.
+    ``utils_core_lib.text_utils.normalized_lower_text``). The ORIGINAL case is what's stored.
     """
     return str(task_id or '').strip().lower()
 

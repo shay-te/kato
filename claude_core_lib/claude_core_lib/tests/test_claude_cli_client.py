@@ -1670,24 +1670,6 @@ class WorkingDirectoriesDeduplicationTests(unittest.TestCase):
         self.assertEqual(extras, [])
 
 
-class RepositoryLocalPathsHelperTests(unittest.TestCase):
-    """Branch 1344->1342 in module-level ``_repository_local_paths``:
-    ``if path:`` falsy — repos with a blank ``local_path`` are skipped."""
-
-    def test_blank_paths_are_skipped(self) -> None:
-        from claude_core_lib.claude_core_lib.cli_client import _repository_local_paths
-        prepared = PreparedTaskContext(
-            repositories=[
-                _FakeRepo('blank', '   '),
-                _FakeRepo('none', ''),
-                _FakeRepo('real', '/wks/PROJ-1/api'),
-            ],
-        )
-        self.assertEqual(_repository_local_paths(prepared), ['/wks/PROJ-1/api'])
-
-    def test_none_prepared_task_returns_empty(self) -> None:
-        from claude_core_lib.claude_core_lib.cli_client import _repository_local_paths
-        self.assertEqual(_repository_local_paths(None), [])
 
 
 class InvestigateTests(unittest.TestCase):

@@ -140,9 +140,30 @@ test('DiffPane gutter line numbers match Bitbucket dark metrics', () => {
   assertDeclaration(deleteOnlyBody, 'background', '#5d1f1a');
 });
 
-test('Diff file comments panel rounds the bottom of the file card', () => {
-  const body = ruleBody('.diff-file-comments');
-  assertDeclaration(body, 'border-radius', '0 0 10px 10px');
+test('The PANEL owns the curve; everything that scrolls inside is square', () => {
+  // A rounded section cannot survive scrolling: it may not clip (that
+  // captures the sticky header) so rows paint over its corners, and a
+  // header pinned mid-scroll floats a rounded top over square rows. Both
+  // were visible while scrolling. The panel is rounded and its content
+  // clips, so square children land inside a rounded panel at every scroll
+  // position.
+  assertDeclaration(ruleBody('.panel-card'), 'border-radius', '12px');
+  assertDeclaration(ruleBody('.panel-card-content'), 'overflow', 'hidden');
+  assertDeclaration(ruleBody('.panel-card-content'), 'border-radius', 'inherit');
+  assertDeclaration(ruleBody('.files-tab-repo'), 'border-radius', '0');
+  assertDeclaration(ruleBody('.files-tab-repo'), 'overflow', 'visible');
+  assertDeclaration(ruleBody('.files-tab-repo-header'), 'border-radius', '0');
+});
+
+test('Scrollports with a pinned header carry no top padding', () => {
+  // Top padding on a scrollport becomes a dead strip that content scrolls
+  // visibly through ABOVE the sticky header — rows appearing to leak out of
+  // the top of the tree.
+  for (const selector of ['.changes-tab-body', '.files-changed-tree-wrap']) {
+    const body = ruleBody(selector);
+    assert.doesNotMatch(body, /padding-top\s*:\s*[1-9]/);
+    assert.doesNotMatch(body, /padding\s*:\s*[1-9][0-9]*px\s+[^;]*;/);
+  }
 });
 
 test('DiffPane skips offscreen diff bodies during scroll', () => {
@@ -163,11 +184,12 @@ test('Files tab repo headers stick while scrolling a repository', () => {
   assertDeclaration(repoBody, 'overflow', 'visible');
 });
 
-test('Changed-file tree guide line stays out of the chevron lane', () => {
-  const body = ruleBody('.diff-file-tree-guide');
-  assertDeclaration(body, 'left', '22px');
-  assert.match(body, /width\s*:\s*calc\(var\(--depth\) \* 22px\)\s*;/);
-  assert.match(body, /background-image\s*:\s*repeating-linear-gradient\(/);
+test('The tree draws NO indent guide lines', () => {
+  // Removed on request: a vertical rule per depth level turned a deep tree
+  // into a grid of stripes competing with the filenames. Indentation and
+  // the chevrons already carry the hierarchy.
+  assert.doesNotMatch(css, /\.diff-file-tree-guide\s*\{/);
+  assert.doesNotMatch(css, /\.tree-row-level-guides\s*\{/);
 });
 
 test('Changed-file tree rows are plain weight, like a normal file explorer', () => {

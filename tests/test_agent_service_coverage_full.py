@@ -23,6 +23,12 @@ from kato_core_lib.comment_core_lib import (
     KatoCommentStatus,
 )
 from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.data_layers.service.task_comment_run_service import (
+    TaskCommentRunService,
+)
+from kato_core_lib.data_layers.service.task_comment_service import (
+    TaskCommentService,
+)
 
 from tests.chaos_lib import (
     build_real_agent_service,
@@ -63,7 +69,7 @@ class CommentAnchorOutdatedTests(unittest.TestCase):
         record = SimpleNamespace(line=42, repo_id='   ', file_path='a/b.py')
         cache: dict = {}
         self.assertFalse(
-            service._comment_anchor_is_outdated('PROJ-1', record, cache)
+            service.comments._comment_anchor_is_outdated('PROJ-1', record, cache)
         )
         self.assertEqual(cache, {})  # never reached the file-count lookup
 
@@ -71,39 +77,39 @@ class CommentAnchorOutdatedTests(unittest.TestCase):
         service = _bare_service()
         record = SimpleNamespace(line=3, repo_id='repo-a', file_path='')
         self.assertFalse(
-            service._comment_anchor_is_outdated('PROJ-1', record, {})
+            service.comments._comment_anchor_is_outdated('PROJ-1', record, {})
         )
 
     def test_changed_anchor_line_is_outdated(self) -> None:
         service = _bare_service()
-        original = service._comment_anchor_line_hash('original line')
+        original = service.comments._comment_anchor_line_hash('original line')
         record = SimpleNamespace(
             line=2, repo_id='repo-a', file_path='f.py',
             anchor_line_hash=original,
         )
         cache: dict = {}
         with unittest.mock.patch.object(
-            service, '_file_lines',
+service.comments, '_file_lines',
             return_value=['line one', 'changed line', 'line three'],
         ):
             self.assertTrue(
-                service._comment_anchor_is_outdated('PROJ-1', record, cache)
+                service.comments._comment_anchor_is_outdated('PROJ-1', record, cache)
             )
 
     def test_matching_anchor_line_is_not_outdated(self) -> None:
         service = _bare_service()
-        original = service._comment_anchor_line_hash('same line')
+        original = service.comments._comment_anchor_line_hash('same line')
         record = SimpleNamespace(
             line=2, repo_id='repo-a', file_path='f.py',
             anchor_line_hash=original,
         )
         cache: dict = {}
         with unittest.mock.patch.object(
-            service, '_file_lines',
+service.comments, '_file_lines',
             return_value=['line one', 'same line', 'line three'],
         ):
             self.assertFalse(
-                service._comment_anchor_is_outdated('PROJ-1', record, cache)
+                service.comments._comment_anchor_is_outdated('PROJ-1', record, cache)
             )
 
 
@@ -111,7 +117,7 @@ class FileLineCountTests(unittest.TestCase):
     def test_returns_none_without_workspace_manager(self) -> None:
         # line 841 — no workspace manager wired at all.
         service = _bare_service(workspace_manager=None)
-        self.assertIsNone(service._file_line_count('PROJ-1', 'repo-a', 'x.py'))
+        self.assertIsNone(service.comments._file_line_count('PROJ-1', 'repo-a', 'x.py'))
 
     def test_returns_none_when_repository_path_raises(self) -> None:
         # lines 844-845 — repository_path() blows up -> defensive None.
@@ -119,7 +125,7 @@ class FileLineCountTests(unittest.TestCase):
             repository_path=MagicMock(side_effect=RuntimeError('boom')),
         )
         service = _bare_service(workspace_manager=wm)
-        self.assertIsNone(service._file_line_count('PROJ-1', 'repo-a', 'x.py'))
+        self.assertIsNone(service.comments._file_line_count('PROJ-1', 'repo-a', 'x.py'))
 
     def test_counts_lines_of_real_file(self) -> None:
         # lines 850-851 — the happy path: open + count.
@@ -132,7 +138,7 @@ class FileLineCountTests(unittest.TestCase):
             )
             service = _bare_service(workspace_manager=wm)
             self.assertEqual(
-                service._file_line_count('PROJ-1', 'repo-a', 'src/mod.py'), 3
+                service.comments._file_line_count('PROJ-1', 'repo-a', 'src/mod.py'), 3
             )
 
     def test_returns_none_when_file_missing(self) -> None:
@@ -142,7 +148,7 @@ class FileLineCountTests(unittest.TestCase):
             )
             service = _bare_service(workspace_manager=wm)
             self.assertIsNone(
-                service._file_line_count('PROJ-1', 'repo-a', 'nope.py')
+                service.comments._file_line_count('PROJ-1', 'repo-a', 'nope.py')
             )
 
     def test_returns_none_when_open_raises(self) -> None:
@@ -164,7 +170,7 @@ class FileLineCountTests(unittest.TestCase):
 
             with unittest.mock.patch.object(Path, 'open', _boom):
                 self.assertIsNone(
-                    service._file_line_count('PROJ-1', 'repo-a', 'mod.py')
+                    service.comments._file_line_count('PROJ-1', 'repo-a', 'mod.py')
                 )
 
     def test_reads_specific_file_line_text(self) -> None:
@@ -179,15 +185,15 @@ class FileLineCountTests(unittest.TestCase):
             )
             service = _bare_service(workspace_manager=wm)
             self.assertEqual(
-                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 1),
+                service.comments._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 1),
                 'alpha',
             )
             self.assertEqual(
-                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 2),
+                service.comments._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 2),
                 '',
             )
             self.assertIsNone(
-                service._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 9),
+                service.comments._file_line_text('PROJ-1', 'repo-a', 'src/mod.py', 9),
             )
 
     def test_outdated_uses_cached_line_count(self) -> None:
@@ -201,12 +207,12 @@ class FileLineCountTests(unittest.TestCase):
             cache: dict = {}
             rec = SimpleNamespace(line=9, repo_id='repo-a', file_path='f.py')
             self.assertTrue(
-                service._comment_anchor_is_outdated('PROJ-1', rec, cache)
+                service.comments._comment_anchor_is_outdated('PROJ-1', rec, cache)
             )
             # second call hits the cache, repository_path not called again
             wm.repository_path.reset_mock()
             self.assertTrue(
-                service._comment_anchor_is_outdated('PROJ-1', rec, cache)
+                service.comments._comment_anchor_is_outdated('PROJ-1', rec, cache)
             )
             wm.repository_path.assert_not_called()
 
@@ -233,10 +239,10 @@ class AddTaskCommentBrokenParentChainTests(unittest.TestCase):
             update_kato_status=update_status,
         )
         service = _bare_service()
-        service._comment_store_for = MagicMock(return_value=fake_store)
-        service._maybe_trigger_comment_run = MagicMock(return_value=False)
+        service.comments.comment_store = MagicMock(return_value=fake_store)
+        service.comment_runs.trigger_comment_run = MagicMock(return_value=False)
 
-        result = service.add_task_comment(
+        result = service.comments.add_task_comment(
             'PROJ-1',
             repo_id='repo-a',
             file_path='x.py',
@@ -276,11 +282,11 @@ class CompleteCommentsChainingTests(unittest.TestCase):
             # method proceeds to complete the in-progress comment.
             service.logger = MagicMock()
             # Make the chain step (drain) raise -> lines 1133-1134.
-            service.drain_next_queued_task_comment = MagicMock(
+            service.comment_runs.drain_next_queued_task_comment = MagicMock(
                 side_effect=RuntimeError('chain blew up')
             )
 
-            completed = service.complete_in_progress_task_comments(
+            completed = service.comment_runs.complete_in_progress_task_comments(
                 'PROJ-1', success=False, result_text='',
             )
 
@@ -289,7 +295,7 @@ class CompleteCommentsChainingTests(unittest.TestCase):
             self.assertEqual(
                 completed[0]['kato_status'], KatoCommentStatus.FAILED.value
             )
-            service.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
+            service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
             service.logger.exception.assert_called()
 
 
@@ -320,10 +326,10 @@ class AdvanceFinishedRunsSessionLookupTests(unittest.TestCase):
                 kato_status=KatoCommentStatus.IN_PROGRESS.value,
             ))
             # not stalled, not busy -> reaches the get_session try/except.
-            service._task_session_is_stalled = MagicMock(return_value=False)
-            service._task_has_busy_turn = MagicMock(return_value=False)
+            service.comment_runs._task_session_is_stalled = MagicMock(return_value=False)
+            service.comment_runs._task_has_busy_turn = MagicMock(return_value=False)
 
-            advanced = service.advance_finished_comment_runs()
+            advanced = service.comment_runs.advance_finished_comment_runs()
 
             # get_session raised -> session stays None (exception swallowed
             # at 1219-1220), so there's no terminal event and the
@@ -349,10 +355,10 @@ class AdvanceFinishedRunsSessionLookupTests(unittest.TestCase):
                 status=CommentStatus.OPEN.value,
                 kato_status=KatoCommentStatus.IN_PROGRESS.value,
             ))
-            service._task_session_is_stalled = MagicMock(return_value=False)
-            service._task_has_busy_turn = MagicMock(return_value=False)
+            service.comment_runs._task_session_is_stalled = MagicMock(return_value=False)
+            service.comment_runs._task_has_busy_turn = MagicMock(return_value=False)
 
-            advanced = service.advance_finished_comment_runs()
+            advanced = service.comment_runs.advance_finished_comment_runs()
 
             # no session at all -> requeued as "session gone".
             self.assertEqual(len(advanced), 1)
@@ -385,9 +391,9 @@ class SyncRemoteCommentsRunGitTests(unittest.TestCase):
             service.logger = MagicMock()
             # Empty pr_id -> short-circuit after the pull, but we've already
             # exercised lines 1494-1499 and fallen through to 1504.
-            service._task_pull_request_id = MagicMock(return_value='')
+            service.comments._task_pull_request_id = MagicMock(return_value='')
 
-            result = service.sync_remote_comments('PROJ-1', 'repo-a')
+            result = service.comments.sync_remote_comments('PROJ-1', 'repo-a')
 
             run_git.assert_called_once()
             args = run_git.call_args[0]
@@ -410,9 +416,9 @@ class SyncRemoteCommentsRunGitTests(unittest.TestCase):
                 list_pull_request_comments=MagicMock(return_value=[]),
             )
             service.logger = MagicMock()
-            service._task_pull_request_id = MagicMock(return_value='')
+            service.comments._task_pull_request_id = MagicMock(return_value='')
 
-            result = service.sync_remote_comments('PROJ-1', 'repo-a')
+            result = service.comments.sync_remote_comments('PROJ-1', 'repo-a')
 
             self.assertTrue(result['ok'])
             self.assertTrue(result['pull']['ok'])
@@ -427,7 +433,7 @@ class TaskHasInProgressCommentTests(unittest.TestCase):
     def test_store_list_failure_reports_not_in_progress(self) -> None:
         store = SimpleNamespace(list=MagicMock(side_effect=RuntimeError('io')))
         self.assertFalse(
-            AgentService._task_has_in_progress_comment(store, exclude_id='c1')
+            TaskCommentRunService._task_has_in_progress_comment(store, exclude_id='c1')
         )
 
     def test_other_comment_in_progress_excludes_self(self) -> None:
@@ -440,12 +446,12 @@ class TaskHasInProgressCommentTests(unittest.TestCase):
         store = SimpleNamespace(list=MagicMock(return_value=[c_self, c_other]))
         # excluding c1, c2 is still in progress -> True
         self.assertTrue(
-            AgentService._task_has_in_progress_comment(store, exclude_id='c1')
+            TaskCommentRunService._task_has_in_progress_comment(store, exclude_id='c1')
         )
         # excluding c2 too: only the (excluded) c1 remains in progress
         store2 = SimpleNamespace(list=MagicMock(return_value=[c_self]))
         self.assertFalse(
-            AgentService._task_has_in_progress_comment(store2, exclude_id='c1')
+            TaskCommentRunService._task_has_in_progress_comment(store2, exclude_id='c1')
         )
 
 
@@ -467,23 +473,23 @@ class RunCommentAgentForceRespawnTests(unittest.TestCase):
             terminate_session=MagicMock(),
         )
         service = _bare_service(session_manager=session_manager, **overrides)
-        service._comment_agent_prompt = MagicMock(return_value='do the thing')
+        service.comment_runs._comment_agent_prompt = MagicMock(return_value='do the thing')
         return service, session_manager, live_session
 
     def test_force_respawn_terminates_then_spawns(self) -> None:
         # lines 1905-1906: force_respawn=True kills the live session and
         # routes to _spawn_comment_agent instead of send_user_message.
         service, session_manager, live = self._service_with_live_session()
-        service._spawn_comment_agent = MagicMock(return_value=True)
+        service.comment_runs._spawn_comment_agent = MagicMock(return_value=True)
         record = SimpleNamespace(id='c1')
 
-        result = service._run_comment_agent('PROJ-1', record, force_respawn=True)
+        result = service.comment_runs._run_comment_agent('PROJ-1', record, force_respawn=True)
 
         self.assertTrue(result)
         session_manager.terminate_session.assert_called_once_with(
             'PROJ-1', remove_record=False,
         )
-        service._spawn_comment_agent.assert_called_once()
+        service.comment_runs._spawn_comment_agent.assert_called_once()
         live.send_user_message.assert_not_called()
 
 
@@ -491,13 +497,13 @@ class TerminateStalledSessionTests(unittest.TestCase):
     def test_no_session_manager_is_noop(self) -> None:
         # line 1921-1922
         service = _bare_service(session_manager=None)
-        service._terminate_stalled_session('PROJ-1')  # no raise
+        service.comment_runs._terminate_stalled_session('PROJ-1')  # no raise
 
     def test_terminate_not_callable_is_noop(self) -> None:
         # lines 1923-1925: terminate_session missing/not callable
         session_manager = SimpleNamespace(terminate_session=None)
         service = _bare_service(session_manager=session_manager)
-        service._terminate_stalled_session('PROJ-1')  # no raise
+        service.comment_runs._terminate_stalled_session('PROJ-1')  # no raise
 
     def test_terminate_called_and_logged(self) -> None:
         # lines 1926-1931 happy path
@@ -505,7 +511,7 @@ class TerminateStalledSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(terminate_session=terminate)
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._terminate_stalled_session('PROJ-1')
+        service.comment_runs._terminate_stalled_session('PROJ-1')
         terminate.assert_called_once_with('PROJ-1', remove_record=False)
         service.logger.info.assert_called_once()
 
@@ -515,7 +521,7 @@ class TerminateStalledSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(terminate_session=terminate)
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._terminate_stalled_session('PROJ-1')
+        service.comment_runs._terminate_stalled_session('PROJ-1')
         service.logger.exception.assert_called_once()
 
 
@@ -531,10 +537,10 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
             workspace_manager=wm,
         )
         service.logger = MagicMock()
-        service._comment_agent_cwd = MagicMock(return_value='/tmp/ws')
+        service.comment_runs._comment_agent_cwd = MagicMock(return_value='/tmp/ws')
         record = SimpleNamespace(id='c1')
 
-        result = service._spawn_comment_agent('PROJ-1', record, 'prompt text')
+        result = service.comment_runs._spawn_comment_agent('PROJ-1', record, 'prompt text')
 
         self.assertTrue(result)
         runner.resume_session_for_chat.assert_called_once()
@@ -556,10 +562,10 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
             workspace_manager=None,
         )
         service.logger = MagicMock()
-        service._comment_agent_cwd = MagicMock(return_value='')
+        service.comment_runs._comment_agent_cwd = MagicMock(return_value='')
         record = SimpleNamespace(id='c1')
 
-        result = service._spawn_comment_agent('PROJ-1', record, 'prompt text')
+        result = service.comment_runs._spawn_comment_agent('PROJ-1', record, 'prompt text')
 
         self.assertTrue(result)
         runner.resume_session_for_chat.assert_called_once()
@@ -580,7 +586,7 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
     def test_no_session_manager_is_silent(self) -> None:
         service = _bare_service(session_manager=None)
         service.logger = MagicMock()
-        service._warn_if_comment_has_no_resumable_session(
+        service.comment_runs._warn_if_comment_has_no_resumable_session(
             'PROJ-1', SimpleNamespace(id='c1'),
         )
         service.logger.warning.assert_not_called()
@@ -589,7 +595,7 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=None))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._warn_if_comment_has_no_resumable_session(
+        service.comment_runs._warn_if_comment_has_no_resumable_session(
             'PROJ-1', SimpleNamespace(id='c1'),
         )
         service.logger.warning.assert_called_once()
@@ -601,7 +607,7 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._warn_if_comment_has_no_resumable_session(
+        service.comment_runs._warn_if_comment_has_no_resumable_session(
             'PROJ-1', SimpleNamespace(id='c1'),
         )
         service.logger.warning.assert_called_once()
@@ -612,7 +618,7 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._warn_if_comment_has_no_resumable_session(
+        service.comment_runs._warn_if_comment_has_no_resumable_session(
             'PROJ-1', SimpleNamespace(id='c1'),
         )
         service.logger.warning.assert_not_called()
@@ -623,7 +629,7 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         )
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service._warn_if_comment_has_no_resumable_session(
+        service.comment_runs._warn_if_comment_has_no_resumable_session(
             'PROJ-1', SimpleNamespace(id='c1'),
         )  # must not raise
         service.logger.warning.assert_not_called()
@@ -636,8 +642,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
             planning_session_runner=runner, session_manager=session_manager,
         )
         service.logger = MagicMock()
-        service._comment_agent_cwd = MagicMock(return_value='')
-        service._spawn_comment_agent('PROJ-1', SimpleNamespace(id='c1'), 'prompt')
+        service.comment_runs._comment_agent_cwd = MagicMock(return_value='')
+        service.comment_runs._spawn_comment_agent('PROJ-1', SimpleNamespace(id='c1'), 'prompt')
         service.logger.warning.assert_called_once()
 
 
@@ -650,16 +656,16 @@ class CommentThreadRepliesTests(unittest.TestCase):
     def test_empty_root_id_returns_empty(self) -> None:
         # line 2032 — root_id falsy after ``str(root_id or '')``.
         service = _bare_service()
-        self.assertEqual(service._comment_thread_replies('PROJ-1', ''), [])
-        self.assertEqual(service._comment_thread_replies('PROJ-1', None), [])
+        self.assertEqual(service.comment_runs._comment_thread_replies('PROJ-1', ''), [])
+        self.assertEqual(service.comment_runs._comment_thread_replies('PROJ-1', None), [])
 
     def test_store_list_failure_returns_empty(self) -> None:
         # lines 2038-2039: store present but list() raises.
         store = SimpleNamespace(list=MagicMock(side_effect=RuntimeError('io')))
         service = _bare_service()
-        service._comment_store_for = MagicMock(return_value=store)
+        service.comments.comment_store = MagicMock(return_value=store)
         self.assertEqual(
-            service._comment_thread_replies('PROJ-1', 'root-1'), []
+            service.comment_runs._comment_thread_replies('PROJ-1', 'root-1'), []
         )
 
     def test_replies_resolve_to_root_through_chain(self) -> None:
@@ -670,8 +676,8 @@ class CommentThreadRepliesTests(unittest.TestCase):
             list=MagicMock(return_value=[root, reply1, reply2]),
         )
         service = _bare_service()
-        service._comment_store_for = MagicMock(return_value=store)
-        replies = service._comment_thread_replies('PROJ-1', 'r')
+        service.comments.comment_store = MagicMock(return_value=store)
+        replies = service.comment_runs._comment_thread_replies('PROJ-1', 'r')
         # both replies resolve to root r, sorted by created_at_epoch.
         self.assertEqual([c.id for c in replies], ['b', 'a'])
 
@@ -696,7 +702,7 @@ class TaskPullRequestIdTests(unittest.TestCase):
         review_service = SimpleNamespace(state_registry=registry)
         service = _bare_service(review_comment_service=review_service)
         self.assertEqual(
-            service._task_pull_request_id('PROJ-1', 'repo-a'), '42'
+            service.comments._task_pull_request_id('PROJ-1', 'repo-a'), '42'
         )
 
     def test_live_fallback_skips_blank_pr_then_returns(self) -> None:
@@ -719,7 +725,7 @@ class TaskPullRequestIdTests(unittest.TestCase):
             review_comment_service=review_service,
         )
         self.assertEqual(
-            service._task_pull_request_id('PROJ-1', 'repo-a'), '77'
+            service.comments._task_pull_request_id('PROJ-1', 'repo-a'), '77'
         )
 
 
@@ -742,15 +748,15 @@ class AddTaskRepositoryTagTests(unittest.TestCase):
             repository_service=repository_service,
         )
         service.logger = MagicMock()
-        service._lookup_task_for_sync = MagicMock(return_value=None)
+        service.repositories._lookup_task_for_sync = MagicMock(return_value=None)
         # Short-circuit the heavy provisioning step after the tag phase.
-        service.sync_task_repositories = MagicMock(
+        service.repositories.sync_task_repositories = MagicMock(
             return_value={'synced': []}
         )
 
-        result = service.add_task_repository('PROJ-1', 'repo-b')
+        result = service.repositories.add_task_repository('PROJ-1', 'repo-b')
 
-        service._lookup_task_for_sync.assert_called_once_with('PROJ-1')
+        service.repositories._lookup_task_for_sync.assert_called_once_with('PROJ-1')
         task_service.add_tag.assert_called_once()
         self.assertTrue(result['tag_added'])
 
@@ -768,7 +774,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         provisioned = [SimpleNamespace(id='repo-a', local_path='/x')]
         missing = [SimpleNamespace(id='repo-a')]
         self.assertFalse(
-            service._sync_requires_session_restart('PROJ-1', provisioned, missing)
+            service.repositories._sync_requires_session_restart('PROJ-1', provisioned, missing)
         )
 
     def test_blank_cwd_and_blank_dir_entries_skipped(self) -> None:
@@ -787,7 +793,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         provisioned = [SimpleNamespace(id='repo-a', local_path='/new/repo')]
         missing = [SimpleNamespace(id='repo-a')]
         self.assertTrue(
-            service._sync_requires_session_restart('PROJ-1', provisioned, missing)
+            service.repositories._sync_requires_session_restart('PROJ-1', provisioned, missing)
         )
 
     def test_path_already_in_sandbox_returns_false(self) -> None:
@@ -803,7 +809,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         provisioned = [SimpleNamespace(id='repo-a', local_path='/new/repo')]
         missing = [SimpleNamespace(id='repo-a')]
         self.assertFalse(
-            service._sync_requires_session_restart('PROJ-1', provisioned, missing)
+            service.repositories._sync_requires_session_restart('PROJ-1', provisioned, missing)
         )
 
 
@@ -823,7 +829,7 @@ class LookupTaskForSyncTests(unittest.TestCase):
             get_review_tasks=MagicMock(return_value=[]),
         )
         service = _bare_service(task_service=task_service)
-        found = service._lookup_task_for_sync('PROJ-1')
+        found = service.repositories._lookup_task_for_sync('PROJ-1')
         self.assertIs(found, match)
 
     def test_no_match_anywhere_returns_none(self) -> None:
@@ -832,7 +838,7 @@ class LookupTaskForSyncTests(unittest.TestCase):
             get_review_tasks=MagicMock(return_value=[SimpleNamespace(id='B')]),
         )
         service = _bare_service(task_service=task_service)
-        self.assertIsNone(service._lookup_task_for_sync('PROJ-1'))
+        self.assertIsNone(service.repositories._lookup_task_for_sync('PROJ-1'))
 
 
 # --------------------------------------------------------------------------
@@ -844,7 +850,7 @@ class TaskPublishStateTests(unittest.TestCase):
     def _service_with_publish_context(self, repos):
         service = _bare_service()
         task_obj = SimpleNamespace(id='PROJ-1', summary='')
-        service._resolve_publish_context = MagicMock(
+        service.publish._resolve_publish_context = MagicMock(
             return_value=(repos, 'feature/proj-1', task_obj)
         )
         return service
@@ -863,7 +869,7 @@ class TaskPublishStateTests(unittest.TestCase):
         service._repository_service.branch_needs_push = branch_needs_push
         service._repository_service.find_pull_requests = MagicMock(return_value=[])
 
-        result = service.task_publish_state('PROJ-1')
+        result = service.publish.task_publish_state('PROJ-1')
 
         self.assertTrue(result['has_changes_to_push'])
         # only the first repo triggered branch_needs_push.
@@ -887,7 +893,7 @@ class TaskPublishStateTests(unittest.TestCase):
             return_value=[{'id': '5'}]  # no 'url' key
         )
 
-        result = service.task_pull_request_state('PROJ-1')
+        result = service.publish.task_pull_request_state('PROJ-1')
 
         self.assertTrue(result['has_pull_request'])
         self.assertEqual(result['pull_request_urls'], [])
@@ -909,7 +915,7 @@ class TaskPublishStateTests(unittest.TestCase):
             side_effect=RuntimeError('429 Too Many Requests')
         )
 
-        result = service.task_pull_request_state('PROJ-1')
+        result = service.publish.task_pull_request_state('PROJ-1')
 
         # Endpoint still returns; PR treated as absent (no exception raised).
         self.assertFalse(result['has_pull_request'])

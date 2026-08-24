@@ -169,7 +169,7 @@ class TaskIdChaosWorkspaceTests(unittest.TestCase):
     def test_all_safe_chaos_task_ids_materialize_and_list(self) -> None:
         for task_id in CHAOS_TASK_IDS_SAFE:
             materialize_workspace(self.workspace_service, task_id)
-        listed = {w.task_id for w in self.service._safe_list_workspaces()}
+        listed = {w.task_id for w in self.service.cleanup.list_workspaces()}
         for task_id in CHAOS_TASK_IDS_SAFE:
             self.assertIn(task_id, listed)
 
@@ -205,8 +205,8 @@ class TaskIdChaosWorkspaceTests(unittest.TestCase):
                 self.workspace_service, task_id,
                 body=f'fix it {task_id} now',
             )
-        with patch.object(self.service, '_run_comment_agent', return_value=True):
-            results = self.service.drain_all_queued_task_comments()
+        with patch.object(self.service.comment_runs, '_run_comment_agent', return_value=True):
+            results = self.service.comment_runs.drain_all_queued_task_comments()
         dispatched = {r['task_id'] for r in results}
         for task_id in CHAOS_TASK_IDS_SAFE:
             self.assertIn(task_id, dispatched)
@@ -230,8 +230,8 @@ class BrokenWorkspaceRecoveryTests(unittest.TestCase):
         bad_path = real_store_for(self.workspace_service, 'BAD-1').storage_path
         bad_path.write_text('NOT EVEN JSON !!!', encoding='utf-8')
 
-        with patch.object(self.service, '_run_comment_agent', return_value=True):
-            results = self.service.drain_all_queued_task_comments()
+        with patch.object(self.service.comment_runs, '_run_comment_agent', return_value=True):
+            results = self.service.comment_runs.drain_all_queued_task_comments()
         # The healthy workspace still drained.
         self.assertEqual([r['task_id'] for r in results], ['GOOD-1'])
 
@@ -246,8 +246,8 @@ class BrokenWorkspaceRecoveryTests(unittest.TestCase):
         queue_real_comment(self.workspace_service, 'GOOD-2',
                            body='whats wrong with you')
 
-        with patch.object(self.service, '_run_comment_agent', return_value=True):
-            results = self.service.drain_all_queued_task_comments()
+        with patch.object(self.service.comment_runs, '_run_comment_agent', return_value=True):
+            results = self.service.comment_runs.drain_all_queued_task_comments()
         # GOOD-2 drained; ROGUE-1 was listed but had no store, no crash.
         ok_ids = [r['task_id'] for r in results if r.get('started')]
         self.assertIn('GOOD-2', ok_ids)
@@ -265,7 +265,7 @@ class BrokenWorkspaceRecoveryTests(unittest.TestCase):
         bad_path = real_store_for(self.workspace_service, 'BAD-1').storage_path
         bad_path.write_text('}}}}}', encoding='utf-8')
 
-        requeued = self.service.requeue_stuck_in_progress_comments()
+        requeued = self.service.comment_runs.requeue_stuck_in_progress_comments()
         # Only the good workspace was successfully requeued.
         self.assertEqual(requeued, [{'task_id': 'GOOD-1',
                                      'comment_id': record.id}])
@@ -288,7 +288,7 @@ class TaskTitleChaosTests(unittest.TestCase):
             )
         # Re-read every record and confirm the summary survived.
         listed = {w.task_id: w.task_summary
-                  for w in service._safe_list_workspaces()}
+                  for w in service.cleanup.list_workspaces()}
         for i, title in enumerate(IMPATIENT_TITLES):
             self.assertEqual(listed[f'IMP-{i}'], title)
 

@@ -197,7 +197,7 @@ class ModelEffortDiscoveryTests(unittest.TestCase):
     def test_models_route_uses_codex_discovery_for_codex_binary(self):
         client = self._client(_runner_with_binary('/usr/bin/codex'))
         with patch(
-            'codex_core_lib.codex_core_lib.helpers.model_discovery.discover_codex_models',
+            'codex_core_lib.codex_core_lib.helpers.model_catalog.discover_models',
             return_value=[{'id': 'gpt', 'label': 'GPT'}],
         ) as codex_discover:
             body = client.get('/api/models').get_json()
@@ -1485,7 +1485,7 @@ class EventsRouteTests(unittest.TestCase):
         manager.get_record.return_value = record
         manager.get_session.side_effect = [None, spawned, spawned]
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = {
+        service.comment_runs.drain_next_queued_task_comment.return_value = {
             'ok': True, 'started': True, 'comment_id': 'c1',
         }
         with patch.object(app_module, '_resolve_agent_session_id', return_value=''):
@@ -1604,12 +1604,12 @@ class FollowLiveTailDrainTests(unittest.TestCase):
 class DrainQueuedCommentTests(unittest.TestCase):
     def test_drain_exception_returns_false(self):
         service = MagicMock()
-        service.drain_next_queued_task_comment.side_effect = RuntimeError('drain boom')
+        service.comment_runs.drain_next_queued_task_comment.side_effect = RuntimeError('drain boom')
         self.assertFalse(_drain_queued_task_comment(service, 'T-1'))
 
     def test_non_dict_result_returns_false(self):
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = 'not-a-dict'
+        service.comment_runs.drain_next_queued_task_comment.return_value = 'not-a-dict'
         self.assertFalse(_drain_queued_task_comment(service, 'T-1'))
 
     def test_no_drain_method_returns_false(self):
@@ -1795,7 +1795,7 @@ class EventStreamDrainRaceTests(unittest.TestCase):
         # (the run finished between drain + re-fetch).
         manager.get_session.return_value = None
         service = MagicMock()
-        service.drain_next_queued_task_comment.return_value = {
+        service.comment_runs.drain_next_queued_task_comment.return_value = {
             'ok': True, 'started': True, 'comment_id': 'c1',
         }
         with patch.object(app_module, '_resolve_agent_session_id', return_value=''):

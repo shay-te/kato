@@ -165,26 +165,17 @@ class StartupFlowTests(unittest.TestCase):
         )
         validator.validate(Mock())
 
-        # Step 4a: repository connections validated first
-        self.assertEqual(
-            call_order[0],
-            'validate_repositories',
-            'repositories must be the first validation step',
-        )
-
-        # Step 4b: issue platform validated after repositories
+        # Every dependency is validated. NOT the ORDER they finish in:
+        # ``validate`` submits every step to a ThreadPoolExecutor, so the
+        # completion order is the thread scheduler's business. Asserting a
+        # sequence here made this test fail roughly one run in three,
+        # depending on nothing more than how busy the machine was. What the
+        # validator actually guarantees is that all steps run and that a
+        # REPOSITORY failure is reported ahead of the others (repo_errors +
+        # other_errors below), which the error-path tests cover.
+        self.assertIn('validate_repositories', call_order)
         self.assertIn(f'validate_{issue_platform}', call_order)
-        self.assertLess(
-            call_order.index('validate_repositories'),
-            call_order.index(f'validate_{issue_platform}'),
-        )
-
-        # Step 4c: main OpenHands validated after issue platform
         self.assertIn('validate_openhands', call_order)
-        self.assertLess(
-            call_order.index(f'validate_{issue_platform}'),
-            call_order.index('validate_openhands'),
-        )
 
         if skip_testing:
             # Step 4d omitted: OPENHANDS_SKIP_TESTING=true skips testing validation
@@ -1130,7 +1121,7 @@ class ShutdownFlowTests(unittest.TestCase):
         )
 
         # Polling for comments triggers cleanup: PROJ-1 is not in review → delete conv-abc
-        agent_service.get_new_pull_request_comments()
+        agent_service.comments.get_new_pull_request_comments()
 
         self.assertIn('conv-abc', delete_calls, 'conversation for done task must be deleted')
 

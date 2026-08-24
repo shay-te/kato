@@ -150,8 +150,8 @@ class LocalizationVocabularyParityTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [record]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            prompt = service._comment_agent_prompt('T1', record)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            prompt = service.comment_runs._comment_agent_prompt('T1', record)
         return next(l for l in prompt.split('\n') if l.startswith('File:'))
 
     def _review_file_line(self, *, line: int) -> str:
@@ -189,8 +189,8 @@ class LocalizationVocabularyParityTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [record]
-        with patch.object(service, '_comment_store_for', return_value=store):
-            prompt = service._comment_agent_prompt('T1', record)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            prompt = service.comment_runs._comment_agent_prompt('T1', record)
         self.assertIn('no file specified', prompt)
 
 
@@ -209,8 +209,8 @@ class DiffTabThreadFramingTests(unittest.TestCase):
         )
         store = MagicMock()
         store.list.return_value = [root] + replies
-        with patch.object(service, '_comment_store_for', return_value=store):
-            return service._comment_agent_prompt('T1', root)
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            return service.comment_runs._comment_agent_prompt('T1', root)
 
     def test_a_mirrored_remote_reply_is_framed_as_untrusted(self) -> None:
         # sync_remote_comments puts provider comments in this same store, so a

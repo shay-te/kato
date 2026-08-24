@@ -221,6 +221,13 @@ class ProcessReviewCommentBatchBestEffortTests(unittest.TestCase):
 
     def test_batch_exception_returns_empty(self) -> None:
         class _Service:
+            @property
+            def comments(self):
+                """This double plays both roles: the service and its comment
+                subsystem. Production splits them (``agent_service.comments``);
+                here the methods live on one object, so point at self."""
+                return self
+
             def process_review_comment_batch(self, comments):
                 raise RuntimeError('platform down')
 
@@ -233,8 +240,9 @@ class ProcessReviewCommentBatchBestEffortTests(unittest.TestCase):
     def test_falls_through_when_batch_returns_non_list(self) -> None:
         # Older test stubs auto-create a Mock attribute that returns a Mock.
         service = MagicMock()
-        service.process_review_comment_batch.return_value = MagicMock()
-        service.process_review_comment.return_value = {'status': 'done'}
+        service.comments = service
+        service.comments.process_review_comment_batch.return_value = MagicMock()
+        service.comments.process_review_comment.return_value = {'status': 'done'}
         result = _process_review_comment_batch_best_effort(
             service,
             [make_review_comment(comment_id='c1')],
@@ -243,6 +251,13 @@ class ProcessReviewCommentBatchBestEffortTests(unittest.TestCase):
 
     def test_singular_path_swallows_exception(self) -> None:
         class _NoBatch:
+            @property
+            def comments(self):
+                """This double plays both roles: the service and its comment
+                subsystem. Production splits them (``agent_service.comments``);
+                here the methods live on one object, so point at self."""
+                return self
+
             def process_review_comment(self, _c):
                 raise RuntimeError('boom')
 
@@ -254,6 +269,13 @@ class ProcessReviewCommentBatchBestEffortTests(unittest.TestCase):
 
     def test_returns_singular_results_when_no_batch_method(self) -> None:
         class _NoBatch:
+            @property
+            def comments(self):
+                """This double plays both roles: the service and its comment
+                subsystem. Production splits them (``agent_service.comments``);
+                here the methods live on one object, so point at self."""
+                return self
+
             def process_review_comment(self, comment):
                 return {'comment': comment.comment_id}
 
@@ -276,6 +298,13 @@ class ProcessReviewCommentBatchBestEffortTests(unittest.TestCase):
         Those Nones must not leak into the result list.
         """
         class _NoBatch:
+            @property
+            def comments(self):
+                """This double plays both roles: the service and its comment
+                subsystem. Production splits them (``agent_service.comments``);
+                here the methods live on one object, so point at self."""
+                return self
+
             def __init__(self):
                 self.calls = 0
 

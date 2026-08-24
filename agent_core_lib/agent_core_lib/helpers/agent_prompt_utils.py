@@ -811,3 +811,21 @@ def narrow_edit_guardrails_text(purpose: str, *, bulleted: bool = False) -> str:
     if bulleted:
         lines = [f'- {line}' for line in lines]
     return '\n'.join(lines) + '\n'
+
+
+def repository_local_paths(prepared_task) -> list[str]:
+    """The per-task workspace clone paths on ``prepared_task``.
+
+    Feeds ``workspace_scope_block`` at the top of every agent prompt: the
+    agent is told exactly which paths it may touch and nothing else. Both CLI
+    transports had their own copy of this walk, which is one more way the two
+    prompts could quietly stop matching.
+    """
+    if prepared_task is None:
+        return []
+    paths: list[str] = []
+    for repo in getattr(prepared_task, 'repositories', None) or []:
+        path = str(getattr(repo, 'local_path', '') or '').strip()
+        if path:
+            paths.append(path)
+    return paths

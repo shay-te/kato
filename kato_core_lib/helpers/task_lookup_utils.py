@@ -44,3 +44,21 @@ def find_task_by_id(
             if task_id_matches(task, task_id):
                 return task
     return None
+
+
+def find_assigned_or_review_task(task_service: object, task_id: str):
+    """Find ``task_id`` in the assigned queue, the review queue, or the all-list.
+
+    Walks all three because the operator can act on a task that has left the
+    active queue (already done / merged) — ``list_all_assigned_tasks`` is what
+    covers that case.
+    """
+    return find_task_by_id(
+        task_service,
+        task_id,
+        queues=(
+            'list_all_assigned_tasks',
+            'get_assigned_tasks',
+            'get_review_tasks',
+        ),
+    )

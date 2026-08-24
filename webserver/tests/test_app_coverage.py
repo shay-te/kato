@@ -274,7 +274,7 @@ class ModuleLevelHelperTests(unittest.TestCase):
 
     def test_changed_files_for_repo_returns_empty_when_no_base(self):
         # ``_resolve_diff_base`` returns '' if detect_default_branch '' AND
-        # no agent_service.configured_destination_branch.
+        # no agent_service.publish.configured_destination_branch.
         with patch('kato_webserver.app.detect_default_branch', return_value=''):
             self.assertEqual(_changed_files_for_repo('', '/tmp', None), [])
 

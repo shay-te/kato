@@ -21,9 +21,9 @@ from kato_core_lib.data_layers.service.comment_run_watcher import (
 
 def _service(advance=None, drain=None, requeue=None) -> MagicMock:
     svc = MagicMock()
-    svc.advance_finished_comment_runs.return_value = advance or []
-    svc.requeue_orphaned_in_progress_comments.return_value = requeue or []
-    svc.drain_all_queued_task_comments.return_value = drain or []
+    svc.comment_runs.advance_finished_comment_runs.return_value = advance or []
+    svc.comment_runs.requeue_orphaned_in_progress_comments.return_value = requeue or []
+    svc.comment_runs.drain_all_queued_task_comments.return_value = drain or []
     return svc
 
 
@@ -34,16 +34,16 @@ class CommentRunWatcherTickTests(unittest.TestCase):
         )
         changes = CommentRunWatcher(service=svc).tick()
         self.assertEqual(changes, 4)
-        svc.advance_finished_comment_runs.assert_called_once_with()
-        svc.requeue_orphaned_in_progress_comments.assert_called_once_with()
-        svc.drain_all_queued_task_comments.assert_called_once_with()
+        svc.comment_runs.advance_finished_comment_runs.assert_called_once_with()
+        svc.comment_runs.requeue_orphaned_in_progress_comments.assert_called_once_with()
+        svc.comment_runs.drain_all_queued_task_comments.assert_called_once_with()
 
     def test_orphan_requeue_failure_does_not_stop_the_drain(self) -> None:
         svc = _service(drain=[{'b': 1}])
-        svc.requeue_orphaned_in_progress_comments.side_effect = RuntimeError('boom')
+        svc.comment_runs.requeue_orphaned_in_progress_comments.side_effect = RuntimeError('boom')
         watcher = CommentRunWatcher(service=svc)
         self.assertEqual(watcher.tick(), 1)
-        svc.drain_all_queued_task_comments.assert_called_once_with()
+        svc.comment_runs.drain_all_queued_task_comments.assert_called_once_with()
 
     def test_tick_is_a_noop_with_no_service(self) -> None:
         self.assertEqual(CommentRunWatcher(service=None).tick(), 0)
@@ -53,14 +53,14 @@ class CommentRunWatcherTickTests(unittest.TestCase):
         # queued drain still runs — one failing pass never strands the
         # other.
         svc = _service(drain=[{'b': 1}])
-        svc.advance_finished_comment_runs.side_effect = RuntimeError('boom')
+        svc.comment_runs.advance_finished_comment_runs.side_effect = RuntimeError('boom')
         watcher = CommentRunWatcher(service=svc)
         self.assertEqual(watcher.tick(), 1)
-        svc.drain_all_queued_task_comments.assert_called_once_with()
+        svc.comment_runs.drain_all_queued_task_comments.assert_called_once_with()
 
     def test_drain_failure_is_swallowed(self) -> None:
         svc = _service(advance=[{'a': 1}])
-        svc.drain_all_queued_task_comments.side_effect = RuntimeError('boom')
+        svc.comment_runs.drain_all_queued_task_comments.side_effect = RuntimeError('boom')
         self.assertEqual(CommentRunWatcher(service=svc).tick(), 1)
 
     def test_tick_tolerates_a_service_missing_the_methods(self) -> None:
@@ -76,16 +76,16 @@ class CommentRunWatcherLifecycleTests(unittest.TestCase):
         deadline = time.monotonic() + 2.0
         while (
             time.monotonic() < deadline
-            and not svc.advance_finished_comment_runs.called
+            and not svc.comment_runs.advance_finished_comment_runs.called
         ):
             time.sleep(0.02)
-        self.assertTrue(svc.advance_finished_comment_runs.called)
+        self.assertTrue(svc.comment_runs.advance_finished_comment_runs.called)
 
         watcher.stop()
-        calls_after_stop = svc.advance_finished_comment_runs.call_count
+        calls_after_stop = svc.comment_runs.advance_finished_comment_runs.call_count
         time.sleep(0.3)
         self.assertEqual(
-            svc.advance_finished_comment_runs.call_count, calls_after_stop,
+            svc.comment_runs.advance_finished_comment_runs.call_count, calls_after_stop,
             'watcher kept ticking after stop()',
         )
 

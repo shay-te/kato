@@ -16,132 +16,43 @@ streaming subprocess.
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
-from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
+from agent_core_lib.agent_core_lib.session.record_files import (
+    delete_record,
+    load_records,
+    record_key,
+    write_record,
+)
+from agent_core_lib.agent_core_lib.session.record import (
+    SESSION_STATUS_ACTIVE,
+    SESSION_STATUS_TERMINATED,
+    SUPPORTED_SESSION_STATUSES,
+    AgentSessionRecord,
+    session_id_list,
+)
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     AGENT_SESSION_ID,
     fix_session_id,
     has_session_id,
     read_session_id_from,
-    read_session_id_from_mapping,
     same_session_id,
 )
-from utils_core_lib.utils_core_lib.text_utils import (
-    normalized_text,
-    text_from_mapping,
-)
+from utils_core_lib.utils_core_lib.text_utils import normalized_text
 from claude_core_lib.claude_core_lib.session.streaming import StreamingClaudeSession
 
 
-SESSION_STATUS_ACTIVE = 'active'
-SESSION_STATUS_DONE = 'done'
-SESSION_STATUS_REVIEW = 'review'
-SESSION_STATUS_TERMINATED = 'terminated'
-
-SUPPORTED_SESSION_STATUSES = frozenset(
-    {
-        SESSION_STATUS_ACTIVE,
-        SESSION_STATUS_DONE,
-        SESSION_STATUS_REVIEW,
-        SESSION_STATUS_TERMINATED,
-    }
-)
 
 
-def _non_negative_int(value) -> int:
-    """``int(value)`` clamped at 0; 0 for anything unparseable."""
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
 
 
-@dataclass
-class PlanningSessionRecord(object):
-    """On-disk metadata for one planning session.
-
-    Stored as JSON at ``<state_dir>/<task_id>.json``. The live subprocess is
-    NOT part of this record — only what's needed to rehydrate / display the
-    tab after a restart. The actual conversation transcript lives inside
-    Claude Code's own session storage and is rejoined via ``claude --resume``.
-    """
-
-    task_id: str
-    task_summary: str = ''
-    # The agent's session id for this task. ``agent_session_id`` is
-    # the canonical name across every the orchestrator agent backend (Claude,
-    # Codex, OpenHands, ...).
-    agent_session_id: str = ''
-    # Last context-window reading reported by a live turn. Persisted because
-    # the live figure lives on the subprocess object: once a session sleeps or
-    # the host restarts, there is nothing to read and the composer's indicator
-    # vanished entirely. The number is still only WRITTEN by a live assistant
-    # turn — this just lets the last known value outlive the subprocess.
-    context_used_tokens: int = 0
-    context_model: str = ''
-    # What THIS chat cost on its first measured turn — the floor a fresh
-    # chat would start from (system prompt + project instructions + any
-    # injected docs). Every later turn re-reads the whole context, so
-    # ``context_used_tokens / context_baseline_tokens`` is what a session
-    # costs relative to starting over, which is the number that tells an
-    # operator when to open a new chat. Reset by ``start_new_chat``.
-    context_baseline_tokens: int = 0
-    status: str = SESSION_STATUS_ACTIVE
-    created_at_epoch: float = field(default_factory=time.time)
-    updated_at_epoch: float = field(default_factory=time.time)
-    cwd: str = ''
-    # The branch the orchestrator prepared for this task. The webserver compares this
-    # against the repo's HEAD before forwarding any message to the live
-    # subprocess; if they diverge (the orchestrator has moved on to a different task)
-    # the send is rejected. Empty string disables the check (wait-planning
-    # tabs that aren't owned by the orchestrator).
-    expected_branch: str = ''
-    # Earlier chats for this task, oldest first. ``start_new_chat`` pushes
-    # the detached session id here so the operator can navigate back to an
-    # old conversation (each id resumes via the normal --resume path).
-    previous_session_ids: list = field(default_factory=list)
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, object]) -> 'PlanningSessionRecord':
-        return cls(
-            task_id=text_from_mapping(payload, 'task_id'),
-            task_summary=str(payload.get('task_summary', '') or ''),
-            agent_session_id=read_session_id_from_mapping(payload),
-            status=str(payload.get('status', SESSION_STATUS_ACTIVE) or SESSION_STATUS_ACTIVE),
-            created_at_epoch=float(payload.get('created_at_epoch', time.time()) or time.time()),
-            updated_at_epoch=float(payload.get('updated_at_epoch', time.time()) or time.time()),
-            cwd=text_from_mapping(payload, 'cwd'),
-            expected_branch=str(payload.get('expected_branch', '') or ''),
-            previous_session_ids=session_id_list(payload.get('previous_session_ids')),
-            # Restored, not defaulted: ``to_dict`` has always written these,
-            # but this reader dropped them, so the reading the docstring
-            # promises would "outlive the subprocess" actually died on the
-            # next load and the indicator blanked after every restart.
-            context_used_tokens=_non_negative_int(payload.get('context_used_tokens')),
-            context_model=str(payload.get('context_model', '') or ''),
-            context_baseline_tokens=_non_negative_int(
-                payload.get('context_baseline_tokens'),
-            ),
-        )
 
 
-def session_id_list(value) -> list:
-    """Normalize a raw payload value into a clean, de-duplicated id list."""
-    ids: list = []
-    for item in (value if isinstance(value, list) else []):
-        fixed = fix_session_id(item)
-        if fixed and fixed not in ids:
-            ids.append(fixed)
-    return ids
+
 
 
 class ClaudeSessionManager(object):
@@ -180,6 +91,11 @@ class ClaudeSessionManager(object):
         )
         return cls(state_dir=resolved)
 
+    #: The backend this manager spawns. Stamped onto every record it writes
+    #: so a chat remembers which CLI produced it even after the operator
+    #: switches backends.
+    AGENT_BACKEND = 'claude'
+
     def __init__(
         self,
         *,
@@ -197,7 +113,7 @@ class ClaudeSessionManager(object):
         # spawn itself, which would serialize all parallel-runner workers.
         self._spawn_locks: dict[str, threading.Lock] = {}
         self._sessions: dict[str, StreamingClaudeSession] = {}
-        self._records: dict[str, PlanningSessionRecord] = {}
+        self._records: dict[str, AgentSessionRecord] = {}
         self._workspace_manager = None
         # Default ``done_callback`` + done-sentinel injected into every
         # spawned session. The host sets both via ``set_done_callback`` so the
@@ -206,7 +122,7 @@ class ClaudeSessionManager(object):
         self._done_callback = None
         self._done_sentinel = ''
         self.logger = configure_logger(self.__class__.__name__)
-        self._load_persisted_records()
+        self._records.update(load_records(self._state_dir, logger=self.logger))
 
     def set_done_callback(self, callback, done_sentinel: str = '') -> None:
         """Register the done-callback + the sentinel that triggers it.
@@ -234,7 +150,7 @@ class ClaudeSessionManager(object):
         """Recover Claude session ids from workspace metadata on boot.
 
         If the orchestrator's own state dir was wiped (or is on a different host than
-        the previous run), the per-task PlanningSessionRecord is missing
+        the previous run), the per-task AgentSessionRecord is missing
         but the workspace folder still has ``.the orchestrator-meta.json`` with the
         Claude session id. Fold those into the in-memory records so the
         next spawn can ``--resume`` cleanly.
@@ -258,7 +174,8 @@ class ClaudeSessionManager(object):
                 existing_id = read_session_id_from(existing)
                 if existing is not None and existing_id:
                     continue
-                record = existing or PlanningSessionRecord(
+                record = existing or AgentSessionRecord(
+                    agent_backend=self.AGENT_BACKEND,
                     task_id=workspace.task_id,
                     task_summary=str(getattr(workspace, 'task_summary', '') or ''),
                     status=SESSION_STATUS_TERMINATED,
@@ -606,7 +523,7 @@ class ClaudeSessionManager(object):
     def _resume_id_for_spawn(
         self,
         normalized_task_id: str,
-        previous_record: PlanningSessionRecord | None,
+        previous_record: AgentSessionRecord | None,
         existing_session,
     ) -> str:
         """Return the resume id to pass to the next spawn (or '' for fresh).
@@ -858,7 +775,7 @@ class ClaudeSessionManager(object):
         *,
         normalized_task_id: str,
         session: StreamingClaudeSession,
-        previous_record: PlanningSessionRecord | None,
+        previous_record: AgentSessionRecord | None,
         task_summary: str,
         expected_branch: str,
         resume_session_id: str,
@@ -868,7 +785,8 @@ class ClaudeSessionManager(object):
             fix_session_id(resume_session_id)
             or read_session_id_from(session)
         )
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
+            agent_backend=self.AGENT_BACKEND,
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary)
             or (previous_record.task_summary if previous_record else ''),
@@ -895,20 +813,29 @@ class ClaudeSessionManager(object):
         self._persist_record(record)
 
     def get_session(self, task_id: str) -> StreamingClaudeSession | None:
+        """The live session for ``task_id``, or ``None``.
+
+        The dictionary lookup takes the global lock; the LIVENESS PROBE does
+        not. Probing under the global lock is what let one unresponsive CLI
+        freeze every caller of this manager — including the UI's git actions,
+        which only ask so they can show a "restart the tab" hint. A slow agent
+        must never be able to hold a lock that git work waits on.
+        """
+        lookup_key = self._lookup_key(task_id)
         with self._lock:
-            lookup_key = self._lookup_key(task_id)
             session = self._sessions.get(lookup_key)
-            if session is None:
-                return None
-            if getattr(session, 'is_alive', False):
+        if session is None:
+            return None
+        if getattr(session, 'is_alive', False):
+            with self._lock:
                 drifted = self._discard_if_session_id_drifted_locked(
                     lookup_key, self._normalize_task_id(task_id), session,
                 )
-                if drifted:
-                    return None
-            return session
+            if drifted:
+                return None
+        return session
 
-    def save_record(self, record: PlanningSessionRecord) -> None:
+    def save_record(self, record: AgentSessionRecord) -> None:
         """Persist an already-held record back to disk.
 
         For fields a CALLER owns and updates between turns — e.g. the last
@@ -919,12 +846,12 @@ class ClaudeSessionManager(object):
             return
         self._persist_record(record)
 
-    def get_record(self, task_id: str) -> PlanningSessionRecord | None:
+    def get_record(self, task_id: str) -> AgentSessionRecord | None:
         with self._lock:
             record = self._records.get(self._lookup_key(task_id))
             return self._with_refreshed_session_id(record)
 
-    def list_records(self) -> list[PlanningSessionRecord]:
+    def list_records(self) -> list[AgentSessionRecord]:
         with self._lock:
             return [
                 self._with_refreshed_session_id(record)
@@ -937,7 +864,7 @@ class ClaudeSessionManager(object):
         *,
         agent_session_id: str,
         task_summary: str = '',
-    ) -> PlanningSessionRecord:
+    ) -> AgentSessionRecord:
         """Bind ``agent_session_id`` to ``task_id`` so the next spawn resumes it.
 
         Used by the planning UI when an operator picks an existing
@@ -993,7 +920,8 @@ class ClaudeSessionManager(object):
                     )
                 record = self._records.get(lookup_key)
                 if record is None:
-                    record = PlanningSessionRecord(
+                    record = AgentSessionRecord(
+                        agent_backend=self.AGENT_BACKEND,
                         task_id=normalized_task_id,
                         task_summary=str(task_summary or ''),
                         status=SESSION_STATUS_TERMINATED,
@@ -1019,7 +947,7 @@ class ClaudeSessionManager(object):
         task_id: str,
         *,
         agent_session_id: str = '',
-    ) -> PlanningSessionRecord:
+    ) -> AgentSessionRecord:
         """Detach the task's current chat; optionally re-attach a previous one.
 
         The detached chat's session id is pushed onto
@@ -1138,7 +1066,9 @@ class ClaudeSessionManager(object):
                 # Capture the record BEFORE dropping it — we need its
                 # Claude session id to delete the CLI transcript.
                 removed = self._records.pop(lookup_key, None)
-                self._delete_persisted_record(normalized_task_id)
+                delete_record(
+                    self._state_dir, normalized_task_id, logger=self.logger,
+                )
                 self._forget_claude_transcript(removed, normalized_task_id)
             else:
                 record = self._records.get(lookup_key)
@@ -1276,32 +1206,26 @@ class ClaudeSessionManager(object):
 
     @staticmethod
     def _lookup_key(task_id: str) -> str:
-        # Canonical key for in-memory dicts (``_records``, ``_sessions``,
-        # ``_spawn_locks``) AND for the on-disk filename. Lowercased so
-        # ``PROJ-1`` and ``proj-1`` resolve to the same logical task.
-        # Without this, two casings produce two records on Linux
-        # (case-sensitive FS) and silent overwrite on macOS
-        # (case-insensitive FS).
-        return ClaudeSessionManager._normalize_task_id(task_id).lower()
+        # Canonical key for the in-memory dicts (``_records``, ``_sessions``,
+        # ``_spawn_locks``). Deliberately the SAME function the on-disk
+        # filename uses (``record_key``): if the memory key and the file key
+        # ever diverged, a lookup would miss a record that is right there on
+        # disk. Lowercased because two casings otherwise produce two records
+        # on a case-sensitive filesystem and a silent overwrite on macOS.
+        return record_key(ClaudeSessionManager._normalize_task_id(task_id))
 
-    def _record_path(self, task_id: str) -> Path:
-        # task ids in YouTrack/Jira/etc. tend to be filename-safe (e.g.
-        # PROJ-123). We still strip any path separators just in case,
-        # and lowercase via _lookup_key so different casings of the
-        # same logical task share one file on disk.
-        safe_name = self._lookup_key(task_id).replace('/', '_').replace(os.sep, '_')
-        return self._state_dir / f'{safe_name}.json'
 
-    def _persist_record(self, record: PlanningSessionRecord) -> None:
-        atomic_write_json(
-            self._record_path(record.task_id),
-            record.to_dict(),
-            logger=self.logger,
-            label=f'planning session record for task {record.task_id}',
-        )
+    def _persist_record(self, record: AgentSessionRecord) -> None:
+        """Write the record, then mirror it into the workspace metadata.
+
+        Storage rules (naming, atomicity, legacy-case cleanup) are shared —
+        see ``agent_core_lib.session.record_files``. The workspace mirror is
+        this host's concern and stays here.
+        """
+        write_record(self._state_dir, record, logger=self.logger)
         self._mirror_to_workspace_metadata(record)
 
-    def _mirror_to_workspace_metadata(self, record: PlanningSessionRecord) -> None:
+    def _mirror_to_workspace_metadata(self, record: AgentSessionRecord) -> None:
         if self._workspace_manager is None:
             return
         if not has_session_id(record.agent_session_id) and not record.cwd:
@@ -1357,74 +1281,12 @@ class ClaudeSessionManager(object):
                     task_id,
                 )
 
-    def _delete_persisted_record(self, task_id: str) -> None:
-        # Delete EVERY state file that maps to this task's canonical
-        # key, not just the canonical lowercased path. Records written
-        # before ``_record_path`` started lowercasing live under the
-        # original-case filename (e.g. ``UNA-1201.json``); the
-        # canonical path is ``una-1201.json``. Unlinking only the
-        # canonical path left the legacy-cased file on disk, and
-        # ``_load_persisted_records`` (a blanket ``glob('*.json')``)
-        # then resurrected the task's tab on every restart — the
-        # "task is back after restart" bug. Case-insensitive filename
-        # match cleans both the canonical and any legacy variant.
-        key = self._lookup_key(task_id).replace('/', '_').replace(os.sep, '_')
-        targets = {self._record_path(task_id)}
-        try:
-            for candidate in self._state_dir.glob('*.json'):
-                if candidate.stem.lower() == key:
-                    targets.add(candidate)
-        except OSError:
-            # Directory listing failed — fall back to just the
-            # canonical path below.
-            pass
-        for path in targets:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError as exc:
-                self.logger.warning(
-                    'failed to remove planning session record %s for task %s: %s',
-                    path,
-                    task_id,
-                    exc,
-                )
 
-    def _load_persisted_records(self) -> None:
-        if not self._state_dir.exists():
-            return
-        for path in sorted(self._state_dir.glob('*.json')):
-            try:
-                payload = json.loads(path.read_text(encoding='utf-8'))
-            except (OSError, json.JSONDecodeError) as exc:
-                self.logger.warning(
-                    'skipping unreadable planning session record %s: %s',
-                    path,
-                    exc,
-                )
-                continue
-            if not isinstance(payload, dict):
-                continue
-            record = PlanningSessionRecord.from_dict(payload)
-            if not record.task_id:
-                continue
-            # On startup the live subprocess is gone; reflect that so the
-            # UI doesn't claim a tab is "active" when there's no subprocess
-            # behind it. The agent_service cleanup loop will sweep these
-            # records on the next scan for tasks that no longer need them.
-            if record.status == SESSION_STATUS_ACTIVE:
-                record.status = SESSION_STATUS_TERMINATED
-                record.updated_at_epoch = time.time()
-            # Key by lowercased task_id so case-mismatched lookups
-            # find the same record. ``record.task_id`` itself keeps
-            # its original case from disk for display purposes.
-            self._records[self._lookup_key(record.task_id)] = record
 
     def _with_refreshed_session_id(
         self,
-        record: PlanningSessionRecord | None,
-    ) -> PlanningSessionRecord | None:
+        record: AgentSessionRecord | None,
+    ) -> AgentSessionRecord | None:
         if record is None:
             return None
         lookup_key = self._lookup_key(record.task_id)

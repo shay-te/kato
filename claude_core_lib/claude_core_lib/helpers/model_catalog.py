@@ -40,7 +40,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=100'
+_ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=100'
 _ANTHROPIC_VERSION = '2023-06-01'
 
 # How many of the most-recently-touched session logs to scan for a resolved
@@ -188,7 +188,7 @@ def _highest_per_family(model_ids) -> dict[str, str]:
     """
     best: dict[str, tuple[int, int, str]] = {}
     for model_id in model_ids:
-        parsed = family_version_from_model_id(model_id)
+        parsed = _family_version_from_model_id(model_id)
         if parsed is None:
             continue
         family, major, minor, label = parsed
@@ -342,7 +342,7 @@ def _model_ids_in_log(log: Path) -> list[str]:
             read += len(line)
             if 'claude-' in line:
                 model_id = _model_id_of_event(_loads_or_empty(line))
-                parsed = family_version_from_model_id(model_id)
+                parsed = _family_version_from_model_id(model_id)
                 if parsed and parsed[0] not in found:
                     found[parsed[0]] = model_id
                     if len(found) == len(_FAMILIES):
@@ -371,7 +371,7 @@ def _model_id_of_event(event: dict) -> str:
     return str(model or '')
 
 
-def family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | None:
+def _family_version_from_model_id(model_id: str) -> tuple[str, int, int, str] | None:
     """``"claude-opus-4-8"`` → ``("opus", 4, 8, "Opus 4.8")``; ``None`` if not a real id.
 
     The numeric ``(major, minor)`` lets callers pick the highest version; the label
@@ -393,7 +393,7 @@ def _fetch_models_api(timeout: float = 3.0) -> list | None:
         return None
     headers['anthropic-version'] = _ANTHROPIC_VERSION
     try:
-        request = urllib.request.Request(ANTHROPIC_MODELS_URL, headers=headers)
+        request = urllib.request.Request(_ANTHROPIC_MODELS_URL, headers=headers)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode('utf-8'))
     except Exception:

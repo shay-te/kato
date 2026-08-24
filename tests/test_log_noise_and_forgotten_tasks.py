@@ -21,16 +21,17 @@ class ForgottenTasksAreLeftAloneTests(unittest.TestCase):
     """A deleted task must not be re-processed OR narrated."""
 
     def _service(self, stale_ids, forgotten, current_status):
-        from kato_core_lib.data_layers.service import agent_service as module
-        service = object.__new__(module.AgentService)
-        service.logger = mock.MagicMock(spec=logging.Logger)
-        service._workspace_manager = mock.MagicMock()
-        service._workspace_manager.get.return_value = SimpleNamespace(
-            status=current_status,
+        from kato_core_lib.data_layers.service import task_cleanup_service as module
+        workspace_manager = mock.MagicMock()
+        workspace_manager.get.return_value = SimpleNamespace(status=current_status)
+        task_service = mock.MagicMock()
+        task_service.get_assigned_tasks.return_value = []
+        service = module.TaskCleanupService(
+            task_service=task_service,
+            session_manager=mock.MagicMock(),
+            workspace_manager=workspace_manager,
+            logger=mock.MagicMock(spec=logging.Logger),
         )
-        service._session_manager = mock.MagicMock()
-        service._task_service = mock.MagicMock()
-        service._task_service.get_assigned_tasks.return_value = []
         service._stale_planning_task_ids = lambda _live: set(stale_ids)
         return service, module
 

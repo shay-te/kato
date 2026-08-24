@@ -170,7 +170,7 @@ class AutoPushEnforcementTests(_SettingsFileBase):
 
         self.assertEqual(result['status'], 'awaiting_push_approval')
         publisher.publish_task_execution.assert_not_called()
-        self.assertTrue(service.is_awaiting_push_approval('T1'))
+        self.assertTrue(service.publish.is_awaiting_push_approval('T1'))
 
     def test_switch_on_publishes_an_untagged_task(self) -> None:
         self._write_settings('true')
@@ -197,9 +197,9 @@ class AutoPushEnforcementTests(_SettingsFileBase):
         service, publisher = self._service()
         self._finish(service, Task(id='T1'))
 
-        self.assertEqual(service.approve_push('T1'), {'status': 'published'})
+        self.assertEqual(service.publish.approve_push('T1'), {'status': 'published'})
         publisher.publish_task_execution.assert_called_once()
-        self.assertFalse(service.is_awaiting_push_approval('T1'))
+        self.assertFalse(service.publish.is_awaiting_push_approval('T1'))
 
     def test_park_comment_names_the_switch_not_the_tag(self) -> None:
         # The comment used to hard-code the tag as the reason, which is now

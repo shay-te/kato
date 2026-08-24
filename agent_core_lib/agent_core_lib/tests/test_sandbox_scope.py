@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )

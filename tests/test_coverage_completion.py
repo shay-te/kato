@@ -389,7 +389,7 @@ class AgentServiceDefensiveBranchesTests(unittest.TestCase):
     ``drain_all_queued_task_comments`` (line 855) +
     ``requeue_stuck_in_progress_comments`` (lines 893, 896, 899-903).
 
-    Each branch fires when ``_safe_list_workspaces`` returns a
+    Each branch fires when ``cleanup.list_workspaces`` returns a
     record with a blank task_id, OR ``_comment_store_for`` returns
     None (race: workspace removed between list + lookup), OR
     ``store.list()`` raises (corrupt JSON).
@@ -409,25 +409,24 @@ class AgentServiceDefensiveBranchesTests(unittest.TestCase):
     def _inject_blank_task_id_record(self) -> None:
         """Append a record with a blank task_id to the workspace
         listing — the defensive ``if not task_id: continue`` branches
-        only fire if such a record gets through ``_safe_list_workspaces``."""
-        real_list = self.service._safe_list_workspaces
+        only fire if such a record gets through ``cleanup.list_workspaces``."""
+        real_list = self.service.cleanup.list_workspaces
 
         def with_blank():
             records = list(real_list())
             records.append(SimpleNamespace(task_id='', status='active'))
             return records
 
-        self._patch = patch.object(
-            self.service, '_safe_list_workspaces', side_effect=with_blank,
+        self._patch = patch.object(self.service.comment_runs, '_workspace_records', side_effect=with_blank,
         )
         self._patch.start()
         self.addCleanup(self._patch.stop)
 
     def test_drain_skips_workspace_with_blank_task_id(self) -> None:
         self._inject_blank_task_id_record()
-        with patch.object(self.service, '_run_comment_agent', return_value=True):
+        with patch.object(self.service.comment_runs, '_run_comment_agent', return_value=True):
             # Must not raise; the blank-id record is skipped silently.
-            out = self.service.drain_all_queued_task_comments()
+            out = self.service.comment_runs.drain_all_queued_task_comments()
         # Result excludes the blank-id entry.
         for r in out:
             self.assertTrue(r.get('task_id'),
@@ -435,7 +434,7 @@ class AgentServiceDefensiveBranchesTests(unittest.TestCase):
 
     def test_requeue_skips_workspace_with_blank_task_id(self) -> None:
         self._inject_blank_task_id_record()
-        out = self.service.requeue_stuck_in_progress_comments()
+        out = self.service.comment_runs.requeue_stuck_in_progress_comments()
         for r in out:
             self.assertTrue(r.get('task_id'),
                             f'blank task_id leaked into result: {r}')
@@ -447,15 +446,15 @@ class AgentServiceDefensiveBranchesTests(unittest.TestCase):
         folder vanished between list + lookup. The defensive
         ``if store is None: continue`` branch must skip cleanly."""
         # Force _comment_store_for to return None for HEALTHY-TASK.
-        with patch.object(self.service, '_comment_store_for', return_value=None):
-            out = self.service.requeue_stuck_in_progress_comments()
+        with patch.object(self.service.comments, 'comment_store', return_value=None):
+            out = self.service.comment_runs.requeue_stuck_in_progress_comments()
         self.assertEqual(out, [])
 
     def test_requeue_swallows_store_list_oserror(self) -> None:
         """``store.list()`` raising must be caught + logged, not
         propagated. Trigger by writing garbage into the store file."""
         # Make the on-disk store file unreadable JSON.
-        store = self.service._comment_store_for('HEALTHY-TASK')
+        store = self.service.comments.comment_store('HEALTHY-TASK')
         store.storage_path.write_text('{not json', encoding='utf-8')
 
         # Replace store.list to raise so the except path fires
@@ -465,15 +464,15 @@ class AgentServiceDefensiveBranchesTests(unittest.TestCase):
             def list(self):
                 raise RuntimeError('disk on fire')
 
-        real_for = self.service._comment_store_for
+        real_for = self.service.comments.comment_store
 
         def store_for(task_id):
             if task_id == 'HEALTHY-TASK':
                 return _RaisingStore()
             return real_for(task_id)
 
-        with patch.object(self.service, '_comment_store_for', side_effect=store_for):
-            out = self.service.requeue_stuck_in_progress_comments()
+        with patch.object(self.service.comments, 'comment_store', side_effect=store_for):
+            out = self.service.comment_runs.requeue_stuck_in_progress_comments()
         # Must not raise; the except branch swallowed it.
         self.assertEqual(out, [])
 

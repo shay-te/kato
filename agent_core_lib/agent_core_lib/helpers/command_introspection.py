@@ -1,7 +1,7 @@
 """Pure, product-agnostic introspection of a shell command string.
 
 Several guards need to look *inside* a Bash command before it runs —
-the workspace sandbox classifier (``claude_core_lib.sandbox_scope``), the
+the workspace sandbox classifier (``sandbox_scope``), the
 Action Guard risk engine (``command_policy``), and the agent transports.
 They all need the same primitives:
 

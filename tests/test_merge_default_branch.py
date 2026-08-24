@@ -7,7 +7,7 @@ Two layers:
     refusals (mocked) + a real on-disk git repo for the clean-merge
     and conflict paths (the conflict path is the whole point: markers
     must be LEFT in the tree, not aborted).
-  * agent_service.merge_default_branch_for_task — aggregation across
+  * agent_service.publish.merge_default_branch_for_task — aggregation across
     repos (mocked repo-service outcomes).
 """
 
@@ -304,12 +304,22 @@ class AgentAggregationTests(unittest.TestCase):
     """merge_default_branch_for_task rolls per-repo outcomes up."""
 
     def _service(self):
-        from kato_core_lib.data_layers.service.agent_service import AgentService
-        svc = AgentService.__new__(AgentService)
-        svc.logger = MagicMock()
-        svc._repository_service = MagicMock()
-        svc._repository_service.build_branch_name.return_value = 'feat/x'
-        return svc
+        from kato_core_lib.data_layers.service.task_publish_service import (
+    TaskPublishService,
+)
+        # Real construction of the publish service — it owns merging now, so
+        # the collaborators it needs are named rather than poked into a
+        # half-built AgentService.
+        repository_service = MagicMock()
+        repository_service.build_branch_name.return_value = 'feat/x'
+        return TaskPublishService(
+            repository_service=repository_service,
+            task_service=MagicMock(),
+            task_state_service=MagicMock(),
+            task_publisher=MagicMock(),
+            workspace_manager=MagicMock(),
+            logger=MagicMock(),
+        )
 
     def test_empty_task_id(self) -> None:
         svc = self._service()

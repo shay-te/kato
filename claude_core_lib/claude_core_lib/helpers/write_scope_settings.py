@@ -36,11 +36,11 @@ import json
 import os
 import sys
 
-from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
     effective_sandbox_roots,
 )
 
-_READ_DEDUPE_MODULE = 'claude_core_lib.claude_core_lib.helpers.read_dedupe'
+_READ_DEDUPE_MODULE = 'agent_core_lib.agent_core_lib.helpers.read_dedupe'
 # Generic (product-agnostic) switch; the orchestrator bridges its own config
 # name onto it. Off unless explicitly turned on — the hook withholds content
 # from the agent, which is not a default anyone should get by surprise.
@@ -82,7 +82,7 @@ def out_of_workspace_write_ask_rules() -> list[str]:
 def read_dedupe_hook_settings() -> dict:
     """``PreToolUse`` hook that blocks re-reads of unchanged files.
 
-    See ``helpers/read_dedupe.py`` for the measurement that motivates it and
+    See ``agent_core_lib.helpers.read_dedupe`` for the measurement that motivates it and
     the escape hatches. Opt-in: the caller decides whether to include this,
     because it changes what the agent can retrieve.
 

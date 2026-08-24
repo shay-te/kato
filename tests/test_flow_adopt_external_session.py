@@ -198,7 +198,7 @@ class FlowAdoptPersistenceTests(unittest.TestCase):
         # Operator's adoption call doesn't supply a summary — kato
         # already has one from the existing record. Don't overwrite.
         from claude_core_lib.claude_core_lib.session.manager import (
-            ClaudeSessionManager, PlanningSessionRecord,
+            ClaudeSessionManager, AgentSessionRecord,
             SESSION_STATUS_TERMINATED,
         )
         with tempfile.TemporaryDirectory() as state_dir:
@@ -208,7 +208,7 @@ class FlowAdoptPersistenceTests(unittest.TestCase):
             # Seed an existing record with a summary.
             with mgr._lock:
                 lookup_key = mgr._lookup_key('T1')
-                mgr._records[lookup_key] = PlanningSessionRecord(
+                mgr._records[lookup_key] = AgentSessionRecord(
                     task_id='T1',
                     task_summary='original summary',
                     status=SESSION_STATUS_TERMINATED,

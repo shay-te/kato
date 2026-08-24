@@ -58,7 +58,7 @@ from kato_core_lib.helpers.lessons_path_utils import (
     lesson_extraction_cwd,
     resolve_and_sync_lessons_path,
 )
-from claude_core_lib.claude_core_lib.helpers.one_shot_utils import make_claude_one_shot
+from claude_core_lib.claude_core_lib.helpers.one_shot_utils import make_one_shot
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
     is_docker_mode_enabled,
@@ -121,7 +121,7 @@ def _export_agent_env_from_kato_config() -> None:
     ignored = os.environ.get('KATO_IGNORED_REPOSITORY_FOLDERS', '').strip()
     if ignored:
         os.environ.setdefault('AGENT_IGNORED_REPOSITORY_FOLDERS', ignored)
-    # Read-dedupe (claude_core_lib/helpers/read_dedupe.py): blocks the agent
+    # Read-dedupe (agent_core_lib/helpers/read_dedupe.py): blocks the agent
     # re-reading a file it already has in context. Off unless the operator
     # sets KATO_DEDUPE_READS. Its per-session state lives in kato's state dir.
     dedupe = os.environ.get('KATO_DEDUPE_READS', '').strip()
@@ -174,7 +174,7 @@ class KatoCoreLib(CoreLib):
                 KATO_TASK_DONE_SENTINEL,
             )
             self.session_manager.set_done_callback(
-                self.service.finish_task_planning_session,
+                self.service.publish.finish_task_planning_session,
                 KATO_TASK_DONE_SENTINEL,
             )
         # ``defer_validation``: build the service but SKIP the network
@@ -246,7 +246,7 @@ class KatoCoreLib(CoreLib):
                 KATO_TASK_DONE_SENTINEL,
             )
             self.session_manager.set_done_callback(
-                service.finish_task_planning_session,
+                service.publish.finish_task_planning_session,
                 KATO_TASK_DONE_SENTINEL,
             )
         self.service = service
@@ -734,7 +734,7 @@ class KatoCoreLib(CoreLib):
             # Best-effort: an uncreatable scratch dir degrades to kato's own
             # cwd (the one-shot still runs; its transcript just lands there).
             cwd = ''
-        llm_one_shot = make_claude_one_shot(binary=binary, model=model, cwd=cwd)
+        llm_one_shot = make_one_shot(binary=binary, model=model, cwd=cwd)
         service = LessonsService(data_access, llm_one_shot)
         self._kick_startup_compact(service)
         return service

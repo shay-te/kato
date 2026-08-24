@@ -371,7 +371,7 @@ def _stop_review_comment_work(app: Flask) -> list[str]:
     the settings write already succeeded and must not report failure
     because a teardown hiccuped; the gate still blocks the next poll."""
     service = app.config.get('AGENT_SERVICE')
-    stopper = getattr(service, 'stop_review_comment_work', None)
+    stopper = _agent_method(service, 'comments.stop_review_comment_work')
     if not callable(stopper):
         return []
     try:
@@ -690,7 +690,7 @@ def _resolve_diff_base(repo_id: str, cwd: str, agent_service) -> str:
     endpoint share it.
     """
     if repo_id and agent_service is not None:
-        lookup = getattr(agent_service, 'configured_destination_branch', None)
+        lookup = getattr(getattr(agent_service, 'publish', agent_service), 'configured_destination_branch', None)
         if callable(lookup):
             configured = (lookup(repo_id) or '').strip()
             if configured:
@@ -727,7 +727,7 @@ def _finalize_resolved_merges(agent_service, task_id: str) -> None:
     if agent_service is None:
         return
     try:
-        agent_service.finalize_resolved_merges_for_task(task_id)
+        agent_service.publish.finalize_resolved_merges_for_task(task_id)
     except Exception:
         logging.getLogger(__name__).exception(
             'finalize-resolved-merges failed for %s', task_id,
@@ -758,6 +758,27 @@ def _no_base_error_message(repo_id: str) -> str:
 # longer 409 on branch divergence.
 
 
+def _agent_method(agent_service, method_name: str):
+    """Look up ``method_name`` on the agent service — dotted names allowed.
+
+    A dotted name addresses a SUB-SERVICE: ``comments.add_task_comment``,
+    ``publish.push_task``, ``repositories.sync_task_repositories``. Each
+    subsystem lives on its own object, and routes name it that way instead of
+    relying on a pass-through method being kept on the facade.
+
+    Returns ``None`` when any hop is missing, so callers decide whether that
+    is a 501 or a soft empty payload. A service (or a test double) that
+    predates the sub-service split still answers the bare name on the facade,
+    so a missing hop falls back to it.
+    """
+    holder = target = agent_service
+    for part in method_name.split('.'):
+        holder, target = target, getattr(target, part, None)
+        if target is None:
+            return getattr(holder, method_name.rsplit('.', 1)[-1], None)
+    return target
+
+
 def _resolve_agent_method(
     app: Flask, method_name: str, *, not_callable_message: str = '',
 ):
@@ -777,7 +798,7 @@ def _resolve_agent_method(
     agent_service = app.config.get('AGENT_SERVICE')
     if agent_service is None:
         return None, (jsonify({'error': 'agent service not wired'}), 503)
-    method = getattr(agent_service, method_name, None)
+    method = _agent_method(agent_service, method_name)
     if not callable(method):
         message = (
             not_callable_message
@@ -1379,6 +1400,12 @@ def _register_http_routes(app: Flask) -> None:
             chats.append({
                 AGENT_SESSION_ID: sid,
                 'active': sid == active_id,
+                # Which CLI produced this chat. Read from the RECORD, not from
+                # current config: the operator can switch backends between
+                # chats, and yesterday's chat still belongs to the CLI that
+                # wrote it. Empty for chats that predate the field — the UI
+                # shows no chip rather than guessing.
+                'agent_backend': str(getattr(record, 'agent_backend', '') or ''),
                 'last_modified_epoch': row.last_modified_epoch if row else 0.0,
                 'turn_count': row.turn_count if row else 0,
                 'first_user_message': row.first_user_message if row else '',
@@ -1971,7 +1998,7 @@ def _register_http_routes(app: Flask) -> None:
         push (push permission was granted); the UI then reloads the tree.
         """
         agent_service = app.config.get('AGENT_SERVICE')
-        recheck = getattr(agent_service, 'recheck_repository_push_access', None)
+        recheck = getattr(getattr(agent_service, 'publish', agent_service), 'recheck_repository_push_access', None)
         if not callable(recheck):
             return jsonify({'error': 'push re-check is not available'}), 503
         try:
@@ -2179,7 +2206,10 @@ def _register_http_routes(app: Flask) -> None:
         if not raw_path:
             return jsonify({'error': 'path is required'}), 400
         service = app.config.get('AGENT_SERVICE')
-        if service is None or not hasattr(service, 'discard_workspace_file_changes'):
+        discard = _agent_method(
+            service, 'repositories.discard_workspace_file_changes',
+        ) if service is not None else None
+        if not callable(discard):
             return jsonify({'error': 'not available'}), 503
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         repo_ids = _task_repository_ids(workspace_manager, task_id)
@@ -2209,7 +2239,7 @@ def _register_http_routes(app: Flask) -> None:
             base = _resolve_diff_base(candidate, cwd, service)
             base_ref, _is_local = resolve_base_ref(cwd, base)
             try:
-                discarded = service.discard_workspace_file_changes(
+                discarded = discard(
                     task_id, candidate, [raw_path], source=base_ref,
                 )
             except ValueError as exc:
@@ -2493,7 +2523,7 @@ def _register_http_routes(app: Flask) -> None:
     def approve_task_push(task_id: str):
         """Operator approves the paused push for a ``kato:wait-before-git-push`` task."""
         approve, err = _resolve_agent_method(
-            app, 'approve_push',
+            app, 'publish.approve_push',
             not_callable_message='agent service does not support push approval',
         )
         if err:
@@ -2513,7 +2543,7 @@ def _register_http_routes(app: Flask) -> None:
         agent_service = app.config.get('AGENT_SERVICE')
         if agent_service is None:
             return jsonify({'awaiting_push_approval': False, 'task_id': task_id})
-        check = getattr(agent_service, 'is_awaiting_push_approval', None)
+        check = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
         if not callable(check):
             return jsonify({'awaiting_push_approval': False, 'task_id': task_id})
         return jsonify({
@@ -2525,7 +2555,7 @@ def _register_http_routes(app: Flask) -> None:
     def push_task(task_id: str):
         """Operator-triggered push from the planning UI's ``Push`` button."""
         push, err = _resolve_agent_method(
-            app, 'push_task',
+            app, 'publish.push_task',
             not_callable_message='agent service does not support push',
         )
         if err:
@@ -2537,7 +2567,7 @@ def _register_http_routes(app: Flask) -> None:
         """Operator-triggered fast-forward pull from the planning UI's
         ``Pull`` button. Symmetric to ``/push``."""
         pull, err = _resolve_agent_method(
-            app, 'pull_task',
+            app, 'publish.pull_task',
             not_callable_message='agent service does not support pull',
         )
         if err:
@@ -2554,7 +2584,7 @@ def _register_http_routes(app: Flask) -> None:
         intentionally blocked from running git itself.
         """
         merge, err = _resolve_agent_method(
-            app, 'merge_default_branch_for_task',
+            app, 'publish.merge_default_branch_for_task',
             not_callable_message='agent service does not support merge-default',
         )
         if err:
@@ -2573,7 +2603,7 @@ def _register_http_routes(app: Flask) -> None:
     def create_task_pull_request(task_id: str):
         """Operator-triggered PR open from the planning UI's ``Pull request`` button."""
         create, err = _resolve_agent_method(
-            app, 'create_pull_request_for_task',
+            app, 'publish.create_pull_request_for_task',
             not_callable_message='agent service does not support PR creation',
         )
         if err:
@@ -2587,7 +2617,7 @@ def _register_http_routes(app: Flask) -> None:
         planning UI's ``Update source`` button.
         """
         update, err = _resolve_agent_method(
-            app, 'update_source_for_task',
+            app, 'publish.update_source_for_task',
             not_callable_message='agent service does not support source-update',
         )
         if err:
@@ -2600,7 +2630,8 @@ def _register_http_routes(app: Flask) -> None:
         agent_service = app.config.get('AGENT_SERVICE')
         if agent_service is None:
             return jsonify({'error': 'agent service not wired'}), 503
-        list_comments = getattr(agent_service, 'list_task_comments', None)
+        list_comments = getattr(
+        getattr(agent_service, 'comments', agent_service), 'list_task_comments', None)
         if not callable(list_comments):
             return jsonify({'comments': []})
         repo_id = (request.args.get('repo') or '').strip()
@@ -2616,7 +2647,7 @@ def _register_http_routes(app: Flask) -> None:
         kato runs on top-of-thread).
         """
         add_comment, err = _resolve_agent_method(
-            app, 'add_task_comment',
+            app, 'comments.add_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2640,7 +2671,7 @@ def _register_http_routes(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/comments/<comment_id>/resolve')
     def resolve_task_comment(task_id: str, comment_id: str):
         resolve, err = _resolve_agent_method(
-            app, 'resolve_task_comment',
+            app, 'comments.resolve_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2662,7 +2693,7 @@ def _register_http_routes(app: Flask) -> None:
         update" reply on the source git platform.
         """
         mark, err = _resolve_agent_method(
-            app, 'mark_comment_addressed',
+            app, 'comments.mark_comment_addressed',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2676,7 +2707,7 @@ def _register_http_routes(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/comments/<comment_id>/reopen')
     def reopen_task_comment(task_id: str, comment_id: str):
         reopen, err = _resolve_agent_method(
-            app, 'reopen_task_comment',
+            app, 'comments.reopen_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2686,7 +2717,7 @@ def _register_http_routes(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/comments/<comment_id>/retry')
     def retry_task_comment(task_id: str, comment_id: str):
         retry, err = _resolve_agent_method(
-            app, 'retry_task_comment',
+            app, 'comments.retry_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2696,7 +2727,7 @@ def _register_http_routes(app: Flask) -> None:
     @app.delete('/api/sessions/<task_id>/comments/<comment_id>')
     def delete_task_comment(task_id: str, comment_id: str):
         delete, err = _resolve_agent_method(
-            app, 'delete_task_comment',
+            app, 'comments.delete_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2714,7 +2745,7 @@ def _register_http_routes(app: Flask) -> None:
         the new body on save (or just back to ``queued`` on cancel).
         """
         edit, err = _resolve_agent_method(
-            app, 'edit_task_comment',
+            app, 'comments.edit_task_comment',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2732,7 +2763,7 @@ def _register_http_routes(app: Flask) -> None:
     def sync_task_comments(task_id: str):
         """Pull remote PR comments + ``git pull`` the workspace clone."""
         sync, err = _resolve_agent_method(
-            app, 'sync_remote_comments',
+            app, 'comments.sync_remote_comments',
             not_callable_message='comments not supported',
         )
         if err:
@@ -2793,7 +2824,9 @@ def _register_http_routes(app: Flask) -> None:
         agent_service = app.config.get('AGENT_SERVICE')
         if agent_service is None:
             return jsonify({'error': 'agent service not wired'}), 503
-        list_repos = getattr(agent_service, 'list_inventory_repositories', None)
+        list_repos = _agent_method(
+            agent_service, 'repositories.list_inventory_repositories',
+        )
         if not callable(list_repos):
             return jsonify({'repositories': []})
         return jsonify({'repositories': list_repos()})
@@ -2808,7 +2841,7 @@ def _register_http_routes(app: Flask) -> None:
         through YouTrack / Jira and the Sync button.
         """
         add_repo, err = _resolve_agent_method(
-            app, 'add_task_repository',
+            app, 'repositories.add_task_repository',
             not_callable_message='agent service does not support add-repository',
         )
         if err:
@@ -2836,7 +2869,7 @@ def _register_http_routes(app: Flask) -> None:
         additive.
         """
         sync, err = _resolve_agent_method(
-            app, 'sync_task_repositories',
+            app, 'repositories.sync_task_repositories',
             not_callable_message='agent service does not support repo sync',
         )
         if err:
@@ -2850,7 +2883,7 @@ def _register_http_routes(app: Flask) -> None:
         a PR if none exists, and moves the ticket to In Review.
         """
         finish, err = _resolve_agent_method(
-            app, 'finish_task_planning_session',
+            app, 'publish.finish_task_planning_session',
             not_callable_message='agent service does not support finish',
         )
         if err:
@@ -2872,7 +2905,7 @@ def _register_http_routes(app: Flask) -> None:
                 'has_changes_to_push': False,
                 'task_id': task_id,
             })
-        check = getattr(agent_service, 'task_publish_state', None)
+        check = getattr(getattr(agent_service, 'publish', agent_service), 'task_publish_state', None)
         if not callable(check):
             return jsonify({
                 'has_workspace': False,
@@ -2889,7 +2922,7 @@ def _register_http_routes(app: Flask) -> None:
         link. Fetched separately from publish-state (tab-load + click, not
         polled) so its provider retry backoff never blocks the git buttons."""
         agent_service = app.config.get('AGENT_SERVICE')
-        check = getattr(agent_service, 'task_pull_request_state', None)
+        check = getattr(getattr(agent_service, 'publish', agent_service), 'task_pull_request_state', None)
         if not callable(check):
             return jsonify({
                 'has_pull_request': False,
@@ -2905,7 +2938,7 @@ def _register_http_routes(app: Flask) -> None:
         """Content (grep) search across the task's workspace repos."""
         query = str(request.args.get('q', '') or '').strip()
         agent_service = app.config.get('AGENT_SERVICE')
-        search = getattr(agent_service, 'search_task_workspace', None)
+        search = _agent_method(agent_service, 'repositories.search_task_workspace')
         if not query or not callable(search):
             return jsonify({'matches': [], 'truncated': False, 'query': query})
         try:
@@ -3159,19 +3192,13 @@ def _configured_chat_effort(app: Flask) -> str:
 
 def _discover_chat_effort_levels(app: Flask) -> list:
     """Effort levels the chat CLI advertises (discovered, with fallback)."""
+    from agent_backend_core_lib.agent_backend_core_lib.client.model_catalog_factory import (
+        discover_effort_levels,
+        platform_for_binary,
+    )
     defaults = _chat_runner_defaults(app)
     binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
-    try:
-        from claude_core_lib.claude_core_lib.helpers.effort_levels import (
-            discover_effort_levels,
-        )
-        return discover_effort_levels(binary)
-    except Exception:
-        app.logger.exception('effort-level discovery failed; using fallback')
-        from claude_core_lib.claude_core_lib.helpers.effort_levels import (
-            FALLBACK_EFFORT_LEVELS,
-        )
-        return list(FALLBACK_EFFORT_LEVELS)
+    return list(discover_effort_levels(platform_for_binary(binary), binary))
 
 
 def _truthy_arg(value: object) -> bool:
@@ -3220,25 +3247,16 @@ def _discover_chat_models(app: Flask, force: bool = False) -> list:
     discovery TTL cache so a refresh picks up a just-installed CLI's labels
     without waiting out the cache (or restarting kato).
     """
+    from agent_backend_core_lib.agent_backend_core_lib.client.model_catalog_factory import (
+        discover_models,
+        platform_for_binary,
+    )
     defaults = _chat_runner_defaults(app)
     binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
-    try:
-        if 'codex' in binary.lower():
-            from codex_core_lib.codex_core_lib.helpers.model_discovery import (
-                discover_codex_models,
-            )
-            models = discover_codex_models()
-        else:
-            from claude_core_lib.claude_core_lib.helpers.model_catalog import (
-                discover_models,
-            )
-            models = discover_models(force=force)
-    except Exception:
-        app.logger.exception('model discovery failed; using fallback')
-        from claude_core_lib.claude_core_lib.helpers.model_catalog import (
-            FALLBACK_MODELS,
-        )
-        models = [dict(model) for model in FALLBACK_MODELS]
+    # WHICH backend answers is the factory lib's question, not this route's:
+    # a ``'codex' in binary`` test here is a backend switch in the UI layer,
+    # and it silently sends every unknown backend down the Claude path.
+    models = discover_models(platform_for_binary(binary), force=force)
     return _apply_configured_default(app, models)
 
 
@@ -3373,7 +3391,7 @@ def _register_post_message_route(app: Flask) -> None:
 def _capture_prompt_lesson_candidate(app: Flask, task_id: str, text: str) -> None:
     """Best-effort early lesson candidate capture for chat prompts."""
     service = app.config.get('AGENT_SERVICE')
-    capture = getattr(service, 'capture_prompt_lesson_candidate', None)
+    capture = _agent_method(service, 'lessons.capture_prompt_lesson_candidate')
     if not callable(capture):
         return
     try:
@@ -4120,7 +4138,7 @@ def _classify_action_for(session, tool_name: str, tool_input: dict):
         from agent_core_lib.agent_core_lib.helpers.command_policy import (
             classify_action,
         )
-        from claude_core_lib.claude_core_lib.helpers.sandbox_scope import (
+        from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
             classify_command_sandbox,
             classify_tool_input_sandbox,
         )
@@ -4558,7 +4576,8 @@ def _task_has_active_comment_run(app, task_id: str) -> bool:
     mid-turn confirm still stands between the operator and a blind kill.
     """
     agent_service = app.config.get('AGENT_SERVICE')
-    list_comments = getattr(agent_service, 'list_task_comments', None)
+    list_comments = getattr(
+        getattr(agent_service, 'comments', agent_service), 'list_task_comments', None)
     if not callable(list_comments):
         return False
     try:
@@ -5074,7 +5093,7 @@ def _complete_in_progress_task_comments(
     result_received_at_epoch: float = 0.0,
 ) -> None:
     complete = getattr(
-        agent_service, 'complete_in_progress_task_comments', None,
+        getattr(agent_service, 'comment_runs', agent_service), 'complete_in_progress_task_comments', None,
     )
     if not callable(complete):
         return
@@ -5092,7 +5111,8 @@ def _complete_in_progress_task_comments(
 
 
 def _drain_queued_task_comment(agent_service, task_id: str) -> bool:
-    drain = getattr(agent_service, 'drain_next_queued_task_comment', None)
+    drain = getattr(
+        getattr(agent_service, 'comment_runs', agent_service), 'drain_next_queued_task_comment', None)
     if not callable(drain):
         return False
     try:
@@ -5181,7 +5201,7 @@ def _records_as_dicts(
         if not is_reserved_workspace_dirname(getattr(record, 'task_id', ''))
     ]
     session_ids_by_task = _session_ids_by_task(session_manager)
-    awaiting_push = getattr(agent_service, 'is_awaiting_push_approval', None)
+    awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
     return [
         _workspace_record_to_dict(
             record,

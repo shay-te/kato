@@ -1,9 +1,8 @@
 """Minimal one-shot Codex CLI invocation.
 
-Mirror of ``claude_core_lib.helpers.one_shot_utils`` — same module
-name, same exported names (``codex_one_shot`` ↔ ``claude_one_shot``,
-``make_codex_one_shot`` ↔ ``make_claude_one_shot``, ``CodexOneShotError``
-↔ ``ClaudeOneShotError``).
+Codex's half of the one-shot path: the command and where the answer lands.
+The subprocess plumbing — stdin, timeout, exit-code handling — is shared with
+every other CLI agent in ``agent_core_lib.helpers.one_shot``.
 
 The lessons subsystem just needs "send text, get text back" — no
 tools, no streaming, no session state. We invoke ``codex exec``
@@ -18,39 +17,41 @@ Verified against ``codex-cli 0.132.0``.
 from __future__ import annotations
 
 import os
-import subprocess
 import tempfile
 from typing import Callable
 
+from agent_core_lib.agent_core_lib.helpers.one_shot import (
+    DEFAULT_TIMEOUT_SECONDS,
+    AgentOneShotError,
+    run_one_shot,
+)
 
-_DEFAULT_TIMEOUT_SECONDS = 120
 
-
-class CodexOneShotError(RuntimeError):
+class OneShotError(AgentOneShotError):
     """Raised when the one-shot Codex invocation fails or times out."""
 
 
-def codex_one_shot(
+def one_shot(
     prompt: str,
     *,
     binary: str = 'codex',
     model: str = '',
-    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+    cwd: str = '',
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> str:
     """Send ``prompt`` to ``codex exec`` and return the agent's final text.
 
     No tools, no system prompt, no session id — pure text completion.
-    ``model`` is optional; empty leaves Codex on whatever the
-    operator's ``~/.codex/config.toml`` declares as the default.
+    ``model`` is optional; empty leaves Codex on whatever the operator's
+    ``~/.codex/config.toml`` declares as the default.
     """
     fd, last_message_file = tempfile.mkstemp(prefix='codex-oneshot-', suffix='.txt')
     os.close(fd)
     try:
         command: list[str] = [
             binary, 'exec',
-            # ``read-only`` sandbox + ``never`` approval so the
-            # one-shot path can't make accidental edits and never
-            # blocks waiting for human input.
+            # ``read-only`` sandbox + ``never`` approval so the one-shot path
+            # can't make accidental edits and never blocks on human input.
             '--sandbox', 'read-only',
             '--ask-for-approval', 'never',
             '--skip-git-repo-check',
@@ -58,41 +59,16 @@ def codex_one_shot(
         ]
         if model:
             command.extend(['-m', model])
-        try:
-            completed = subprocess.run(
-                command,
-                input=prompt,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                check=False,
-                timeout=timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise CodexOneShotError(
-                f'codex one-shot did not finish within {timeout_seconds}s'
-            ) from exc
-        except OSError as exc:
-            raise CodexOneShotError(
-                f'failed to invoke codex binary "{binary}": {exc}'
-            ) from exc
-        if completed.returncode != 0:
-            stderr = (completed.stderr or '').strip()
-            raise CodexOneShotError(
-                f'codex one-shot exited {completed.returncode}: {stderr or "<no stderr>"}'
-            )
-        # Prefer the file the CLI wrote. Fallback to stdout for the
-        # rare case where ``-o`` produced nothing (e.g. agent had no
-        # reply text), so callers always see *something*.
-        try:
-            with open(last_message_file, 'r', encoding='utf-8') as handle:
-                final_message = handle.read()
-        except OSError:
-            final_message = ''
-        if final_message:
-            return final_message
-        return completed.stdout or ''
+        return run_one_shot(
+            prompt,
+            command=command,
+            cli_name='codex',
+            error_type=OneShotError,
+            timeout_seconds=timeout_seconds,
+            read_output=lambda completed: (
+                _final_message(last_message_file) or completed.stdout or ''
+            ),
+        )
     finally:
         try:
             os.unlink(last_message_file)
@@ -100,18 +76,34 @@ def codex_one_shot(
             pass
 
 
-def make_codex_one_shot(
+def _final_message(path: str) -> str:
+    """The reply Codex wrote to ``-o``, or ``''`` when it wrote nothing.
+
+    Preferred over stdout because parsing the ``--json`` event stream for
+    "the last agent_message" would tie us to event names that are not part
+    of the CLI's public contract.
+    """
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            return handle.read()
+    except OSError:
+        return ''
+
+
+def make_one_shot(
     *,
     binary: str = 'codex',
     model: str = '',
-    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+    cwd: str = '',
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> Callable[[str], str]:
-    """Return a closure that calls :func:`codex_one_shot` with fixed config."""
+    """Return a closure that calls :func:`one_shot` with fixed config."""
     def _call(prompt: str) -> str:
-        return codex_one_shot(
+        return one_shot(
             prompt,
             binary=binary,
             model=model,
+            cwd=cwd,
             timeout_seconds=timeout_seconds,
         )
     return _call

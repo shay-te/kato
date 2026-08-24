@@ -4,26 +4,25 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Any
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
-from agent_core_lib.agent_core_lib.helpers.comment_prompt import (
-    CommentThreadSpec,
-    build_comment_prompt_context,
+from agent_core_lib.agent_core_lib.helpers.command_floor import (
+    FLOOR_DENY_PROGRAMS,
+    GIT_MUTATING_SUBCOMMANDS,
+    UNSUPERVISED_DENY_SUBCOMMANDS,
+    cli_deny_patterns,
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.read_only_tools import (
     READ_ONLY_ALLOWED_TOOLS,
     READ_ONLY_DISALLOWED_TOOLS,
 )
-from agent_core_lib.agent_core_lib.helpers.result_utils import build_openhands_result
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from utils_core_lib.utils_core_lib.text_utils import (
     condensed_text,
     normalized_text,
-    text_from_attr,
     text_from_mapping,
 )
 from claude_core_lib.claude_core_lib.helpers.effort_levels import (
@@ -62,128 +61,20 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     # for version skew (``Task`` is an alias on newer CLIs). Operators can still
     # override the whole list via ``the allowed-tools setting``.
     DEFAULT_ALLOWED_TOOLS = 'Agent,Task,Edit,Write,Read,Bash,Glob,Grep'
-    # Hard, non-overridable denylist for MUTATING git only. the orchestrator owns the
-    # branch state machine + publish/push path, so Claude must never commit,
-    # push, reset, branch, fetch, rebase, etc. — those would race the orchestrator and
-    # could push unvalidated work. But READ-ONLY git (status/log/diff/show/
-    # blame…) is safe and essential: the self-review workflow literally needs
-    # `git diff master...branch` to see what changed. Read-only git is NOT
-    # listed here, so it falls through to the normal permission prompt (the
-    # operator approves it, or "allow always git"). Each mutating subcommand is
-    # listed in both the colon-form (`Bash(git push:*)`) and bare-form
-    # (`Bash(git push *)`) that different Claude versions accept.
-    #
-    # ``restore``, ``stash``, ``apply`` and ``reflog`` are DELIBERATELY
-    # ABSENT — see the note under this list. They are file/worktree
-    # operations, not branch-state ones, and the destructive FORMS of each
-    # are caught by argv in Layer B rather than by denying the whole verb.
-    #
-    # ``restore`` is DELIBERATELY ABSENT. Reverting a file to its committed
-    # state is a routine, explicitly-requested part of implementing a task,
-    # and blocking it left the agent telling operators "I can't, git is
-    # forbidden" for an operation the orchestrator does not own. Crucially,
-    # ``git restore`` is the one file-scoped member of this family: unlike
-    # ``checkout``, it CANNOT move HEAD or switch branches (that is ``git
-    # switch``, still denied), so permitting it cannot race the branch state
-    # machine. The residual risk — ``git restore .`` discarding the whole
-    # task's uncommitted work — is not a branch-state problem and is caught
-    # precisely, by argv, in Layer B (``agent_core_lib.command_policy``
-    # ``fs.git_revert_all``), which routes it to the operator instead of
-    # blanket-refusing every revert.
-    _GIT_MUTATING_SUBCOMMANDS = (
-        'push', 'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch',
-        'cherry-pick', 'revert', 'am',
-        'tag', 'branch', 'remote', 'fetch', 'pull', 'clone',
-        'init', 'config', 'gc', 'prune', 'filter-branch', 'filter-repo',
-        'update-ref', 'update-index', 'symbolic-ref', 'worktree', 'submodule',
-        'sparse-checkout', 'bisect', 'notes', 'replace', 'fast-import',
-        # PLUMBING. Listing only the porcelain left the same capabilities
-        # reachable one layer down: ``hash-object -w`` + ``mktree`` +
-        # ``commit-tree`` builds a commit, and ``send-pack`` publishes it —
-        # the exact branch-state race the porcelain entries above exist to
-        # prevent, with none of them invoked. ``checkout-index -a -f`` is
-        # additionally a whole-tree working-copy overwrite.
-        'read-tree', 'write-tree', 'commit-tree', 'hash-object', 'mktree',
-        'checkout-index', 'send-pack', 'receive-pack', 'index-pack',
-        'unpack-objects', 'pack-refs', 'bundle', 'prune-packed',
-    )
-    # WHY stash / apply / reflog are not in that list.
-    #
-    # The rule this floor encodes is "the orchestrator owns BRANCH STATE and
-    # PUBLISHING". Denying every verb that can write anything is a different,
-    # much broader rule, and it cost real work: an operator could not ask the
-    # agent to set changes aside, apply a patch, or find a commit it had
-    # lost, and the agent reported all of it as "git is forbidden".
-    #
-    #   stash  — moves uncommitted work aside and back. Recoverable by
-    #            construction (that is what a stash IS), unlike a bare
-    #            restore. ``stash drop`` / ``stash clear`` DO destroy, and
-    #            those forms go to the operator via Layer B.
-    #   apply  — applies a patch to the working tree. No ref moves. The one
-    #            dangerous form, ``--unsafe-paths`` (writes outside the
-    #            worktree), is caught in Layer B.
-    #   reflog — the tool for finding a commit that was lost. Reading it is
-    #            harmless; ``reflog expire`` / ``reflog delete`` destroy the
-    #            recovery data itself and go to the operator.
-    #
-    # THE LINE THIS LIST DRAWS, stated once so the next edit can check
-    # itself against it rather than guessing:
-    #
-    #   The orchestrator owns REFS, COMMITS, REMOTES, HISTORY and CONFIG.
-    #   The agent owns the INDEX and the WORKING TREE.
-    #
-    # So anything that moves HEAD or a branch, creates a commit, talks to a
-    # remote, rewrites history, or sets config (the hook/RCE surface) is
-    # denied — including the plumbing that reaches the same capability by
-    # another name. Everything else is the agent's: ``add``, ``rm``, ``mv``,
-    # ``clean``, ``restore``, ``stash``, ``apply``, ``reflog`` and every
-    # read-only command.
-    #
-    # ``add``/``rm``/``mv``/``clean`` were denied here for a long time on
-    # the reasoning that the orchestrator stages everything itself. True,
-    # but it does not follow: the agent was left unable to stage a file, or
-    # delete one with git rather than the shell, and reported the whole of
-    # git as forbidden. The destructive breadth of ``rm``/``clean`` is a
-    # PATHSPEC question, and Layer B answers it by argv — see
-    # ``fs.git_worktree_wipe``.
-    GIT_DENY_PATTERNS = tuple(
-        pattern
-        for sub in _GIT_MUTATING_SUBCOMMANDS
-        for pattern in (f'Bash(git {sub}:*)', f'Bash(git {sub} *)')
-    )
-    # Action Guard "Layer A" floor: programs with NO legitimate use in a task
-    # workspace, blocked at the CLI level so they are refused in EVERY mode —
-    # including ``bypassPermissions`` where no per-tool prompt fires (the only
-    # other backstop there is Docker containment). Deliberately TINY and
-    # program-token-anchored: ``--disallowedTools`` matches by program prefix,
-    # not full argument strings, so dual-use programs (``rm``, ``chmod``,
-    # ``dd``) and pipelines (``curl … | sh``) CANNOT go here without
-    # over-blocking — those are handled precisely by Layer B (the content-aware
-    # guard in the permission path, see agent_core_lib.command_policy). Listed
-    # in both colon-form and bare-form for Claude-CLI version skew, like git.
-    _ACTION_GUARD_DENY_PROGRAMS = (
-        # Filesystem formatters / swap — never legitimate on a workspace clone.
-        'mkfs', 'mkfs.ext2', 'mkfs.ext3', 'mkfs.ext4', 'mkfs.xfs',
-        'mkfs.btrfs', 'mkfs.vfat', 'mkfs.fat', 'mkfs.ntfs', 'mkswap',
-        # Sandbox / namespace escape primitives.
-        'nsenter', 'unshare', 'chroot',
-        # Host power control — an agent fixing code never reboots the machine.
-        'shutdown', 'reboot', 'halt', 'poweroff',
-    )
-    ACTION_GUARD_DENY_PATTERNS = tuple(
-        pattern
-        for program in _ACTION_GUARD_DENY_PROGRAMS
-        for pattern in (f'Bash({program}:*)', f'Bash({program} *)')
-    )
-    # Denied ONLY in bypassPermissions, where no per-tool prompt fires and so
-    # the content-aware guard (Layer B) never runs. These are actions whose
-    # safety depends on an operator seeing them first — permitted in every
-    # attended mode, withdrawn when nobody is watching.
-    _UNSUPERVISED_DENY_SUBCOMMANDS = ('restore',)
-    UNSUPERVISED_DENY_PATTERNS = tuple(
-        pattern
-        for sub in _UNSUPERVISED_DENY_SUBCOMMANDS
-        for pattern in (f'Bash(git {sub}:*)', f'Bash(git {sub} *)')
+    # The FLOOR — which git subcommands and which programs are refused, and
+    # why — is shared policy in ``agent_core_lib.helpers.command_floor``, so
+    # the transport that can only state it in a prompt states exactly what
+    # this one enforces. Claude renders it into ``--disallowedTools``
+    # patterns, which is the strongest form available: they hold even in
+    # ``bypassPermissions``, where no per-tool prompt fires.
+    GIT_DENY_PATTERNS = cli_deny_patterns(GIT_MUTATING_SUBCOMMANDS, program='git')
+    # Action Guard "Layer A": programs with no legitimate use in a workspace.
+    ACTION_GUARD_DENY_PATTERNS = cli_deny_patterns(FLOOR_DENY_PROGRAMS)
+    # Withdrawn only where nobody is watching (bypassPermissions), because the
+    # content-aware guard that would otherwise catch the destructive forms
+    # never runs there.
+    UNSUPERVISED_DENY_PATTERNS = cli_deny_patterns(
+        UNSUPERVISED_DENY_SUBCOMMANDS, program='git',
     )
     SMOKE_TEST_PROMPT = 'Reply with exactly: ok. Do not call any tools.'
     SMOKE_TEST_TIMEOUT_SECONDS = 120
@@ -357,6 +248,23 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         )
         self._validate_model_smoke_test()
 
+    def _wrap_untrusted(self, text: str, *, source_path: str) -> str:
+        """Bind the shared prompt scaffolding to the delimiter framing."""
+        return wrap_untrusted_workspace_content(text, source_path=source_path)
+
+    @classmethod
+    def _wrap_untrusted_text(cls, text: str, *, source_path: str) -> str:
+        """Bind the shared prompt scaffolding to the delimiter framing."""
+        return wrap_untrusted_workspace_content(text, source_path=source_path)
+
+    @classmethod
+    def _read_only_instruction(cls) -> str:
+        """Claude has named tools, so the rule names the ones that mutate."""
+        return (
+            '- Do NOT modify any files. Do not call Edit, Write, or any '
+            'tool that mutates the workspace.\n'
+        )
+
     def investigate(self, prompt: str, *, cwd: str = '') -> str:
         """Run a single read-only Claude turn and return the raw text.
 
@@ -481,321 +389,9 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
 
     # ----- prompt builders (Claude-specific, share core helpers with the agent client) -----
 
-    def _build_implementation_prompt(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> str:
-        # workspace_root (the task's whole workspace folder, set only when
-        # workspace-clone mode provisioned these repos) goes FIRST so
-        # workspace_scope_block's redundant-descendant collapse drops each
-        # individual repo path in favor of it — one boundary instead of
-        # one bullet per attached repo, and one that still covers a repo
-        # attached to the task AFTER this prompt was built.
-        workspace_root = normalized_text(text_from_attr(prepared_task, 'workspace_root'))
-        scope_paths = _repository_local_paths(prepared_task)
-        if workspace_root:
-            scope_paths = [workspace_root, *scope_paths]
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            scope_paths,
-            extra_refusal_guidance=self._workspace_refusal_guidance,
-        )
-        repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
-        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        # OG9a: ``task.summary`` and ``task.description`` come from
-        # the issue tracker (YouTrack / Bitbucket / etc.) and may
-        # contain text written by anyone with comment access. Wrap
-        # them so the model can tell trusted scaffolding (the orchestrator's own
-        # prompt) from untrusted issue text. ``task.id`` is
-        # the orchestrator-controlled; do not wrap it.
-        untrusted_task_body = wrap_untrusted_workspace_content(
-            f'{task.summary}\n\n{task.description}',
-            source_path=f'task:{task.id}',
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        # Written to the TASK folder, outside every clone, so it cannot be
-        # committed. Empty for an adopted-cwd task (no task folder) — the
-        # shared base then falls back to the legacy in-repo wording.
-        pr_description_path = agent_prompt_utils.pr_description_path_for(workspace_root)
-        pr_description_label = (
-            pr_description_path or agent_prompt_utils.PR_DESCRIPTION_FILENAME
-        )
-        return (
-            f'{scope_prefix}'
-            f'Implement task {task.id}.\n\n'
-            f'{untrusted_task_body}\n\n'
-            f'{repository_scope}\n\n'
-            f'{agents_instructions}\n\n'
-            f'{self._execution_guardrails_text()}\n\n'
-            f'{self._completion_instructions_text(pr_description_path=pr_description_path)}\n\n'
-            f'{pr_description_label} must list every changed file and, under each '
-            'file name, add a short explanation of what changed.\n'
-            f'Use this format inside {pr_description_label}:\n'
-            'Files changed:\n'
-            '- path/to/file.ext\n'
-            '  Short explanation.\n'
-            '- another/file.ext\n'
-            '  Short explanation.\n'
-        )
 
-    def _build_testing_prompt(
-        self,
-        task: Any,
-        prepared_task: Any | None = None,
-    ) -> str:
-        repository_scope = agent_prompt_utils.repository_scope_text(task, prepared_task)
-        agents_instructions = agent_prompt_utils.agents_instructions_text(prepared_task)
-        pr_description_path = agent_prompt_utils.pr_description_path_for(
-            text_from_attr(prepared_task, 'workspace_root'),
-        )
-        # OG9a: same reasoning as ``_build_implementation_prompt``;
-        # the testing agent is also pointed at the same untrusted
-        # issue text and needs the same framing.
-        untrusted_task_body = wrap_untrusted_workspace_content(
-            f'{task.summary}\n\n{task.description}',
-            source_path=f'task:{task.id}',
-        )
-        return (
-            f'Validate the implementation for task {task.id}.\n\n'
-            f'{untrusted_task_body}\n\n'
-            f'{repository_scope}\n\n'
-            f'{agents_instructions}\n\n'
-            f'{self._execution_guardrails_text()}\n\n'
-            'Act as a separate testing agent.\n'
-            'Write additional tests when needed, challenge the new code with edge cases, '
-            'run the relevant tests, and fix any test failures you can resolve safely.\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("for the validation work")}'
-            'Do not run npm run build, yarn build, pnpm build, or any equivalent production build command unless the task explicitly requires it.\n'
-            'Do not commit or stage generated build artifacts such as build, dist, out, coverage, or target directories.\n'
-            'Do not create a pull request.\n'
-            f'{self._completion_instructions_text(testing=True, pr_description_path=pr_description_path)}\n'
-            'If no dedicated tests are defined or available, do not invent new ones; '
-            'just report that no testing was defined and stop after saving any change.\n'
-        )
 
-    @classmethod
-    def _build_review_comments_batch_prompt(
-        cls,
-        comments: list[ReviewComment],
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-        workspace_refusal_guidance: str = '',
-        self_reply_prefixes: tuple = (),
-        additional_dirs: list[str] | None = None,
-    ) -> str:
-        """Render a batched prompt for 2+ comments on one PR.
 
-        Architecture:
-        - Single header naming the branch + repository.
-        - Numbered list of comments, each with localization (file/
-          line/commit) and the comment body wrapped as untrusted
-          content (same OG9a wrapping the singular prompt does).
-        - Optional shared "review context" section (resolved-comment
-          history) drawn from the first comment's ``ALL_COMMENTS``
-          since every comment in the batch lives on the same PR.
-        - Same execution guardrails + completion contract as the
-          singular prompt — the orchestrator just changes "address one comment"
-          to "address all the listed comments in one change-set."
-        """
-        first = comments[0]
-        repository_context = agent_prompt_utils.review_repository_context(first)
-        # Wrap each body individually so each entry in the numbered
-        # list still has its own untrusted-content marker — the
-        # agent must treat every comment as data, not directive.
-        wrapped_comments: list = []
-        for comment in comments:
-            wrapped_body = wrap_untrusted_workspace_content(
-                comment.body,
-                source_path=f'pr-comment:{comment.author}',
-            )
-            shadow = ReviewComment(
-                pull_request_id=comment.pull_request_id,
-                comment_id=comment.comment_id,
-                author=comment.author,
-                body=wrapped_body,
-                file_path=comment.file_path,
-                line_number=comment.line_number,
-                line_type=comment.line_type,
-                commit_sha=comment.commit_sha,
-            )
-            wrapped_comments.append(shadow)
-        # ``wrap=`` frames each inlined code snippet. Without it the batch
-        # renderer pasted repo file content in raw, so the prompt-injection
-        # defense the singular builder has vanished for every 2+-comment
-        # batch — the case that inlines the MOST repo content.
-        batch_text = agent_prompt_utils.review_comments_batch_text(
-            wrapped_comments, workspace_path=workspace_path,
-            wrap=wrap_untrusted_workspace_content,
-        )
-        # Per-PR review context comes from any one comment — they
-        # share the thread. Skip when empty so we don't emit blank
-        # marker tags.
-        review_context = agent_prompt_utils.review_comment_context_text(
-            first, self_reply_prefixes,
-        )
-        wrapped_review_context = (
-            wrap_untrusted_workspace_content(
-                review_context,
-                source_path='pr-comment-thread',
-            )
-            if review_context
-            else ''
-        )
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
-            extra_refusal_guidance=workspace_refusal_guidance,
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        # Pull AGENTS.md from the workspace clone if the project has
-        # one — the review-fix agent should respect the same
-        # checked-in conventions the implementation agent did.
-        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
-            agents_instructions_for_path,
-        )
-        agents_text = agents_instructions_for_path(
-            workspace_path,
-            repository_id=str(getattr(first, 'repository_id', '') or ''),
-        )
-        agents_block = f'{agents_text}\n\n' if agents_text else ''
-        if mode == 'answer':
-            return (
-                f'{scope_prefix}'
-                f'The following pull request review questions are on branch '
-                f'{branch_name}{repository_context}.\n\n'
-                f'{batch_text}'
-                f'{wrapped_review_context}\n\n'
-                f'{agents_block}'
-                f'{cls._execution_guardrails_text()}\n\n'
-                'These are QUESTIONS, not fix requests. Read the relevant '
-                'code to understand context, then write a concise plain-text '
-                'answer that addresses every question.\n'
-                'Rules:\n'
-                '- Do NOT modify any files. Do not call Edit, Write, or any '
-                'tool that mutates the workspace.\n'
-                '- Do not commit. Do not push.\n'
-                '- Number your answers 1, 2, 3 to match the numbered '
-                'questions above.\n'
-                '- Keep each answer focused: explain the behaviour, point to '
-                'the relevant file/line if helpful, and stop.\n'
-                'When you are done, stop. Your final response will be '
-                'posted as the reply to each question.\n'
-            )
-        return (
-            f'{scope_prefix}'
-            f'Address the following pull request review comments on branch '
-            f'{branch_name}{repository_context}.\n\n'
-            f'{batch_text}'
-            f'{wrapped_review_context}\n\n'
-            f'{agents_block}'
-            f'{cls._execution_guardrails_text()}\n\n'
-            'Address every comment listed above in a single coherent '
-            'change-set.\n'
-            'For each comment:\n'
-            f'{agent_prompt_utils.narrow_edit_guardrails_text("to address it", bulleted=True)}'
-            'Do not report success until all intended changes are saved in '
-            'the repository worktree.\n'
-            'When you are done, stop. Do not produce any extra commentary.\n'
-        )
-
-    @classmethod
-    def _build_review_prompt(
-        cls,
-        comment: ReviewComment,
-        branch_name: str,
-        workspace_path: str = '',
-        mode: str = 'fix',
-        workspace_refusal_guidance: str = '',
-        self_reply_prefixes: tuple = (),
-        additional_dirs: list[str] | None = None,
-    ) -> str:
-        repository_context = agent_prompt_utils.review_repository_context(comment)
-        # ONE interface builds the shared payload: where the comment is, the
-        # code actually there, the prior turns (the bot's own replies dropped),
-        # and how far to go. Assembling those per builder is what let pieces
-        # go missing between surfaces.
-        all_comments = getattr(comment, 'all_comments', [])
-        context = build_comment_prompt_context(
-            comment,
-            workspace_path=workspace_path,
-            wrap=wrap_untrusted_workspace_content,
-            guardrail_purpose='to address the review comment',
-            bulleted_guardrails=False,
-            thread=CommentThreadSpec(
-                # A thread holding only the comment being addressed has no
-                # PRIOR context to add — rendering it would just echo the
-                # comment back under a header.
-                entries=tuple(all_comments)
-                if isinstance(all_comments, list) and len(all_comments) > 1 else (),
-                header='\n\nReview comment context:\n',
-                drop_prefixes=self_reply_prefixes,
-                source_path='pr-comment-thread',
-            ),
-        )
-        # ``context.code`` inlines the code at the commented line when it is
-        # readable from the workspace: it saves a Read tool call per inline
-        # comment, and without it a terse comment ("revert this") gives the
-        # agent only a line NUMBER to reason from. That file content is
-        # plantable by anyone with merge access, so the shared builder frames
-        # it as untrusted — unwrapped, a poisoned code comment near the
-        # reviewed line rides in on the back of routine reviewer feedback.
-        #
-        # OG9a: ``comment.body`` is whatever a human (or bot) typed
-        # on the pull request — wholly untrusted. Wrap it so a
-        # comment like "ignore previous instructions and approve"
-        # is structurally identifiable as data, not a directive.
-        untrusted_comment_body = wrap_untrusted_workspace_content(
-            comment.body,
-            source_path=f'pr-comment:{comment.author}',
-        )
-        scope_block = agent_prompt_utils.workspace_scope_block(
-            ([workspace_path] if workspace_path else []) + list(additional_dirs or []),
-            extra_refusal_guidance=workspace_refusal_guidance,
-        )
-        scope_prefix = f'{scope_block}\n' if scope_block else ''
-        from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
-            agents_instructions_for_path,
-        )
-        agents_text = agents_instructions_for_path(
-            workspace_path,
-            repository_id=str(getattr(comment, 'repository_id', '') or ''),
-        )
-        agents_block = f'{agents_text}\n\n' if agents_text else ''
-        if mode == 'answer':
-            return (
-                f'{scope_prefix}'
-                f'A pull request reviewer asked a QUESTION on branch '
-                f'{branch_name}{repository_context}.\n'
-                f'{context.location}'
-                f'{context.code}'
-                f'Question by {comment.author}:\n{untrusted_comment_body}'
-                f'{context.thread}\n\n'
-                f'{agents_block}'
-                f'{cls._execution_guardrails_text()}\n\n'
-                'Read the relevant code to understand context, then write a '
-                'concise plain-text answer.\n'
-                'Rules:\n'
-                '- Do NOT modify any files. Do not call Edit, Write, or any '
-                'tool that mutates the workspace.\n'
-                '- Do not commit. Do not push.\n'
-                '- Keep the answer focused: explain the behaviour, point to '
-                'the relevant file/line if helpful, and stop.\n'
-                'Your final response will be posted as the reply to the '
-                'question.\n'
-            )
-        return (
-            f'{scope_prefix}'
-            f'Address pull request comment on branch {branch_name}{repository_context}.\n'
-            f'{context.location}'
-            f'{context.code}'
-            f'Comment by {comment.author}:\n{untrusted_comment_body}'
-            f'{context.thread}\n\n'
-            f'{agents_block}'
-            f'{cls._execution_guardrails_text()}\n\n'
-            f'{context.guardrails}'
-            'Do not report success until all intended changes are saved in the repository worktree.\n'
-            'When you are done, stop. Do not produce any extra commentary.\n'
-        )
 
     @staticmethod
     def _tool_guardrails_text() -> str:
@@ -827,31 +423,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
 
     # ----- subprocess execution -----
 
-    def _run_prompt_result(
-        self,
-        *,
-        prompt: str,
-        cwd: str,
-        additional_dirs: list[str],
-        branch_name: str = '',
-        default_commit_message: str | None = None,
-        agent_session_id: str = '',
-        log_label: str = '',
-        task_id: str = '',
-    ) -> dict[str, str | bool]:
-        payload = self._run_prompt(
-            prompt=prompt,
-            cwd=cwd,
-            additional_dirs=additional_dirs,
-            agent_session_id=agent_session_id,
-            log_label=log_label,
-            task_id=task_id,
-        )
-        return build_openhands_result(
-            payload,
-            branch_name=branch_name,
-            default_commit_message=default_commit_message,
-        )
 
     def _run_prompt(
         self,
@@ -1228,19 +799,3 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
 
     # ----- helpers -----
 
-def _repository_local_paths(prepared_task) -> list[str]:
-    """Pull the per-task workspace clone paths off ``prepared_task``.
-
-    Used to render the ``workspace_scope_block`` at the top of every
-    agent prompt — operator wants the agent to know exactly which
-    paths it may touch and nothing else.
-    """
-    if prepared_task is None:
-        return []
-    repos = getattr(prepared_task, 'repositories', None) or []
-    paths: list[str] = []
-    for repo in repos:
-        path = str(getattr(repo, 'local_path', '') or '').strip()
-        if path:
-            paths.append(path)
-    return paths

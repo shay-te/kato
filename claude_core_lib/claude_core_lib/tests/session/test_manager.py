@@ -10,11 +10,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION_ID
-from claude_core_lib.claude_core_lib.session.manager import (
+from agent_core_lib.agent_core_lib.session.record import (
+    AgentSessionRecord,
     SESSION_STATUS_ACTIVE,
     SESSION_STATUS_DONE,
+)
+from claude_core_lib.claude_core_lib.session.manager import (
     ClaudeSessionManager,
-    PlanningSessionRecord,
 )
 
 
@@ -372,7 +374,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         old_jsonl = old_cwd_project_dir / f'{agent_session_id}.jsonl'
         old_jsonl.write_text('{"type": "user"}\n', encoding='utf-8')
         # Persist a record pointing at the old session id.
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-77',
             agent_session_id=agent_session_id,
             status='terminated',
@@ -409,7 +411,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
         import os
         sessions_root = self.state_dir / 'claude-sessions'
         sessions_root.mkdir(parents=True)
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-88',
             agent_session_id='gone-session-uuid',
             status='terminated',
@@ -430,7 +432,7 @@ class ClaudeSessionManagerTests(unittest.TestCase):
 
 class PlanningSessionRecordTests(unittest.TestCase):
     def test_round_trips_through_dict(self) -> None:
-        original = PlanningSessionRecord(
+        original = AgentSessionRecord(
             task_id='PROJ-1',
             task_summary='do the thing',
             agent_session_id='abc',
@@ -439,11 +441,11 @@ class PlanningSessionRecordTests(unittest.TestCase):
             updated_at_epoch=200.0,
             cwd='/tmp/x',
         )
-        round_tripped = PlanningSessionRecord.from_dict(original.to_dict())
+        round_tripped = AgentSessionRecord.from_dict(original.to_dict())
         self.assertEqual(round_tripped, original)
 
     def test_from_dict_trims_persisted_session_fields(self) -> None:
-        restored = PlanningSessionRecord.from_dict({
+        restored = AgentSessionRecord.from_dict({
             'task_id': '  PROJ-1  ',
             AGENT_SESSION_ID: '  sess-1\n',
             'cwd': '  /tmp/repo  ',
@@ -454,7 +456,7 @@ class PlanningSessionRecordTests(unittest.TestCase):
         self.assertEqual(restored.cwd, '/tmp/repo')
 
     def test_from_dict_reads_legacy_claude_session_fields(self) -> None:
-        restored = PlanningSessionRecord.from_dict({
+        restored = AgentSessionRecord.from_dict({
             'task_id': 'PROJ-1',
             'claude_session_id': '  legacy-sess\n',
         })
@@ -588,7 +590,7 @@ class StaleResumeIdStrictPreservationTests(unittest.TestCase):
         # keep retrying that id. Silent fresh-session drift is worse
         # than a loud failure.
         manager = self._build_manager_with_stale_marker(False)
-        previous_record = PlanningSessionRecord(
+        previous_record = AgentSessionRecord(
             task_id='PROJ-1',
             agent_session_id='dead-session-uuid',
         )
@@ -627,7 +629,7 @@ class StaleResumeIdStrictPreservationTests(unittest.TestCase):
 
     def test_resume_id_for_spawn_normalizes_whitespace_id(self) -> None:
         manager = self._build_manager_with_stale_marker(False)
-        record = PlanningSessionRecord(task_id='PROJ-1', agent_session_id='   ')
+        record = AgentSessionRecord(task_id='PROJ-1', agent_session_id='   ')
         manager._records[manager._lookup_key('PROJ-1')] = record
         manager._persist_record(record)
 
@@ -640,7 +642,7 @@ class StaleResumeIdStrictPreservationTests(unittest.TestCase):
         # First boot after restart: no existing session yet, but a
         # persisted record exists. The persisted id should be returned.
         manager = self._build_manager_with_stale_marker(False)
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='persisted-id',
         )
         self.assertEqual(
@@ -681,7 +683,7 @@ class StaleResumeIdStrictPreservationTests(unittest.TestCase):
         # Operator invariant: after stop + restart, Claude rejecting
         # --resume must fail loud instead of replacing the session id.
         manager = self._build_manager_with_stale_marker(True)
-        manager._records[manager._lookup_key('PROJ-1')] = PlanningSessionRecord(
+        manager._records[manager._lookup_key('PROJ-1')] = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='original-uuid',
         )
         manager._persist_record(
@@ -784,7 +786,7 @@ class WorkspaceSeedingTests(unittest.TestCase):
 
     def test_workspace_seed_replaces_whitespace_only_existing_id(self) -> None:
         self.manager._records[self.manager._lookup_key('PROJ-W')] = (
-            PlanningSessionRecord(
+            AgentSessionRecord(
                 task_id='PROJ-W',
                 agent_session_id='   ',
                 cwd='',
@@ -810,7 +812,7 @@ class WorkspaceSeedingTests(unittest.TestCase):
         # workspace's cwd must NOT overwrite the record's own cwd —
         # ``if cwd and not record.cwd`` is False because record.cwd is set.
         self.manager._records[self.manager._lookup_key('PROJ-CWD')] = (
-            PlanningSessionRecord(
+            AgentSessionRecord(
                 task_id='PROJ-CWD',
                 agent_session_id='',
                 cwd='/original/cwd',
@@ -968,7 +970,7 @@ class TerminateSessionExceptionPath(unittest.TestCase):
         )
         lookup_key = manager._lookup_key('PROJ-1')
         manager._sessions[lookup_key] = broken_session
-        manager._records[lookup_key] = PlanningSessionRecord(task_id='PROJ-1')
+        manager._records[lookup_key] = AgentSessionRecord(task_id='PROJ-1')
 
         with patch.object(manager, 'logger', MagicMock()) as logger:
             # Must not raise — log + continue.
@@ -985,7 +987,7 @@ class UpdateStatusNoOpForUnknownTask(unittest.TestCase):
         self.state_dir = Path(self._tmp.name)
 
     def test_no_op_when_task_id_unknown(self) -> None:
-        from claude_core_lib.claude_core_lib.session.manager import SESSION_STATUS_DONE
+        from agent_core_lib.agent_core_lib.session.record import SESSION_STATUS_DONE
         manager = ClaudeSessionManager(
             state_dir=self.state_dir,
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
@@ -1009,7 +1011,7 @@ class MirrorEarlyReturnTests(unittest.TestCase):
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
         )
         manager._workspace_manager = workspace_manager
-        empty_record = PlanningSessionRecord(
+        empty_record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='', cwd='',
         )
         manager._mirror_to_workspace_metadata(empty_record)
@@ -1096,7 +1098,7 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         self.assertIsNone(self.manager._with_refreshed_session_id(None))
 
     def test_refreshes_when_record_has_no_session_id(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='',
         )
         lookup_key = self.manager._lookup_key('PROJ-1')
@@ -1108,7 +1110,7 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         self.assertEqual(refreshed.agent_session_id, 'new-id')
 
     def test_does_not_overwrite_pinned_session_id(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='old-id',
         )
         lookup_key = self.manager._lookup_key('PROJ-1')
@@ -1122,7 +1124,7 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         self.assertEqual(refreshed.agent_session_id, 'old-id')
 
     def test_refresh_does_not_replace_generated_id_without_callback(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='generated-id',
         )
         lookup_key = self.manager._lookup_key('PROJ-1')
@@ -1136,7 +1138,7 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         self.assertEqual(refreshed.agent_session_id, 'generated-id')
 
     def test_returns_record_unchanged_when_no_live_session(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='persisted',
         )
         # No session in self._sessions for this task.
@@ -1144,7 +1146,7 @@ class WithRefreshedSessionIdTests(unittest.TestCase):
         self.assertEqual(refreshed.agent_session_id, 'persisted')
 
     def test_no_op_when_live_id_matches_persisted(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='same-id',
         )
         self.manager._sessions[self.manager._lookup_key('PROJ-1')] = (
@@ -1184,7 +1186,7 @@ class LiveSessionIdDriftTests(unittest.TestCase):
 
     def _pin_record_with_wrong_live(self) -> tuple[str, _WrongLiveSession]:
         lookup_key = self.manager._lookup_key('PROJ-1')
-        self.manager._records[lookup_key] = PlanningSessionRecord(
+        self.manager._records[lookup_key] = AgentSessionRecord(
             task_id='PROJ-1',
             agent_session_id='pinned-id',
         )
@@ -1520,7 +1522,7 @@ class AdoptSessionIdTaskSummaryTests(unittest.TestCase):
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
         )
         # Existing record with NO task_summary.
-        manager._records[manager._lookup_key('PROJ-X')] = PlanningSessionRecord(
+        manager._records[manager._lookup_key('PROJ-X')] = AgentSessionRecord(
             task_id='PROJ-X', agent_session_id='old', task_summary='',
         )
         manager.adopt_session_id(
@@ -1589,28 +1591,15 @@ class AdoptSessionIdSpawnRaceTests(unittest.TestCase):
             )
 
 
-class LoadPersistedRecordsMissingDirTests(unittest.TestCase):
-    """Line 703: ``return`` when state_dir does not exist on disk.
 
-    Constructor auto-mkdir's the state_dir, so we hit this by calling
-    ``_load_persisted_records`` directly after removing the dir.
+
+class WorkspaceMirrorTests(unittest.TestCase):
+    """Persisting also mirrors the session id into the workspace metadata.
+
+    The storage rules themselves moved to ``agent_core_lib.session
+    .record_files`` with their tests; the mirror is this host's concern.
     """
 
-    def test_no_op_when_state_dir_was_removed(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            state_dir = Path(tmp) / 'mgr_state'
-            manager = ClaudeSessionManager(
-                state_dir=state_dir,
-                session_factory=lambda **kw: _FakeStreamingSession(**kw),
-            )
-            # Simulate the dir being deleted out from under us between calls.
-            state_dir.rmdir()
-            self.assertFalse(state_dir.exists())
-            # Must not raise — silent return at line 703.
-            manager._load_persisted_records()
-
-
-class PersistedRecordHelperTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tempdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._tempdir.cleanup)
@@ -1620,20 +1609,8 @@ class PersistedRecordHelperTests(unittest.TestCase):
             session_factory=lambda **kw: _FakeStreamingSession(**kw),
         )
 
-    def test_delete_persisted_record_silently_ignores_missing_file(self) -> None:
-        # Calling delete on a never-persisted task must not raise.
-        self.manager._delete_persisted_record('nonexistent-task')
-
-    def test_delete_persisted_record_logs_warning_on_oserror(self) -> None:
-        # Hit the OSError branch by patching ``Path.unlink``.
-        self.manager.start_session(task_id='PROJ-X')
-        with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):
-            with patch.object(self.manager, 'logger', MagicMock()) as mock_logger:
-                self.manager._delete_persisted_record('PROJ-X')
-                mock_logger.warning.assert_called_once()
-
     def test_mirror_to_workspace_metadata_no_op_when_no_workspace_manager(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='id', cwd='/wks',
         )
         # Default manager has no workspace_manager — must not raise.
@@ -1644,7 +1621,7 @@ class PersistedRecordHelperTests(unittest.TestCase):
         workspace_manager = MagicMock()
         workspace_manager.update_agent_session.side_effect = RuntimeError('boom')
         self.manager._workspace_manager = workspace_manager
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-1', agent_session_id='id', cwd='/wks',
         )
         with patch.object(self.manager, 'logger', MagicMock()) as mock_logger:
@@ -1739,7 +1716,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
         # Defensive early return — caller passed empty / whitespace.
         # Should not touch the record or call persist.
         key = self.manager._lookup_key('PROJ-A')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-A', agent_session_id='original',
         )
         with patch.object(self.manager, '_persist_record') as persist:
@@ -1760,7 +1737,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
     def test_matching_id_is_a_noop(self) -> None:
         # Record already has the same id — no work to do, no persist call.
         key = self.manager._lookup_key('PROJ-B')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-B', agent_session_id='same-id',
         )
         with patch.object(self.manager, '_persist_record') as persist:
@@ -1769,7 +1746,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
 
     def test_matching_id_normalizes_persisted_whitespace(self) -> None:
         key = self.manager._lookup_key('PROJ-B')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-B', agent_session_id='  same-id\n',
         )
 
@@ -1782,7 +1759,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
 
     def test_different_id_updates_empty_record_and_persists(self) -> None:
         key = self.manager._lookup_key('PROJ-C')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-C', agent_session_id='',
         )
         with patch.object(self.manager, '_persist_record') as persist:
@@ -1794,7 +1771,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
 
     def test_different_id_does_not_overwrite_pinned_record(self) -> None:
         key = self.manager._lookup_key('PROJ-C')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-C', agent_session_id='old-id',
         )
         with patch.object(self.manager, '_persist_record') as persist:
@@ -1806,7 +1783,7 @@ class CorrectSessionIdInRecordTests(unittest.TestCase):
 
     def test_fresh_spawn_can_replace_expected_generated_id(self) -> None:
         key = self.manager._lookup_key('PROJ-C')
-        self.manager._records[key] = PlanningSessionRecord(
+        self.manager._records[key] = AgentSessionRecord(
             task_id='PROJ-C', agent_session_id='generated-id',
         )
         with patch.object(self.manager, '_persist_record') as persist:
@@ -1866,7 +1843,7 @@ class ForgetClaudeTranscriptExceptionTests(unittest.TestCase):
         )
 
     def test_unexpected_exception_in_delete_is_logged_and_swallowed(self) -> None:
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-Z', agent_session_id='sess-z',
         )
         with patch(
@@ -2059,7 +2036,7 @@ class DiscardIfSessionIdDriftedTerminateTests(unittest.TestCase):
     def test_blank_pinned_id_returns_false(self) -> None:
         # Plant a record with NO agent_session_id → pinned_id is blank
         # → line 1100 short-circuits with ``return False``.
-        record = PlanningSessionRecord(task_id='PROJ-D', agent_session_id='')
+        record = AgentSessionRecord(task_id='PROJ-D', agent_session_id='')
         lookup_key = self.manager._lookup_key('PROJ-D')
         self.manager._records[lookup_key] = record
         session = SimpleNamespace(
@@ -2078,7 +2055,7 @@ class DiscardIfSessionIdDriftedTerminateTests(unittest.TestCase):
         # Pinned id != live id → terminate is called. If terminate
         # raises, _discard logs via exception() and returns True
         # (the session was still dropped from the registry).
-        record = PlanningSessionRecord(
+        record = AgentSessionRecord(
             task_id='PROJ-D', agent_session_id='pinned-id',
         )
         lookup_key = self.manager._lookup_key('PROJ-D')
@@ -2099,30 +2076,6 @@ class DiscardIfSessionIdDriftedTerminateTests(unittest.TestCase):
         logger.exception.assert_called_once()
 
 
-class DeletePersistedRecordGlobOSErrorTests(unittest.TestCase):
-    """Lines 890-893: when ``Path.glob('*.json')`` raises OSError
-    (directory listing failed mid-traversal), the helper must fall
-    through to the canonical-path-only unlink rather than crash."""
-
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.state_dir = Path(self._tmp.name)
-        self.manager = ClaudeSessionManager(
-            state_dir=self.state_dir,
-            session_factory=lambda **kw: _FakeStreamingSession(**kw),
-        )
-
-    def test_glob_oserror_falls_back_to_canonical_path(self) -> None:
-        # First persist a record so the canonical file exists.
-        self.manager.start_session(task_id='PROJ-G')
-        canonical = self.manager._record_path('PROJ-G')
-        self.assertTrue(canonical.is_file())
-        # Now make glob() raise — the fallback should still unlink the
-        # canonical file without propagating.
-        with patch.object(Path, 'glob', side_effect=OSError('dir listing failed')):
-            self.manager._delete_persisted_record('PROJ-G')
-        self.assertFalse(canonical.is_file())
 
 
 class _ChatFakeWorkspaceManager:

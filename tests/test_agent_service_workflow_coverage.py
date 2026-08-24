@@ -26,25 +26,25 @@ def _kwargs(**overrides):
 class ConfiguredDestinationBranchTests(unittest.TestCase):
     def test_returns_empty_for_blank_repository_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertEqual(service.configured_destination_branch(''), '')
+        self.assertEqual(service.publish.configured_destination_branch(''), '')
 
     def test_returns_empty_when_repo_not_in_inventory(self) -> None:
         repo = MagicMock()
         repo.get_repository.side_effect = RuntimeError('unknown')
         service = AgentService(**_kwargs(repository_service=repo))
-        self.assertEqual(service.configured_destination_branch('r1'), '')
+        self.assertEqual(service.publish.configured_destination_branch('r1'), '')
 
     def test_returns_empty_when_destination_branch_raises(self) -> None:
         repo = MagicMock()
         repo.destination_branch.side_effect = ValueError('cannot infer')
         service = AgentService(**_kwargs(repository_service=repo))
-        self.assertEqual(service.configured_destination_branch('r1'), '')
+        self.assertEqual(service.publish.configured_destination_branch('r1'), '')
 
     def test_returns_destination_branch_on_success(self) -> None:
         repo = MagicMock()
         repo.destination_branch.return_value = 'main'
         service = AgentService(**_kwargs(repository_service=repo))
-        self.assertEqual(service.configured_destination_branch('r1'), 'main')
+        self.assertEqual(service.publish.configured_destination_branch('r1'), 'main')
 
 
 class SearchTaskWorkspaceTests(unittest.TestCase):
@@ -63,7 +63,7 @@ class SearchTaskWorkspaceTests(unittest.TestCase):
             '/wk/T1/backend': [{'path': 'a.py', 'line': 1, 'text': 'project_list'}],
             '/wk/T1/client': [{'path': 'b.js', 'line': 2, 'text': 'projectList'}],
         })
-        out = svc.search_task_workspace('T1', 'project')
+        out = svc.repositories.search_task_workspace('T1', 'project')
         self.assertEqual(len(out['matches']), 2)
         first = out['matches'][0]
         self.assertEqual(first['repo_id'], 'backend')
@@ -72,8 +72,8 @@ class SearchTaskWorkspaceTests(unittest.TestCase):
 
     def test_blank_query_or_task_returns_empty(self) -> None:
         svc = self._service(['backend'], {})
-        self.assertEqual(svc.search_task_workspace('T1', '   ')['matches'], [])
-        self.assertEqual(svc.search_task_workspace('', 'q')['matches'], [])
+        self.assertEqual(svc.repositories.search_task_workspace('T1', '   ')['matches'], [])
+        self.assertEqual(svc.repositories.search_task_workspace('', 'q')['matches'], [])
 
     def test_per_repo_grep_failure_is_skipped(self) -> None:
         wm = MagicMock()
@@ -89,7 +89,7 @@ class SearchTaskWorkspaceTests(unittest.TestCase):
         repo.git_grep.side_effect = grep
         svc = AgentService(**_kwargs(repository_service=repo, workspace_manager=wm))
         svc.logger = MagicMock()
-        out = svc.search_task_workspace('T1', 'q')
+        out = svc.repositories.search_task_workspace('T1', 'q')
         self.assertEqual([m['repo_id'] for m in out['matches']], ['b'])
 
 
@@ -132,8 +132,9 @@ class AdoptTaskTests(unittest.TestCase):
 
     def test_returns_error_when_task_not_found(self) -> None:
         service = AgentService(**_kwargs(workspace_manager=MagicMock()))
-        with patch.object(service, '_lookup_assigned_or_review_task',
-                          return_value=None):
+        with patch('kato_core_lib.data_layers.service.agent_service.'
+                   'find_assigned_or_review_task',
+                  return_value=None):
             result = service.adopt_task('T1')
         self.assertFalse(result['adopted'])
         self.assertIn('not assigned', result['error'])
@@ -146,8 +147,9 @@ class AdoptTaskTests(unittest.TestCase):
             workspace_manager=MagicMock(),
             repository_service=repo,
         ))
-        with patch.object(service, '_lookup_assigned_or_review_task',
-                          return_value=task):
+        with patch('kato_core_lib.data_layers.service.agent_service.'
+                   'find_assigned_or_review_task',
+                  return_value=task):
             result = service.adopt_task('T1')
         self.assertFalse(result['adopted'])
         self.assertIn('failed to resolve', result['error'])
@@ -162,14 +164,15 @@ class AdoptTaskTests(unittest.TestCase):
             workspace_manager=MagicMock(),
             repository_service=repo,
         ))
-        with patch.object(service, '_lookup_assigned_or_review_task',
-                          return_value=task), \
+        with patch('kato_core_lib.data_layers.service.agent_service.'
+                   'find_assigned_or_review_task',
+                  return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.repository_approval_service.'
                  'RepositoryApprovalService',
              ) as approval_cls:
             instance = approval_cls.return_value
-            instance.is_approved.return_value = None  # not approved
+            instance.unapproved_repository_ids.return_value = ['unapproved-repo']
             result = service.adopt_task('T1')
         self.assertFalse(result['adopted'])
         self.assertIn('unapproved-repo', result['unapproved_repositories'])
@@ -184,8 +187,9 @@ class AdoptTaskTests(unittest.TestCase):
             workspace_manager=MagicMock(),
             repository_service=repo,
         ))
-        with patch.object(service, '_lookup_assigned_or_review_task',
-                          return_value=task), \
+        with patch('kato_core_lib.data_layers.service.agent_service.'
+                   'find_assigned_or_review_task',
+                  return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.repository_approval_service.'
                  'RepositoryApprovalService',
@@ -195,7 +199,7 @@ class AdoptTaskTests(unittest.TestCase):
                  'provision_task_workspace_clones',
                  side_effect=RuntimeError('provisioning fail'),
              ):
-            approval_cls.return_value.is_approved.return_value = 'restricted'
+            approval_cls.return_value.unapproved_repository_ids.return_value = []
             service.logger = MagicMock()
             result = service.adopt_task('T1')
         self.assertFalse(result['adopted'])
@@ -211,8 +215,9 @@ class AdoptTaskTests(unittest.TestCase):
             workspace_manager=MagicMock(),
             repository_service=repo,
         ))
-        with patch.object(service, '_lookup_assigned_or_review_task',
-                          return_value=task), \
+        with patch('kato_core_lib.data_layers.service.agent_service.'
+                   'find_assigned_or_review_task',
+                  return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.repository_approval_service.'
                  'RepositoryApprovalService',
@@ -222,37 +227,11 @@ class AdoptTaskTests(unittest.TestCase):
                  'provision_task_workspace_clones',
                  return_value=[SimpleNamespace(id='approved-repo')],
              ):
-            approval_cls.return_value.is_approved.return_value = 'trusted'
+            approval_cls.return_value.unapproved_repository_ids.return_value = []
             result = service.adopt_task('T1')
         self.assertTrue(result['adopted'])
         self.assertEqual(result['cloned_repositories'], ['approved-repo'])
 
-
-class LookupAssignedOrReviewTaskTests(unittest.TestCase):
-    def test_returns_first_match_across_queues(self) -> None:
-        task = SimpleNamespace(id='T1')
-        task_service = MagicMock()
-        # Configure list_all_assigned_tasks first as that's the priority.
-        task_service.list_all_assigned_tasks.return_value = [task]
-        service = AgentService(**_kwargs(task_service=task_service))
-        self.assertIs(service._lookup_assigned_or_review_task('T1'), task)
-
-    def test_swallows_per_queue_exception(self) -> None:
-        # When one queue raises, fall through to the next.
-        task = SimpleNamespace(id='T1')
-        task_service = MagicMock()
-        task_service.list_all_assigned_tasks.side_effect = RuntimeError('fail')
-        task_service.get_assigned_tasks.return_value = [task]
-        service = AgentService(**_kwargs(task_service=task_service))
-        self.assertIs(service._lookup_assigned_or_review_task('T1'), task)
-
-    def test_returns_none_when_no_match(self) -> None:
-        task_service = MagicMock()
-        task_service.list_all_assigned_tasks.return_value = []
-        task_service.get_assigned_tasks.return_value = []
-        task_service.get_review_tasks.return_value = []
-        service = AgentService(**_kwargs(task_service=task_service))
-        self.assertIsNone(service._lookup_assigned_or_review_task('T1'))
 
 
 class ListInventoryRepositoriesTests(unittest.TestCase):
@@ -264,7 +243,7 @@ class ListInventoryRepositoriesTests(unittest.TestCase):
         )
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        self.assertEqual(service.list_inventory_repositories(), [])
+        self.assertEqual(service.repositories.list_inventory_repositories(), [])
 
     def test_returns_inventory_dicts(self) -> None:
         repo = MagicMock()
@@ -274,15 +253,15 @@ class ListInventoryRepositoriesTests(unittest.TestCase):
             ],
         )
         service = AgentService(**_kwargs(repository_service=repo))
-        result = service.list_inventory_repositories()
+        result = service.repositories.list_inventory_repositories()
         self.assertEqual(result[0]['id'], 'r1')
 
 
 class AddTaskRepositoryTests(unittest.TestCase):
     def test_returns_error_for_blank_inputs(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.add_task_repository('', 'r1')['added'])
-        self.assertFalse(service.add_task_repository('T1', '')['added'])
+        self.assertFalse(service.repositories.add_task_repository('', 'r1')['added'])
+        self.assertFalse(service.repositories.add_task_repository('T1', '')['added'])
 
     def test_returns_error_for_unknown_repository_id(self) -> None:
         repo = MagicMock()
@@ -290,7 +269,7 @@ class AddTaskRepositoryTests(unittest.TestCase):
             lambda self: [SimpleNamespace(id='r1')],
         )
         service = AgentService(**_kwargs(repository_service=repo))
-        result = service.add_task_repository('T1', 'unknown')
+        result = service.repositories.add_task_repository('T1', 'unknown')
         self.assertFalse(result['added'])
         self.assertIn('not in the kato', result['error'])
 
@@ -305,9 +284,9 @@ class AddTaskRepositoryTests(unittest.TestCase):
             repository_service=repo, task_service=task_service,
         ))
         service.logger = MagicMock()
-        with patch.object(service, '_lookup_task_for_sync',
+        with patch.object(service.repositories, '_lookup_task_for_sync',
                           return_value=SimpleNamespace(id='T1', tags=[])):
-            result = service.add_task_repository('T1', 'r1')
+            result = service.repositories.add_task_repository('T1', 'r1')
         self.assertFalse(result['added'])
 
     def test_skips_tag_when_already_tagged(self) -> None:
@@ -326,11 +305,11 @@ class AddTaskRepositoryTests(unittest.TestCase):
             id='T1',
             tags=[f'{RepositoryFields.REPOSITORY_TAG_PREFIX}r1'],
         )
-        with patch.object(service, '_lookup_task_for_sync',
+        with patch.object(service.repositories, '_lookup_task_for_sync',
                           return_value=existing), \
-             patch.object(service, 'sync_task_repositories',
+             patch.object(service.repositories, 'sync_task_repositories',
                           return_value={'synced': True}):
-            result = service.add_task_repository('T1', 'r1')
+            result = service.repositories.add_task_repository('T1', 'r1')
         task_service.add_tag.assert_not_called()
         self.assertFalse(result['tag_added'])
 
@@ -338,11 +317,11 @@ class AddTaskRepositoryTests(unittest.TestCase):
 class SyncTaskRepositoriesTests(unittest.TestCase):
     def test_returns_error_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.sync_task_repositories('')['synced'])
+        self.assertFalse(service.repositories.sync_task_repositories('')['synced'])
 
     def test_returns_error_when_no_workspace_manager(self) -> None:
         service = AgentService(**_kwargs())
-        result = service.sync_task_repositories('T1')
+        result = service.repositories.sync_task_repositories('T1')
         self.assertFalse(result['synced'])
         self.assertIn('workspace manager', result['error'])
 
@@ -350,15 +329,15 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         workspace = MagicMock()
         workspace.get.return_value = None
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        result = service.sync_task_repositories('T1')
+        result = service.repositories.sync_task_repositories('T1')
         self.assertIn('no workspace exists', result['error'])
 
     def test_returns_error_when_task_lookup_fails(self) -> None:
         workspace = MagicMock()
         workspace.get.return_value = SimpleNamespace(repository_ids=[])
         service = AgentService(**_kwargs(workspace_manager=workspace))
-        with patch.object(service, '_lookup_task_for_sync', return_value=None):
-            result = service.sync_task_repositories('T1')
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=None):
+            result = service.repositories.sync_task_repositories('T1')
         self.assertIn('could not find', result['error'])
 
     def test_returns_error_when_resolve_fails(self) -> None:
@@ -370,8 +349,8 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             workspace_manager=workspace, repository_service=repo,
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task):
-            result = service.sync_task_repositories('T1')
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task):
+            result = service.repositories.sync_task_repositories('T1')
         self.assertIn('failed to resolve', result['error'])
 
     def test_returns_already_synced_when_no_missing(self) -> None:
@@ -385,8 +364,8 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             workspace_manager=workspace, repository_service=repo,
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task):
-            result = service.sync_task_repositories('T1')
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task):
+            result = service.repositories.sync_task_repositories('T1')
         self.assertTrue(result['synced'])
         self.assertEqual(result['already_present'], ['r1'])
 
@@ -402,13 +381,13 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
             workspace_manager=workspace, repository_service=repo,
         ))
         service.logger = MagicMock()
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
                  side_effect=RuntimeError('clone fail'),
              ):
-            result = service.sync_task_repositories('T1')
+            result = service.repositories.sync_task_repositories('T1')
         self.assertFalse(result['synced'])
         self.assertEqual(len(result['failed_repositories']), 1)
 
@@ -424,13 +403,13 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             workspace_manager=workspace, repository_service=repo,
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
                  return_value=[SimpleNamespace(id='new-repo')],
              ):
-            result = service.sync_task_repositories('T1')
+            result = service.repositories.sync_task_repositories('T1')
         self.assertTrue(result['synced'])
         self.assertEqual(result['added_repositories'], ['new-repo'])
         # No live session manager wired → conservative False.
@@ -455,13 +434,13 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             workspace_manager=workspace, repository_service=repo,
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
                  return_value=[SimpleNamespace(id='new-repo')],
              ):
-            service.sync_task_repositories('T1')
+            service.repositories.sync_task_repositories('T1')
         # ``prepare_task_branches`` was called with the newly-added
         # repos AND the task branch mapping for each.
         repo.prepare_task_branches.assert_called_once()
@@ -490,13 +469,13 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
             workspace_manager=workspace, repository_service=repo,
         ))
         service.logger = MagicMock()
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
                  return_value=[SimpleNamespace(id='broken-repo')],
              ):
-            result = service.sync_task_repositories('T1')
+            result = service.repositories.sync_task_repositories('T1')
         self.assertFalse(result['synced'])
         self.assertTrue(any(
             'broken-repo' in entry['repository_id']
@@ -575,7 +554,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
 
     def test_no_session_manager_returns_false(self) -> None:
         service = self._service_with(session_manager=None)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[SimpleNamespace(id='r1', local_path='/x/r1')],
             missing_repos=[SimpleNamespace(id='r1')],
         ))
@@ -586,7 +565,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
             'T1': _FakeLiveSession(dirs=('/y',)),
         })
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[], missing_repos=[SimpleNamespace(id='r1')],
         ))
         # Provisioned-empty short-circuits BEFORE looking up the session.
@@ -595,7 +574,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
     def test_no_live_session_for_task_returns_false(self) -> None:
         mgr = _RecordingSessionManager()  # empty registry
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[SimpleNamespace(id='r1', local_path='/x/r1')],
             missing_repos=[SimpleNamespace(id='r1')],
         ))
@@ -608,7 +587,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
             'T1': _FakeLiveSession(alive=False, dirs=()),
         })
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[SimpleNamespace(id='r1', local_path='/x/r1')],
             missing_repos=[SimpleNamespace(id='r1')],
         ))
@@ -623,7 +602,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
             # no allowed_additional_dirs method at all.
         mgr = _RecordingSessionManager({'T1': _OldSession()})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[SimpleNamespace(id='r1', local_path='/x/r1')],
             missing_repos=[SimpleNamespace(id='r1')],
         ))
@@ -631,7 +610,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
     def test_accessor_exception_returns_false(self) -> None:
         mgr = _RecordingSessionManager({'T1': _BoomDirsSession(dirs=())})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1', provisioned=[SimpleNamespace(id='r1', local_path='/x/r1')],
             missing_repos=[SimpleNamespace(id='r1')],
         ))
@@ -646,7 +625,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         )
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
-        self.assertTrue(service._sync_requires_session_restart(
+        self.assertTrue(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[
                 SimpleNamespace(id='client', local_path='/x/workspaces/T1/client'),
@@ -669,7 +648,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         )
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[
                 SimpleNamespace(id='new', local_path='/x/workspaces/T1/new'),
@@ -687,7 +666,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         )
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[
                 SimpleNamespace(id='client', local_path='/x/workspaces/T1/client'),
@@ -707,7 +686,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
         # Backend is in provisioned but NOT in missing → ignored.
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[
                 SimpleNamespace(id='client', local_path='/x/workspaces/T1/client'),
@@ -722,7 +701,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         session = _FakeLiveSession(cwd='/x/cwd', dirs=())
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[SimpleNamespace(id='new', local_path='')],
             missing_repos=[SimpleNamespace(id='new')],
@@ -737,7 +716,7 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         )
         mgr = _RecordingSessionManager({'T1': session})
         service = self._service_with(session_manager=mgr)
-        self.assertFalse(service._sync_requires_session_restart(
+        self.assertFalse(service.repositories._sync_requires_session_restart(
             'T1',
             provisioned=[
                 SimpleNamespace(id='new', local_path='/x/workspaces/T1/new'),
@@ -771,7 +750,7 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
             workspace_manager=workspace, repository_service=repo,
             session_manager=mgr,
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
@@ -780,7 +759,7 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
                      SimpleNamespace(id='added', local_path='/x/workspaces/T1/added'),
                  ],
              ):
-            result = service.sync_task_repositories('T1')
+            result = service.repositories.sync_task_repositories('T1')
         self.assertTrue(result['synced'])
         self.assertEqual(result['added_repositories'], ['added'])
         self.assertTrue(result['requires_session_restart'])
@@ -797,7 +776,7 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
             workspace_manager=workspace, repository_service=repo,
             session_manager=_RecordingSessionManager(),  # no session for T1
         ))
-        with patch.object(service, '_lookup_task_for_sync', return_value=task), \
+        with patch.object(service.repositories, '_lookup_task_for_sync', return_value=task), \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
@@ -805,7 +784,7 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
                      SimpleNamespace(id='added', local_path='/x/workspaces/T1/added'),
                  ],
              ):
-            result = service.sync_task_repositories('T1')
+            result = service.repositories.sync_task_repositories('T1')
         self.assertTrue(result['synced'])
         self.assertFalse(result['requires_session_restart'])
 
@@ -816,7 +795,7 @@ class LookupTaskForSyncTests(unittest.TestCase):
         task_service.get_assigned_tasks.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(task_service=task_service))
         service.logger = MagicMock()
-        self.assertIsNone(service._lookup_task_for_sync('T1'))
+        self.assertIsNone(service.repositories._lookup_task_for_sync('T1'))
 
     def test_returns_match_from_review_queue(self) -> None:
         task = SimpleNamespace(id='T1')
@@ -824,19 +803,19 @@ class LookupTaskForSyncTests(unittest.TestCase):
         task_service.get_assigned_tasks.return_value = []
         task_service.get_review_tasks.return_value = [task]
         service = AgentService(**_kwargs(task_service=task_service))
-        self.assertIs(service._lookup_task_for_sync('T1'), task)
+        self.assertIs(service.repositories._lookup_task_for_sync('T1'), task)
 
 
 class PushTaskTests(unittest.TestCase):
     def test_returns_error_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.push_task('')['pushed'])
+        self.assertFalse(service.publish.push_task('')['pushed'])
 
     def test_returns_error_when_no_workspace_context(self) -> None:
         service = AgentService(**_kwargs())
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([], '', None)):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertFalse(result['pushed'])
 
     def test_skips_repository_when_no_push_needed(self) -> None:
@@ -845,10 +824,10 @@ class PushTaskTests(unittest.TestCase):
         repo.build_branch_name.return_value = 'feat/x'
         repo.push_skip_reason.return_value = 'nothing to push — clean tree'
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertFalse(result['pushed'])
         self.assertEqual(len(result['skipped_repositories']), 1)
         # The repository service's REASON reaches the operator verbatim —
@@ -864,10 +843,10 @@ class PushTaskTests(unittest.TestCase):
         repo.build_branch_name.return_value = 'feat/x'
         repo.push_skip_reason.return_value = ''
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertTrue(result['pushed'])
         self.assertEqual(result['pushed_repositories'], ['r1'])
 
@@ -879,10 +858,10 @@ class PushTaskTests(unittest.TestCase):
         repo.build_branch_name.return_value = 'feat/x'
         repo.push_skip_reason.return_value = ''
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertEqual(result['branch'], 'feat/x')
 
     def test_swallows_branch_needs_push_exception(self) -> None:
@@ -892,10 +871,10 @@ class PushTaskTests(unittest.TestCase):
         repo.push_skip_reason.side_effect = RuntimeError('git fail')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         # Pre-check defaults to "no push needed" on error.
         self.assertFalse(result['pushed'])
         service.logger.exception.assert_called()
@@ -913,10 +892,10 @@ class PushTaskTests(unittest.TestCase):
         )
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
     def test_swallows_generic_publish_exception(self) -> None:
@@ -927,10 +906,10 @@ class PushTaskTests(unittest.TestCase):
         repo.publish_review_fix.side_effect = RuntimeError('git error')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
     def test_reconciles_the_task_tags_into_the_metadata_first(self) -> None:
@@ -945,12 +924,12 @@ class PushTaskTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             repository_service=repo, workspace_manager=MagicMock(),
         ))
-        with patch.object(service, 'sync_task_repositories',
+        with patch.object(service.repositories, 'sync_task_repositories',
                           return_value={'added_repositories': ['r2']}) as sync, \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         sync.assert_called_once_with('T1', task=None)
         self.assertEqual(result['synced_repositories'], ['r2'])
 
@@ -965,12 +944,12 @@ class PushTaskTests(unittest.TestCase):
             repository_service=repo, workspace_manager=MagicMock(),
         ))
         service.logger = MagicMock()
-        with patch.object(service, 'sync_task_repositories',
+        with patch.object(service.repositories, 'sync_task_repositories',
                           side_effect=RuntimeError('youtrack down')), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.push_task('T1')
+            result = service.publish.push_task('T1')
         self.assertTrue(result['pushed'])
         self.assertEqual(result['synced_repositories'], [])
 
@@ -983,11 +962,11 @@ class PushTaskTests(unittest.TestCase):
         repo.build_branch_name.return_value = 'feat/x'
         repo.push_skip_reason.return_value = ''
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, 'sync_task_repositories') as sync, \
-             patch.object(service, '_resolve_publish_context',
+        with patch.object(service.repositories, 'sync_task_repositories') as sync, \
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            service.push_task('T1')
+            service.publish.push_task('T1')
         sync.assert_not_called()
 
     def test_reconcile_is_throttled_across_push_and_pull_request(self) -> None:
@@ -1000,26 +979,26 @@ class PushTaskTests(unittest.TestCase):
         service = AgentService(**_kwargs(
             repository_service=repo, workspace_manager=MagicMock(),
         ))
-        with patch.object(service, 'sync_task_repositories',
+        with patch.object(service.repositories, 'sync_task_repositories',
                           return_value={'added_repositories': []}) as sync, \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            service.push_task('T1')
-            service.push_task('T1')
+            service.publish.push_task('T1')
+            service.publish.push_task('T1')
         self.assertEqual(sync.call_count, 1)
 
 
 class PullTaskTests(unittest.TestCase):
     def test_returns_error_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.pull_task('')['pulled'])
+        self.assertFalse(service.publish.pull_task('')['pulled'])
 
     def test_returns_error_when_no_workspace_context(self) -> None:
         service = AgentService(**_kwargs())
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([], '', None)):
-            result = service.pull_task('T1')
+            result = service.publish.pull_task('T1')
         self.assertFalse(result['pulled'])
 
     def test_records_successful_pull(self) -> None:
@@ -1030,10 +1009,10 @@ class PullTaskTests(unittest.TestCase):
             'pulled': True, 'updated': True, 'commits_pulled': 3,
         }
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.pull_task('T1')
+            result = service.publish.pull_task('T1')
         self.assertTrue(result['pulled'])
         self.assertEqual(result['pulled_repositories'][0]['commits_pulled'], 3)
 
@@ -1045,10 +1024,10 @@ class PullTaskTests(unittest.TestCase):
             'pulled': True, 'updated': False, 'commits_pulled': 0,
         }
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.pull_task('T1')
+            result = service.publish.pull_task('T1')
         self.assertFalse(result['pulled'])
         self.assertEqual(len(result['skipped_repositories']), 1)
 
@@ -1061,10 +1040,10 @@ class PullTaskTests(unittest.TestCase):
             'detail': 'commit first',
         }
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.pull_task('T1')
+            result = service.publish.pull_task('T1')
         self.assertEqual(len(result['skipped_repositories']), 1)
 
     def test_swallows_pull_workspace_exception(self) -> None:
@@ -1074,24 +1053,24 @@ class PullTaskTests(unittest.TestCase):
         repo.pull_workspace_clone.side_effect = RuntimeError('git fail')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.pull_task('T1')
+            result = service.publish.pull_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
 
 class UpdateSourceForTaskTests(unittest.TestCase):
     def test_returns_error_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.update_source_for_task('')['updated'])
+        self.assertFalse(service.publish.update_source_for_task('')['updated'])
 
     def test_returns_error_when_no_workspace_context(self) -> None:
         service = AgentService(**_kwargs())
-        with patch.object(service, 'push_task', return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+        with patch.object(service.publish, 'push_task', return_value={'pushed': True}), \
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([], '', None)):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertFalse(result['updated'])
 
     def test_skips_when_get_repository_fails(self) -> None:
@@ -1100,12 +1079,12 @@ class UpdateSourceForTaskTests(unittest.TestCase):
         repo.build_branch_name.return_value = 'feat/x'
         repo.get_repository.side_effect = ValueError('unknown')
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, 'push_task',
+        with patch.object(service.publish, 'push_task',
                           return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertEqual(len(result['skipped_repositories']), 1)
 
     def test_skips_when_local_path_blank(self) -> None:
@@ -1116,12 +1095,12 @@ class UpdateSourceForTaskTests(unittest.TestCase):
             id='r1', local_path='',
         )
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, 'push_task',
+        with patch.object(service.publish, 'push_task',
                           return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertEqual(len(result['skipped_repositories']), 1)
 
     def test_records_update_warning(self) -> None:
@@ -1135,12 +1114,12 @@ class UpdateSourceForTaskTests(unittest.TestCase):
             'warning': 'stashed changes', 'stash_conflict': False,
         }
         service = AgentService(**_kwargs(repository_service=repo))
-        with patch.object(service, 'push_task',
+        with patch.object(service.publish, 'push_task',
                           return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertTrue(result['updated'])
         self.assertEqual(len(result['warnings']), 1)
 
@@ -1154,12 +1133,12 @@ class UpdateSourceForTaskTests(unittest.TestCase):
         repo.update_source_to_task_branch.side_effect = RuntimeError('dirty')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, 'push_task',
+        with patch.object(service.publish, 'push_task',
                           return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
     def test_handles_generic_exception_in_update_source(self) -> None:
@@ -1172,12 +1151,12 @@ class UpdateSourceForTaskTests(unittest.TestCase):
         repo.update_source_to_task_branch.side_effect = OSError('FS fail')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
-        with patch.object(service, 'push_task',
+        with patch.object(service.publish, 'push_task',
                           return_value={'pushed': True}), \
-             patch.object(service, '_resolve_publish_context',
+             patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
-            result = service.update_source_for_task('T1')
+            result = service.publish.update_source_for_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
 

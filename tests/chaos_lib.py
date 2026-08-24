@@ -300,6 +300,13 @@ class _RealScanService(object):
     drain`` cycle of the real runner.
     """
 
+    @property
+    def comments(self):
+        """This double plays both roles: the service and its comment
+        subsystem. Production splits them (``agent_service.comments``);
+        here the methods live on one object, so point at self."""
+        return self
+
     def __init__(
         self,
         *,

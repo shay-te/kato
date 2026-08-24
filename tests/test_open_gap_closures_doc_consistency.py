@@ -234,35 +234,62 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
             'OG9a to Open in BYPASS_PROTECTIONS.md.',
         )
 
-    def test_each_prompt_builder_calls_wrap_function(self) -> None:
+    def test_every_prompt_path_wraps_untrusted_content(self) -> None:
+        """Every prompt that embeds externally-sourced text must frame it.
+
+        The implementation and testing prompts are now built ONCE, on
+        ``CliAgentSharedBehaviour``, so the wrap call moved with them: the
+        shared builder frames the task body through the ``_wrap_untrusted``
+        hook, and each transport binds that hook to the real delimiter
+        function (checked separately below). The review builders are still
+        per-transport and are checked directly.
+
+        A prior version of this guard only looked at ClaudeCliClient — an
+        audit then found codex's review builders missing the addendum wiring
+        and openhands with ZERO wrapping anywhere. Hence: every transport,
+        every path.
+        """
         import inspect
 
-        # Every prompt builder, across ALL THREE agent transports, that
-        # embeds externally-sourced text (task.summary/description,
-        # comment.body) into a prompt. A prior version of this guard only
-        # checked ClaudeCliClient — an audit found codex_core_lib's review
-        # builders missing the system-prompt addendum wiring (a separate,
-        # now-fixed bug) and openhands_core_lib with ZERO wrapping
-        # anywhere, neither of which this test would have caught. If a
-        # fourth prompt builder is added that handles untrusted content
-        # (e.g. issue-comment expansion), add it here too.
+        from agent_core_lib.agent_core_lib.cli_agent_shared import (
+            CliAgentSharedBehaviour,
+        )
+
+        # The shared path: one builder pair for every CLI transport.
+        shared_source = inspect.getsource(CliAgentSharedBehaviour._untrusted_task_body)
+        self.assertIn(
+            'self._wrap_untrusted(', shared_source,
+            'the shared prompt scaffolding no longer frames the task body; '
+            'OG9a closure is broken for EVERY CLI transport at once.',
+        )
+        for builder in ('_build_implementation_prompt', '_build_testing_prompt'):
+            with self.subTest(builder=builder):
+                source = inspect.getsource(getattr(CliAgentSharedBehaviour, builder))
+                self.assertIn(
+                    'self._untrusted_task_body(task)', source,
+                    f'{builder} stopped routing the task body through the '
+                    'framing helper.',
+                )
+        # The review prompt is shared too, and frames TWO untrusted inputs:
+        # the reviewer's comment body, and the code inlined from the workspace
+        # at the commented line (plantable by anyone with merge access).
+        for builder in ('_build_review_prompt', '_build_review_comments_batch_prompt'):
+            with self.subTest(builder=builder):
+                source = inspect.getsource(getattr(CliAgentSharedBehaviour, builder))
+                self.assertIn(
+                    'cls._wrap_untrusted_text(', source,
+                    f'{builder} no longer frames the reviewer comment body.',
+                )
+                self.assertIn(
+                    'wrap=cls._wrap_untrusted_text', source,
+                    f'{builder} no longer frames the inlined code context — a '
+                    'poisoned comment near the reviewed line would ride in as '
+                    'trusted text. The batch path inlines the MOST content.',
+                )
+
+        # The per-transport paths: review prompts, and openhands (an API
+        # client, not a CLI one — it does not share the mixin).
         builders = {
-            'claude._build_implementation_prompt':
-                cli_client_module.ClaudeCliClient._build_implementation_prompt,
-            'claude._build_testing_prompt':
-                cli_client_module.ClaudeCliClient._build_testing_prompt,
-            'claude._build_review_prompt':
-                cli_client_module.ClaudeCliClient._build_review_prompt,
-            'claude._build_review_comments_batch_prompt':
-                cli_client_module.ClaudeCliClient._build_review_comments_batch_prompt,
-            'codex._build_implementation_prompt':
-                codex_cli_client_module.CodexCliClient._build_implementation_prompt,
-            'codex._build_testing_prompt':
-                codex_cli_client_module.CodexCliClient._build_testing_prompt,
-            'codex._build_review_prompt':
-                codex_cli_client_module.CodexCliClient._build_review_prompt,
-            'codex._build_review_comments_batch_prompt':
-                codex_cli_client_module.CodexCliClient._build_review_comments_batch_prompt,
             'openhands._build_implementation_prompt':
                 openhands_client_module.OpenHandsClient._build_implementation_prompt,
             'openhands._build_testing_prompt':
@@ -272,19 +299,40 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
             'openhands._build_review_comments_batch_prompt':
                 openhands_client_module.OpenHandsClient._build_review_comments_batch_prompt,
         }
-        missing: list[str] = []
-        for name, fn in builders.items():
-            source = inspect.getsource(fn)
-            if 'wrap_untrusted_workspace_content(' not in source:
-                missing.append(name)
+        missing = [
+            name for name, fn in builders.items()
+            if 'wrap_untrusted_workspace_content(' not in inspect.getsource(fn)
+        ]
         self.assertEqual(
             missing, [],
-            f'OG9a wiring missing in: {missing}. Each prompt builder, in '
-            'every agent transport, must wrap externally-sourced text '
-            '(task.summary/description, comment.body) via '
-            'wrap_untrusted_workspace_content. Either restore the wrap '
-            'call or flip OG9a to Open in BYPASS_PROTECTIONS.md.',
+            f'OG9a wiring missing in: {missing}. Each prompt builder that '
+            'embeds externally-sourced text (task.summary/description, '
+            'comment.body) must wrap it via wrap_untrusted_workspace_content. '
+            'Either restore the wrap call or flip OG9a to Open in '
+            'BYPASS_PROTECTIONS.md.',
         )
+
+    def test_every_cli_transport_binds_the_framing_hook(self) -> None:
+        """``_wrap_untrusted`` must reach the real delimiter, in every transport.
+
+        The shared builders frame through this hook, so a transport that
+        bound it to anything else — or to identity — would send unframed
+        issue text while every other check still passed.
+        """
+        import inspect
+
+        for label, client in (
+            ('claude', cli_client_module.ClaudeCliClient),
+            ('codex', codex_cli_client_module.CodexCliClient),
+        ):
+            with self.subTest(transport=label):
+                for hook in ('_wrap_untrusted', '_wrap_untrusted_text'):
+                    source = inspect.getsource(getattr(client, hook))
+                    self.assertIn(
+                        'wrap_untrusted_workspace_content(', source,
+                        f'{label}.{hook} no longer binds to the real '
+                        'delimiter function — OG9a closure is broken for it.',
+                    )
 
     def test_addendum_describes_the_marker(self) -> None:
         # Independent of the wrap calls: the model needs the

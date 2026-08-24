@@ -68,7 +68,7 @@ class ReviewWorkspaceProtectionTests(unittest.TestCase):
         live_ids = {'UNA-1'}  # ticket still in review bucket
         ws = [_ws('UNA-1', status=WORKSPACE_STATUS_REVIEW, age_seconds=60)]
         service = _build_agent_service(ws, ttl=3600)
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertNotIn('UNA-1', stale, 'fresh review workspace must not be cleaned')
 
     def test_review_workspace_past_ttl_is_still_protected(self) -> None:
@@ -81,7 +81,7 @@ class ReviewWorkspaceProtectionTests(unittest.TestCase):
         live_ids = {'UNA-1'}  # still in review
         ws = [_ws('UNA-1', status=WORKSPACE_STATUS_REVIEW, age_seconds=7200)]
         service = _build_agent_service(ws, ttl=3600)
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertNotIn(
             'UNA-1', stale,
             'review workspace must be protected regardless of age',
@@ -97,7 +97,7 @@ class ReviewWorkspaceProtectionTests(unittest.TestCase):
         live_ids: set[str] = set()  # ticket absent from this scan
         ws = [_ws('UNA-232', status=WORKSPACE_STATUS_REVIEW, age_seconds=99999)]
         service = _build_agent_service(ws, ttl=3600)
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertNotIn(
             'UNA-232', stale,
             'a review clone on disk must never be swept',
@@ -109,7 +109,7 @@ class ReviewWorkspaceProtectionTests(unittest.TestCase):
         live_ids: set[str] = set()
         ws = [_ws('UNA-1', status=WORKSPACE_STATUS_ACTIVE, age_seconds=99999)]
         service = _build_agent_service(ws, ttl=3600, live_session_for='UNA-1')
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertNotIn('UNA-1', stale)
 
     def test_cold_active_workspace_without_session_is_stale(self) -> None:
@@ -118,14 +118,14 @@ class ReviewWorkspaceProtectionTests(unittest.TestCase):
         live_ids: set[str] = set()
         ws = [_ws('UNA-1', status=WORKSPACE_STATUS_ACTIVE, age_seconds=99999)]
         service = _build_agent_service(ws, ttl=3600)
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertIn('UNA-1', stale)
 
     def test_ttl_zero_keeps_review_workspace(self) -> None:
         live_ids = {'UNA-1'}
         ws = [_ws('UNA-1', status=WORKSPACE_STATUS_REVIEW, age_seconds=99999)]
         service = _build_agent_service(ws, ttl=0)
-        stale = service._stale_planning_task_ids(live_ids)
+        stale = service.cleanup._stale_planning_task_ids(live_ids)
         self.assertNotIn(
             'UNA-1', stale,
             'review workspace must be kept whatever the TTL setting',

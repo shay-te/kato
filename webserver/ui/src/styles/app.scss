@@ -1733,6 +1733,23 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 650;
 }
 
+// Which CLI produced a chat. Reuses the existing neutrals rather than
+// introducing a per-backend colour: the chip is an identifier, not a status,
+// and colouring it would compete with the run-state dot beside it.
+.agent-backend-chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border: 1px solid $C-NEUTRAL-19;
+  border-radius: 4px;
+  background: $C-NEUTRAL-16;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-10;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  vertical-align: baseline;
+}
+
 header .chats-menu button:not(.header-status) {
   width: 100%;
   height: auto;
@@ -5289,7 +5306,17 @@ body.kato-resizing {
  * Soft rounded glass instead of dark squares with hard borders. */
 .files-tab-repo {
   border: 1px solid $C-NEUTRAL-100-A06;
-  border-radius: $RADIUS-12;
+  /* SQUARE, deliberately. A rounded section here cannot work: it may not
+   * clip (that would capture the sticky header and stop it sticking — see
+   * DiffPaneCss.test.js), so with ``overflow: visible`` the tree rows paint
+   * their square backgrounds straight over its rounded corners, and a
+   * header pinned mid-scroll keeps a rounded top over square rows. Both are
+   * visible while scrolling and neither can be fixed by matching radii.
+   *
+   * The curve lives on the PANEL instead: .panel-card is rounded and
+   * .panel-card-content clips to it, so everything inside can be square and
+   * still ends up inside a rounded panel at every scroll position. */
+  border-radius: 0;
   margin-bottom: $SPACE-6;
   overflow: visible;
   background: $C-NEUTRAL-100-A06;
@@ -5304,7 +5331,10 @@ body.kato-resizing {
   // sits in the SAME column as the tree's chevrons — in both Changes and the
   // full tree. Font size also matches the tree rows (14px).
   padding: $SPACE-6 $SPACE-12 $SPACE-6 $SPACE-10;
-  border-radius: $RADIUS-12-12-0-0;
+  /* Square: this header pins mid-scroll, where a rounded top would float
+   * its curve over square rows. The panel's own radius is what rounds the
+   * view. */
+  border-radius: 0;
   background: $C-NEUTRAL-16;
   cursor: pointer;
   font-size: $TEXT-14;
@@ -6494,25 +6524,6 @@ body.kato-resizing {
   color: $C-ORANGE-50;
 }
 
-.diff-file-tree-guide {
-  position: absolute;
-  left: $SPACE-22;
-  /* Span EXACTLY the row (rows are contiguous, no gap). The old
-   * ``top:-3px; bottom:-3px`` made every row's guide overlap its
-   * neighbour's by 6px, so the 1px gradient lines double-drew in
-   * those bands — the "sometimes bold" artefact. Abutting rows now
-   * form one continuous, uniform 1px line per depth level. */
-  top: 0;
-  bottom: 0;
-  width: calc(var(--depth) * $SPACE-22);
-  pointer-events: none;
-  background-image: repeating-linear-gradient(to right, transparent 0, transparent 1px, $C-NEUTRAL-100-A10 1px, $C-NEUTRAL-100-A10 2px, transparent 2px, transparent $SPACE-22);
-}
-
-.diff-file-tree-row[style*="--depth: 0"] .diff-file-tree-guide {
-  display: none;
-}
-
 .diff-file-tree-chevron {
   width: 16px;
   color: $C-NEUTRAL-64;
@@ -6529,7 +6540,9 @@ body.kato-resizing {
 }
 
 .files-changed-tree-wrap {
-  padding: $SPACE-8 $SPACE-6 $SPACE-12;
+  /* Top padding removed for the same reason as .changes-tab-body above —
+   * two nested strips were stacking into a 16px leak over the header. */
+  padding: 0 $SPACE-6 $SPACE-12;
 }
 
 .files-changed-tree-row {
@@ -6854,16 +6867,6 @@ body.kato-resizing {
   color: $C-CYAN-52;
 }
 
-.tree-row-level-guides {
-  position: absolute;
-  left: 0;
-  top: -4px;
-  bottom: -4px;
-  width: calc(var(--level) * 14px);
-  pointer-events: none;
-  background-image: repeating-linear-gradient(to right, transparent 0, transparent 13px, $C-NEUTRAL-100-A10 13px, $C-NEUTRAL-100-A10 14px);
-}
-
 .tree-row-chevron {
   width: 16px;
   color: $C-NEUTRAL-64;
@@ -6929,7 +6932,17 @@ body.kato-resizing {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: $SPACE-8;
+  /* No TOP padding. A ``position: sticky; top: 0`` child pins to the
+   * scrollport's CONTENT box, so any top padding becomes a dead strip that
+   * rows scroll visibly through ABOVE the pinned repo header — the reported
+   * "text going out of the tree from the top". Same rule as
+   * .diff-pane-body and #event-log; breathing room comes back below via
+   * the first-child margin, which scrolls away instead of leaking. */
+  padding: 0 $SPACE-8 $SPACE-8;
+}
+
+.changes-tab-body > :first-child {
+  margin-top: $SPACE-8;
 }
 
 .diff-file {

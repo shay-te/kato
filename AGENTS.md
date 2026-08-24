@@ -45,6 +45,37 @@ names. A lib's tests test only that lib; only `kato_core_lib`'s own tests may sa
   literals. Replace fixture values + comments individually; turn
   `assertNotIn('KATO_…')` guards into positive `assertIn('AGENT_…')` assertions.
 
+### Refactors: never leave the tree red — ENFORCED by habit, not by CI
+
+A refactor is not "in progress" between turns. It is finished, or it is
+reverted. Every rule here exists because it was broken once and the operator
+watched the cleanup.
+
+- **A turn ends green.** Before reporting anything — done, partly done, or a
+  status update — the affected test modules pass AND `python scripts/run_all_tests.py`
+  is green (all 24 roots; `discover -s tests` alone does not count). If a move
+  cannot be finished in the turn, `git stash` / revert it. Never hand back a
+  tree with failing tests in it.
+- **Move code by AST span, never by regex over `def`.** A `^\s*def ` match cuts
+  through docstrings and decorators. Use `ast.FunctionDef` `lineno`/`end_lineno`
+  (decorators included) to lift exact spans, and derive the new module's imports
+  from the moved code's names — never guess them.
+- **Never blanket-regex a test directory.** Rewrites of call sites are enumerated
+  per file and per symbol, then diff-reviewed before the suite runs. Two classes
+  in this repo share method names and a `service` variable; a broad pattern
+  silently edited the wrong one, twice.
+- **Run the affected module after EVERY mechanical step**, not once at the end.
+  A 100-site rewrite verified only at the end cannot tell you which site broke.
+- **No type-sniffing dependency injection.** Never decide what an injected
+  argument means by `callable(x)` / `isinstance(x, …)` — a `Mock` is callable, so
+  "callable means it's a getter" silently handed every test a child mock. Late
+  binding is declared explicitly with `later(host, 'attr')` /
+  `call_later(host, 'method')` (`kato_core_lib/helpers/late_binding.py`);
+  anything else passed in is the collaborator itself.
+- **Extraction order:** move → repoint importers → delete the original (no
+  re-export shim, see above) → gate → commit that cut before starting the next
+  one. One cut per commit keeps each independently revertible.
+
 ### Reuse these before writing your own
 
 - **Frontend (`webserver/ui/src/`):** `hooks/` (data-load + save state machines — `useSettingsResource`, `useRestartingSave`, `useSessionOption`, `usePolling`, `useBusyAction`; plus `useAutoSizeTextarea`, `useEscapeKey`, `useDismissOnOutsidePointerOrEscape`), `utils/` (`apiErrorMessage`, `cx`, `storage`, `pluralize`/`countNoun`, `clipboard`, `basenameOf`, `settingsSource`, `katoTags` for `kato:` tag prefixes/builders), `stores/toastStore.js` — use `toast.errorFromResult(result, {...})` / `toastResult(...)` for API-result toasts instead of hand-rolling the `{ kind: 'error', message: apiErrorMessage(...) }` envelope — and `components/settings/` panel scaffolding (`SettingsPanelBody`, `SettingsActions`, `RestartBanner`).
