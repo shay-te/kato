@@ -1690,19 +1690,48 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 650;
 }
 
-/* The "New chat with Claude / Codex" row. Only rendered when more than one
- * backend is wired — with one there is nothing to choose. */
-.chats-menu-new-group {
+/* One tab per agent, at the top of the chat pane. Sits above the transcript
+ * because it selects which CONVERSATION is below it. */
+.agent-backend-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid #303134;
+  flex-shrink: 0;
+}
+
+.agent-backend-tab {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  padding: 4px 0;
+  /* The active tab is marked by a rule flush with the strip's own border, so
+   * the two read as one edge rather than two competing lines. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 
-.chats-menu-new-label {
+.agent-backend-tab.is-active {
+  border-bottom-color: #a3a3a3;
+}
+
+.agent-backend-tab-button {
+  background: none;
+  border: 0;
+  padding: 4px 8px;
   color: #737373;
-  font-size: 12px;
-  padding-left: 8px;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.agent-backend-tab.is-active .agent-backend-tab-button {
+  color: #f5f5f7;
+}
+
+.agent-backend-tab-button:disabled {
+  cursor: default;
 }
 
 .agent-backend-chip {
