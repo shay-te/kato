@@ -202,6 +202,28 @@ kato:
     # a periodic compact) take effect on the next turn without
     # restarting kato. Empty falls back to ``KATO_WORKSPACES_ROOT/lessons.md``.
     lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
+  # Codex CLI. Wired by DEFAULT: the chat pane always shows both a Claude
+  # and a Codex tab, and a tab whose CLI is missing opens a setup panel
+  # instead of a chat. Hiding the tab was worse — an operator with codex
+  # installed had no way to discover kato could use it, and the only switch
+  # lived in an env var that appeared in no UI.
+  codex:
+    # ON by default. Turn it off to drop the Codex tab entirely.
+    enabled: ${oc.decode:${oc.env:KATO_CODEX_ENABLED,"true"}}
+    binary: ${oc.env:KATO_CODEX_BINARY,"codex"}
+    model: ${oc.env:KATO_CODEX_MODEL,""}
+    max_turns: ${oc.env:KATO_CODEX_MAX_TURNS,""}
+    # Codex routes reasoning depth through ``model_reasoning_effort`` in
+    # ~/.codex/config.toml rather than a per-spawn flag; this is carried for
+    # parity and applied where the CLI accepts it.
+    effort: ${oc.env:KATO_CODEX_EFFORT,""}
+    allowed_tools: ${oc.env:KATO_CODEX_ALLOWED_TOOLS,""}
+    disallowed_tools: ${oc.env:KATO_CODEX_DISALLOWED_TOOLS,""}
+    bypass_permissions: ${oc.decode:${oc.env:KATO_CODEX_BYPASS_PERMISSIONS,"false"}}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_CODEX_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CODEX_MODEL_SMOKE_TEST_ENABLED,"false"}}
+    architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
+    lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
     # 180s (3 min) is the sweet spot for the autonomous scan: slow
     # enough that the per-(task × repo) PR-lookups don't trip

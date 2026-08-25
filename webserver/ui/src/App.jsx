@@ -56,6 +56,7 @@ import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
   closeTab, findTab, moveTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
 } from './utils/fileTabs.js';
+import { markdownViewFor } from './utils/markdownView.js';
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -657,6 +658,17 @@ export default function App() {
       view: tab.view === 'diff' ? 'file' : 'diff',
     });
   }, [handleOpenFile]);
+  // Rendered-preview ⇄ source for a markdown tab. A patch, NOT a re-open:
+  // ``handleOpenFile`` would bump ``openRequestId`` and re-focus the tab,
+  // yanking the operator's scroll position back to the top on every flip.
+  const handleToggleMarkdownView = useCallback((key) => {
+    const tab = findTab(openTabsRef.current, key);
+    if (!tab) { return; }
+    setOpenTabs(patchTab(
+      openTabsRef.current, key,
+      { mdView: markdownViewFor(tab) === 'preview' ? 'source' : 'preview' },
+    ));
+  }, []);
   const handleFocusFileInTree = useCallback((target) => {
     const relativePath = String(target?.relativePath || target?.absolutePath || '').trim();
     if (!relativePath) { return; }
@@ -725,6 +737,7 @@ export default function App() {
           onSelect={handleSelectFileTab}
           onClose={handleCloseFileTab}
           onToggleView={handleToggleTabView}
+          onToggleMarkdownView={handleToggleMarkdownView}
           onCloseAll={handleCloseAllFileTabs}
           onCloseOthers={handleCloseOtherFileTabs}
           onTogglePin={handleToggleFileTabPin}

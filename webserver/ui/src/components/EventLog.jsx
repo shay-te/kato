@@ -713,7 +713,6 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
       type="button"
       className={cx(
         'chat-sticky-prompt-comment-jump',
-        'tooltip-below',
         commentStatus && `is-${commentStatus}`,
       )}
       data-tooltip={jumpLabel}

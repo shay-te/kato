@@ -107,17 +107,6 @@ describe('Tab', () => {
     expect(dot).toHaveClass('is-idle-alive');
   });
 
-  test('changes-pending indicator appears only when has_changes_pending is true', () => {
-    const { container: c1 } = render(
-      <Tab session={_session({ has_changes_pending: false })} onSelect={() => {}} />,
-    );
-    expect(c1.querySelector('.tab-changes-indicator')).toBeNull();
-
-    const { container: c2 } = render(
-      <Tab session={_session({ has_changes_pending: true })} onSelect={() => {}} />,
-    );
-    expect(c2.querySelector('.tab-changes-indicator')).toBeInTheDocument();
-  });
 
   test('clicking forget button requests forget via onForget(task_id)', () => {
     // No native confirm anymore — the hard-confirm lives in
@@ -135,17 +124,6 @@ describe('Tab', () => {
     confirmSpy.mockRestore();
   });
 
-  test('the changes-indicator reserve is applied only when it is showing', () => {
-    const { container: without } = render(
-      <Tab session={_session({ has_changes_pending: false })} onSelect={() => {}} />,
-    );
-    expect(without.querySelector('li')).not.toHaveClass('has-changes');
-
-    const { container: with_ } = render(
-      <Tab session={_session({ has_changes_pending: true })} onSelect={() => {}} />,
-    );
-    expect(with_.querySelector('li')).toHaveClass('has-changes');
-  });
 
   test('an un-resized tab is left to size itself to its name', () => {
     // No inline max-width, and no `has-custom-width` class: both of those

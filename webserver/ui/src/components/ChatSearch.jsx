@@ -89,7 +89,7 @@ export default function ChatSearch({
     <>
       <button
         type="button"
-        className="chat-search-toggle tooltip-below"
+        className="chat-search-toggle"
         data-tooltip={open ? 'Search bar is open' : 'Search the chat'}
         onClick={() => setOpen(true)}
         disabled={open}
@@ -122,7 +122,7 @@ export default function ChatSearch({
           )}
           <button
             type="button"
-            className="chat-search-nav tooltip-below"
+            className="chat-search-nav"
             data-tooltip="Previous match (Shift+Enter)"
             onClick={() => onPrevMatch && onPrevMatch()}
             disabled={!hasMatches}
@@ -132,7 +132,7 @@ export default function ChatSearch({
           </button>
           <button
             type="button"
-            className="chat-search-nav tooltip-below"
+            className="chat-search-nav"
             data-tooltip="Next match (Enter)"
             onClick={() => onNextMatch && onNextMatch()}
             disabled={!hasMatches}
@@ -142,7 +142,7 @@ export default function ChatSearch({
           </button>
           <button
             type="button"
-            className="chat-search-close tooltip-below"
+            className="chat-search-close"
             data-tooltip="Close search (Esc)"
             onClick={close}
             aria-label="Close search"

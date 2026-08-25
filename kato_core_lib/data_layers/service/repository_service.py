@@ -119,10 +119,45 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         # transport layer.
         self._run_git(
             str(target.parent),
-            ['clone', remote_url, target.name],
+            ['clone', *self._clone_speedup_args(repository, target), remote_url,
+             target.name],
             f'failed to clone {repository.id} from {remote_url} into {target}',
             repository,
         )
+
+    def _clone_speedup_args(self, repository, target: Path) -> list[str]:
+        """Reuse the operator's existing checkout as a local object source.
+
+        A per-task workspace clone re-downloaded the WHOLE history over the
+        network every time, which is what made the Files-tab sync button feel
+        broken on a large repo (~39s for a 144MB repo here, vs ~7s with this).
+        The inventory already knows where that repo is checked out on disk —
+        the objects are sitting right there, so the network only has to carry
+        what the local copy is missing.
+
+        ``--dissociate`` is NOT optional: without it the new clone keeps an
+        ``objects/info/alternates`` pointer at the operator's working tree,
+        and the workspace silently corrupts the day they delete that
+        directory or it gets gc'd. Dissociating copies the borrowed objects
+        in, so the result is byte-for-byte an ordinary independent clone —
+        same history, same refs, no external dependency.
+
+        ``--reference-if-able`` (not ``--reference``) so a stale or
+        unreadable path degrades to a normal clone instead of failing it.
+        """
+        local_path = normalized_text(text_from_attr(repository, 'local_path'))
+        if not local_path:
+            return []
+        reference = Path(local_path)
+        try:
+            # Must be a real repository, and never the clone we're creating.
+            if not (reference / '.git').is_dir():
+                return []
+            if reference.resolve() == target.resolve():
+                return []
+        except OSError:
+            return []
+        return ['--reference-if-able', str(reference), '--dissociate']
 
     def restore_task_repositories(
         self,

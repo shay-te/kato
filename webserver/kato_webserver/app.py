@@ -1399,9 +1399,20 @@ def _register_http_routes(app: Flask) -> None:
         record = manager.get_record(task_id)
         if record is None:
             return jsonify({'task_id': task_id, 'chats': []})
-        active_id = read_session_id_from(record)
+        # Each backend has its OWN chat history: the tabs are separate
+        # conversations with different agents, so a Claude tab must never
+        # list a Codex thread it cannot resume. Defaults to the active
+        # backend, which is what the front tab is showing.
+        from agent_core_lib.agent_core_lib.session.backend_chats import (
+            parked_chat,
+        )
+        requested_backend = _requested_chat_backend(request.args) or str(
+            getattr(record, 'agent_backend', '') or '',
+        )
+        chat = parked_chat(record, requested_backend)
+        active_id = str(chat['agent_session_id'] or '')
         previous_ids = [
-            sid for sid in getattr(record, 'previous_session_ids', []) or []
+            sid for sid in chat['previous_session_ids']
             if sid and sid != active_id
         ]
         ordered = ([active_id] if active_id else []) + list(reversed(previous_ids))
@@ -1417,7 +1428,7 @@ def _register_http_routes(app: Flask) -> None:
                 # chats, and yesterday's chat still belongs to the CLI that
                 # wrote it. Empty for chats that predate the field — the UI
                 # shows no chip rather than guessing.
-                'agent_backend': str(getattr(record, 'agent_backend', '') or ''),
+                'agent_backend': requested_backend,
                 'last_modified_epoch': row.last_modified_epoch if row else 0.0,
                 'turn_count': row.turn_count if row else 0,
                 'first_user_message': row.first_user_message if row else '',
@@ -1500,6 +1511,52 @@ def _register_http_routes(app: Flask) -> None:
             'previous_session_ids': list(record.previous_session_ids),
         })
 
+    @app.post('/api/sessions/<task_id>/backend')
+    def switch_task_backend(task_id: str):
+        """Switch which agent this task's chat pane is talking to.
+
+        The tabs are separate conversations with different agents. Switching
+        parks the outgoing chat (id + history) and lifts the incoming one, so
+        an operator who tries the other agent and comes back finds their
+        thread where they left it rather than a blank one.
+
+        The live subprocess of the outgoing chat is left running: the operator
+        switched tabs, they did not end the conversation.
+        """
+        from agent_core_lib.agent_core_lib.session.backend_chats import (
+            switch_backend,
+        )
+        backend = _requested_chat_backend(request.get_json(silent=True) or {})
+        if not backend:
+            return jsonify({'error': 'unknown agent backend'}), 400
+        manager = app.config['SESSION_MANAGER']
+        available = getattr(manager, 'available_backends', None)
+        wired = list(available()) if callable(available) else []
+        if wired and backend not in wired:
+            # Switching to a backend with no manager would hand the operator
+            # a tab whose first message fails.
+            return jsonify({
+                'error': f'the {backend} backend is not configured on this host',
+            }), 400
+        record = manager.get_record(task_id)
+        if record is None:
+            # No chat yet: nothing to park. The tab is still a valid place to
+            # start one, so this is a no-op success rather than a 404.
+            return jsonify({
+                'task_id': task_id, 'agent_backend': backend,
+                AGENT_SESSION_ID: '', 'previous_session_ids': [],
+            })
+        switch_backend(record, backend)
+        saver = getattr(manager, 'save_record', None)
+        if callable(saver):
+            saver(record)
+        return jsonify({
+            'task_id': record.task_id,
+            'agent_backend': record.agent_backend,
+            AGENT_SESSION_ID: record.agent_session_id,
+            'previous_session_ids': list(record.previous_session_ids),
+        })
+
     @app.get('/api/agent-backends')
     def list_agent_backends():
         """Backends this host can actually start a chat on.
@@ -1508,14 +1565,34 @@ def _register_http_routes(app: Flask) -> None:
         backend whose manager does not exist would hand the operator a
         picker entry that fails at the first message.
         """
+        from kato_core_lib.helpers.agent_backend_readiness import (
+            probe_chat_backends,
+            reset_probe_cache,
+        )
+        if request.args.get('refresh'):
+            # The setup panel's "Check again": an operator who just installed
+            # the CLI must not have to wait out a cache they cannot see.
+            reset_probe_cache()
         manager = app.config.get('SESSION_MANAGER')
         available = getattr(manager, 'available_backends', None)
-        backends = list(available()) if callable(available) else []
-        if not backends:
+        wired = set(available()) if callable(available) else set()
+        if not wired:
             # A host with a single (unrouted) manager still has one backend.
-            backends = [str(getattr(manager, 'AGENT_BACKEND', '') or '')]
+            wired = {str(getattr(manager, 'AGENT_BACKEND', '') or '')}
+        entries = []
+        for probe in probe_chat_backends(app.config.get('AGENT_BINARIES') or {}):
+            # ``wired`` and ``ready`` are DIFFERENT questions and both matter:
+            # wired = kato built a session manager for it; ready = its CLI is
+            # installed and answers. A tab is shown either way — an unready
+            # one opens the setup panel instead of a chat — but only a
+            # both-true backend can actually take a message.
+            entries.append({
+                **probe,
+                'wired': probe['id'] in wired,
+                'chat_available': probe['ready'] and probe['id'] in wired,
+            })
         return jsonify({
-            'backends': [b for b in backends if b],
+            'backends': entries,
             'default': str(getattr(manager, 'default_backend', '') or ''),
         })
 

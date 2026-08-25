@@ -821,10 +821,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   max-width: calc(100% - 80px);
 }
 
-.tabs-pane-top .tab.has-custom-width.has-changes .tab-label {
-  max-width: calc(100% - 96px);
-}
-
 /* Auto-sizing tab: the name is shown in full. A plain px ceiling (not a
  * percentage, which would feed back into the tab's own shrink-to-fit width)
  * stops one pathological ticket summary from claiming the whole strip. Sized
@@ -880,12 +876,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tabs-pane-top .tab .tab-changes-indicator {
-  display: inline-flex;
-  color: #f59e0b;
-  font-size: 10px;
 }
 
 .tabs-pane-top .tab .tab-forget-btn {
@@ -1581,8 +1571,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 .chats-menu {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
-  z-index: 10;
+  /* LEFT-anchored, growing rightward. It used to be ``right: 0`` — correct
+   * while the button lived at the right end of the session header, but the
+   * button now sits in the agent-tab strip at the chat panel's LEFT edge, so
+   * a 420px-wide menu anchored by its right edge hung ~360px off-panel and
+   * was clipped. */
+  left: 0;
+  right: auto;
+  z-index: 30;
   padding: 4px 0;
   background: #2a2a2a;
   border: 1px solid #2a2a2a;
@@ -1690,19 +1686,111 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 650;
 }
 
-/* The "New chat with Claude / Codex" row. Only rendered when more than one
- * backend is wired — with one there is nothing to choose. */
-.chats-menu-new-group {
+/* One tab per agent, at the top of the chat pane. Sits above the transcript
+ * because it selects which CONVERSATION is below it. */
+.agent-backend-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid #303134;
+  flex-shrink: 0;
+}
+
+.agent-backend-tab {
   display: flex;
   align-items: center;
   gap: 4px;
+  padding: 4px 0;
+  /* The active tab is marked by a rule flush with the strip's own border, so
+   * the two read as one edge rather than two competing lines. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+/* A backend whose CLI is missing still gets a tab — it opens the setup
+ * panel instead of a chat, so the "!" marks it as needing attention rather
+ * than the tab being absent entirely. */
+.agent-backend-tab.is-unready .agent-backend-tab-button {
+  color: #737373;
+}
+
+.agent-backend-tab-unready {
+  margin-left: 4px;
+  color: #fde68a;
+  font-weight: 700;
+}
+
+.agent-backend-setup {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.agent-backend-setup-title {
+  margin: 0 0 8px 0;
+  color: #f5f5f7;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.agent-backend-setup-lead {
+  margin: 0 0 14px 0;
+  color: #a3a3a3;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.agent-backend-setup-detail {
+  margin: 0 0 14px 0;
+  padding: 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  background: #181818;
+  color: #d4d4d4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.agent-backend-setup-detail.is-empty {
+  font-family: inherit;
+  white-space: normal;
+}
+
+.agent-backend-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.chats-menu-new-label {
+.agent-backend-setup-hint {
   color: #737373;
   font-size: 12px;
-  padding-left: 8px;
+}
+
+.agent-backend-tab.is-active {
+  border-bottom-color: #a3a3a3;
+}
+
+.agent-backend-tab-button {
+  background: none;
+  border: 0;
+  padding: 4px 8px;
+  color: #737373;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.agent-backend-tab.is-active .agent-backend-tab-button {
+  color: #f5f5f7;
+}
+
+.agent-backend-tab-button:disabled {
+  cursor: default;
 }
 
 .agent-backend-chip {
@@ -1721,7 +1809,11 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   vertical-align: baseline;
 }
 
-header .chats-menu button:not(.header-status) {
+/* Scoped to the menu itself, NOT ``header .chats-menu``: the chats button
+ * moved out of the session header into the agent-tab strip, so the old
+ * descendant selector silently stopped matching and every row lost its
+ * full-width 40px skin. ChatsMenu has exactly one render site. */
+.chats-menu button:not(.header-status) {
   width: 100%;
   height: auto;
   min-height: 40px;
@@ -8171,17 +8263,6 @@ body.kato-resizing {
   line-height: 1.4;
 }
 
-.tab-changes-indicator {
-  grid-column: 3;
-  grid-row: 1/span 2;
-  align-self: center;
-  color: #f59e0b;
-  font-size: 14px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-}
-
 /* Adopt Claude session modal */
 .adopt-session-modal-backdrop {
   position: fixed;
@@ -9104,6 +9185,49 @@ body.kato-resizing {
 .settings-drawer-divider {
   border-top: 1px solid #2a2a2a;
   margin: 14px 0;
+}
+
+/* Schema fields lifted into a bespoke tab (SchemaFieldGroup) — e.g. the
+ * repo ignore list + denylist on the Approvals tab. The rule above it
+ * separates it from the tab's own content. */
+/* Rendered markdown in the centre pane (EditorPane preview mode). Reuses
+ * the chat bubble's markdown rules via .md-* class names; this only owns
+ * the scroll container + reading measure. */
+.editor-pane-markdown {
+  height: 100%;
+  overflow: auto;
+  padding: 16px 20px;
+  color: #d4d4d4;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.editor-pane-markdown > *:first-child {
+  margin-top: 0;
+}
+.editor-pane-markdown pre,
+.editor-pane-markdown table,
+.editor-pane-markdown img {
+  max-width: 100%;
+}
+
+.settings-drawer-field-group {
+  border-top: 1px solid #2a2a2a;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.settings-drawer-field-group-title {
+  margin: 0 0 4px 0;
+  color: #f5f5f7;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-drawer-field-group-help {
+  margin: 0 0 10px 0;
+  color: #a3a3a3;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .settings-drawer-field-label {

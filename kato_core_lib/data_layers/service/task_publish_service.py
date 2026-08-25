@@ -154,8 +154,16 @@ class TaskPublishService(object):
         reconcile that ERRORS. A repo tagged in the last few seconds is then
         picked up by the next scan tick or the next press, which is a far
         better outcome than a frozen button.
+
+        ALWAYS a dict, never None. ``push_task`` reads ``added_repositories``
+        off this to tell the operator which repos the push covered, and both
+        no-result paths used to hand it ``None`` instead — the deadline's
+        default, and the no-op stand-in used when no reconcile function is
+        injected. Either one turned a slow ticket provider into an
+        ``AttributeError`` 500 on Push and Update-source, i.e. the timeout
+        fallback took down the very operation it existed to protect.
         """
-        return run_with_deadline(
+        result = run_with_deadline(
             lambda: self._reconcile_task_repositories_impl(task_id),
             seconds=_RECONCILE_TIMEOUT_SECONDS,
             default=None,
@@ -165,6 +173,7 @@ class TaskPublishService(object):
                 task_id, _RECONCILE_TIMEOUT_SECONDS,
             ),
         )
+        return result if isinstance(result, dict) else {}
 
     def recheck_repository_push_access(self, task_id: str, repo_id: str) -> bool:
         """Re-run the push-access check for one repo's workspace clone.

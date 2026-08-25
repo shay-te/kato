@@ -317,7 +317,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-go-to-task"
-        className="tabs-action tooltip-below"
+        className="tabs-action"
         data-tooltip="Go to task (Ctrl+Shift+F) — search your open tasks by id or name and jump straight to one."
         aria-label="Go to task"
         onClick={onOpenTaskPalette}
@@ -328,7 +328,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-add-task"
-        className="tabs-action tooltip-below"
+        className="tabs-action"
         data-tooltip="Add a task — pick from every task assigned to kato (open, in progress, in review, done) and provision its workspace."
         aria-label="Add a task"
         onClick={onOpenAddTask}
@@ -338,7 +338,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-scan-now"
-        className="tabs-action tooltip-below"
+        className="tabs-action"
         data-tooltip={scanPending ? 'Scanning…' : 'Scan now — skip the idle wait and check for new tasks and review comments immediately.'}
         aria-label="Scan now"
         onClick={onScanNow}
@@ -366,7 +366,7 @@ export default function TabList({
     <nav id="tabs-pane" className="tabs-pane-top">
       <button
         type="button"
-        className="tabs-nav-button tabs-nav-prev tooltip-below"
+        className="tabs-nav-button tabs-nav-prev"
         data-tooltip="Scroll tabs left (click) or hold to keep scrolling"
         aria-label="Scroll tabs left"
         onClick={() => scrollByPage('prev')}
@@ -382,7 +382,7 @@ export default function TabList({
       </div>
       <button
         type="button"
-        className="tabs-nav-button tabs-nav-next tooltip-below"
+        className="tabs-nav-button tabs-nav-next"
         data-tooltip="Scroll tabs right (click) or hold to keep scrolling"
         aria-label="Scroll tabs right"
         onClick={() => scrollByPage('next')}

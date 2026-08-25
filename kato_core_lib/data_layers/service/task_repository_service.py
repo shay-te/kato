@@ -152,6 +152,12 @@ class TaskRepositoryService(object):
         except Exception:
             inventory_ids = set()
         if normalized_repo_id.lower() not in inventory_ids:
+            self.logger.error(
+                'add repository %s to task %s failed: not in the kato '
+                'inventory (known: %s)',
+                normalized_repo_id, normalized_task_id,
+                ', '.join(sorted(inventory_ids)) or '<none>',
+            )
             return failure(
                 f'repository {normalized_repo_id!r} is not in the kato '
                     f'inventory; add it to the kato config under '
@@ -160,6 +166,9 @@ class TaskRepositoryService(object):
                 task_id=normalized_task_id,
                 repository_id=normalized_repo_id,
             )
+        self.logger.info(
+            'adding repository %s to task %s', normalized_repo_id, normalized_task_id,
+        )
         from kato_core_lib.helpers.kato_tag_utils import build_repository_tag
         tag_name = build_repository_tag(normalized_repo_id)
         tag_added = False
@@ -196,6 +205,19 @@ class TaskRepositoryService(object):
                 repository_id=normalized_repo_id,
             )
         sync_result = self.sync_task_repositories(normalized_task_id)
+        if not sync_result.get('synced'):
+            self.logger.error(
+                'add repository %s to task %s did not complete: %s',
+                normalized_repo_id, normalized_task_id,
+                sync_result.get('error')
+                or self._describe_repository_failures(sync_result)
+                or 'no repositories were added',
+            )
+        else:
+            self.logger.info(
+                'added repository %s to task %s', normalized_repo_id,
+                normalized_task_id,
+            )
         # Compose the response so the UI can show one toast for the
         # whole flow (tag + clone), not two.
         return {
@@ -227,29 +249,34 @@ class TaskRepositoryService(object):
         normalized = str(task_id or '').strip()
         if not normalized:
             return failure('empty task id', flag='synced', task_id=task_id)
+        self.logger.info('scanning task %s for repositories', normalized)
         if self._workspace_manager is None:
-            return failure(
-                'workspace manager not wired', flag='synced', task_id=normalized,
+            return self._sync_failed(
+                normalized, 'workspace manager not wired',
             )
         workspace = self._workspace_manager.get(normalized)
         if workspace is None:
-            return failure(
-                'no workspace exists for this task yet',
-                flag='synced',
-                task_id=normalized,
+            return self._sync_failed(
+                normalized, 'no workspace exists for this task yet',
             )
         task_obj = task if task is not None else self._lookup_task_for_sync(normalized)
         if task_obj is None:
-            return failure(
+            return self._sync_failed(
+                normalized,
                 f'could not find {normalized} on the ticket platform — '
                 f'check that you are still the assignee and that the '
                 f'ticket is reachable from kato\'s configured queues',
-                flag='synced',
-                task_id=normalized,
             )
         try:
             task_repos = self._repository_service.resolve_task_repositories(task_obj)
         except Exception as exc:
+            # The operator's most common cause lands here — a repo the task
+            # references sits under AGENT_IGNORED_REPOSITORY_FOLDERS. Log the
+            # reason so it is findable in the activity log, not only in the
+            # toast the operator has to hover to read.
+            self.logger.exception(
+                'repository scan for task %s failed: %s', normalized, exc,
+            )
             return failure(
                 f'failed to resolve task repositories: {exc}',
                 flag='synced',
@@ -265,6 +292,15 @@ class TaskRepositoryService(object):
             for r in task_repos
             if str(getattr(r, 'id', '') or '').lower() in existing_ids
         ]
+        self.logger.info(
+            'repository scan for task %s found %d repositor%s (%d already '
+            'in the workspace, %d to add%s)',
+            normalized, len(task_repos), 'y' if len(task_repos) == 1 else 'ies',
+            len(already_present), len(missing_repos),
+            ': ' + ', '.join(
+                str(getattr(r, 'id', '') or '') for r in missing_repos
+            ) if missing_repos else '',
+        )
         if not missing_repos:
             return {
                 'synced': True,
@@ -280,16 +316,50 @@ class TaskRepositoryService(object):
         branch_prep_failures = self._put_new_clones_on_the_task_branch(
             normalized, task_obj, provisioned, missing_repos,
         )
+        all_failures = failed_repositories + branch_prep_failures
+        if all_failures:
+            for entry in all_failures:
+                self.logger.error(
+                    'adding repository %s to task %s failed: %s',
+                    entry.get('repository_id') or '<unknown>', normalized,
+                    entry.get('error') or 'unknown error',
+                )
+        if added and not all_failures:
+            self.logger.info(
+                'added %s to task %s', ', '.join(added), normalized,
+            )
         return {
             'synced': bool(added) and not failed_repositories and not branch_prep_failures,
             'task_id': normalized,
             'added_repositories': added,
             'already_present': already_present,
-            'failed_repositories': failed_repositories + branch_prep_failures,
+            'failed_repositories': all_failures,
             'requires_session_restart': self._sync_requires_session_restart(
                 normalized, provisioned, missing_repos,
             ),
         }
+
+    def _sync_failed(self, task_id: str, error: str) -> dict[str, object]:
+        """Log the reason, then return the standard failure envelope.
+
+        Every early return in ``sync_task_repositories`` used to be silent —
+        the reason reached the UI toast only, so an operator who missed the
+        toast had nothing to search for in the activity log.
+        """
+        self.logger.error(
+            'repository scan for task %s failed: %s', task_id, error,
+        )
+        return failure(error, flag='synced', task_id=task_id)
+
+    @staticmethod
+    def _describe_repository_failures(sync_result: dict) -> str:
+        """Flatten ``failed_repositories`` into one log-friendly line."""
+        entries = sync_result.get('failed_repositories') or []
+        return '; '.join(
+            f"{entry.get('repository_id') or '<unknown>'}: "
+            f"{entry.get('error') or 'unknown error'}"
+            for entry in entries
+        )
 
     def _clone_missing_repositories(
         self, task_id: str, task_obj, task_repos: list, missing_repos: list,

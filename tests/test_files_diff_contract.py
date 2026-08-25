@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -500,6 +501,27 @@ def _stabilize_tree_paths(
             _stabilize_tree_paths(
                 node['children'], repo_id=repo_id, tmp_prefix=tmp_prefix,
             )
+
+class TaskFolderTreeIdMirrorTests(unittest.TestCase):
+    """The UI mirrors ``TASK_FOLDER_TREE_ID`` — they must not drift.
+
+    The client uses it to decide that a markdown file is a task DOCUMENT
+    (renders as a preview by default) rather than repo source. A rename on
+    either side silently reverts every task document to raw-text view, with
+    nothing failing to say so.
+    """
+
+    def test_client_constant_matches_the_server(self) -> None:
+        from kato_webserver.app import TASK_FOLDER_TREE_ID
+        source = (
+            Path(__file__).resolve().parent.parent
+            / 'webserver' / 'ui' / 'src' / 'utils' / 'markdownView.js'
+        ).read_text(encoding='utf-8')
+        match = re.search(
+            r"TASK_FOLDER_REPO_ID\s*=\s*'([^']*)'", source,
+        )
+        self.assertIsNotNone(match, 'TASK_FOLDER_REPO_ID not found in markdownView.js')
+        self.assertEqual(match.group(1), TASK_FOLDER_TREE_ID)
 
 
 if __name__ == '__main__':

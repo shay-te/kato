@@ -453,3 +453,78 @@ describe('FileTabStrip — drag to reorder', () => {
     expect(pill('a').className).not.toContain('dragging');
   });
 });
+
+
+// The markdown preview ⇄ source switch. It appears only where there is a
+// rendered view to switch to: a markdown file, shown as a file (a diff is
+// already a source view — rendering it would hide the +/- lines).
+describe('FileTabStrip — markdown preview toggle', () => {
+  function md(overrides = {}) {
+    return tab({
+      key: '/wks/T1/plan.md',
+      absolutePath: '/wks/T1/plan.md',
+      relativePath: 'plan.md',
+      repoId: 'task files',
+      ...overrides,
+    });
+  }
+  const noop = () => {};
+
+  function renderStrip(t, onToggleMarkdownView = noop) {
+    return render(
+      <FileTabStrip
+        tabs={[t]} activeKey={t.key}
+        onSelect={noop} onClose={noop} onToggleView={noop}
+        onToggleMarkdownView={onToggleMarkdownView}
+      />,
+    );
+  }
+
+  test('offers the source switch on a previewed task document', () => {
+    renderStrip(md());
+    expect(screen.getByLabelText('View the plan.md markdown source')).toBeTruthy();
+  });
+
+  test('offers the preview switch on a repo markdown file', () => {
+    renderStrip(md({ repoId: 'client', relativePath: 'README.md',
+      absolutePath: '/wks/T1/client/README.md' }));
+    expect(
+      screen.getByLabelText('View the rendered preview of README.md'),
+    ).toBeTruthy();
+  });
+
+  test('is absent on a non-markdown file', () => {
+    renderStrip(tab());
+    expect(screen.queryByLabelText(/markdown source|rendered preview/)).toBeNull();
+  });
+
+  test('is absent while the tab shows a diff', () => {
+    renderStrip(md({ view: 'diff' }));
+    expect(screen.queryByLabelText(/markdown source|rendered preview/)).toBeNull();
+  });
+
+  test('clicking it toggles the tab, without selecting the tab', () => {
+    const onToggleMarkdownView = vi.fn();
+    const onSelect = vi.fn();
+    render(
+      <FileTabStrip
+        tabs={[md()]} activeKey={md().key}
+        onSelect={onSelect} onClose={noop} onToggleView={noop}
+        onToggleMarkdownView={onToggleMarkdownView}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText('View the plan.md markdown source'));
+    expect(onToggleMarkdownView).toHaveBeenCalledWith('/wks/T1/plan.md');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('is absent when no handler is wired', () => {
+    render(
+      <FileTabStrip
+        tabs={[md()]} activeKey={md().key}
+        onSelect={noop} onClose={noop} onToggleView={noop}
+      />,
+    );
+    expect(screen.queryByLabelText(/markdown source|rendered preview/)).toBeNull();
+  });
+});

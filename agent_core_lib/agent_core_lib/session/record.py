@@ -51,6 +51,29 @@ def session_id_list(value) -> list:
             ids.append(fixed)
     return ids
 
+def _chats_by_backend(value) -> dict:
+    """Normalise the per-backend chat map read from disk.
+
+    Tolerant by design: this is operator-visible state that a hand-edit or an
+    older host may have written differently, and a malformed entry must cost
+    that backend's history — not the whole record, and not the task's tab.
+    """
+    if not isinstance(value, dict):
+        return {}
+    out: dict = {}
+    for backend, entry in value.items():
+        key = str(backend or '').strip().lower()
+        if not key or not isinstance(entry, dict):
+            continue
+        out[key] = {
+            'agent_session_id': fix_session_id(entry.get('agent_session_id')),
+            'previous_session_ids': session_id_list(
+                entry.get('previous_session_ids'),
+            ),
+        }
+    return out
+
+
 @dataclass
 class AgentSessionRecord(object):
     """On-disk metadata for one agent chat session, whatever the backend.
@@ -105,6 +128,17 @@ class AgentSessionRecord(object):
     # the detached session id here so the operator can navigate back to an
     # old conversation (each id resumes via the normal --resume path).
     previous_session_ids: list = field(default_factory=list)
+    # Per-backend chat history: ``{backend: {'agent_session_id': str,
+    # 'previous_session_ids': [...]}}``.
+    #
+    # A task can hold a live conversation with each backend at once — they
+    # are different agents, and an operator asking Codex something does not
+    # want their Claude thread replaced. The fields ABOVE mirror whichever
+    # backend is currently active, so every existing reader keeps working
+    # unchanged; this map is what makes the inactive ones recoverable.
+    # Empty on records written before per-backend chats existed.
+    chats_by_backend: dict = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
@@ -121,6 +155,7 @@ class AgentSessionRecord(object):
             cwd=text_from_mapping(payload, 'cwd'),
             expected_branch=str(payload.get('expected_branch', '') or ''),
             previous_session_ids=session_id_list(payload.get('previous_session_ids')),
+            chats_by_backend=_chats_by_backend(payload.get('chats_by_backend')),
             # Restored, not defaulted: ``to_dict`` has always written these,
             # but this reader dropped them, so the reading the docstring
             # promises would "outlive the subprocess" actually died on the

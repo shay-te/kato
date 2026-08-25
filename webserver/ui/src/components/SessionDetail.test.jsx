@@ -66,6 +66,11 @@ vi.mock('../stores/toastStore.js', () => ({
   toastResult: vi.fn(),
 }));
 vi.mock('../api.js', () => ({
+  // The chat pane's agent tabs read these on mount.
+  fetchAgentBackends: vi.fn().mockResolvedValue({ backends: ['claude'] }),
+  switchTaskBackend: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  fetchTaskChats: vi.fn().mockResolvedValue({ chats: [] }),
+  startTaskChat: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   fetchModels: vi.fn().mockResolvedValue({ models: [] }),
   fetchSessionModel: vi.fn().mockResolvedValue({ model: '' }),
   postChatMessage: vi.fn().mockResolvedValue({ ok: true, body: {} }),

@@ -5,6 +5,8 @@ import {
   faChevronRight,
   faChevronUp,
   faFile,
+  faEye,
+  faCode,
   faFolder,
   faFolderOpen,
   faFolderPlus,
@@ -47,6 +49,8 @@ const ICONS = {
   'chevron-right': faChevronRight,
   'chevron-up': faChevronUp,
   'file': faFile,
+  'eye': faEye,
+  'code': faCode,
   'folder': faFolder,
   'folder-open': faFolderOpen,
   // "Add repository" — distinct from the bare ``plus`` (which the

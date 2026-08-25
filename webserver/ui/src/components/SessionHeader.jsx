@@ -19,7 +19,6 @@ import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast, toastResult } from '../stores/toastStore.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
-import ChatsMenu from './ChatsMenu.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
   formatFinishResult,
@@ -312,7 +311,7 @@ export default function SessionHeader({
     <button
       id="session-approve-push"
       type="button"
-      className="session-action tooltip-below"
+      className="session-action"
       data-tooltip="Approve push: kato will push the branch and open the pull request."
       onClick={pushApproval.approve}
       disabled={pushApproval.busy}
@@ -410,7 +409,7 @@ export default function SessionHeader({
     <button
       id="session-resume"
       type="button"
-      className="session-action tooltip-below is-warning"
+      className="session-action is-warning"
       data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
       onClick={onResumeClick}
       disabled={resuming || typeof onResume !== 'function'}
@@ -422,7 +421,7 @@ export default function SessionHeader({
     <button
       id="session-stop"
       type="button"
-      className="session-action tooltip-below is-danger"
+      className="session-action is-danger"
       data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
       onClick={onStop}
       // Enabled whenever this Stop variant is rendered. The
@@ -479,7 +478,7 @@ export default function SessionHeader({
           <button
             id="session-code-review"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip="Code review — ask Claude to strictly review this task's changes (correctness, security, tests, redundancy, comment cleanup) and fix blockers before the PR."
             onClick={onCodeReview}
             disabled={reviewing}
@@ -490,7 +489,7 @@ export default function SessionHeader({
           <button
             id="session-push"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={pushTitle}
             onClick={taskPublish.push}
             disabled={gitDisabled}
@@ -501,7 +500,7 @@ export default function SessionHeader({
           <button
             id="session-merge-default"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={mergeTitle}
             onClick={onMergeDefault}
             disabled={gitDisabled}
@@ -512,7 +511,7 @@ export default function SessionHeader({
           <button
             id="session-pull"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={pullTitle}
             onClick={onPull}
             disabled={gitDisabled}
@@ -523,7 +522,7 @@ export default function SessionHeader({
           <button
             id="session-pull-request"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={prTitle}
             onClick={taskPublish.createPullRequest}
             disabled={prDisabled}
@@ -534,7 +533,7 @@ export default function SessionHeader({
           <button
             id="session-open-pull-request"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={openPrTitle}
             onClick={onOpenPullRequest}
             disabled={openPrDisabled}
@@ -545,7 +544,7 @@ export default function SessionHeader({
           <button
             id="session-update-source"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip={updateSourceTitle}
             onClick={onUpdateSource}
             disabled={updateSourceDisabled}
@@ -556,7 +555,7 @@ export default function SessionHeader({
           <button
             id="session-finish"
             type="button"
-            className="session-action tooltip-below is-primary"
+            className="session-action is-primary"
             data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
             onClick={onFinish}
             disabled={finishing}
@@ -567,7 +566,7 @@ export default function SessionHeader({
           <button
             id="session-sync"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip="Sync now — run a scan immediately to pick up new review comments, status changes, and PR updates without waiting for the next 3-minute auto-tick."
             onClick={onSyncNow}
             disabled={syncing}
@@ -575,16 +574,10 @@ export default function SessionHeader({
           >
             <BusyIcon busy={syncing} idle="history" />
           </button>
-          <ChatsMenu
-            taskId={session.task_id}
-            onChatChanged={onChatChanged}
-            onChatSwitchPending={onChatSwitchPending}
-            turnInFlight={turnInFlight}
-          />
           <button
             id="session-adopt-claude"
             type="button"
-            className="session-action tooltip-below"
+            className="session-action"
             data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
             onClick={() => setAdoptModalOpen(true)}
             aria-label="Adopt session"

@@ -24,6 +24,8 @@ import { toast } from '../stores/toastStore.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
+import { markdownViewFor } from '../utils/markdownView.js';
+import MarkdownContent from './MarkdownContent.jsx';
 
 /**
  * Read-only Monaco editor that lives in the middle column.
@@ -127,6 +129,15 @@ export default function EditorPane({
   // them), so build the threads list here even though it's only
   // rendered in the happy-path body below.
   const threads = useMemo(() => buildThreads(fileComments), [fileComments]);
+
+  // A per-line composer is portaled into a Monaco view zone, which the
+  // preview doesn't have — leaving ``activeLine`` set while previewing would
+  // strand a half-typed comment in a zone nobody can see. File-level (-1)
+  // renders inline in both views, so it survives the flip.
+  const previewing = markdownViewFor(openFile) === 'preview';
+  useEffect(() => {
+    if (previewing) { setActiveLine((cur) => (cur !== null && cur >= 1 ? null : cur)); }
+  }, [previewing]);
 
   async function onCommentSubmit(line, body, parentId = '') {
     if (!body.trim()) { return false; }
@@ -523,6 +534,20 @@ export default function EditorPane({
   }
 
   const language = languageForPath(openFile.relativePath || openFile.absolutePath);
+  // Rendered markdown instead of Monaco. Task-folder documents (plan.md,
+  // pr_description.md) default here — they are prose written for the
+  // operator, and raw ``##``/``|---|`` is not how you read a plan. The
+  // switch lives on the file tab, beside the diff toggle.
+  const showMarkdownPreview = previewing;
+
+  // Built once and spread at BOTH render sites (Monaco's view zone and the
+  // markdown preview) — two hand-copied prop lists is how one of the views
+  // ends up silently missing a handler.
+  const commentsProps = {
+    commentsError, threads, activeLine, replyTo, setReplyTo, jumpToLine,
+    onResolve, onReopen, onDelete, onMarkAddressed, onEdit, onCommentSubmit,
+    setActiveLine, taskId, repoId, filePath,
+  };
 
   let body;
   if (state.loading) {
@@ -543,6 +568,18 @@ export default function EditorPane({
     body = (
       <div className="editor-pane-message editor-pane-message-error">
         {state.error}
+      </div>
+    );
+  } else if (showMarkdownPreview) {
+    body = (
+      <div className="editor-pane-markdown">
+        <MarkdownContent>{state.content}</MarkdownContent>
+        {/* Same threads the source view shows in its trailing Monaco view
+            zone — without this a comment on a previewed file would look
+            like it had been deleted. Line-anchored ones can't jump (there
+            are no line numbers in rendered prose), so their anchor button
+            is inert here; the operator flips to source to act on it. */}
+        <EditorComments {...commentsProps} />
       </div>
     );
   } else {
@@ -614,71 +651,92 @@ export default function EditorPane({
       {/* All file-level + per-line discussion lives in a single Monaco
           view zone anchored AFTER the last line — Monaco's scrollbar
           is the only scroller for the pane. Same ``CommentThread`` the
-          diff uses. */}
-      {commentsZoneNode && createPortal(
-        <div
-          className="editor-pane-comments-wrap"
-          onMouseDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {commentsError && (
-            <p className="editor-pane-message editor-pane-message-error">
-              {commentsError}
-            </p>
-          )}
-          {threads.map(({ root, replies }) => (
-            <div key={root.id} className="editor-pane-comment-thread">
-              <div className="editor-pane-comment-anchor">
-                {root.line >= 0 ? (
-                  <button
-                    type="button"
-                    className="editor-pane-comment-jump"
-                    onClick={() => jumpToLine(root.line)}
-                    title="Jump to this line in the editor"
-                  >
-                    line {root.line}
-                  </button>
-                ) : (
-                  <span className="editor-pane-comment-jump is-file">file-level</span>
-                )}
-              </div>
-              <CommentThread
-                thread={{ root, replies }}
-                onResolve={(id) => onResolve({ id })}
-                onReopen={(id) => onReopen({ id })}
-                onDelete={(id) => onDelete({ id })}
-                onMarkAddressed={(id) => onMarkAddressed({ id })}
-                onEdit={onEdit}
-                onReply={(rootId) => setReplyTo(rootId)}
-              />
-              {replyTo === root.id && (
-                <CommentForm
-                  placeholder="Reply…"
-                  replyMode
-                  onSubmit={(b) => onCommentSubmit(root.line, b, root.id)}
-                  onCancel={() => setReplyTo('')}
-                  draftKey={commentDraftKey(taskId, repoId, filePath, `reply:${root.id}`)}
-                />
-              )}
-            </div>
-          ))}
-          {activeLine === -1 && (
-            <div className="editor-pane-comment-thread">
-              <div className="editor-pane-comment-anchor">
-                <span className="editor-pane-comment-jump is-file">file-level</span>
-              </div>
-              <CommentForm
-                placeholder="What should kato do about this file?"
-                onSubmit={(b) => onCommentSubmit(activeLine, b)}
-                onCancel={() => setActiveLine(null)}
-                draftKey={commentDraftKey(taskId, repoId, filePath, 'file')}
-              />
-            </div>
-          )}
-        </div>,
+          diff uses. The markdown preview renders the SAME component
+          inline instead (no Monaco, so no view zone to portal into). */}
+      {!showMarkdownPreview && commentsZoneNode && createPortal(
+        <EditorComments insideEditor {...commentsProps} />,
         commentsZoneNode,
       )}
     </section>
+  );
+}
+
+
+// The file's comment threads. Rendered in TWO places and therefore
+// extracted: inside Monaco's trailing view zone for the source view, and
+// straight after the rendered body in the markdown preview — where there
+// is no Monaco at all, so a portal-only version would make every comment
+// on a previewed file silently vanish.
+function EditorComments({
+  insideEditor, commentsError, threads, activeLine, replyTo, setReplyTo,
+  jumpToLine, onResolve, onReopen, onDelete, onMarkAddressed, onEdit,
+  onCommentSubmit, setActiveLine, taskId, repoId, filePath,
+}) {
+  return (
+    <div
+      className="editor-pane-comments-wrap"
+      {...(insideEditor ? {
+    // Monaco re-grabs focus on mousedown inside its own DOM; the
+    // preview is plain DOM and needs no such guard.
+    onMouseDown: (e) => e.stopPropagation(),
+    onPointerDown: (e) => e.stopPropagation(),
+      } : {})}
+    >
+      {commentsError && (
+        <p className="editor-pane-message editor-pane-message-error">
+          {commentsError}
+        </p>
+      )}
+      {threads.map(({ root, replies }) => (
+        <div key={root.id} className="editor-pane-comment-thread">
+          <div className="editor-pane-comment-anchor">
+            {root.line >= 0 ? (
+              <button
+                type="button"
+                className="editor-pane-comment-jump"
+                onClick={() => jumpToLine(root.line)}
+                title="Jump to this line in the editor"
+              >
+                line {root.line}
+              </button>
+            ) : (
+              <span className="editor-pane-comment-jump is-file">file-level</span>
+            )}
+          </div>
+          <CommentThread
+            thread={{ root, replies }}
+            onResolve={(id) => onResolve({ id })}
+            onReopen={(id) => onReopen({ id })}
+            onDelete={(id) => onDelete({ id })}
+            onMarkAddressed={(id) => onMarkAddressed({ id })}
+            onEdit={onEdit}
+            onReply={(rootId) => setReplyTo(rootId)}
+          />
+          {replyTo === root.id && (
+            <CommentForm
+              placeholder="Reply…"
+              replyMode
+              onSubmit={(b) => onCommentSubmit(root.line, b, root.id)}
+              onCancel={() => setReplyTo('')}
+              draftKey={commentDraftKey(taskId, repoId, filePath, `reply:${root.id}`)}
+            />
+          )}
+        </div>
+      ))}
+      {activeLine === -1 && (
+        <div className="editor-pane-comment-thread">
+          <div className="editor-pane-comment-anchor">
+            <span className="editor-pane-comment-jump is-file">file-level</span>
+          </div>
+          <CommentForm
+            placeholder="What should kato do about this file?"
+            onSubmit={(b) => onCommentSubmit(activeLine, b)}
+            onCancel={() => setActiveLine(null)}
+            draftKey={commentDraftKey(taskId, repoId, filePath, 'file')}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
