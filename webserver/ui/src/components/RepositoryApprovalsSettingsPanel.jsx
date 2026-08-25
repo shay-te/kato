@@ -8,6 +8,7 @@ import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
+import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 
 // "Repository approvals" tab — the UI replacement for the old
 // ``./kato approve-repo`` CLI picker. Lists every candidate kato
@@ -22,7 +23,7 @@ import SettingsActions from './settings/SettingsActions.jsx';
 const MODE_RESTRICTED = 'restricted';
 const MODE_TRUSTED = 'trusted';
 
-export default function RepositoryApprovalsSettingsPanel() {
+export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) {
   const [meta, setMeta] = useState({ rows: [], storagePath: '' });
   // Per-row pending edits keyed by repository_id. Each value is
   // ``{ approved: bool, mode: 'restricted' | 'trusted' }``. We
@@ -214,6 +215,22 @@ export default function RepositoryApprovalsSettingsPanel() {
             saving={saving}
             canSave={hasChanges}
             primaryLabel="Save changes"
+          />
+
+          {/* Which repos are candidates AT ALL. Lifted out of the General
+              tab: the ignore list decides what appears in the table above,
+              and the denylist is a hard refusal — both are approval
+              decisions, so they belong on this tab. */}
+          <SchemaFieldGroup
+            sectionId="general"
+            panel="approvals"
+            highlightKey={highlightKey}
+            title="Repository scope"
+            description={
+              'Applied before the table above: ignored folders never reach '
+              + 'auto-discovery, and denylisted ids are refused at boot even '
+              + 'if approved. Both need a kato restart.'
+            }
           />
         </>
       </SettingsPanelBody>

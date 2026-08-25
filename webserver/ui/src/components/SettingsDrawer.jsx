@@ -106,7 +106,7 @@ export default function SettingsDrawer({
   if (tab === TAB_REPOS) {
     panel = <RepositoriesSettingsPanel />;
   } else if (tab === TAB_APPROVALS) {
-    panel = <RepositoryApprovalsSettingsPanel />;
+    panel = <RepositoryApprovalsSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_PERMISSIONS) {
     panel = <ClaudePermissionsSettingsPanel />;
   } else if (tab === TAB_ACTION_GUARD) {

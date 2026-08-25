@@ -1565,14 +1565,34 @@ def _register_http_routes(app: Flask) -> None:
         backend whose manager does not exist would hand the operator a
         picker entry that fails at the first message.
         """
+        from kato_core_lib.helpers.agent_backend_readiness import (
+            probe_chat_backends,
+            reset_probe_cache,
+        )
+        if request.args.get('refresh'):
+            # The setup panel's "Check again": an operator who just installed
+            # the CLI must not have to wait out a cache they cannot see.
+            reset_probe_cache()
         manager = app.config.get('SESSION_MANAGER')
         available = getattr(manager, 'available_backends', None)
-        backends = list(available()) if callable(available) else []
-        if not backends:
+        wired = set(available()) if callable(available) else set()
+        if not wired:
             # A host with a single (unrouted) manager still has one backend.
-            backends = [str(getattr(manager, 'AGENT_BACKEND', '') or '')]
+            wired = {str(getattr(manager, 'AGENT_BACKEND', '') or '')}
+        entries = []
+        for probe in probe_chat_backends(app.config.get('AGENT_BINARIES') or {}):
+            # ``wired`` and ``ready`` are DIFFERENT questions and both matter:
+            # wired = kato built a session manager for it; ready = its CLI is
+            # installed and answers. A tab is shown either way — an unready
+            # one opens the setup panel instead of a chat — but only a
+            # both-true backend can actually take a message.
+            entries.append({
+                **probe,
+                'wired': probe['id'] in wired,
+                'chat_available': probe['ready'] and probe['id'] in wired,
+            })
         return jsonify({
-            'backends': [b for b in backends if b],
+            'backends': entries,
             'default': str(getattr(manager, 'default_backend', '') or ''),
         })
 

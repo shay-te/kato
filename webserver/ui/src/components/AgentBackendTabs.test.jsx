@@ -22,9 +22,24 @@ beforeEach(() => {
   fetchTaskChats.mockResolvedValue({ chats: [] });
 });
 
+// ``/api/agent-backends`` returns one entry PER BACKEND with its readiness,
+// not a list of ids: both tabs always show, and ``ready`` decides whether the
+// tab opens a chat or a setup panel.
+function backendEntry(id, overrides = {}) {
+  return {
+    id,
+    label: id === 'codex' ? 'Codex' : 'Claude',
+    ready: true,
+    wired: true,
+    chat_available: true,
+    error: '',
+    ...overrides,
+  };
+}
+
 describe('AgentBackendTabs', () => {
   it('shows one tab per agent the host can run', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
 
     render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
 
@@ -33,7 +48,7 @@ describe('AgentBackendTabs', () => {
   });
 
   it('marks the task\'s current agent as the selected tab', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
 
     render(<AgentBackendTabs taskId="T1" activeBackend="codex" />);
 
@@ -44,7 +59,7 @@ describe('AgentBackendTabs', () => {
   });
 
   it('switching tabs asks the backend to swap the conversation', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
     switchTaskBackend.mockResolvedValue({ ok: true, body: {} });
     const onBackendChanged = vi.fn();
 
@@ -60,7 +75,7 @@ describe('AgentBackendTabs', () => {
 
   it('clicking the tab you are already on does nothing', async () => {
     // Re-switching would rewrite the record on every stray click.
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
 
     render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
     fireEvent.click(await screen.findByRole('tab', { name: 'Claude' }));
@@ -69,7 +84,7 @@ describe('AgentBackendTabs', () => {
   });
 
   it('a failed switch is reported and does not change tab', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
     switchTaskBackend.mockResolvedValue({ ok: false, error: 'not configured' });
     const onBackendChanged = vi.fn();
 
@@ -83,7 +98,7 @@ describe('AgentBackendTabs', () => {
 
   it('each tab carries its own chat history, scoped to that agent', async () => {
     // A Claude tab must never list a Codex thread it cannot resume.
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
 
     render(<AgentBackendTabs taskId="T1" activeBackend="codex" />);
     fireEvent.click(await screen.findByRole('button', { name: /chats/i }));
@@ -95,7 +110,7 @@ describe('AgentBackendTabs', () => {
 
   it('only the ACTIVE tab shows a history button', async () => {
     // An inactive tab's menu would switch conversations behind the operator.
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
+    fetchAgentBackends.mockResolvedValue({ backends: [backendEntry('claude'), backendEntry('codex')] });
 
     render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
     await screen.findByRole('tab', { name: 'Codex' });
@@ -111,7 +126,7 @@ describe('AgentBackendTabs', () => {
     render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
 
     expect(screen.getByRole('tab', { name: 'Claude' })).toBeTruthy();
-    resolve({ backends: ['claude'] });
+    resolve({ backends: [backendEntry('claude')] });
   });
 
   it('a failed backend lookup still leaves the current agent usable', async () => {
@@ -128,5 +143,86 @@ describe('AgentBackendTabs', () => {
     const { container } = render(<AgentBackendTabs taskId="T1" activeBackend="" />);
 
     await waitFor(() => expect(container.innerHTML).toBe(''));
+  });
+});
+
+
+// A backend whose CLI is missing keeps its tab — hiding it is how the
+// operator never learns kato can run that agent at all.
+describe('AgentBackendTabs — unready backends', () => {
+  const UNREADY = backendEntry('codex', {
+    ready: false, chat_available: false,
+    error: 'Codex CLI ("codex") was not found on PATH.',
+  });
+
+  test('an unready backend still gets a tab', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNREADY],
+    });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    expect(await screen.findByRole('tab', { name: /Codex/ })).toBeTruthy();
+  });
+
+  test('its tab is marked as needing attention', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNREADY],
+    });
+    const { container } = render(
+      <AgentBackendTabs taskId="T1" activeBackend="claude" />,
+    );
+    await screen.findByRole('tab', { name: /Codex/ });
+    expect(container.querySelector('.agent-backend-tab.is-unready')).toBeTruthy();
+  });
+
+  test('it offers no chat history — there is no chat to list', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNREADY],
+    });
+    render(<AgentBackendTabs taskId="T1" activeBackend="codex" />);
+    await screen.findByRole('tab', { name: /Codex/ });
+    expect(screen.queryByRole('button', { name: /chats/i })).toBeNull();
+  });
+
+  test('a ready active backend keeps its history button', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNREADY],
+    });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    await screen.findByRole('tab', { name: /Codex/ });
+    expect(screen.getAllByRole('button', { name: /chats/i }).length).toBe(1);
+  });
+
+  test('readiness of the ACTIVE tab is reported upward', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNREADY],
+    });
+    const onReadinessChange = vi.fn();
+    render(
+      <AgentBackendTabs
+        taskId="T1" activeBackend="codex"
+        onReadinessChange={onReadinessChange}
+      />,
+    );
+    await screen.findByRole('tab', { name: /Codex/ });
+    const last = onReadinessChange.mock.calls.at(-1)[0];
+    expect(last.id).toBe('codex');
+    expect(last.ready).toBe(false);
+    expect(last.error).toContain('not found on PATH');
+  });
+
+  test('the pre-load placeholder is treated as ready', async () => {
+    // Otherwise a working chat flashes a setup panel while the probe is in
+    // flight on every remount.
+    let resolve;
+    fetchAgentBackends.mockReturnValue(new Promise((r) => { resolve = r; }));
+    const onReadinessChange = vi.fn();
+    render(
+      <AgentBackendTabs
+        taskId="T1" activeBackend="claude"
+        onReadinessChange={onReadinessChange}
+      />,
+    );
+    expect(onReadinessChange.mock.calls.at(-1)[0].ready).toBe(true);
+    resolve({ backends: [backendEntry('claude')] });
   });
 });

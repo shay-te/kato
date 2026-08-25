@@ -183,12 +183,11 @@ export default function Tab({
     onTogglePin(session.task_id);
   }
 
-  const hasChangesPending = !!session.has_changes_pending;
-  const changesIndicator = hasChangesPending && (
-    <span className="tab-changes-indicator" aria-hidden="true">
-      <Icon name="commit" />
-    </span>
-  );
+  // No unpushed-changes glyph on the tab. It sat between the task name and
+  // the tab's buttons as an unlabelled symbol with no hover text — operators
+  // read it as noise and asked twice what it meant. The information still
+  // exists where it changes a decision: the forget-task dialog warns about
+  // unpushed work before it lets you delete the workspace.
 
   // The tab shows the task NAME next to the id (VSCode/Chrome style) so the
   // operator can tell tabs apart WITHOUT hovering for the tooltip. The id
@@ -238,7 +237,7 @@ export default function Tab({
     if (measured > 0) {
       setNaturalWidth(measured + NATURAL_WIDTH_SLACK_PX);
     }
-  }, [label, renaming, pinned, hasChangesPending, session.task_id]);
+  }, [label, renaming, pinned, session.task_id]);
 
   const { width: cap, hasCustomWidth, onPointerDown } = useResizable({
     storageKey: capKey,
@@ -264,12 +263,6 @@ export default function Tab({
     // between "no reserve, grow to fit" and "reserve room for the trailing
     // controls inside a fixed width" — see app.scss.
     hasCustomWidth && 'has-custom-width',
-    // The changes indicator is the one trailing control that comes and goes,
-    // and the label's reserve has to follow it. Reserving for it
-    // unconditionally squeezes every tab without one by 17px — which shows
-    // up as an early ellipsis AND a gap after the ×, since inline content
-    // packs left and the denied pixels resurface at the end of the row.
-    hasChangesPending && 'has-changes',
   );
 
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
@@ -375,7 +368,6 @@ export default function Tab({
             </span>
           ) : null}
         </span>
-        {changesIndicator}
         {typeof onRename === 'function' && !renaming && (
           <button
             type="button"

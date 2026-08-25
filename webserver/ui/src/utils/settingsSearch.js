@@ -20,13 +20,22 @@ export function buildSettingsIndex(sections, bespokeTabs = []) {
       kind: 'tab',
     });
   }
+  // A field the schema tagged with ``panel`` renders inside that bespoke
+  // tab, not its section's generic one — so index it under the tab it is
+  // actually visible on, or the search jump lands on a tab without it.
+  const bespokeById = new Map(
+    (bespokeTabs || []).filter((t) => t && t.id).map((t) => [t.id, t]),
+  );
   for (const section of sections || []) {
     if (!section || !section.id) { continue; }
     for (const field of section.fields || []) {
       if (!field || !field.key) { continue; }
+      const host = field.panel ? bespokeById.get(field.panel) : null;
       entries.push({
-        tabId: `schema:${section.id}`,
-        section: section.label || section.id,
+        tabId: host ? host.id : `schema:${section.id}`,
+        section: host
+          ? (host.label || host.id)
+          : (section.label || section.id),
         key: field.key,
         label: field.label || field.key,
         description: field.description || '',

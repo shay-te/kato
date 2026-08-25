@@ -777,10 +777,18 @@ export function startTaskChat(taskId, agentSessionId = '', agentBackend = '') {
   );
 }
 
-// Backends this host can actually start a chat on. Empty on any failure so
-// the menu falls back to a plain "New chat" rather than an empty picker.
+// Every chat backend with its readiness — both tabs always come back; the
+// ``ready`` flag decides whether a tab opens a chat or a setup panel. Empty
+// on any failure so the pane falls back to the backend it is already on.
 export function fetchAgentBackends() {
   return fetchJson('/api/agent-backends');
+}
+
+// Drop the server's memoised readiness probe so the NEXT fetch re-runs it.
+// Backs the setup panel's "Check again" — an operator who just installed the
+// CLI must not be told to wait out a cache they cannot see.
+export function refreshAgentBackends() {
+  return fetchJson('/api/agent-backends?refresh=1');
 }
 
 // Switch which agent this task's chat pane is talking to. The outgoing

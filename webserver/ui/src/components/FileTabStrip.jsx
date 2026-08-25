@@ -4,6 +4,7 @@ import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import Icon from './Icon.jsx';
 import DiffKindIcon from './DiffKindIcon.jsx';
+import { markdownViewFor } from '../utils/markdownView.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -16,7 +17,7 @@ import DiffKindIcon from './DiffKindIcon.jsx';
 const NO_DRAG = { key: '', over: '' };
 
 export default function FileTabStrip({
-  tabs, activeKey, onSelect, onClose, onToggleView,
+  tabs, activeKey, onSelect, onClose, onToggleView, onToggleMarkdownView,
   onCloseAll, onCloseOthers, onTogglePin, onReorder,
   // Bumped ONLY when the operator opened a file from the tree. Scrolling
   // the tab into view is a response to that click and nothing else — see
@@ -81,6 +82,7 @@ export default function FileTabStrip({
             onSelect={onSelect}
             onClose={onClose}
             onToggleView={onToggleView}
+            onToggleMarkdownView={onToggleMarkdownView}
             dragging={drag.key === tab.key}
             dropTarget={drag.over === tab.key && drag.key !== tab.key}
             // Pins are a block at the front of the strip, so a tab can only
@@ -199,8 +201,8 @@ function FileTabMenu({
 }
 
 function FileTab({
-  tab, active, nodeRef, onSelect, onClose, onToggleView, onContextMenu,
-  dragging, dropTarget, canDrop,
+  tab, active, nodeRef, onSelect, onClose, onToggleView, onToggleMarkdownView,
+  onContextMenu, dragging, dropTarget, canDrop,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
   const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
@@ -214,6 +216,15 @@ function FileTab({
 
   function handleSelect() {
     onSelect(tab.key);
+  }
+  // '' for anything that isn't markdown, so the switch only appears where
+  // there is a rendered view to switch to. A diff is already a source view —
+  // rendering markdown would hide the +/- lines, so no switch there either.
+  const mdView = isDiff ? '' : markdownViewFor(tab);
+  const isPreview = mdView === 'preview';
+  function handleToggleMarkdownView(event) {
+    event.stopPropagation();
+    onToggleMarkdownView(tab.key);
   }
   function handleToggleView(event) {
     // Not a tab selection — the click stops here or the strip would
@@ -296,6 +307,22 @@ function FileTab({
           control next to the close X, where a tab's actions live. */}
       {tabIcon}
       <span className="file-tab-label">{name}</span>
+      {mdView && typeof onToggleMarkdownView === 'function' && (
+        <button
+          type="button"
+          className="file-tab-view-toggle tooltip-start"
+          onClick={handleToggleMarkdownView}
+          data-tooltip={isPreview ? 'View the markdown source' : 'View the rendered preview'}
+          aria-label={
+            isPreview
+              ? `View the ${name} markdown source`
+              : `View the rendered preview of ${name}`
+          }
+        >
+          {/* Shows the TARGET view, like the diff toggle beside it. */}
+          <Icon name={isPreview ? 'code' : 'eye'} />
+        </button>
+      )}
       {typeof onToggleView === 'function' && (
         <button
           type="button"

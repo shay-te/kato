@@ -37,7 +37,12 @@ test('SessionHeader title row clips long summaries to one line', () => {
 });
 
 test('Chats menu rows override the global header icon-button skin', () => {
-  const body = ruleBody('header .chats-menu button:not(.header-status)');
+  // Scoped to the MENU, not ``header .chats-menu``. The chats button moved
+  // out of the session header into the agent-tab strip, and the old
+  // descendant selector then matched nothing — every row silently lost its
+  // full-width 40px skin and rendered as a cramped icon button.
+  assert.doesNotMatch(css, /header \.chats-menu button/);
+  const body = ruleBody('.chats-menu button:not(.header-status)');
 
   assertDeclaration(body, 'width', '100%');
   assertDeclaration(body, 'height', 'auto');
@@ -46,4 +51,15 @@ test('Chats menu rows override the global header icon-button skin', () => {
   assertDeclaration(body, 'border', '0');
   assertDeclaration(body, 'border-radius', '0');
   assertDeclaration(body, 'padding', '8px 12px');
+});
+
+test('the chats menu opens rightward from its button', () => {
+  // It was ``right: 0`` — correct while the button sat at the right end of
+  // the session header, wrong once it moved to the agent-tab strip at the
+  // chat panel's LEFT edge: a 420px-wide menu anchored by its right edge
+  // hung ~360px off-panel and the operator saw a clipped popup.
+  const body = ruleBody('.chats-menu');
+  assertDeclaration(body, 'left', '0');
+  assertDeclaration(body, 'right', 'auto');
+  assert.doesNotMatch(body, /right:\s*0;/);
 });

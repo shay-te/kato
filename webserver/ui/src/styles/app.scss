@@ -863,10 +863,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   max-width: calc(100% - 80px);
 }
 
-.tabs-pane-top .tab.has-custom-width.has-changes .tab-label {
-  max-width: calc(100% - 96px);
-}
-
 /* Auto-sizing tab: the name is shown in full. A plain px ceiling (not a
  * percentage, which would feed back into the tab's own shrink-to-fit width)
  * stops one pathological ticket summary from claiming the whole strip. Sized
@@ -922,12 +918,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tabs-pane-top .tab .tab-changes-indicator {
-  display: inline-flex;
-  color: $C-ORANGE-50;
-  font-size: $TEXT-10;
 }
 
 .tabs-pane-top .tab .tab-forget-btn {
@@ -1624,8 +1614,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 .chats-menu {
   position: absolute;
   top: calc(100% + #{$SPACE-4});
-  right: 0;
-  z-index: 10;
+  /* LEFT-anchored, growing rightward. It used to be ``right: 0`` — correct
+   * while the button lived at the right end of the session header, but the
+   * button now sits in the agent-tab strip at the chat panel's LEFT edge, so
+   * a 420px-wide menu anchored by its right edge hung ~360px off-panel and
+   * was clipped. */
+  left: 0;
+  right: auto;
+  z-index: 30;
   padding: $SPACE-4 0;
   background: $C-NEUTRAL-16;
   border: 1px solid $C-NEUTRAL-16;
@@ -1758,6 +1754,69 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-bottom: -1px;
 }
 
+/* A backend whose CLI is missing still gets a tab — it opens the setup
+ * panel instead of a chat, so the "!" marks it as needing attention rather
+ * than the tab being absent entirely. */
+.agent-backend-tab.is-unready .agent-backend-tab-button {
+  color: $C-NEUTRAL-45;
+}
+
+.agent-backend-tab-unready {
+  margin-left: $SPACE-4;
+  color: $C-AMBER-77;
+  font-weight: 700;
+}
+
+.agent-backend-setup {
+  padding: $SPACE-20;
+  overflow-y: auto;
+}
+
+.agent-backend-setup-title {
+  margin: 0 0 $SPACE-8 0;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-15;
+  font-weight: 650;
+}
+
+.agent-backend-setup-lead {
+  margin: 0 0 $SPACE-14 0;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-13;
+  line-height: 1.6;
+}
+
+.agent-backend-setup-detail {
+  margin: 0 0 $SPACE-14 0;
+  padding: $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-09;
+  color: $C-NEUTRAL-83;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: $TEXT-12;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.agent-backend-setup-detail.is-empty {
+  font-family: inherit;
+  white-space: normal;
+}
+
+.agent-backend-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-10;
+  flex-wrap: wrap;
+}
+
+.agent-backend-setup-hint {
+  color: $C-NEUTRAL-45;
+  font-size: $TEXT-12;
+}
+
 .agent-backend-tab.is-active {
   border-bottom-color: $C-NEUTRAL-64;
 }
@@ -1796,7 +1855,11 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   vertical-align: baseline;
 }
 
-header .chats-menu button:not(.header-status) {
+/* Scoped to the menu itself, NOT ``header .chats-menu``: the chats button
+ * moved out of the session header into the agent-tab strip, so the old
+ * descendant selector silently stopped matching and every row lost its
+ * full-width 40px skin. ChatsMenu has exactly one render site. */
+.chats-menu button:not(.header-status) {
   width: 100%;
   height: auto;
   min-height: 40px;
@@ -8378,17 +8441,6 @@ body.kato-resizing {
   line-height: 1.4;
 }
 
-.tab-changes-indicator {
-  grid-column: 3;
-  grid-row: 1/span 2;
-  align-self: center;
-  color: $C-ORANGE-50;
-  font-size: $TEXT-14;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-}
-
 /* Adopt Claude session modal */
 .adopt-session-modal-backdrop {
   position: fixed;
@@ -9315,6 +9367,51 @@ body.kato-resizing {
 .settings-drawer-divider {
   border-top: 1px solid $C-NEUTRAL-16;
   margin: $SPACE-14 0;
+}
+
+/* Schema fields lifted into a bespoke tab (SchemaFieldGroup) — e.g. the
+ * repo ignore list + denylist on the Approvals tab. The rule above it
+ * separates it from the tab's own content. */
+/* Rendered markdown in the centre pane (EditorPane preview mode). Reuses
+ * the chat bubble's markdown rules via .md-* class names; this only owns
+ * the scroll container + reading measure. */
+.editor-pane-markdown {
+  height: 100%;
+  overflow: auto;
+  padding: $SPACE-16 $SPACE-20;
+  color: $C-NEUTRAL-83;
+  font-size: $TEXT-13;
+  line-height: 1.6;
+
+  > *:first-child {
+    margin-top: 0;
+  }
+
+  pre,
+  table,
+  img {
+    max-width: 100%;
+  }
+}
+
+.settings-drawer-field-group {
+  border-top: 1px solid $C-NEUTRAL-16;
+  margin-top: $SPACE-14;
+  padding-top: $SPACE-14;
+}
+
+.settings-drawer-field-group-title {
+  margin: 0 0 $SPACE-4 0;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-12;
+  font-weight: 600;
+}
+
+.settings-drawer-field-group-help {
+  margin: 0 0 $SPACE-10 0;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+  line-height: 1.5;
 }
 
 .settings-drawer-field-label {

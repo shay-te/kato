@@ -22,6 +22,7 @@ export default function AgentBackendTabs({
   onBackendChanged,
   onChatChanged,
   onChatSwitchPending,
+  onReadinessChange,
   turnInFlight = false,
 }) {
   const [backends, setBackends] = useState([]);
@@ -41,10 +42,24 @@ export default function AgentBackendTabs({
 
   // Until the list loads, show the tab the session is actually on rather
   // than nothing — the history button must not disappear on every remount.
+  // A pre-load placeholder is assumed READY: the session is already running
+  // on it, so flashing a setup panel over a working chat would be a lie.
   const tabs = backends.length > 0
     ? backends
-    : (activeBackend ? [activeBackend] : []);
-  const current = activeBackend || tabs[0] || '';
+    : (activeBackend
+      ? [{ id: activeBackend, label: backendLabel(activeBackend),
+          ready: true, chat_available: true, error: '' }]
+      : []);
+  const current = activeBackend || tabs[0]?.id || '';
+  const currentEntry = tabs.find((t) => t.id === current) || null;
+
+  // The chat area needs to know whether to render a chat or a setup panel,
+  // and only this component knows what the probe said.
+  useEffect(() => {
+    if (typeof onReadinessChange === 'function') {
+      onReadinessChange(currentEntry);
+    }
+  }, [onReadinessChange, currentEntry]);
 
   async function pickBackend(backend) {
     if (switching || backend === current) { return; }
@@ -70,12 +85,21 @@ export default function AgentBackendTabs({
   return (
     <div className="agent-backend-tabs" role="tablist"
          aria-label="Agent for this task">
-      {tabs.map((backend) => {
+      {tabs.map((entry) => {
+        const backend = entry.id;
         const active = backend === current;
+        // Not ready = its CLI is missing or won't answer. The tab still
+        // shows (hiding it is how the operator never learns the backend
+        // exists) — selecting it opens setup instructions instead of a chat.
+        const unready = entry.ready === false;
         return (
           <div
             key={backend}
-            className={`agent-backend-tab${active ? ' is-active' : ''}`}
+            className={[
+              'agent-backend-tab',
+              active ? 'is-active' : '',
+              unready ? 'is-unready' : '',
+            ].filter(Boolean).join(' ')}
           >
             <button
               type="button"
@@ -84,18 +108,26 @@ export default function AgentBackendTabs({
               className="agent-backend-tab-button"
               onClick={() => pickBackend(backend)}
               disabled={switching}
-              title={active
-                ? `This task's chat is running on ${backendLabel(backend)}`
-                : `Switch to ${backendLabel(backend)} — the current `
-                  + 'conversation is kept and can be switched back to'}
+              title={unready
+                ? `${backendLabel(backend)} is not set up on this host — `
+                  + 'open the tab for instructions'
+                : active
+                  ? `This task's chat is running on ${backendLabel(backend)}`
+                  : `Switch to ${backendLabel(backend)} — the current `
+                    + 'conversation is kept and can be switched back to'}
             >
               {backendLabel(backend)}
+              {unready && (
+                <span className="agent-backend-tab-unready" aria-hidden="true">
+                  !
+                </span>
+              )}
             </button>
             {/* Each tab carries its OWN history. Rendered only for the
                 active tab: the menu acts on the task's live chat, and an
                 inactive tab's button would switch conversations behind the
                 operator's back. */}
-            {active ? (
+            {active && !unready ? (
               <ChatsMenu
                 taskId={taskId}
                 agentBackend={backend}

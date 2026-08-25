@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION_ID
 from kato_webserver.app import (
@@ -1791,6 +1791,25 @@ class NewChatBackendChoiceTests(unittest.TestCase):
 
 
 class AgentBackendsRouteTests(unittest.TestCase):
+    """Every chat backend is listed; ``wired`` says which kato can run.
+
+    The route used to return the wired ids ONLY, which meant a host without
+    a codex manager showed a Claude tab and nothing else — the operator had
+    no way to discover the Codex backend existed. Both now come back, and
+    the readiness flags decide chat-vs-setup-panel in the UI.
+    """
+
+    def setUp(self) -> None:
+        from kato_core_lib.helpers import agent_backend_readiness
+        self.readiness = agent_backend_readiness
+        agent_backend_readiness.reset_probe_cache()
+        self.addCleanup(agent_backend_readiness.reset_probe_cache)
+        # No subprocesses in a route test: the probe shells out to the CLIs.
+        patcher = patch.object(agent_backend_readiness, '_build_probe_client')
+        self.probe = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.probe.return_value.validate_connection.return_value = None
+
     def test_it_reports_what_the_host_can_actually_run(self) -> None:
         manager = MagicMock()
         manager.available_backends.return_value = ['claude', 'codex']
@@ -1799,7 +1818,9 @@ class AgentBackendsRouteTests(unittest.TestCase):
 
         body = app.test_client().get('/api/agent-backends').get_json()
 
-        self.assertEqual(body['backends'], ['claude', 'codex'])
+        self.assertEqual([e['id'] for e in body['backends']], ['claude', 'codex'])
+        self.assertTrue(all(e['wired'] for e in body['backends']))
+        self.assertTrue(all(e['chat_available'] for e in body['backends']))
         self.assertEqual(body['default'], 'claude')
 
     def test_a_single_unrouted_manager_still_reports_its_backend(self) -> None:
@@ -1809,7 +1830,23 @@ class AgentBackendsRouteTests(unittest.TestCase):
 
         body = app.test_client().get('/api/agent-backends').get_json()
 
-        self.assertEqual(body['backends'], ['claude'])
+        wired = [e['id'] for e in body['backends'] if e['wired']]
+        self.assertEqual(wired, ['claude'])
+
+    def test_an_unwired_backend_is_listed_but_cannot_chat(self) -> None:
+        manager = MagicMock()
+        manager.available_backends.return_value = ['claude']
+        manager.default_backend = 'claude'
+        app = create_app(session_manager=manager, agent_service=MagicMock())
+
+        body = app.test_client().get('/api/agent-backends').get_json()
+
+        codex = next(e for e in body['backends'] if e['id'] == 'codex')
+        # Listed (so the tab exists) but not chattable (so the tab opens the
+        # setup panel rather than a dead composer).
+        self.assertTrue(codex['ready'])
+        self.assertFalse(codex['wired'])
+        self.assertFalse(codex['chat_available'])
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AgentBackendTabs from './AgentBackendTabs.jsx';
+import AgentBackendSetup from './AgentBackendSetup.jsx';
 import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
@@ -26,7 +27,9 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode } from '../api.js';
+import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode,
+  refreshAgentBackends,
+} from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 
@@ -127,6 +130,30 @@ export default function SessionDetail({
   // in-pane position) when the slot isn't in the DOM (unit tests /
   // the legacy sidebar shell).
   const [headerSlot, setHeaderSlot] = useState(null);
+  // Readiness of the agent tab currently selected, reported up by
+  // <AgentBackendTabs> (only it sees the probe). ``null`` until the probe
+  // answers — treated as READY so a working chat never flashes a setup
+  // panel while the lookup is in flight.
+  const [activeBackendEntry, setActiveBackendEntry] = useState(null);
+  // Bumped by "Check again": remounting the tab strip re-runs the probe.
+  const [backendProbeNonce, setBackendProbeNonce] = useState(0);
+  const [rechecking, setRechecking] = useState(false);
+  const backendUnready = !!activeBackendEntry && activeBackendEntry.ready === false;
+
+  const recheckBackends = useCallback(async () => {
+    setRechecking(true);
+    try {
+      // The server memoises the probe for a minute; this asks it to forget
+      // so an operator who JUST installed the CLI isn't told to wait.
+      await refreshAgentBackends();
+    } catch {
+      // A failed refresh still gets a re-probe below — the cached answer is
+      // simply a minute stale, which is not worth surfacing as an error.
+    } finally {
+      setBackendProbeNonce((n) => n + 1);
+      setRechecking(false);
+    }
+  }, []);
   useEffect(() => {
     setHeaderSlot(
       (typeof document !== 'undefined'
@@ -657,11 +684,13 @@ export default function SessionDetail({
             which CONVERSATION is below it — the same placement the editor
             extensions use. */}
         <AgentBackendTabs
+          key={backendProbeNonce}
           taskId={taskId}
           activeBackend={String(session?.agent_backend || '')}
           onBackendChanged={onChatChanged}
           onChatChanged={onChatChanged}
           onChatSwitchPending={onChatSwitchPending}
+          onReadinessChange={setActiveBackendEntry}
           turnInFlight={stream.turnInFlight}
         />
         {/* The working indicator is the LAST entry inside the
@@ -670,6 +699,15 @@ export default function SessionDetail({
             reads as part of the chat and the transcript never bleeds
             through it (the earlier "floating dock" overlapped chat
             text that scrolled behind it). */}
+        {backendUnready ? (
+          <AgentBackendSetup
+            backend={activeBackendEntry.id}
+            error={activeBackendEntry.error}
+            rechecking={rechecking}
+            onRecheck={recheckBackends}
+          />
+        ) : (
+        <>
         <EventLog
           taskId={taskId}
           entries={stream.events}
@@ -717,6 +755,8 @@ export default function SessionDetail({
           planAvailable={planAvailable}
           onOpenPlan={onOpenPlan}
         />
+        </>
+        )}
       </section>
     </PanelCard>
   );

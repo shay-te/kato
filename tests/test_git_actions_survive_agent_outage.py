@@ -23,9 +23,10 @@ lock would deadlock on nothing.
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from kato_core_lib.data_layers.service.task_repository_service import (
     TaskRepositoryService,
@@ -237,9 +238,24 @@ class PushDoesNotWaitOnTheTicketPlatformTests(unittest.TestCase):
             logger=MagicMock(),
         )
 
+    def _pushable_service(self, reconcile):
+        """A publish service that reaches ``push_task``'s summary dict.
+
+        The crash was in building that summary, so a fixture that returns
+        early (no workspace context) proves nothing — it never gets there.
+        """
+        service = self._publish_service(reconcile)
+        repository = SimpleNamespace(id='repo-a')
+        service._resolve_publish_context = MagicMock(
+            return_value=([repository], 'kato/PROJ-1', SimpleNamespace(id='PROJ-1')),
+        )
+        # Nothing to push: the per-repo work is skipped and the loop falls
+        # straight through to the summary the bug lived in.
+        service._repository_service.push_skip_reason.return_value = 'nothing to push'
+        return service
+
     def test_a_hanging_provider_does_not_hold_the_push(self) -> None:
         import time
-        from unittest.mock import patch
         service = self._publish_service(lambda task_id: time.sleep(60))
 
         # Shorten the production bound so the SUITE does not wait it out; the
@@ -269,7 +285,64 @@ class PushDoesNotWaitOnTheTicketPlatformTests(unittest.TestCase):
 
         service = self._publish_service(_boom)
 
-        self.assertIsNone(service._reconcile_task_repositories('PROJ-1'))
+        # A DICT, not None: push_task reads ``added_repositories`` off this.
+        # Returning None turned a failing reconcile into an AttributeError
+        # 500 on Push — the fallback taking down what it was protecting.
+        self.assertEqual(service._reconcile_task_repositories('PROJ-1'), {})
+
+    def test_a_timed_out_reconcile_returns_a_dict_not_none(self) -> None:
+        def _slow(task_id):
+            time.sleep(5)
+            return {'added_repositories': ['late']}
+
+        service = self._publish_service(_slow)
+        with patch('kato_core_lib.data_layers.service.task_publish_service'
+                   '._RECONCILE_TIMEOUT_SECONDS', 0.2):
+            self.assertEqual(service._reconcile_task_repositories('PROJ-1'), {})
+
+    def test_no_injected_reconcile_returns_a_dict_not_none(self) -> None:
+        # The default stand-in used when the caller wires no reconcile at all.
+        service = self._publish_service(None)
+        self.assertEqual(service._reconcile_task_repositories('PROJ-1'), {})
+
+    def test_a_successful_reconcile_is_passed_through(self) -> None:
+        service = self._publish_service(
+            lambda task_id: {'added_repositories': ['new-repo']},
+        )
+        self.assertEqual(
+            service._reconcile_task_repositories('PROJ-1'),
+            {'added_repositories': ['new-repo']},
+        )
+
+    def test_push_survives_a_reconcile_that_times_out(self) -> None:
+        """The reported 500: Push and Update-source died on a slow provider.
+
+        ``push_task`` reads ``added_repositories`` off the reconcile result to
+        report which repos the push covered. A timed-out reconcile handed it
+        ``None``, so the deadline that existed to keep the button responsive
+        was instead the thing that broke it — ``AttributeError: 'NoneType'
+        object has no attribute 'get'`` straight out of /update-source.
+        """
+        def _slow(task_id):
+            time.sleep(5)
+
+        service = self._pushable_service(_slow)
+        with patch('kato_core_lib.data_layers.service.task_publish_service'
+                   '._RECONCILE_TIMEOUT_SECONDS', 0.2):
+            result = service.push_task('PROJ-1')
+
+        # Reaching the summary at all is the assertion — this raised before.
+        self.assertEqual(result['synced_repositories'], [])
+        self.assertEqual(result['task_id'], 'PROJ-1')
+
+    def test_push_reports_repositories_the_reconcile_pulled_in(self) -> None:
+        service = self._pushable_service(
+            lambda task_id: {'added_repositories': ['late-repo', '']},
+        )
+        result = service.push_task('PROJ-1')
+
+        # Falsy entries dropped; the real one reaches the operator's toast.
+        self.assertEqual(result['synced_repositories'], ['late-repo'])
 
 
 if __name__ == '__main__':

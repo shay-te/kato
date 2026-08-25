@@ -169,14 +169,20 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_MAX_PARALLEL_TASKS', 'number', 'Max parallel tasks',
              'How many tasks execute concurrently (1 = sequential).',
              {}),
+            # ``panel`` moves a field OUT of its section's generic tab and
+            # into the named bespoke panel — these two decide which repos
+            # kato may touch at all, so they belong beside the per-repo
+            # approval table rather than in a general grab-bag.
             ('KATO_IGNORED_REPOSITORY_FOLDERS', 'text',
              'Ignored repo folders',
-             'Comma-separated folder names excluded from auto-discovery.',
-             {}),
+             'Comma-separated folder names excluded from auto-discovery. '
+             'A task that references an ignored repo fails its repository '
+             'scan — check the activity log for the repo name.',
+             {'panel': 'approvals'}),
             ('KATO_REPOSITORY_DENYLIST', 'text', 'Repository denylist',
              'Comma-separated repo ids kato must NEVER touch '
              '(secrets-vault, regulated-data, …). Boot-time refusal.',
-             {}),
+             {'panel': 'approvals'}),
             ('KATO_WEBSERVER_PORT', 'number', 'Webserver port',
              'Host port for the planning UI (Flask).', {}),
             ('KATO_TASK_PUBLISH_MAX_RETRIES', 'number',
@@ -290,6 +296,46 @@ SETTINGS_SCHEMA: list[dict] = [
         ],
     },
     {
+        'id': 'codex_agent',
+        'label': 'Codex agent',
+        'title': 'Codex agent',
+        'description': 'The OpenAI Codex CLI. Codex gets its own chat tab '
+                       'alongside Claude by default — each tab is its own '
+                       'conversation with its own history. Auth lives in '
+                       'the CLI itself (`codex login`).',
+        'fields': [
+            # ON by default — a missing CLI shows a setup panel in the tab
+            # rather than hiding the tab, so this only exists for operators
+            # who want the Codex tab gone entirely.
+            ('KATO_CODEX_ENABLED', 'bool', 'Enable Codex',
+             'On by default. Gives Codex its own chat tab; if the `codex` '
+             'binary is missing the tab shows setup instructions instead of '
+             'a chat. Uncheck to remove the tab. Needs a kato restart.', {}),
+            ('KATO_CODEX_BINARY', 'text', 'Codex binary',
+             'Path to the `codex` CLI. Plain `codex` works on PATH.', {}),
+            ('KATO_CODEX_MODEL', 'text', 'Model override',
+             'Model name passed to the CLI. Empty = Codex default.', {}),
+            ('KATO_CODEX_MAX_TURNS', 'number', 'Max turns',
+             'Cap on agent turns per task. Empty = no cap.', {}),
+            ('KATO_CODEX_EFFORT', 'select', 'Reasoning effort',
+             'Codex routes this through `model_reasoning_effort` in '
+             '~/.codex/config.toml rather than a per-spawn flag.',
+             {'options': ['', 'low', 'medium', 'high', 'xhigh', 'max']}),
+            ('KATO_CODEX_ALLOWED_TOOLS', 'text', 'Allowed tools',
+             'Comma-separated allow-list. Empty → safe default when '
+             'bypass is off.', {}),
+            ('KATO_CODEX_DISALLOWED_TOOLS', 'text', 'Disallowed tools',
+             'Comma-separated deny-list.', {}),
+            ('KATO_CODEX_TIMEOUT_SECONDS', 'number',
+             'Per-task timeout (s)',
+             'Subprocess timeout for the Codex CLI per task.', {}),
+            ('KATO_CODEX_MODEL_SMOKE_TEST_ENABLED', 'bool',
+             'Model smoke test',
+             'Boot-time model-access check. Off by default (spend).',
+             {}),
+        ],
+    },
+    {
         'id': 'sandbox',
         'label': 'Sandbox',
         'title': 'Sandbox & permission bypass',
@@ -328,6 +374,14 @@ SETTINGS_SCHEMA: list[dict] = [
                         'either startup confirmation prompt. When on, '
                         'kato writes an unmissable banner. Only enable '
                         'if you understand BYPASS_PROTECTIONS.md.'}),
+            ('KATO_CODEX_BYPASS_PERMISSIONS', 'bool',
+             'Bypass ALL permission prompts (Codex)',
+             'The Codex equivalent of the switch above — every tool runs '
+             'with NO prompt, inside the Docker sandbox.',
+             {'danger': 'DANGEROUS. Same refusal conditions as the Claude '
+                        'switch above: root, no Docker sandbox, or a '
+                        'non-interactive environment all block startup. '
+                        'Read BYPASS_PROTECTIONS.md first.'}),
         ],
     },
     {

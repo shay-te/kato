@@ -83,16 +83,13 @@ test('a RESIZED tab reserves room for every sibling sharing its row', () => {
   );
 });
 
-test('the changes indicator gets its own reserve rather than a blanket one', () => {
-  // Reserving for it on every tab squeezes the ones without it by 17px, and
-  // the symptom looks like two unrelated bugs: the name ellipsises early AND
-  // a gap opens between the × and the pill's edge. Inline content packs left,
-  // so pixels wrongly denied to the label resurface as dead space at the end.
-  assertDeclaration(
-    ruleBody('.tabs-pane-top .tab.has-custom-width.has-changes .tab-label'),
-    'max-width',
-    'calc\\(100% - 96px\\)',
-  );
+test('no reserve survives for the removed changes indicator', () => {
+  // The orange commit glyph on the task tab is gone (it read as a stray
+  // symbol, and unpushed work is already surfaced by the Push button and the
+  // forget-task warning). Its 96px label reserve must go with it, or every
+  // tab that used to carry it keeps paying 16px it no longer needs.
+  assert.doesNotMatch(css, /has-changes/);
+  assert.doesNotMatch(css, /tab-changes-indicator/);
 });
 
 test('an un-resized tab sizes to its name instead of ellipsising', () => {

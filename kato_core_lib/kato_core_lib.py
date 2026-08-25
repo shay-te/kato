@@ -366,7 +366,14 @@ class KatoCoreLib(CoreLib):
             return None
         record_owner = ClaudeSessionManager(state_dir=state_dir)
         managers = {AgentBackend.CLAUDE.value: record_owner}
-        if getattr(open_cfg, AgentBackend.CODEX.value, None) is not None:
+        # Codex is opt-in. The config block always resolves (it has defaults),
+        # so presence cannot be the signal — the operator has to say yes, or
+        # be running Codex as their agent backend already.
+        codex_cfg = getattr(open_cfg, AgentBackend.CODEX.value, None)
+        codex_on = bool(getattr(codex_cfg, 'enabled', False)) or (
+            backend is AgentBackend.CODEX
+        )
+        if codex_cfg is not None and codex_on:
             from codex_core_lib.codex_core_lib.session.manager import (
                 CodexSessionManager,
             )

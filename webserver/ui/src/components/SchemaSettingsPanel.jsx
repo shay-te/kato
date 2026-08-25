@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchOpenRouterModels } from '../api.js';
 import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
+import { useFieldHighlight } from '../hooks/useFieldHighlight.js';
 import { sourceLabel } from '../utils/settingsSource.js';
 import { fieldPlaceholder } from '../utils/fieldHelp.js';
 import FieldInfoTip from './settings/FieldInfoTip.jsx';
 import PanelMessage from './settings/PanelMessage.jsx';
+import SchemaFieldsBlock from './settings/SchemaFieldsBlock.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
-import SettingsActions from './settings/SettingsActions.jsx';
-import RestartBanner from './settings/RestartBanner.jsx';
 
 // Generic, schema-driven settings panel. One instance renders ONE
 // section of the ``/api/all-settings`` schema (General, Claude
@@ -31,19 +31,7 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
 
   // When the operator jumps here from the settings search, scroll the matched
   // field into view and flash it so they spot the one they searched for.
-  useEffect(() => {
-    if (!highlightKey || !fieldsRef.current) { return undefined; }
-    const row = fieldsRef.current.querySelector(
-      `[data-field-key="${CSS.escape(highlightKey)}"]`,
-    );
-    if (!row) { return undefined; }
-    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    row.classList.add('is-search-highlight');
-    const handle = window.setTimeout(
-      () => row.classList.remove('is-search-highlight'), 1800,
-    );
-    return () => window.clearTimeout(handle);
-  }, [highlightKey, sectionId, section]);
+  useFieldHighlight(fieldsRef, highlightKey, [sectionId, section]);
 
   if (loading) {
     return (
@@ -84,20 +72,18 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
         </div>
       )}
 
-      <div className="settings-drawer-fields" ref={fieldsRef}>
-        {section.fields.map((f) => (
-          <SchemaField
-            key={f.key}
-            field={f}
-            value={draft[f.key] ?? ''}
-            onChange={(v) => setField(f.key, v)}
-          />
-        ))}
-      </div>
-
-      <SettingsActions {...saveBarProps} />
-
-      <RestartBanner show={savedAt && restartRequired} />
+      {/* A field tagged with ``panel`` lives in a bespoke tab (see
+          SchemaFieldGroup) — skipping it here keeps it from rendering
+          twice, with two independent drafts fighting over one key. */}
+      <SchemaFieldsBlock
+        fields={section.fields.filter((f) => !f.panel)}
+        draft={draft}
+        setField={setField}
+        fieldsRef={fieldsRef}
+        saveBarProps={saveBarProps}
+        savedAt={savedAt}
+        restartRequired={restartRequired}
+      />
     </div>
   );
 }

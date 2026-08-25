@@ -160,8 +160,12 @@ export default function ChatsMenu({
           className={`chats-menu-row${chat.active ? ' is-active' : ''}`}
           onClick={() => onPickChat(chat)}
           disabled={busy}
+          // No tooltip on the active row: it already SAYS "current" beside
+          // the agent chip, and a hover label repeating that only had
+          // somewhere to be clipped. The switch hint stays, because
+          // "clicking this replaces your current chat" is not visible.
           title={chat.active
-            ? 'This is the current chat.'
+            ? undefined
             : 'Switch back to this chat — the next message resumes it.'}
         >
           <span className="chats-menu-row-title">{title}</span>
@@ -208,8 +212,15 @@ export default function ChatsMenu({
       <button
         id="session-chats"
         type="button"
-        className="session-action tooltip-below"
-        data-tooltip="Chats — start a fresh conversation for this task, or navigate back to a previous one. The old chat is kept and can be resumed any time."
+        // ``tooltip-start``, NOT the default centred anchor: this button
+        // sits a few dozen px from the chat panel's LEFT edge, so a
+        // 320px tooltip centred on it hangs ~100px past the edge and is
+        // clipped. Left-anchoring grows it rightward, into the panel.
+        className={`session-action${open ? '' : ' tooltip-start'}`}
+        // Only while CLOSED. An open menu already shows what the button
+        // explains, and the tooltip is anchored to the button — so it
+        // renders on top of the very list the operator is reading.
+        data-tooltip={open ? undefined : 'Chats — start a new conversation, or go back to an earlier one. Old chats are kept and can be resumed.'}
         onClick={toggle}
         aria-expanded={open}
         aria-label="Chats"
