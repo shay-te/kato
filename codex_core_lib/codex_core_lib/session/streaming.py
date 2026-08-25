@@ -50,6 +50,16 @@ CODEX_EVENT_TURN_COMPLETED = 'turn.completed'
 #: ``turn.completed`` — a crash, a kill, a non-zero exit. Without it the UI
 #: would show a turn as running forever.
 CODEX_EVENT_TURN_ABORTED = 'turn.aborted'
+#: Emitted BY THE CLI when the turn reached the model and the model (or the
+#: API) refused it — a bad model name, an auth problem, a rate limit. It is
+#: terminal: the process exits straight after.
+#:
+#: Missing from this set, every such failure fell through to the synthesised
+#: ``turn.aborted`` above, which threw the CLI's own explanation away. An
+#: operator whose model picker still held a Claude alias saw a bare
+#: "turn.aborted" instead of "The 'opus' model is not supported when using
+#: Codex with a ChatGPT account" — the one line that says what to change.
+CODEX_EVENT_TURN_FAILED = 'turn.failed'
 
 _MAX_RECENT_EVENTS = 5000
 _MAX_STDERR_LINES = 200
@@ -79,7 +89,9 @@ class SessionEvent(object):
     @property
     def is_terminal(self) -> bool:
         return self.event_type in (
-            CODEX_EVENT_TURN_COMPLETED, CODEX_EVENT_TURN_ABORTED,
+            CODEX_EVENT_TURN_COMPLETED,
+            CODEX_EVENT_TURN_ABORTED,
+            CODEX_EVENT_TURN_FAILED,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -334,16 +346,45 @@ class StreamingCodexSession(object):
                 # A turn that ends without ``turn.completed`` — a crash, a
                 # kill, a non-zero exit. Synthesise a terminal event so the
                 # UI's in-flight indicator clears instead of spinning forever.
+                #
+                # ``error`` carries the best available explanation rather
+                # than leaving the reader with a bare event name: the CLI's
+                # own ``error`` events first (those name the actual refusal),
+                # then stderr. A terminal event with no reason on it is what
+                # reached the operator as an unexplained "turn.aborted".
+                stderr_tail = self.stderr_snapshot()[-5:]
                 self._append_event({
                     'type': CODEX_EVENT_TURN_ABORTED,
                     'returncode': returncode,
-                    'stderr': '\n'.join(self.stderr_snapshot()[-5:]),
+                    'stderr': '\n'.join(stderr_tail),
+                    'error': self._failure_reason(returncode, stderr_tail),
                 })
             stderr_thread.join(timeout=1.0)
         finally:
             if self._proc is proc:
                 self._proc = None
             self._drain_pending_messages()
+
+    def _failure_reason(self, returncode: int, stderr_tail: list[str]) -> str:
+        """The most useful one-line explanation for a turn that died.
+
+        Preference order matters. The CLI reports a refused model or a bad
+        credential as an ``error`` event on STDOUT and says nothing about it
+        on stderr, so a stderr-only reason would report the unrelated
+        shell-snapshot warnings the CLI logs on every run.
+        """
+        for event in reversed(self.recent_events(limit=50)):
+            raw = event.raw if isinstance(event.raw, dict) else {}
+            if raw.get('type') != 'error':
+                continue
+            message = normalized_text(str(raw.get('message', '') or ''))
+            if message:
+                return message
+        for line in reversed(stderr_tail):
+            text = normalized_text(line)
+            if text and 'Reading prompt from stdin' not in text:
+                return text
+        return f'the {self._binary} process exited with code {returncode}'
 
     def _drain_pending_messages(self) -> None:
         """Send whatever arrived mid-turn, as one follow-up turn."""

@@ -10,9 +10,16 @@ import { backendLabel } from './AgentBackendChip.jsx';
 // (``npm install -g @openai/codex``, ``codex login``), so this renders one
 // source of truth instead of a second copy that drifts from the validator.
 
-export default function AgentBackendSetup({ backend, error, onRecheck, rechecking = false }) {
+export default function AgentBackendSetup({
+  backend, error, onRecheck, rechecking = false, wired = true,
+}) {
   const label = backendLabel(backend) || backend;
   const detail = String(error || '').trim();
+  // Two different problems wear the same tab. A CLI that answers but has no
+  // session manager behind it is not a missing install — telling that
+  // operator to re-check the binary path sends them hunting for a fault
+  // that isn't there; they just need to restart kato.
+  const needsRestart = !wired && !detail;
 
   return (
     <section className="agent-backend-setup" aria-labelledby="agent-backend-setup-title">
@@ -24,7 +31,12 @@ export default function AgentBackendSetup({ backend, error, onRecheck, recheckin
         installed and reachable. Your other agent tabs are unaffected.
       </p>
 
-      {detail ? (
+      {needsRestart ? (
+        <p className="agent-backend-setup-detail is-empty">
+          The {label} CLI is installed and answering — kato just hasn&apos;t
+          wired it into this session yet. Restart kato to pick it up.
+        </p>
+      ) : detail ? (
         // Pre-formatted: the validator's message is deliberately laid out
         // with indented shell commands on their own lines.
         <pre className="agent-backend-setup-detail">{detail}</pre>

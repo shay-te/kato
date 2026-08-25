@@ -17,6 +17,8 @@ import {
 vi.mock('../api.js', () => ({
   fetchAgentBackends: vi.fn(),
   switchTaskBackend: vi.fn(),
+  // The chat-title bar under the tabs reads the same list the dropdown does.
+  fetchTaskChats: vi.fn(async () => ({ chats: [] })),
   fetchClaudeSessions: vi.fn(async () => ({ ok: true, body: { sessions: [] } })),
   startNewChat: vi.fn(),
   switchChat: vi.fn(),

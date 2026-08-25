@@ -133,16 +133,22 @@ export function fetchDirectoryListing(path) {
   return fetchJson(`/api/fs/dirs?path=${encodeURIComponent(path || '~')}`);
 }
 
-export function fetchAgentVersion(force = false) {
+export function fetchAgentVersion(force = false, backend = '') {
   // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
   // a CLI or settings change with no kato restart).
-  return fetchJson(force ? '/api/agent-version?refresh=1' : '/api/agent-version');
+  // ``backend`` scopes the answer to the agent the operator is looking at —
+  // each tab has its own CLI and its own "out of date".
+  const params = [];
+  if (force) { params.push('refresh=1'); }
+  if (backend) { params.push(`backend=${encodeURIComponent(backend)}`); }
+  const query = params.length ? `?${params.join('&')}` : '';
+  return fetchJson(`/api/agent-version${query}`);
 }
 
-export function upgradeAgentCli() {
+export function upgradeAgentCli(backend = '') {
   // STARTS the upgrade and returns immediately; ``body`` is the first progress
   // snapshot. Poll fetchAgentUpgradeStatus for the bar + live output.
-  return postEnvelope('/api/agent-version/upgrade', {});
+  return postEnvelope('/api/agent-version/upgrade', backend ? { backend } : {});
 }
 
 export function fetchAgentUpgradeStatus() {

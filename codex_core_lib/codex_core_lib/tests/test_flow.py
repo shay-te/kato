@@ -61,6 +61,24 @@ def _success_jsonl(thread_id: str = 'thread-1', text: str = 'done editing') -> s
     )
 
 
+def _probe_response(command):
+    """Answer a connection probe, or ``None`` when this is a real turn.
+
+    ``validate_connection`` runs ``--version`` and then ``exec --help`` (to
+    confirm the build supports the ``--json`` streaming flag). A fake runner
+    that answers every call with the turn's canned output tells the help
+    probe there is no ``--json``, which fails a healthy CLI before any flow
+    under test gets to run.
+    """
+    if '--version' in command:
+        return _completed(stdout='codex-cli 0.132.0\n', returncode=0)
+    if 'exec' in command and '--help' in command:
+        return _completed(
+            stdout='Usage: codex exec [OPTIONS]\n      --json\n', returncode=0,
+        )
+    return None
+
+
 def _fake_codex_run(*, jsonl: str = '', last_message: str = '',
                     stderr: str = '', returncode: int = 0):
     """Build a ``subprocess.run`` replacement that writes ``last_message``
@@ -68,6 +86,9 @@ def _fake_codex_run(*, jsonl: str = '', last_message: str = '',
     on stdout — exactly what the real codex CLI does."""
 
     def fake_run(command, **kwargs):
+        probe = _probe_response(command)
+        if probe is not None:
+            return probe
         try:
             idx = command.index('-o')
             path = command[idx + 1]
@@ -86,6 +107,11 @@ def _recording_codex_run(seen: list, *, last_message: str = 'ok',
     flow can assert the exact command line codex was invoked with."""
 
     def fake_run(command, **kwargs):
+        # Probes are not the turn — recording them would shift every
+        # "what argv did codex get" assertion by two entries.
+        probe = _probe_response(command)
+        if probe is not None:
+            return probe
         seen.append(list(command))
         try:
             idx = command.index('-o')
@@ -151,7 +177,7 @@ class F1_PrimaryWorkflowEndToEnd(unittest.TestCase):
         # --- A. validate_connection: binary found + version probe OK ---
         with patch.object(CodexCliClient, '_running_inside_docker', return_value=False), \
              patch(_WHICH_PATH, return_value='/usr/bin/codex'), \
-             patch(_RUN_PATH, return_value=_completed(stdout='codex-cli 0.132.0\n', returncode=0)):
+             patch(_RUN_PATH, side_effect=_fake_codex_run()):
             client.validate_connection()
         self.assertEqual(client._binary_path, '/usr/bin/codex')
 
@@ -229,11 +255,12 @@ class F2_ValidateConnectionWithSmokeTest(unittest.TestCase):
         spawns: list[list[str]] = []
 
         def fake_run(command, **kwargs):
+            # EVERY spawn is recorded — the point of this flow is the exact
+            # set of subprocesses validate_connection starts.
             spawns.append(list(command))
-            # First call is `--version`; the smoke-test call is a real
-            # `codex exec`. Both must report success.
-            if '--version' in command:
-                return _completed(stdout='codex-cli 0.132.0\n', returncode=0)
+            probe = _probe_response(command)
+            if probe is not None:
+                return probe
             return _completed(stdout=_success_jsonl(text='ok'), returncode=0)
 
         with patch.object(CodexCliClient, '_running_inside_docker', return_value=False), \
@@ -241,12 +268,15 @@ class F2_ValidateConnectionWithSmokeTest(unittest.TestCase):
              patch(_RUN_PATH, side_effect=fake_run):
             client.validate_connection()
 
-        # Two spawns: the version probe and the smoke-test exec. Both use
-        # the binary path resolved by ``shutil.which`` above.
-        self.assertEqual(len(spawns), 2)
+        # Three spawns: the version probe, the ``exec --help`` capability
+        # check, and the smoke-test exec. All use the binary path resolved by
+        # ``shutil.which`` above.
+        self.assertEqual(len(spawns), 3)
         self.assertIn('--version', spawns[0])
-        self.assertEqual(spawns[1][0], '/usr/bin/codex')
-        self.assertEqual(spawns[1][1], 'exec')
+        self.assertIn('--help', spawns[1])
+        self.assertEqual(spawns[0][0], '/usr/bin/codex')
+        self.assertEqual(spawns[2][0], '/usr/bin/codex')
+        self.assertEqual(spawns[2][1], 'exec')
 
     def test_missing_binary_raises_install_hint(self):
         client = _client(binary='nope-binary')

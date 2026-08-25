@@ -14,6 +14,7 @@ import glob
 import os
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     fix_session_id,
     read_session_id_from,
@@ -311,6 +312,17 @@ def _is_tool_result_only(message) -> bool:
     )
 
 
+def _record_is_claude(record) -> bool:
+    """Is this record's ACTIVE chat a Claude one?
+
+    An empty backend means yes: records written before backends were tracked
+    have no field to read, and they are all Claude. Treating them as
+    "not Claude" would blank the scroll-back of every pre-existing chat.
+    """
+    backend = str(getattr(record, 'agent_backend', '') or '').strip().lower()
+    return not backend or backend == AgentBackend.CLAUDE.value
+
+
 def resolve_agent_session_id(manager, workspace_manager, task_id: str) -> str:
     """Return the agent session id bound to ``task_id``, or ``''``.
 
@@ -324,6 +336,14 @@ def resolve_agent_session_id(manager, workspace_manager, task_id: str) -> str:
     (Claude's JSONL transcript replay) is Claude-specific. Other
     backends (OpenHands, Codex) don't have an equivalent webserver
     SSE history-replay path, so they don't need an analogue.
+
+    Answers '' for a task whose ACTIVE chat is on another backend, and does
+    NOT consult the workspace fallback for one. That fallback reads a mirror
+    written by the Claude session and never cleared on a backend switch — so
+    a task switched to Codex, whose record correctly carries an empty (fresh)
+    chat, fell through to it and replayed CLAUDE's transcript into the Codex
+    tab. The id being Claude-specific is exactly why the backend has to gate
+    it: an id is only meaningful next to the backend that issued it.
     """
     if manager is not None:
         try:
@@ -331,6 +351,8 @@ def resolve_agent_session_id(manager, workspace_manager, task_id: str) -> str:
         except Exception:
             record = None
         if record is not None:
+            if not _record_is_claude(record):
+                return ''
             record_id = read_session_id_from(record)
             if record_id:
                 return record_id

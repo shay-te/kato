@@ -229,12 +229,62 @@ class CodexCliClient(CliAgentSharedBehaviour):
             raise RuntimeError(
                 f'Codex CLI binary "{self._binary}" failed to report a version: {detail}'
             )
+        version_text = condensed_text(result.stdout)
         self.logger.info(
             'Codex CLI is available at %s (%s)',
             binary_path,
-            condensed_text(result.stdout),
+            version_text,
         )
+        self._validate_streaming_support(binary_path, version_text)
         self._validate_model_smoke_test()
+
+    def _validate_streaming_support(self, binary_path: str, version_text: str) -> None:
+        """Refuse a CLI too old to stream, BEFORE a turn depends on it.
+
+        Every chat turn runs ``codex exec --json`` and parses the JSONL it
+        emits. The pre-Rust Codex CLI has no such flag, so the turn died on
+        ``error: unknown option '--json'`` — mid-conversation, after the
+        operator had typed a message, with nothing saying which binary was
+        at fault or what to do about it.
+
+        Feature-detected rather than version-compared: the flag is the thing
+        actually depended on, and a version table would need editing every
+        time the CLI is repackaged. A help probe that cannot run is NOT
+        treated as a failure — a sandbox that blocks it must not make an
+        otherwise-working CLI look broken.
+        """
+        try:
+            probe = subprocess.run(
+                [*self._host_binary_argv(), 'exec', '--help'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                check=False,
+                timeout=self.VERSION_PROBE_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        if probe.returncode != 0:
+            return
+        if '--json' in (probe.stdout or '') + (probe.stderr or ''):
+            return
+        raise RuntimeError(
+            f'\n'
+            f'The Codex CLI at {binary_path} is too old for streaming chat.\n'
+            f'\n'
+            f'    reported version: {version_text or "unknown"}\n'
+            f'\n'
+            f'Each turn is streamed with `codex exec --json`, and this build\n'
+            f'does not support that flag — a chat would fail mid-turn with\n'
+            f'"unknown option \'--json\'". Upgrade it:\n'
+            f'\n'
+            f'    npm install -g @openai/codex@latest\n'
+            f'\n'
+            f'Then check with `codex --version`. If several copies are\n'
+            f'installed, make sure the one on PATH is the upgraded one — or\n'
+            f'set the Codex binary path in Settings to point at it.\n'
+        )
 
     def _wrap_untrusted(self, text: str, *, source_path: str) -> str:
         """Bind the shared prompt scaffolding to the delimiter framing."""

@@ -106,6 +106,13 @@ def prompt_floor_rules() -> str:
     can only enforce this in the prompt still names exactly what the enforcing
     transports block. Grouped rather than exhaustive per-line: a wall of forty
     subcommands reads as noise, and the categories are what the model needs.
+
+    States what IS allowed, not only what is not. A list of prohibitions with
+    no counterpart teaches the model that git is dangerous ground in general,
+    and it then over-refuses the working-tree operations that are deliberately
+    permitted — an operator asking "undo your change to that file" had to say
+    it three times before the agent would run ``git restore``. The permission
+    has to be as explicit as the denial or it is not read as one.
     """
     return (
         'Hard limits — these are refused at the tool level for other agents '
@@ -113,6 +120,12 @@ def prompt_floor_rules() -> str:
         '- No git that changes refs, commits, remotes, history or config: '
         + ', '.join(GIT_MUTATING_SUBCOMMANDS[:12]) + ', and their plumbing '
         'equivalents. Read-only git (status, log, diff, show, blame) is fine.\n'
+        '- Working-tree git IS yours, needs no approval, and is not covered '
+        'by the rule above: `git restore <path>` / `git restore --staged '
+        '<path>`, `git stash`, `git apply`. Undoing an edit you made to a '
+        'file is ordinary work — when asked to revert or drop a change, do '
+        'it with `git restore <path>` and do not report yourself blocked. '
+        'Scope it to the paths concerned rather than the whole tree.\n'
         '- No filesystem formatting or swap setup: '
         + ', '.join(p for p in FLOOR_DENY_PROGRAMS if p.startswith(('mkfs', 'mkswap')))
         + '.\n'

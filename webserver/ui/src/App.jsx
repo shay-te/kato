@@ -834,7 +834,7 @@ export default function App() {
         onOpenFullSettings={openSettings}
       />
       <SafetyBanner state={safetyState} />
-      <AgentVersionBanner />
+      <AgentVersionBanner backend={String(activeSession?.agent_backend || '')} />
       <Header
         onRefresh={handleHeaderRefresh}
         statusLatest={status.latest}

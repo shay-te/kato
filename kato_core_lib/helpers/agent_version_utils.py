@@ -97,7 +97,28 @@ def parse_version(text) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
-def _resolve_backend(env: dict) -> str:
+def _resolve_backend(env: dict, backend: str = '') -> str:
+    """The backend to report on: an explicit ask, else the configured one.
+
+    ``backend`` is what the operator is LOOKING at. Every task now shows a
+    tab per agent, so "is my CLI out of date" is a per-backend question — but
+    this read only ``KATO_AGENT_BACKEND``, so a host configured for Claude
+    could never surface a stale Codex CLI, and the upgrade button the Claude
+    tab offers would have upgraded the wrong CLI for the Codex one.
+    """
+    explicit = str(backend or '').strip()
+    if explicit:
+        try:
+            from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
+                resolve_platform,
+            )
+            return resolve_platform(explicit).value
+        except Exception:
+            low = explicit.lower()
+            if low.startswith('claude'):
+                return 'claude'
+            if 'codex' in low:
+                return 'codex'
     name = (env.get('KATO_AGENT_BACKEND', '') or '').strip()
     try:
         from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
@@ -219,7 +240,9 @@ def _default_runner(path: str) -> str:
     return (result.stdout or result.stderr or '').strip()
 
 
-def installed_version(env: dict | None = None, runner=None) -> str | None:
+def installed_version(
+    env: dict | None = None, runner=None, backend: str = '',
+) -> str | None:
     """Just the installed CLI's ``'x.y.z'`` (or ``None``) — no registry lookup.
 
     The before/after probe around an upgrade needs the local version only;
@@ -227,7 +250,7 @@ def installed_version(env: dict | None = None, runner=None) -> str | None:
     both sides of a command that already knows it changed things.
     """
     env = _config_env() if env is None else env
-    backend = _resolve_backend(env)
+    backend = _resolve_backend(env, backend)
     if backend == 'openhands':
         return None
     found, raw = _probe(_binary_for(backend, env), runner=runner)
@@ -237,7 +260,9 @@ def installed_version(env: dict | None = None, runner=None) -> str | None:
     return '.'.join(str(n) for n in version) if version else None
 
 
-def agent_version_info(env: dict | None = None, runner=None, latest=None) -> dict:
+def agent_version_info(
+    env: dict | None = None, runner=None, latest=None, backend: str = '',
+) -> dict:
     """Report the configured backend's CLI version + capability flags.
 
     Keys: ``backend``, ``binary``, ``found``, ``version`` (``'x.y.z'``/None),
@@ -247,7 +272,7 @@ def agent_version_info(env: dict | None = None, runner=None, latest=None) -> dic
     enough), ``detail``. ``latest`` is an injectable lookup for tests. Never raises.
     """
     env = _config_env() if env is None else env
-    backend = _resolve_backend(env)
+    backend = _resolve_backend(env, backend)
     info = {
         'backend': backend, 'binary': '', 'found': True, 'version': None,
         'version_raw': '', 'recommended_min': '', 'up_to_date': True,
@@ -399,7 +424,7 @@ def _npm_plan(plan: dict, npm: str, package: str, backend: str) -> dict:
     return plan
 
 
-def upgrade_plan(env: dict | None = None) -> dict:
+def upgrade_plan(env: dict | None = None, backend: str = '') -> dict:
     """How an in-app upgrade would be performed on THIS host.
 
     Returns ``{allowed, reason, manager, argv, command}``. Two managers:
@@ -420,12 +445,12 @@ def upgrade_plan(env: dict | None = None) -> dict:
     """
     env = _config_env() if env is None else env
     plan = {'allowed': False, 'reason': '', 'manager': '', 'argv': [], 'command': ''}
-    allowed, reason = upgrade_allowed(env)
+    allowed, reason = upgrade_allowed(env, backend)
     if not allowed:
         plan['reason'] = reason
         return plan
 
-    backend = _resolve_backend(env)
+    backend = _resolve_backend(env, backend)
     binary = _binary_for(backend, env)
     package = _NPM_PACKAGES.get(backend, '')
     npm = shutil.which('npm')
@@ -449,13 +474,13 @@ def upgrade_plan(env: dict | None = None) -> dict:
     return plan
 
 
-def upgrade_command_str(env: dict | None = None) -> str:
+def upgrade_command_str(env: dict | None = None, backend: str = '') -> str:
     """The exact command an in-app upgrade runs (shown to the operator for
     approval). Fixed template — never built from user input."""
-    return upgrade_plan(env)['command']
+    return upgrade_plan(env, backend)['command']
 
 
-def upgrade_allowed(env: dict | None = None) -> tuple[bool, str]:
+def upgrade_allowed(env: dict | None = None, backend: str = '') -> tuple[bool, str]:
     """``(allowed, reason)`` for an in-app CLI upgrade. Available by default for
     the claude and codex CLIs on the host (both ship as npm packages); an
     operator can hard-disable it with ``KATO_ALLOW_CLI_UPGRADE=false``. Not
@@ -465,7 +490,7 @@ def upgrade_allowed(env: dict | None = None) -> tuple[bool, str]:
     env = _config_env() if env is None else env
     if _is_falsy(env.get('KATO_ALLOW_CLI_UPGRADE')):
         return False, 'in-app upgrade is disabled (KATO_ALLOW_CLI_UPGRADE=false)'
-    backend = _resolve_backend(env)
+    backend = _resolve_backend(env, backend)
     if backend not in _NPM_PACKAGES:
         return False, (
             f'in-app upgrade supports only the claude and codex CLIs (backend '
@@ -484,7 +509,7 @@ def _apply_upgrade_flags(info: dict, env: dict) -> None:
     # below the recommended floor. Gating solely on the floor is what hid the
     # button while the host sat dozens of releases behind.
     outdated = bool(info['update_available'] or not info['up_to_date'])
-    plan = upgrade_plan(env)
+    plan = upgrade_plan(env, info.get('backend', ''))
     info['can_upgrade'] = bool(plan['allowed'] and outdated)
     info['upgrade_command'] = plan['command'] if info['can_upgrade'] else ''
     # Why one-click upgrade isn't offered — only when there IS an update we
@@ -510,7 +535,7 @@ UPGRADE_SUCCESS_MESSAGE = (
 )
 
 
-def upgrade_agent_cli(env: dict | None = None, runner=None) -> dict:
+def upgrade_agent_cli(env: dict | None = None, runner=None, backend: str = '') -> dict:
     """Run the gated, FIXED upgrade command for the configured CLI on the host.
 
     Caller is responsible for the operator's per-use approval (the UI confirm);
@@ -520,11 +545,11 @@ def upgrade_agent_cli(env: dict | None = None, runner=None) -> dict:
     uses, see ``agent_cli_upgrade_job``.
     """
     env = _config_env() if env is None else env
-    plan = upgrade_plan(env)
+    plan = upgrade_plan(env, backend)
     if not plan['allowed']:
         return {'ok': False, 'message': plan['reason'], 'output': '',
                 'version_before': None, 'version_after': None}
-    before = installed_version(env)
+    before = installed_version(env, backend=backend)
     run = runner or _default_upgrade_runner
     try:
         code, output = run(plan['argv'])
@@ -532,7 +557,7 @@ def upgrade_agent_cli(env: dict | None = None, runner=None) -> dict:
         return {'ok': False, 'message': f'upgrade failed to run: {exc}',
                 'output': '', 'version_before': before, 'version_after': None}
     reset_latest_version_cache()
-    after = installed_version(env)
+    after = installed_version(env, backend=backend)
     return {
         'ok': code == 0,
         'message': (UPGRADE_SUCCESS_MESSAGE if code == 0

@@ -25,7 +25,7 @@ function reprobeAfterUpgrade() {
   refreshCatalogs();
 }
 
-export function useAgentUpgrade() {
+export function useAgentUpgrade(backend = '') {
   const [progress, setProgress] = useState(null);
   const timerRef = useRef(null);
   const aliveRef = useRef(true);
@@ -88,7 +88,9 @@ export function useAgentUpgrade() {
     setProgress({ state: 'running', percent: 0, step: 'Starting…', lines: [] });
     let body = null;
     try {
-      const result = await upgradeAgentCli();
+      // Names the CLI to upgrade: without it the server resolves the
+      // CONFIGURED backend, so the Codex tab's button installs a new Claude.
+      const result = await upgradeAgentCli(backend);
       body = (result && result.body) || null;
     } catch {
       body = null;

@@ -215,6 +215,18 @@ def agent_guidance_text() -> str:
     """
     operations = ', '.join(sorted(REQUIRES_APPROVAL))
     return (
+        # Opens with what NEEDS no channel. Leading with the request
+        # machinery taught the agent that git in general is kato's, and it
+        # then routed — or refused — working-tree edits that were always its
+        # own to make. An operator had to ask three times for a file to be
+        # reverted before the agent would run ``git restore``.
+        'GIT YOU JUST DO, no request and no approval: `git restore <path>` '
+        'to undo your own edits to a file, `git restore --staged <path>`, '
+        '`git stash`, `git apply`, and any read-only git (status, log, diff, '
+        'show, blame). Reverting or dropping a change you made is ordinary '
+        'work — when the operator asks for it, do it, once, without checking '
+        'first. The publish rules below are about COMMITTING and PUBLISHING '
+        'on your own initiative; they say nothing about the working tree. '
         'If you need a git operation that kato owns (committing, creating or '
         'switching a branch, staging, cleaning), do NOT try to run it and do '
         'NOT report yourself as blocked. Ask kato to do it: write '

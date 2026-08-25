@@ -3,16 +3,21 @@ import { useAgentVersion } from '../hooks/useAgentVersion.js';
 import { useAgentUpgrade } from '../hooks/useAgentUpgrade.js';
 import AgentUpgradeModal from './AgentUpgradeModal.jsx';
 
-// Always-visible banner telling the operator the CONFIGURED agent CLI is
+// Always-visible banner telling the operator the ACTIVE agent's CLI is
 // behind the published release, below the recommended minimum, or missing.
+//
+// ``backend`` scopes it to the agent tab in front of the operator. It used to
+// report the CONFIGURED backend only, so on a Claude-configured host a stale
+// Codex CLI was invisible — and the Codex chat simply failed mid-turn instead
+// ("unknown option '--json'" from a pre-Rust build).
 // Mirrors SafetyBanner: self-contained, renders nothing in the healthy case.
 // When in-app upgrade is available it offers an "Upgrade" action gated behind
 // an explicit per-use confirm, then shows a live progress bar. The version
 // re-probe that clears the banner (and re-enables the ultracode toggle) is
 // driven by useAgentUpgrade — no page reload.
-export default function AgentVersionBanner() {
-  const info = useAgentVersion();
-  const { progress, start, dismiss } = useAgentUpgrade();
+export default function AgentVersionBanner({ backend = '' }) {
+  const info = useAgentVersion(backend);
+  const { progress, start, dismiss } = useAgentUpgrade(backend);
   const [confirming, setConfirming] = useState(false);
   const message = bannerMessage(info);
   const upgrading = Boolean(progress);

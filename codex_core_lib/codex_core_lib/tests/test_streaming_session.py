@@ -17,9 +17,12 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from codex_core_lib.codex_core_lib.session.streaming import (
     CODEX_EVENT_TURN_ABORTED,
+    CODEX_EVENT_TURN_FAILED,
+    SessionEvent,
     StreamingCodexSession,
 )
 
@@ -291,3 +294,134 @@ class TerminationTests(_SessionHarness):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TurnFailureIsExplainedTests(unittest.TestCase):
+    """A dead turn must carry WHY, not just that it died.
+
+    Reported as an unexplained ``turn.aborted`` bubble in the chat. Two
+    faults met: ``turn.failed`` — the CLI's own terminal event, which names
+    the refusal — was not in the terminal set, so it fell through to the
+    synthesised abort; and that abort carried only a return code.
+
+    The real case: a model picker still holding a Claude alias makes the CLI
+    answer "The 'opus' model is not supported when using Codex with a ChatGPT
+    account" and exit. That sentence is the entire fix instruction, and it
+    was being discarded.
+    """
+
+    def test_turn_failed_is_terminal(self) -> None:
+        event = SessionEvent(
+            raw={'type': CODEX_EVENT_TURN_FAILED, 'error': {'message': 'x'}},
+        )
+        self.assertTrue(event.is_terminal)
+        self.assertEqual(CODEX_EVENT_TURN_FAILED, 'turn.failed')
+
+    def test_turn_completed_and_aborted_are_still_terminal(self) -> None:
+        for kind in ('turn.completed', 'turn.aborted'):
+            self.assertTrue(SessionEvent(raw={'type': kind}).is_terminal, kind)
+
+    def test_an_ordinary_event_is_not_terminal(self) -> None:
+        self.assertFalse(SessionEvent(raw={'type': 'item.completed'}).is_terminal)
+
+    def _session(self):
+        return StreamingCodexSession(task_id='T1', binary='codex')
+
+    def test_the_reason_prefers_the_clis_own_error_event(self) -> None:
+        session = self._session()
+        session._append_event({
+            'type': 'error',
+            'message': "The 'opus' model is not supported when using Codex "
+                       'with a ChatGPT account.',
+        })
+        reason = session._failure_reason(1, ['Reading prompt from stdin...'])
+        self.assertIn("'opus' model is not supported", reason)
+
+    def test_the_reason_falls_back_to_stderr(self) -> None:
+        session = self._session()
+        reason = session._failure_reason(1, ['something broke badly'])
+        self.assertEqual(reason, 'something broke badly')
+
+    def test_the_stdin_banner_is_not_mistaken_for_a_reason(self) -> None:
+        # The CLI prints it on every run; reporting it as the failure would
+        # be worse than saying nothing.
+        session = self._session()
+        reason = session._failure_reason(3, ['Reading prompt from stdin...'])
+        self.assertIn('exited with code 3', reason)
+
+    def test_a_bare_exit_still_yields_something_actionable(self) -> None:
+        session = self._session()
+        reason = session._failure_reason(137, [])
+        self.assertIn('137', reason)
+        self.assertIn('codex', reason)
+
+    def test_the_latest_error_event_wins(self) -> None:
+        session = self._session()
+        session._append_event({'type': 'error', 'message': 'first'})
+        session._append_event({'type': 'error', 'message': 'second'})
+        self.assertEqual(session._failure_reason(1, []), 'second')
+
+
+class TooOldCliIsRefusedUpFrontTests(unittest.TestCase):
+    """A CLI without ``exec --json`` must fail the PROBE, not the turn.
+
+    Reported as a chat that died on ``error: unknown option '--json'`` after
+    the operator had already typed a message. That is the pre-Rust Codex CLI:
+    it has no ``--json``, so every streamed turn is impossible on it. The
+    check belongs at connection-validation time, where the setup panel can
+    show what to install.
+
+    Feature-detected, not version-compared — the flag is what is actually
+    depended on.
+    """
+
+    def _client(self, help_output: str, help_returncode: int = 0):
+        from unittest.mock import patch
+        from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
+        client = CodexCliClient(binary='codex')
+        calls = {'n': 0}
+
+        def fake_run(argv, **kwargs):
+            calls['n'] += 1
+            if '--version' in argv:
+                return SimpleNamespace(returncode=0, stdout='codex-cli 1.2.3', stderr='')
+            return SimpleNamespace(
+                returncode=help_returncode, stdout=help_output, stderr='',
+            )
+
+        return client, fake_run, patch
+
+    def test_a_cli_without_json_is_refused(self) -> None:
+        client, fake_run, patch = self._client('Usage: codex exec [options]\n  --quiet\n')
+        with patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
+                   return_value='/usr/local/bin/codex'), \
+             patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+                   side_effect=fake_run):
+            with self.assertRaises(RuntimeError) as caught:
+                client.validate_connection()
+        message = str(caught.exception)
+        self.assertIn('too old', message)
+        self.assertIn('npm install -g @openai/codex@latest', message)
+        # Naming the resolved path matters: "unknown option" alone never said
+        # WHICH codex ran, and several can be installed at once.
+        self.assertIn('/usr/local/bin/codex', message)
+
+    def test_a_modern_cli_passes(self) -> None:
+        client, fake_run, patch = self._client(
+            'Usage: codex exec [OPTIONS]\n      --json\n      --add-dir <DIR>\n',
+        )
+        with patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
+                   return_value='/usr/local/bin/codex'), \
+             patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+                   side_effect=fake_run):
+            client.validate_connection()  # must not raise
+
+    def test_an_unrunnable_help_probe_is_not_treated_as_failure(self) -> None:
+        # A sandbox that blocks the probe must not make a working CLI look
+        # broken — the turn itself would still succeed.
+        client, fake_run, patch = self._client('', help_returncode=127)
+        with patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
+                   return_value='/usr/local/bin/codex'), \
+             patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+                   side_effect=fake_run):
+            client.validate_connection()  # must not raise

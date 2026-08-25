@@ -1688,12 +1688,39 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 /* One tab per agent, at the top of the chat pane. Sits above the transcript
  * because it selects which CONVERSATION is below it. */
+/* Two rows: the agent tabs, then the conversation you are IN with the
+ * controls that act on it — the shape the editor extensions use. */
+.agent-backend-header {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-bottom: 1px solid #303134;
+}
+
+.agent-chat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+  min-height: 30px;
+}
+
+.agent-chat-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a3a3a3;
+  font-size: 12px;
+}
+
 .agent-backend-tabs {
   display: flex;
   align-items: stretch;
   gap: 4px;
   padding: 0 8px;
-  border-bottom: 1px solid #303134;
   flex-shrink: 0;
 }
 

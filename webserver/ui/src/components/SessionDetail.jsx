@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AgentBackendTabs from './AgentBackendTabs.jsx';
 import AgentBackendSetup from './AgentBackendSetup.jsx';
+import { backendLabel } from './AgentBackendChip.jsx';
 import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
@@ -138,7 +139,12 @@ export default function SessionDetail({
   // Bumped by "Check again": remounting the tab strip re-runs the probe.
   const [backendProbeNonce, setBackendProbeNonce] = useState(0);
   const [rechecking, setRechecking] = useState(false);
-  const backendUnready = !!activeBackendEntry && activeBackendEntry.ready === false;
+  // Either half means there is no chat to show: the CLI is missing, or it
+  // works but kato has no manager wired for it yet (needs a restart).
+  // One name for every agent-facing string in this component.
+  const agentName = backendLabel(session?.agent_backend) || 'the agent';
+  const backendUnready = !!activeBackendEntry
+    && activeBackendEntry.chat_available === false;
 
   const recheckBackends = useCallback(async () => {
     setRechecking(true);
@@ -386,7 +392,7 @@ export default function SessionDetail({
       if (status === 'spawned') {
         stream.appendLocalEvent({
           source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM,
-          text: '✓ resumed — spawning Claude…',
+          text: `✓ resumed — spawning ${backendLabel(session?.agent_backend) || 'the agent'}…`,
         });
         stream.reconnect();
       } else {
@@ -539,7 +545,7 @@ export default function SessionDetail({
       source: ENTRY_SOURCE.LOCAL,
       kind: BUBBLE_KIND.SYSTEM,
       text: (
-        `📎 session attached — kato will resume Claude session ${idShort} `
+        `📎 session attached — kato will resume ${agentName} session ${idShort} `
         + `for ${taskId} on the next message.${cwdLine}`
       ),
     });
@@ -589,14 +595,20 @@ export default function SessionDetail({
       stream.appendLocalEvent({
         source: ENTRY_SOURCE.LOCAL,
         kind: BUBBLE_KIND.SYSTEM,
-        text: '🆕 new chat — your next message starts a fresh Claude session. '
+        // Named from the ACTIVE backend, not hardcoded: this fires on a
+        // backend switch too, and the Codex tab announcing a "fresh Claude
+        // session" is exactly the confusion the tabs exist to remove.
+        text: `🆕 new chat — your next message starts a fresh `
+          + `${backendLabel(session?.agent_backend) || 'agent'} session. `
           + 'The previous conversation is in the chats menu.',
       });
     }
   }
 
   const hasVisible = useMemo(() => hasVisibleBubbles(stream.events), [stream.events]);
-  const banner = lifecycleBanner(stream.lifecycle, taskId, hasVisible);
+  const banner = lifecycleBanner(
+    stream.lifecycle, taskId, hasVisible, agentName,
+  );
   const composerDisabled = !canSend(stream.lifecycle, session);
   const composerHint = composerDisabledReason(stream.lifecycle, session);
   // Chat search state. Lifted here (not in EventLog) so the search
@@ -703,6 +715,7 @@ export default function SessionDetail({
           <AgentBackendSetup
             backend={activeBackendEntry.id}
             error={activeBackendEntry.error}
+            wired={activeBackendEntry.wired !== false}
             rechecking={rechecking}
             onRecheck={recheckBackends}
           />
@@ -710,6 +723,7 @@ export default function SessionDetail({
         <>
         <EventLog
           taskId={taskId}
+          agentName={backendLabel(session?.agent_backend) || 'Agent'}
           entries={stream.events}
           banner={banner}
           searchQuery={searchQuery}
@@ -735,6 +749,7 @@ export default function SessionDetail({
         <MessageForm
           ref={composerRef}
           taskId={taskId}
+          agentBackend={String(session?.agent_backend || '')}
           turnInFlight={stream.turnInFlight}
           onSubmit={onSendMessage}
           disabled={composerDisabled}
@@ -792,14 +807,16 @@ function composerDisabledReason(lifecycle, session) {
 // - STREAMING → show "Connected, waiting…" *only* until at least one
 //   bubble appears, then suppress so the chat reads cleanly.
 // Exported for unit tests. Pure function with no React deps.
-export function lifecycleBanner(lifecycle, taskId, hasVisible) {
+export function lifecycleBanner(
+  lifecycle, taskId, hasVisible, agentName = 'the agent',
+) {
   switch (lifecycle) {
     case SESSION_LIFECYCLE.CONNECTING:
       return `Connecting to session for ${taskId}…`;
     case SESSION_LIFECYCLE.STREAMING:
       return hasVisible
         ? null
-        : `Connected — waiting for Claude's first reply…`;
+        : `Connected — waiting for ${agentName}'s first reply…`;
     case SESSION_LIFECYCLE.IDLE:
       return '(no live subprocess for this tab — chat will resume when kato re-spawns it)';
     case SESSION_LIFECYCLE.MISSING:

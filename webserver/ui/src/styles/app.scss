@@ -1734,12 +1734,39 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 // and colouring it would compete with the run-state dot beside it.
 /* One tab per agent, at the top of the chat pane. Sits above the transcript
  * because it selects which CONVERSATION is below it. */
+/* Two rows: the agent tabs, then the conversation you are IN with the
+ * controls that act on it — the shape the editor extensions use. */
+.agent-backend-header {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-bottom: 1px solid $C-NEUTRAL-19;
+}
+
+.agent-chat-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-8;
+  padding: $SPACE-4 $SPACE-8 $SPACE-4 $SPACE-12;
+  min-height: 30px;
+}
+
+.agent-chat-bar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+}
+
 .agent-backend-tabs {
   display: flex;
   align-items: stretch;
   gap: $SPACE-4;
   padding: 0 $SPACE-8;
-  border-bottom: 1px solid $C-NEUTRAL-19;
   flex-shrink: 0;
 }
 

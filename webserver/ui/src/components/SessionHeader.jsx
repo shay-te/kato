@@ -18,6 +18,7 @@ import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast, toastResult } from '../stores/toastStore.js';
+import { backendLabel } from './AgentBackendChip.jsx';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
@@ -226,7 +227,7 @@ export default function SessionHeader({
           ? {
             kind: 'success',
             title: 'Code review requested',
-            message: 'Sent the review prompt to Claude (queued if it’s mid-turn).',
+            message: `Sent the review prompt to ${agentName} (queued if it’s mid-turn).`,
             durationMs: 5000,
           }
           : {
@@ -299,6 +300,11 @@ export default function SessionHeader({
   // (a Monitor / run_in_background wait), and the tab badge already passes it
   // via agentStatusStore — omitting it here made the header read "idle" while
   // the tab read "working" during a background wait.
+  // One name for every agent-facing string in this header — the status
+  // pill, the resume/stop tooltips, the review and Done copy.
+  // 'Agent' (capitalised) not 'the agent': it is used as a NAME in the
+  // status pill ('Agent: working') as well as in prose.
+  const agentName = backendLabel(session?.agent_backend) || 'Agent';
   const agent = deriveAgentStatus(
     session,
     { lifecycle: streamLifecycle, turnInFlight, awaitingBackground, backgroundIsWorkflow },
@@ -354,7 +360,7 @@ export default function SessionHeader({
   const mergeTitle = gitBlockedReason
     || ('Merge the default branch (master/main) into this task branch. '
       + "The agent's clone can't run git, so use this when the branch fell behind "
-      + '— on conflict the markers are left in place and Claude is told (with the '
+      + `— on conflict the markers are left in place and ${agentName} is told (with the `
       + 'file list) to resolve them. Safe to click again ("already up to date" if '
       + 'nothing new).'
       + lastActionSuffix(session.task_id, 'merge', 'merged'));
@@ -410,7 +416,7 @@ export default function SessionHeader({
       id="session-resume"
       type="button"
       className="session-action is-warning"
-      data-tooltip="Resume the Claude session — kato will respawn the subprocess and ask Claude to pick up where it left off."
+      data-tooltip={`Resume the ${agentName} session — kato will respawn the subprocess and ask ${agentName} to pick up where it left off.`}
       onClick={onResumeClick}
       disabled={resuming || typeof onResume !== 'function'}
       aria-label={resumeLabel}
@@ -422,7 +428,7 @@ export default function SessionHeader({
       id="session-stop"
       type="button"
       className="session-action is-danger"
-      data-tooltip="Stop the live Claude subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended."
+      data-tooltip={`Stop the live ${agentName} subprocess for this task. The chat history is preserved; you can resume from this header when the subprocess has ended.`}
       onClick={onStop}
       // Enabled whenever this Stop variant is rendered. The
       // ``isResumable`` branch above already swapped to Resume when
@@ -470,7 +476,10 @@ export default function SessionHeader({
             className={`claude-status claude-status-${agent.kind}`}
             title={agent.title}
           >
-            Claude: {agent.label}
+            {/* Named from the ACTIVE backend: the pill sits directly above
+                the agent tabs, so "Claude: working" over a selected Codex
+                tab flatly contradicts what the operator is looking at. */}
+            {`${agentName}: ${agent.label}`}
           </span>
           {sessionIdBadgeRight}
           {searchSlot}
@@ -479,7 +488,7 @@ export default function SessionHeader({
             id="session-code-review"
             type="button"
             className="session-action"
-            data-tooltip="Code review — ask Claude to strictly review this task's changes (correctness, security, tests, redundancy, comment cleanup) and fix blockers before the PR."
+            data-tooltip={`Code review — ask ${agentName} to strictly review this task's changes (correctness, security, tests, redundancy, comment cleanup) and fix blockers before the PR.`}
             onClick={onCodeReview}
             disabled={reviewing}
             aria-label={reviewing ? 'Requesting review…' : 'Code review'}
@@ -556,7 +565,7 @@ export default function SessionHeader({
             id="session-finish"
             type="button"
             className="session-action is-primary"
-            data-tooltip="Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow Claude can trigger by emitting <KATO_TASK_DONE>."
+            data-tooltip={`Done — push pending changes, open a PR if missing, and move the ticket to In Review. Same flow ${agentName} can trigger by emitting <KATO_TASK_DONE>.`}
             onClick={onFinish}
             disabled={finishing}
             aria-label={finishLabel}

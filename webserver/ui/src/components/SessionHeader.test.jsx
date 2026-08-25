@@ -66,6 +66,8 @@ function _session(overrides = {}) {
     status: TAB_STATUS.ACTIVE,
     live: true,
     working: false,
+    // The status pill is named from this — a session always has one.
+    agent_backend: 'claude',
     [AGENT_SESSION_ID]: 'sess-1',
     ...overrides,
   };
@@ -743,5 +745,35 @@ describe('SessionHeader — manual Sync button', () => {
     expect(toast.show).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'error', message: 'auth' }),
     );
+  });
+});
+
+
+// The pill sits directly above the agent tabs, so a hardcoded "Claude:"
+// over a selected Codex tab contradicts what the operator is looking at.
+describe('SessionHeader — the status pill names the active backend', () => {
+  function renderFor(backend) {
+    render(
+      <SessionHeader
+        session={_session({ agent_backend: backend })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        turnInFlight={true}
+      />,
+    );
+  }
+
+  test('a Codex session reads "Codex: working"', () => {
+    renderFor('codex');
+    expect(screen.getByText('Codex: working')).toBeInTheDocument();
+  });
+
+  test('a Claude session still reads "Claude: working"', () => {
+    renderFor('claude');
+    expect(screen.getByText('Claude: working')).toBeInTheDocument();
+  });
+
+  test('a session with no backend yet uses a neutral name', () => {
+    renderFor('');
+    expect(screen.getByText('Agent: working')).toBeInTheDocument();
   });
 });

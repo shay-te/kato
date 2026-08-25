@@ -169,9 +169,21 @@ class PlanningSessionRunner(object):
         if claude_cfg is None:
             return None
         defaults = cls._build_defaults(claude_cfg, docker_mode_on=docker_mode_on)
+        # Every chat backend that HAS a config block gets its own defaults, so
+        # a spawn on a tab other than the configured backend still gets that
+        # CLI's binary, model and tool settings.
+        by_backend = {}
+        for candidate in (AgentBackend.CLAUDE, AgentBackend.CODEX):
+            cfg = getattr(open_cfg, candidate.value, None)
+            if cfg is None:
+                continue
+            by_backend[candidate.value] = cls._build_defaults(
+                cfg, docker_mode_on=docker_mode_on,
+            )
         return cls(
             session_manager=session_manager,
             defaults=defaults,
+            defaults_by_backend=by_backend,
             max_wait_seconds=_positive_int_or_none(
                 getattr(claude_cfg, 'timeout_seconds', None),
             ),
@@ -206,9 +218,20 @@ class PlanningSessionRunner(object):
         max_wait_seconds: float | None = None,
         clock: Callable[[], float] = time.monotonic,
         hook_runner=None,
+        defaults_by_backend: dict | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._defaults = defaults
+        # Defaults PER BACKEND, because a task's chat tab decides which CLI
+        # runs — not the boot-time configured backend.
+        #
+        # There is one runner for the whole app, built from the configured
+        # backend's config block, and every spawn used its ``binary``. So the
+        # Codex tab spawned the CLAUDE binary with Codex's argv and the turn
+        # died on ``error: unknown option '--json'`` — commander.js refusing a
+        # flag only the Codex CLI has. The router had picked the right
+        # manager; the binary handed to it came from the wrong block.
+        self._defaults_by_backend = dict(defaults_by_backend or {})
         self._max_wait_seconds = (
             max_wait_seconds
             if max_wait_seconds is not None
@@ -220,6 +243,22 @@ class PlanningSessionRunner(object):
         # is unchanged for kato installs that never adopt hooks.
         self._hook_runner = hook_runner
         self.logger = configure_logger(self.__class__.__name__)
+
+    def _defaults_for(self, task_id: str) -> 'StreamingSessionDefaults':
+        """The spawn defaults for the backend THIS task's chat is on.
+
+        Falls back to the configured backend's set when the manager cannot
+        say (a single-backend host, or a task with no record yet), which is
+        the behaviour every caller had before tabs existed.
+        """
+        resolver = getattr(self._session_manager, 'backend_for', None)
+        if not callable(resolver) or not self._defaults_by_backend:
+            return self._defaults
+        try:
+            backend = str(resolver(task_id) or '').strip().lower()
+        except Exception:
+            return self._defaults
+        return self._defaults_by_backend.get(backend, self._defaults)
 
     @property
     def session_manager(self) -> ClaudeSessionManager:
@@ -691,38 +730,41 @@ class PlanningSessionRunner(object):
         # threaded through the same call), then the persisted lock, then the
         # configured default.
         locked = _task_mode_spawn(task_id) if not permission_mode else {}
+        # The CLI this task's chat is actually on. Resolved per spawn, not
+        # captured at boot: the operator picks it with the agent tabs.
+        defaults = self._defaults_for(task_id)
         return self._session_manager.start_session(
             task_id=task_id,
             task_summary=task_summary,
             initial_prompt=initial_prompt,
             cwd=cwd,
-            binary=self._defaults.binary,
-            model=model or self._defaults.model,
+            binary=defaults.binary,
+            model=model or defaults.model,
             permission_mode=(
                 permission_mode
                 or locked.get('permission_mode', '')
-                or self._defaults.permission_mode
+                or defaults.permission_mode
             ),
-            permission_prompt_tool=self._defaults.permission_prompt_tool,
+            permission_prompt_tool=defaults.permission_prompt_tool,
             # Per-spawn tool overrides exist for the read-only composer modes
             # (Explain), which restrict BEYOND the configured defaults. Empty
             # means "no override" so every other spawn keeps the defaults.
             allowed_tools=(
                 allowed_tools
                 or locked.get('allowed_tools', '')
-                or self._defaults.allowed_tools
+                or defaults.allowed_tools
             ),
             disallowed_tools=(
                 disallowed_tools
                 or locked.get('disallowed_tools', '')
-                or self._defaults.disallowed_tools
+                or defaults.disallowed_tools
             ),
-            max_turns=self._defaults.max_turns,
-            effort=effort or self._defaults.effort,
+            max_turns=defaults.max_turns,
+            effort=effort or defaults.effort,
             expected_branch=branch_name,
-            architecture_doc_path=self._defaults.architecture_doc_path,
-            lessons_path=self._defaults.lessons_path,
-            docker_mode_on=self._defaults.docker_mode_on,
+            architecture_doc_path=defaults.architecture_doc_path,
+            lessons_path=defaults.lessons_path,
+            docker_mode_on=defaults.docker_mode_on,
             # The docker sandbox mounts THIS, not cwd: cwd is one repo
             # clone, so mounting it hides every sibling repo in the same
             # task. Empty ⇒ previous cwd-only mount.

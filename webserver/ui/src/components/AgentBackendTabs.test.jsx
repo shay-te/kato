@@ -226,3 +226,239 @@ describe('AgentBackendTabs — unready backends', () => {
     resolve({ backends: [backendEntry('claude')] });
   });
 });
+
+
+// Clicking a tab must SELECT it. Selection used to be derived from the
+// session record alone, which this render tree never re-reads — so a
+// successful switch changed nothing on screen and the Codex tab appeared to
+// snap straight back to Claude. The operator's report: "when moving to codex
+// tab he immediately goes back to claude tab".
+describe('AgentBackendTabs — the picked tab stays picked', () => {
+  function renderTabs(props = {}) {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), backendEntry('codex')],
+    });
+    return render(
+      <AgentBackendTabs taskId="T1" activeBackend="claude" {...props} />,
+    );
+  }
+
+  function selected() {
+    return screen.getAllByRole('tab')
+      .filter((t) => t.getAttribute('aria-selected') === 'true')
+      .map((t) => t.textContent.trim());
+  }
+
+  test('a successful switch selects the clicked tab', async () => {
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'codex' },
+    });
+    renderTabs();
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(selected()).toEqual(['Codex']));
+  });
+
+  test('it stays selected even though the session prop never changes', async () => {
+    // The exact bug: App keeps reporting activeBackend="claude" until its
+    // next poll. The tab must not revert in the meantime.
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'codex' },
+    });
+    const { rerender } = renderTabs();
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(selected()).toEqual(['Codex']));
+
+    rerender(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    expect(selected()).toEqual(['Codex']);
+  });
+
+  test('the server’s answer wins over the clicked id', async () => {
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'claude' },
+    });
+    renderTabs();
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(selected()).toEqual(['Claude']));
+  });
+
+  test('a REFUSED switch leaves the tab where it was', async () => {
+    switchTaskBackend.mockResolvedValue({
+      ok: false, error: 'the codex backend is not configured on this host',
+    });
+    renderTabs();
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(switchTaskBackend).toHaveBeenCalled());
+    expect(selected()).toEqual(['Claude']);
+  });
+
+  test('once the session agrees, the server is in charge again', async () => {
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'codex' },
+    });
+    const { rerender } = renderTabs();
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(selected()).toEqual(['Codex']));
+
+    // App's poll catches up...
+    rerender(<AgentBackendTabs taskId="T1" activeBackend="codex" />);
+    await waitFor(() => expect(selected()).toEqual(['Codex']));
+    // ...and a switch made ELSEWHERE is now reflected, not pinned by a
+    // stale local pick.
+    rerender(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    await waitFor(() => expect(selected()).toEqual(['Claude']));
+  });
+
+  test('the readiness report follows the picked tab', async () => {
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'codex' },
+    });
+    const onReadinessChange = vi.fn();
+    renderTabs({ onReadinessChange });
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => {
+      expect(onReadinessChange.mock.calls.at(-1)[0].id).toBe('codex');
+    });
+  });
+});
+
+
+// Selecting a backend kato has no manager for must OPEN ITS SETUP PANEL,
+// not ask the server to switch to it. The switch route refuses a backend it
+// cannot run, so posting would answer the click with "Could not switch
+// agent" — an error about the very thing the tab exists to explain.
+describe('AgentBackendTabs — selecting an unwired backend', () => {
+  const UNWIRED = backendEntry('codex', {
+    ready: true, wired: false, chat_available: false, error: '',
+  });
+
+  function selected() {
+    return screen.getAllByRole('tab')
+      .filter((t) => t.getAttribute('aria-selected') === 'true')
+      .map((t) => t.textContent.trim());
+  }
+
+  test('selects locally without posting a switch', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNWIRED],
+    });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+
+    await waitFor(() => expect(selected()).toEqual(['Codex']));
+    expect(switchTaskBackend).not.toHaveBeenCalled();
+  });
+
+  test('reports it upward so the chat area shows the setup panel', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), UNWIRED],
+    });
+    const onReadinessChange = vi.fn();
+    render(
+      <AgentBackendTabs
+        taskId="T1" activeBackend="claude"
+        onReadinessChange={onReadinessChange}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => {
+      const last = onReadinessChange.mock.calls.at(-1)[0];
+      expect(last.id).toBe('codex');
+      expect(last.chat_available).toBe(false);
+    });
+  });
+
+  test('a wired backend still goes through the server', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), backendEntry('codex')],
+    });
+    switchTaskBackend.mockResolvedValue({
+      ok: true, body: { agent_backend: 'codex' },
+    });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    fireEvent.click(await screen.findByRole('tab', { name: /Codex/ }));
+    await waitFor(() => expect(switchTaskBackend).toHaveBeenCalledWith('T1', 'codex'));
+  });
+});
+
+
+// The chats control moved OUT of the active tab pill onto its own row,
+// beside the name of the conversation you are in. Inside the pill it read as
+// part of the agent's name, and the chat's own title appeared nowhere — you
+// had to open the dropdown to learn which conversation you were looking at.
+describe('AgentBackendTabs — the chat bar under the tabs', () => {
+  function ready() {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), backendEntry('codex')],
+    });
+  }
+
+  test('the chat name renders on its own row, below the tabs', async () => {
+    ready();
+    fetchTaskChats.mockResolvedValue({
+      chats: [{ active: true, first_user_message: 'Fix the login redirect' }],
+    });
+    const { container } = render(
+      <AgentBackendTabs taskId="T1" activeBackend="claude" />,
+    );
+    await screen.findByText('Fix the login redirect');
+
+    const bar = container.querySelector('.agent-chat-bar');
+    expect(bar).toBeTruthy();
+    // The row is a SIBLING of the tab strip, not inside a tab.
+    expect(container.querySelector('.agent-backend-tab .agent-chat-bar')).toBeNull();
+  });
+
+  test('the chats control sits on that row, not in the tab pill', async () => {
+    ready();
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    const { container } = render(
+      <AgentBackendTabs taskId="T1" activeBackend="claude" />,
+    );
+    await screen.findByRole('tab', { name: /Claude/ });
+
+    const button = screen.getByRole('button', { name: /chats/i });
+    expect(button.closest('.agent-chat-bar')).toBeTruthy();
+    expect(button.closest('.agent-backend-tab')).toBeNull();
+  });
+
+  test('falls back to a neutral label when there is no chat yet', async () => {
+    ready();
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    expect(await screen.findByText('Chats')).toBeTruthy();
+  });
+
+  test('a failed lookup does not blank the row', async () => {
+    ready();
+    fetchTaskChats.mockRejectedValue(new Error('offline'));
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+    expect(await screen.findByText('Chats')).toBeTruthy();
+  });
+
+  test('an unconfigured backend gets no chat bar', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [
+        backendEntry('claude'),
+        backendEntry('codex', { ready: false, chat_available: false }),
+      ],
+    });
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    const { container } = render(
+      <AgentBackendTabs taskId="T1" activeBackend="codex" />,
+    );
+    await screen.findByRole('tab', { name: /Codex/ });
+    expect(container.querySelector('.agent-chat-bar')).toBeNull();
+  });
+
+  test('the chats icon is a line drawing, not a filled glyph', async () => {
+    ready();
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    const { container } = render(
+      <AgentBackendTabs taskId="T1" activeBackend="claude" />,
+    );
+    await screen.findByRole('tab', { name: /Claude/ });
+    const svg = screen.getByRole('button', { name: /chats/i }).querySelector('svg');
+    expect(svg.getAttribute('fill')).toBe('none');
+    expect(svg.getAttribute('stroke')).toBe('currentColor');
+  });
+});

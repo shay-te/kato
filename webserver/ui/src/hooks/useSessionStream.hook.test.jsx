@@ -479,3 +479,62 @@ describe('useSessionStream — onIncomingEvent callback', () => {
     expect(onIncoming).not.toHaveBeenCalled();
   });
 });
+
+
+// Codex's turn lifecycle. The reducer only knew Claude's assistant/result, so
+// a Codex turn set "working" and nothing cleared it: the spinner ran forever
+// and the status chip only flipped to idle after switching tabs and back —
+// a remount re-deriving what the stream should have reported.
+describe('useSessionStream — Codex turn lifecycle', () => {
+  function emit(raw) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_event', { event: { raw } });
+    });
+  }
+
+  test('turn.started marks the turn in flight', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({ type: 'turn.started' });
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('turn.completed clears it — the reported bug', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({ type: 'turn.started' });
+    expect(result.current.turnInFlight).toBe(true);
+    emit({ type: 'turn.completed', usage: { output_tokens: 2 } });
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('a failed turn clears it too', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({ type: 'turn.started' });
+    emit({ type: 'turn.failed', error: { message: 'nope' } });
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('an aborted turn clears it too', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({ type: 'turn.started' });
+    emit({ type: 'turn.aborted', returncode: 1 });
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('a produced item keeps the turn alive', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'hi' },
+    });
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('a full turn ends idle', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emit({ type: 'thread.started', thread_id: 't1' });
+    emit({ type: 'turn.started' });
+    emit({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } });
+    emit({ type: 'turn.completed' });
+    expect(result.current.turnInFlight).toBe(false);
+  });
+});

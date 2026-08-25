@@ -65,3 +65,22 @@ describe('AgentBackendSetup', () => {
     expect(screen.getByText(/other agent tabs are unaffected/)).toBeTruthy();
   });
 });
+
+describe('AgentBackendSetup — installed but not wired', () => {
+  test('says to restart kato rather than blaming the binary path', () => {
+    // ready + no error + not wired = the CLI answered fine, kato just has
+    // no manager for it yet. Telling this operator to check the binary path
+    // sends them hunting for a fault that does not exist.
+    render(<AgentBackendSetup backend="codex" error="" wired={false} />);
+    expect(screen.getByText(/Restart kato to pick it up/)).toBeTruthy();
+  });
+
+  test('a real install error still wins over the restart hint', () => {
+    const { container } = render(
+      <AgentBackendSetup backend="codex" error={CODEX_ERROR} wired={false} />,
+    );
+    expect(container.querySelector('pre').textContent)
+      .toContain('npm install -g @openai/codex');
+    expect(screen.queryByText(/Restart kato/)).toBeNull();
+  });
+});

@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { backendLabel } from './AgentBackendChip.jsx';
 import { useAgentVersion } from '../hooks/useAgentVersion.js';
 import { useTaskTree } from '../stores/taskCache/index.js';
 import ComposerMentionMenu from './ComposerMentionMenu.jsx';
@@ -83,6 +84,7 @@ const MENTION_LIMIT = 50;
 
 const MessageForm = forwardRef(function MessageForm({
   taskId,
+  agentBackend = '',
   turnInFlight,
   onSubmit,
   disabled = false,
@@ -154,7 +156,7 @@ const MessageForm = forwardRef(function MessageForm({
   // Only offer ultracode when the installed agent CLI actually supports
   // multi-agent workflows — otherwise the keyword is inert and the toggle
   // misleads. ``null`` (still loading) keeps it hidden until confirmed.
-  const agentVersion = useAgentVersion();
+  const agentVersion = useAgentVersion(agentBackend);
   const supportsWorkflows = !!(agentVersion && agentVersion.supports_workflows);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -396,11 +398,15 @@ const MessageForm = forwardRef(function MessageForm({
   // message is held and auto-sent by SessionDetail when the current
   // turn finishes (no mid-turn steering).
   const isQueueing = turnInFlight && !disabled;
+  // Named from the ACTIVE backend. Hardcoding "Claude" told an operator
+  // typing into the Codex tab that they were replying to Claude — the exact
+  // ambiguity separate agent tabs exist to remove.
+  const agentName = backendLabel(agentBackend) || 'the agent';
   const placeholder = disabled
     ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
     : isQueueing
-      ? 'Queue another message… (sends when Claude is free)'
-      : 'Reply to Claude';
+      ? `Queue another message… (sends when ${agentName} is free)`
+      : `Reply to ${agentName}`;
   const submitClass = isQueueing ? 'is-queued' : '';
   const hasContent = (value || '').trim() || attachments.length > 0;
   // While Claude is working with NOTHING to send, the button has no job — it
@@ -415,9 +421,9 @@ const MessageForm = forwardRef(function MessageForm({
   if (disabled) {
     submitTitle = disabledReason || 'Session is not live — chat resumes when kato re-spawns it.';
   } else if (turnInFlight) {
-    submitTitle = 'Claude is working — your message will be queued and sent when the turn finishes.';
+    submitTitle = `${agentName} is working — your message will be queued and sent when the turn finishes.`;
   } else {
-    submitTitle = 'Send your message to Claude (or press Enter).';
+    submitTitle = `Send your message to ${agentName} (or press Enter).`;
   }
 
   // Recompute the @-mention state from the live text + caret. Resets the
@@ -751,8 +757,8 @@ const MessageForm = forwardRef(function MessageForm({
             <button
               type="button"
               className="message-send is-stop tooltip-above tooltip-end"
-              data-tooltip="Stop Claude. The turn ends where it is and the chat history is kept — this does not start a new session."
-              aria-label="Stop Claude"
+              data-tooltip={`Stop ${agentName}. The turn ends where it is and the chat history is kept — this does not start a new session.`}
+              aria-label={`Stop ${agentName}`}
               onClick={() => onStop && onStop()}
             >
               <span aria-hidden="true">■</span>

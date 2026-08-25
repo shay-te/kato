@@ -225,7 +225,9 @@ export default function ChatsMenu({
         aria-expanded={open}
         aria-label="Chats"
       >
-        <Icon name="comment" />
+        {/* Line, not solid: it sits beside the chat's own title on a text
+            row, where a filled glyph reads as a stamped blob. */}
+        <Icon name="chat-line" />
       </button>
       {menu}
     </span>

@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
+import { CODEX_EVENT, isCodexTerminal } from '../constants/codexEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { safeParseJSON } from '../utils/sse.js';
 
@@ -380,6 +381,25 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
   // forces a hydrate that includes a freshly-stamped lastEventAt).
   const next = appended === state ? { ...state } : appended;
   next.lastEventAt = Date.now();
+  // Codex speaks a different wire vocabulary from Claude — a thread/turn
+  // lifecycle instead of assistant/result. Handled BEFORE the Claude switch
+  // because none of its cases match, so a Codex turn set "working" at spawn
+  // and never cleared it: the indicator span forever and the status chip sat
+  // on "working" until a tab switch remounted and re-derived it.
+  if (isCodexTerminal(raw?.type)) {
+    next.turnInFlight = false;
+    next.awaitingBackground = false;
+    next.backgroundIsWorkflow = false;
+    return next;
+  }
+  if (raw?.type === CODEX_EVENT.TURN_STARTED
+      || raw?.type === CODEX_EVENT.ITEM_COMPLETED) {
+    next.turnInFlight = true;
+    next.awaitingBackground = false;
+    next.backgroundIsWorkflow = false;
+    return next;
+  }
+
   // turnInFlight is a LIVE-only concern; keep it inline here. The
   // shared permission/result clearing is folded into
   // applyPermissionTransition (strict, positive-match policy).

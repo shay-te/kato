@@ -47,6 +47,11 @@ _TRANSPORT_ONLY_METHODS = {
     '_merge_disallowed_with_git_deny', '_union_disallowed',
     # Codex: no system-prompt channel, and a JSONL event stream.
     '_system_prompt_addendum', '_parse_jsonl_payload',
+    # Codex only: the CLI was rewritten (Node → Rust) and the old build has
+    # no ``exec --json``, which every streamed turn depends on. Claude's CLI
+    # has never lacked its streaming flag, so it needs no counterpart —
+    # inventing one for symmetry would be an empty method.
+    '_validate_streaming_support',
 }
 
 # Public signatures that differ only by the transport's own name.

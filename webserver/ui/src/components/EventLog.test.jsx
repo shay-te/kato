@@ -58,12 +58,12 @@ function _server(raw) {
 describe('EventLog — banner + empty state', () => {
 
   test('renders the banner as a system bubble', () => {
-    render(<EventLog entries={[]} banner="Connecting…" />);
+    render(<EventLog agentName="Claude" entries={[]} banner="Connecting…" />);
     expect(screen.getByText('Connecting…')).toBeInTheDocument();
   });
 
   test('renders nothing meaningful when entries+banner both empty', () => {
-    const { container } = render(<EventLog entries={[]} banner={null} />);
+    const { container } = render(<EventLog agentName="Claude" entries={[]} banner={null} />);
     // The outer #event-log div is present but has no bubble children.
     const log = container.querySelector('#event-log');
     expect(log).toBeInTheDocument();
@@ -76,7 +76,7 @@ describe('EventLog — local entries', () => {
 
   test('LOCAL user prompt renders as a sticky prompt', () => {
     const { container } = render(
-      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hello there')]} />,
+      <EventLog agentName="Claude" entries={[_local(BUBBLE_KIND.USER, 'hello there')]} />,
     );
     // An operator prompt is its turn's sticky section header — the
     // sole representation, not a separate chat bubble.
@@ -96,7 +96,7 @@ describe('EventLog — local entries', () => {
       type: 'assistant',
       message: { id: `m${i}`, content: [{ type: 'text', text: `step ${i}` }] },
     }));
-    const { container } = render(<EventLog entries={[prompt, ...filler]} />);
+    const { container } = render(<EventLog agentName="Claude" entries={[prompt, ...filler]} />);
     // The prompt is entry 0 — well past the trailing 200 — yet its sticky
     // header still renders.
     expect(
@@ -111,7 +111,7 @@ describe('EventLog — local entries', () => {
       text: 'check this',
       imageCount: 2,
     };
-    const { container } = render(<EventLog entries={[entry]} />);
+    const { container } = render(<EventLog agentName="Claude" entries={[entry]} />);
     const prompt = container.querySelector('.chat-sticky-prompt-text');
     expect(prompt).toHaveTextContent('check this');
     expect(prompt).toHaveTextContent('2 images attached');
@@ -124,7 +124,7 @@ describe('EventLog — local entries', () => {
       text: '',
       imageCount: 1,
     };
-    render(<EventLog entries={[entry]} />);
+    render(<EventLog agentName="Claude" entries={[entry]} />);
     expect(screen.getByText(/1 image attached/)).toBeInTheDocument();
   });
 
@@ -142,7 +142,7 @@ describe('EventLog — local entries', () => {
       + 'assert that expansion survives a follow-up event arrival.'
     );
     const initial = [_local(BUBBLE_KIND.USER, longPrompt)];
-    const { container, rerender } = render(<EventLog entries={initial} />);
+    const { container, rerender } = render(<EventLog agentName="Claude" entries={initial} />);
     const expandButton = container.querySelector(
       '.chat-sticky-prompt-expand',
     );
@@ -158,8 +158,7 @@ describe('EventLog — local entries', () => {
     // a longer ``entries`` array. The expanded prompt must STAY
     // expanded; the old (index-based-key) bug collapsed it here.
     rerender(
-      <EventLog
-        entries={[
+      <EventLog agentName="Claude" entries={[
           ...initial,
           _server({
             type: CLAUDE_EVENT.ASSISTANT,
@@ -180,7 +179,7 @@ describe('EventLog — local entries', () => {
 describe('EventLog — server event rendering', () => {
 
   test('SYSTEM init shows agent session id', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
       [AGENT_SESSION_ID]: 'sess-abc-123',
@@ -189,7 +188,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('SYSTEM init with missing agent session id falls back to "(none yet)"', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
     })]} />);
@@ -202,8 +201,7 @@ describe('EventLog — server event rendering', () => {
     // "(none yet)" forever even after the session was up and
     // answering. Passing the live id through ``liveAgentSessionId``
     // swaps in the real short id so the chat matches the header.
-    render(<EventLog
-      entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
         type: CLAUDE_EVENT.SYSTEM,
         subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
       })]}
@@ -218,8 +216,7 @@ describe('EventLog — server event rendering', () => {
   test('SYSTEM init event id wins over liveAgentSessionId fallback', () => {
     // When the event itself carries an id (the happy path), the
     // fallback is irrelevant — the bubble shows the event's id.
-    render(<EventLog
-      entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
         type: CLAUDE_EVENT.SYSTEM,
         subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
         [AGENT_SESSION_ID]: 'sess-from-event',
@@ -232,7 +229,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('SYSTEM preflight renders the message', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: CLAUDE_SYSTEM_SUBTYPE.PREFLIGHT,
       message: 'cloning client repo…',
@@ -241,7 +238,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('SYSTEM with unrecognised subtype renders nothing', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: 'mystery_subtype',
     })]} />);
@@ -249,7 +246,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('SYSTEM action-guard block renders a loud message', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK,
       message: 'BLOCKED by Action Guard (credential_read): reads a key.',
@@ -261,7 +258,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('SYSTEM action-guard block with empty message renders nothing', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.SYSTEM,
       subtype: CLAUDE_SYSTEM_SUBTYPE.ACTION_GUARD_BLOCK,
       message: '',
@@ -270,7 +267,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('ASSISTANT with text content renders the text', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [{ type: 'text', text: "I'll fix the bug" }] },
     })]} />);
@@ -278,7 +275,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('ASSISTANT with tool_use renders a tool bubble with the summary', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } },
@@ -305,7 +302,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('no reveal button when onOpenFile is not provided', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'tool_use', id: 't1', name: 'Read',
@@ -330,7 +327,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('ASSISTANT with mixed text + tool_use renders BOTH bubbles', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'text', text: 'running ls' },
@@ -342,7 +339,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('USER text content renders as a sticky prompt', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: [{ type: 'text', text: 'fix this' }] },
     })]} />);
@@ -352,7 +349,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('USER string content renders as a sticky prompt', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: 'restart prompt' },
     })]} />);
@@ -362,7 +359,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('USER task-notification content is hidden from prompts', () => {
-    const { container } = render(<EventLog entries={[
+    const { container } = render(<EventLog agentName="Claude" entries={[
       _server({
         type: CLAUDE_EVENT.USER,
         message: {
@@ -391,7 +388,7 @@ describe('EventLog — server event rendering', () => {
       'line three',
       'line four',
     ].join('\n');
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: [{ type: 'text', text: longPrompt }] },
     })]} />);
@@ -414,7 +411,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('USER with images appends image count', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.USER,
       message: { content: [
         { type: 'text', text: 'screenshot' },
@@ -428,14 +425,14 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('STREAM_EVENT renders nothing (suppressed)', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.STREAM_EVENT,
     })]} />);
     expect(container.querySelectorAll('.bubble').length).toBe(0);
   });
 
   test('PERMISSION_REQUEST renders nothing in the log (modal handles it)', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.PERMISSION_REQUEST,
       request_id: 'r1',
     })]} />);
@@ -446,7 +443,7 @@ describe('EventLog — server event rendering', () => {
     // The success-case result event is the full tool output again
     // (file lists, summaries, etc.) — duplicates what the assistant
     // just said. Operator complaint: "remove the result block".
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.RESULT,
       is_error: false,
       result: 'done',
@@ -455,7 +452,7 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('RESULT (error) renders "(result: error)" error bubble', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.RESULT,
       is_error: true,
       result: 'rate limited',
@@ -465,19 +462,19 @@ describe('EventLog — server event rendering', () => {
   });
 
   test('event with no type renders nothing', () => {
-    const { container } = render(<EventLog entries={[_server({})]} />);
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({})]} />);
     expect(container.querySelectorAll('.bubble').length).toBe(0);
   });
 
   test('hidden chat events (rate_limit_event) render nothing', () => {
-    const { container } = render(<EventLog entries={[_server({
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: 'rate_limit_event',
     })]} />);
     expect(container.querySelectorAll('.bubble').length).toBe(0);
   });
 
   test('unknown event type renders as a generic TOOL bubble with the label', () => {
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: 'unknown_event',
       subtype: 'weird',
     })]} />);
@@ -495,7 +492,7 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
     // defined". This test renders a Bash with multi-line output to
     // exercise the toggle-button branch.
     const longCommand = Array.from({ length: 60 }, (_, i) => `echo line ${i}`).join('\n');
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'tool_use', id: 't1', name: 'Bash', input: { command: longCommand } },
@@ -508,7 +505,7 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
 
   test('tool_use with <40 details lines does NOT show the toggle button', () => {
     const shortCommand = 'ls -la';
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'tool_use', id: 't1', name: 'Bash', input: { command: shortCommand } },
@@ -521,7 +518,7 @@ describe('EventLog — tool_use with long details (Bug fix regression guard)', (
 
   test('clicking the toggle expands collapsed details', () => {
     const longCommand = Array.from({ length: 80 }, (_, i) => `echo "${i}"`).join('\n');
-    render(<EventLog entries={[_server({
+    render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.ASSISTANT,
       message: { content: [
         { type: 'tool_use', id: 't1', name: 'Bash', input: { command: longCommand } },
@@ -543,7 +540,7 @@ describe('EventLog — dedupe + show-older', () => {
     // optimistic prompt + the server's echo into ONE rendered
     // prompt. Both have the same text — without dedupe there would
     // be two sticky prompts (two turns).
-    const { container } = render(<EventLog entries={[
+    const { container } = render(<EventLog agentName="Claude" entries={[
       _local(BUBBLE_KIND.USER, 'identical text'),
       _server({
         type: CLAUDE_EVENT.USER,
@@ -563,7 +560,7 @@ describe('EventLog — dedupe + show-older', () => {
       uuid: `u${i}`,
       message: { content: [{ type: 'text', text: `msg ${i}` }] },
     }));
-    render(<EventLog entries={many} />);
+    render(<EventLog agentName="Claude" entries={many} />);
     const showOlder = screen.queryByRole('button', { name: /show.*earlier event/i });
     expect(showOlder).toBeInTheDocument();
   });
@@ -573,7 +570,7 @@ describe('EventLog — dedupe + show-older', () => {
 describe('EventLog — per-turn sticky grouping', () => {
 
   test('each operator prompt opens its own .chat-turn section', () => {
-    const { container } = render(<EventLog entries={[
+    const { container } = render(<EventLog agentName="Claude" entries={[
       _local(BUBBLE_KIND.USER, 'first ask'),
       _server({
         type: CLAUDE_EVENT.ASSISTANT,
@@ -607,7 +604,7 @@ describe('EventLog — per-turn sticky grouping', () => {
   });
 
   test('bubbles before the first prompt go in a preamble (no sticky header)', () => {
-    const { container } = render(<EventLog entries={[
+    const { container } = render(<EventLog agentName="Claude" entries={[
       _server({
         type: CLAUDE_EVENT.SYSTEM,
         subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
@@ -636,8 +633,7 @@ describe('EventLog — footer (trailing working indicator)', () => {
     // with the messages and trails the newest one — it must be the
     // final child of the scroll container, after every turn.
     const { container } = render(
-      <EventLog
-        entries={[
+      <EventLog agentName="Claude" entries={[
           _local(BUBBLE_KIND.USER, 'do the thing'),
           _server({
             type: CLAUDE_EVENT.ASSISTANT,
@@ -657,7 +653,7 @@ describe('EventLog — footer (trailing working indicator)', () => {
 
   test('omitting footer renders nothing extra (default null)', () => {
     const { container } = render(
-      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
+      <EventLog agentName="Claude" entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
     );
     expect(
       container.querySelector('[data-testid="work-indicator"]'),
@@ -921,7 +917,7 @@ describe('EventLog — copy-response button', () => {
 
   test('a turn with an assistant response shows a copy button', () => {
     render(
-      <EventLog entries={[
+      <EventLog agentName="Claude" entries={[
         _local(BUBBLE_KIND.USER, 'ask one'),
         _assistant('the full answer'),
       ]} />,
@@ -933,7 +929,7 @@ describe('EventLog — copy-response button', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(
-      <EventLog entries={[
+      <EventLog agentName="Claude" entries={[
         _local(BUBBLE_KIND.USER, 'ask one'),
         _assistant('first part'),
         _assistant('second part'),
@@ -948,7 +944,7 @@ describe('EventLog — copy-response button', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(
-      <EventLog entries={[
+      <EventLog agentName="Claude" entries={[
         _local(BUBBLE_KIND.USER, 'do the thing'),
         _assistant('let me check the file'),
         _server({
@@ -971,7 +967,7 @@ describe('EventLog — copy-response button', () => {
 
   test('a turn with no assistant response (tool-only) has no copy button', () => {
     render(
-      <EventLog entries={[
+      <EventLog agentName="Claude" entries={[
         _local(BUBBLE_KIND.USER, 'just run a tool'),
         _server({
           type: 'assistant',
@@ -988,7 +984,7 @@ describe('EventLog — copy-response button', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(
-      <EventLog entries={[_server({
+      <EventLog agentName="Claude" entries={[_server({
         type: 'assistant',
         message: { id: 'm-w', content: [{
           type: 'tool_use', name: 'Write',
@@ -1007,7 +1003,7 @@ describe('EventLog — copy-response button', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     render(
-      <EventLog entries={[_server({
+      <EventLog agentName="Claude" entries={[_server({
         type: 'assistant',
         message: { id: 'm-e', content: [{
           type: 'tool_use', name: 'Edit',
@@ -1032,7 +1028,7 @@ describe('EventLog — copy-response button', () => {
 describe('EventLog — prompt timestamp', () => {
   test('a prompt with an epoch shows its time', () => {
     const { container } = render(
-      <EventLog entries={[{
+      <EventLog agentName="Claude" entries={[{
         source: ENTRY_SOURCE.LOCAL,
         kind: BUBBLE_KIND.USER,
         text: 'do the thing',
@@ -1046,7 +1042,7 @@ describe('EventLog — prompt timestamp', () => {
 
   test('a prompt with no epoch shows no time', () => {
     const { container } = render(
-      <EventLog entries={[_local(BUBBLE_KIND.USER, 'no time here')]} />,
+      <EventLog agentName="Claude" entries={[_local(BUBBLE_KIND.USER, 'no time here')]} />,
     );
     expect(container.querySelector('.chat-sticky-prompt-time')).toBeNull();
   });
@@ -1055,7 +1051,7 @@ describe('EventLog — prompt timestamp', () => {
     // History prompts now carry the JSONL timestamp as received_at_epoch,
     // threaded through serverBubblesFor → userBubbles → StickyPrompt.
     const { container } = render(
-      <EventLog entries={[{
+      <EventLog agentName="Claude" entries={[{
         source: ENTRY_SOURCE.SERVER,
         receivedAtEpoch: 1717000000,
         raw: {
@@ -1076,13 +1072,13 @@ describe('EventLog — scroll-to-latest button', () => {
   afterEach(() => { scrollState.override = null; });
 
   test('hidden while pinned to the bottom', () => {
-    render(<EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />);
+    render(<EventLog agentName="Claude" entries={[_local(BUBBLE_KIND.USER, 'hi')]} />);
     expect(screen.queryByRole('button', { name: 'Scroll to latest' })).toBeNull();
   });
 
   test('appears after scrolling up, and jumps back on click', () => {
     const { container } = render(
-      <EventLog entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
+      <EventLog agentName="Claude" entries={[_local(BUBBLE_KIND.USER, 'hi')]} />,
     );
     const log = container.querySelector('#event-log');
     scrollState.override = false;      // simulate "scrolled up off the bottom"

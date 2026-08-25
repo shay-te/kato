@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -855,13 +856,47 @@ def _send_kato_png(*, cache_control: str = '', not_found_message: str = 'not fou
     return response
 
 
+#: A backend id that may be folded into a per-task override key.
+_BACKEND_KEY_RE = re.compile(r'^[a-z0-9][a-z0-9_-]{0,31}$')
+
+
+def _override_key(app: Flask, task_id: str) -> str:
+    """Store key for a per-task override: the task AND its active backend.
+
+    Model and effort are backend-specific — ``opus`` means nothing to Codex,
+    which answers a request for it with "The 'opus' model is not supported
+    when using Codex with a ChatGPT account" and fails the turn. Keying these
+    on ``task_id`` alone made switching a task to the Codex tab inherit the
+    Claude model the operator had picked, so the first message died before it
+    reached the model.
+
+    Falls back to the bare task id when the backend is unknown, which keeps
+    the key stable for a single-backend host.
+    """
+    backend = ''
+    manager = app.config.get('SESSION_MANAGER')
+    resolver = getattr(manager, 'backend_for', None)
+    if callable(resolver):
+        try:
+            backend = str(resolver(task_id) or '').strip().lower()
+        except Exception:
+            backend = ''
+    # Only a plausible backend identifier is allowed into the key. Anything
+    # else — a stub that returns an object, a resolver that answers with a
+    # repr — would mint an unstable key, and the operator's saved model would
+    # silently read back empty on the very next request.
+    if not _BACKEND_KEY_RE.match(backend):
+        backend = ''
+    return f'{task_id}::{backend}' if backend else str(task_id)
+
+
 def _get_task_override(app: Flask, key: str, task_id: str) -> str:
     """Read a per-task override (model / effort) from its config store.
 
     Treats a missing / ``None`` store as "no override" — returns the
     empty string, matching the GET routes' ``... or {}`` fallback.
     """
-    return (app.config.get(key) or {}).get(task_id, '')
+    return (app.config.get(key) or {}).get(_override_key(app, task_id), '')
 
 
 def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> bool:
@@ -877,10 +912,11 @@ def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> b
     store = app.config.get(key)
     if store is None:
         return False
+    store_key = _override_key(app, task_id)
     if value:
-        store[task_id] = value
+        store[store_key] = value
     else:
-        store.pop(task_id, None)
+        store.pop(store_key, None)
     return True
 
 
@@ -3905,8 +3941,14 @@ def _register_agent_version_route(app: Flask) -> None:
         upgrade button reflect a host-side CLI change (or a settings change)
         WITHOUT a kato restart — the UI's refresh control passes it.
         """
+        # Per-backend: every task shows a tab per agent, so "is my CLI out of
+        # date" is a question about the agent the operator is LOOKING at. A
+        # single cached answer for the configured backend could never surface
+        # a stale Codex CLI on a Claude-configured host.
+        wanted = str(request.args.get('backend', '') or '').strip().lower()
+        cache_key = f'AGENT_VERSION_INFO::{wanted}' if wanted else 'AGENT_VERSION_INFO'
         if _truthy_arg(request.args.get('refresh')):
-            app.config.pop('AGENT_VERSION_INFO', None)
+            app.config.pop(cache_key, None)
             # A manual refresh must also re-ask the registry — otherwise a
             # release published during this process's lifetime stays invisible
             # until the published-version TTL lapses.
@@ -3917,13 +3959,13 @@ def _register_agent_version_route(app: Flask) -> None:
                 reset_latest_version_cache()
             except Exception:
                 app.logger.exception('could not reset the published-version cache')
-        cached = app.config.get('AGENT_VERSION_INFO')
+        cached = app.config.get(cache_key)
         if cached is None:
             try:
                 from kato_core_lib.helpers.agent_version_utils import (
                     agent_version_info,
                 )
-                cached = agent_version_info()
+                cached = agent_version_info(backend=wanted)
             except Exception:
                 app.logger.exception('agent version probe failed')
                 cached = {
@@ -3933,7 +3975,7 @@ def _register_agent_version_route(app: Flask) -> None:
                     'update_available': False, 'supports_workflows': False,
                     'detail': '',
                 }
-            app.config['AGENT_VERSION_INFO'] = cached
+            app.config[cache_key] = cached
         return jsonify(cached)
 
 
@@ -3958,8 +4000,13 @@ def _register_agent_version_upgrade_route(app: Flask) -> None:
             app.logger.exception('agent upgrade helper unavailable')
             return jsonify({'ok': False, 'state': 'error',
                             'message': 'upgrade helper unavailable'})
+        # Upgrade the CLI the operator is LOOKING at, not the configured
+        # one — the request names it, the same way the banner did.
+        payload = request.get_json(silent=True) or {}
+        wanted = str(payload.get('backend', '') or '').strip().lower()
         app.config.pop('AGENT_VERSION_INFO', None)
-        return jsonify(agent_cli_upgrade_job.start())
+        app.config.pop(f'AGENT_VERSION_INFO::{wanted}', None)
+        return jsonify(agent_cli_upgrade_job.start(backend=wanted))
 
     @app.get('/api/agent-version/upgrade')
     def get_agent_version_upgrade():
@@ -4385,8 +4432,7 @@ def _effort_change_needs_respawn(app: Flask, manager, task_id: str, images) -> b
     """
     if images:
         return False
-    overrides = app.config.get('TASK_EFFORT_OVERRIDES') or {}
-    requested = str(overrides.get(task_id, '') or '')
+    requested = str(_get_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id) or '')
     if not requested:
         return False  # Auto / no override — never force a respawn
     session = manager.get_session(task_id) if manager is not None else None
@@ -4477,8 +4523,7 @@ def _model_change_needs_respawn(app: Flask, manager, task_id: str, images) -> bo
     """
     if images:
         return False
-    overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
-    requested = str(overrides.get(task_id, '') or '')
+    requested = str(_get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id) or '')
     if not requested:
         return False  # no override — never force a respawn
     session = manager.get_session(task_id) if manager is not None else None
@@ -4657,13 +4702,14 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
         manager, workspace_manager, task_id,
     )
     additional_dirs = _chat_additional_dirs(workspace_manager, task_id)
-    overrides = app.config.get('TASK_MODEL_OVERRIDES') or {}
-    model_override = overrides.get(task_id, '')
-    effort_overrides = app.config.get('TASK_EFFORT_OVERRIDES') or {}
+    model_override = _get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id)
     # No per-task override (or it was cleared) → pass the concrete chat default
     # explicitly, so kato never falls through to the CLI's opaque built-in
     # effort (the old "Auto"). The operator always knows the level that ran.
-    effort_override = effort_overrides.get(task_id, '') or _configured_chat_effort(app)
+    effort_override = (
+        _get_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id)
+        or _configured_chat_effort(app)
+    )
     # Plan-mode lock: when set, force ``--permission-mode plan`` so the
     # spawned agent can only plan. Empty → '' so the runner falls back to
     # its configured default mode (the normal can-implement chat session).

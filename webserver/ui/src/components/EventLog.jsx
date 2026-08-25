@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { AgentNameProvider } from '../contexts/AgentNameContext.jsx';
 import Bubble from './Bubble.jsx';
 import Icon from './Icon.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
@@ -6,6 +7,9 @@ import StickyHeader from './StickyHeader.jsx';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
+import {
+  CODEX_EVENT, CODEX_ITEM, codexAgentMessage, isCodexHidden,
+} from '../constants/codexEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { parseCommentRunPrompt } from '../utils/commentRunPrompt.js';
@@ -48,6 +52,10 @@ export default function EventLog({
   // passing it here lets the bubble swap "(none yet)" for the real
   // short id once known, without rewriting the underlying event.
   liveAgentSessionId = '',
+  // Display name of the agent this transcript belongs to. Every assistant
+  // bubble is labelled with it — a constant here attributed Codex's replies
+  // to Claude, in Codex's own tab.
+  agentName = '',
 }) {
   const containerRef = useRef(null);
   // Sticky-scroll intent. Starts true so the log opens at the
@@ -224,10 +232,13 @@ export default function EventLog({
     }
   });
 
+  const agentLabel = String(agentName || '').trim() || 'Agent';
   const bannerBubble = banner && <Bubble kind={BUBBLE_KIND.SYSTEM}>{banner}</Bubble>;
   const eventBubbles = useMemo(
     () => window.visible.flatMap(
-      (entry, index) => bubblesFor(entry, index, onOpenFile, liveAgentSessionId),
+      (entry, index) => bubblesFor(
+        entry, index, onOpenFile, liveAgentSessionId, agentLabel,
+      ),
     ),
     [window.visible, onOpenFile, liveAgentSessionId],
   );
@@ -253,6 +264,9 @@ export default function EventLog({
     </button>
   ) : null;
   return (
+    // Names every assistant bubble below. A context, not a prop on each
+    // Bubble: they are built by plain helper functions several calls deep.
+    <AgentNameProvider name={agentLabel}>
     <CommentStatusContext.Provider value={commentStatusMap}>
       <div id="event-log" ref={containerRef}>
         {bannerBubble}
@@ -285,6 +299,7 @@ export default function EventLog({
         )}
       </div>
     </CommentStatusContext.Provider>
+    </AgentNameProvider>
   );
 }
 
@@ -353,7 +368,9 @@ function groupIntoTurns(bubbles) {
   return { preamble, turns };
 }
 
-function bubblesFor(entry, index, onOpenFile, liveAgentSessionId = '') {
+function bubblesFor(
+  entry, index, onOpenFile, liveAgentSessionId = '', agentLabel = 'Agent',
+) {
   if (entry?.source === ENTRY_SOURCE.LOCAL) {
     const text = entry.text || '';
     const count = Number(entry.imageCount || 0);
@@ -378,13 +395,22 @@ function bubblesFor(entry, index, onOpenFile, liveAgentSessionId = '') {
     onOpenFile,
     liveAgentSessionId,
     entry?.receivedAtEpoch,
+    agentLabel,
   );
 }
 
 function serverBubblesFor(
   raw, index, isHistory = false, onOpenFile, liveAgentSessionId = '', epoch = 0,
+  agentLabel = 'Agent',
 ) {
   if (!raw || !raw.type) { return []; }
+  // Codex's wire vocabulary, handled before the Claude switch — none of its
+  // cases match, so every Codex event fell through to the unknown-event
+  // fallback and rendered as its own TYPE NAME. A working turn read as four
+  // grey chips (thread.started / turn.started / item.completed /
+  // turn.completed) while the reply itself was never shown at all.
+  const codexBubbles = codexEventBubbles(raw, index);
+  if (codexBubbles) { return codexBubbles; }
   switch (raw.type) {
     case CLAUDE_EVENT.SYSTEM:
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.INIT) {
@@ -399,7 +425,7 @@ function serverBubblesFor(
         return [
           <Bubble key={keyOf(raw, index, 'sys')} kind={BUBBLE_KIND.SYSTEM}>
             <span title={`Full session id: ${sidFull}`}>
-              {`Claude session started · ${sidShort}${sid ? '…' : ''}`}
+              {`${agentLabel} session started · ${sidShort}${sid ? '…' : ''}`}
             </span>
           </Bubble>,
         ];
@@ -471,6 +497,18 @@ function serverBubblesFor(
       if (MessageFilter.isChatEventHidden(raw.type)) {
         return [];
       }
+      // Codex reports a dead turn as an event carrying the reason, but the
+      // default branch below prints only the type NAME — so a turn killed by
+      // a refused model showed the operator a bare "turn.aborted" chip while
+      // the sentence that says what to change sat unread in the payload.
+      const failure = codexFailureText(raw);
+      if (failure) {
+        return [
+          <Bubble key={keyOf(raw, index, 'agent-fail')} kind={BUBBLE_KIND.ERROR}>
+            {failure}
+          </Bubble>,
+        ];
+      }
       const eventLabel = raw.subtype
         ? `${raw.type} / ${raw.subtype}`
         : String(raw.type || '');
@@ -481,6 +519,112 @@ function serverBubblesFor(
       ];
     }
   }
+}
+
+// Bubbles for a Codex event, or ``null`` when this is not one (so the caller
+// falls through to the Claude vocabulary).
+//
+// Returning an EMPTY array is meaningful and different from null: it means
+// "this is Codex lifecycle noise, render nothing".
+function codexEventBubbles(raw, index) {
+  const type = String(raw?.type || '');
+  if (isCodexHidden(type)) { return []; }
+
+  const failure = codexFailureText(raw);
+  if (failure) {
+    return [
+      <Bubble key={keyOf(raw, index, 'agent-fail')} kind={BUBBLE_KIND.ERROR}>
+        {failure}
+      </Bubble>,
+    ];
+  }
+
+  if (type === CODEX_EVENT.TURN_COMPLETED) {
+    // Terminal but silent: the reply already arrived as an item. A bubble
+    // here would only say "the turn ended", under the turn that ended.
+    return [];
+  }
+
+  if (type === CODEX_EVENT.ERROR) {
+    const message = String(raw.message || '').trim();
+    return message
+      ? [
+        <Bubble key={keyOf(raw, index, 'codex-err')} kind={BUBBLE_KIND.ERROR}>
+          {message}
+        </Bubble>,
+      ]
+      : [];
+  }
+
+  if (type !== CODEX_EVENT.ITEM_COMPLETED) { return null; }
+
+  const item = raw.item || {};
+  const message = codexAgentMessage(raw);
+  if (message) {
+    // The actual reply — the thing the operator asked for, and the one part
+    // of a Codex turn that was never rendered at all.
+    return [
+      <Bubble key={keyOf(raw, index, 'codex-msg')} kind={BUBBLE_KIND.ASSISTANT}>
+        <MarkdownContent>{message}</MarkdownContent>
+      </Bubble>,
+    ];
+  }
+
+  // Everything else produced on the way: shown as tool activity, the same
+  // weight Claude's tool_use blocks get.
+  const label = codexItemLabel(String(item.type || ''), item);
+  return label
+    ? [
+      <Bubble key={keyOf(raw, index, 'codex-item')} kind={BUBBLE_KIND.TOOL}>
+        {label}
+      </Bubble>,
+    ]
+    : [];
+}
+
+// One line describing a non-message Codex item.
+function codexItemLabel(itemType, item) {
+  if (itemType === CODEX_ITEM.COMMAND_EXECUTION) {
+    const command = String(item.command || '').trim();
+    return command ? `$ ${command}` : 'command';
+  }
+  if (itemType === CODEX_ITEM.FILE_CHANGE) {
+    const changes = Array.isArray(item.changes) ? item.changes : [];
+    const paths = changes.map((c) => String(c?.path || '')).filter(Boolean);
+    return paths.length ? `edited ${paths.join(', ')}` : 'edited files';
+  }
+  if (itemType === CODEX_ITEM.MCP_TOOL_CALL) {
+    const tool = String(item.tool || item.name || '').trim();
+    return tool ? `tool: ${tool}` : 'tool call';
+  }
+  if (itemType === CODEX_ITEM.WEB_SEARCH) {
+    const query = String(item.query || '').trim();
+    return query ? `web search: ${query}` : 'web search';
+  }
+  if (itemType === CODEX_ITEM.ERROR) {
+    return String(item.message || 'error');
+  }
+  // Reasoning traces and todo lists are deliberately not rendered: they are
+  // the model thinking out loud, and Claude's equivalent is hidden too.
+  return '';
+}
+
+
+// Human-readable text for a Codex turn that ended badly, or '' when the
+// event is not one. Both shapes are handled: ``turn.failed`` comes FROM the
+// CLI with the refusal on ``error.message``, and ``turn.aborted`` is
+// synthesised by the transport when the process dies without a terminal
+// event, carrying the best reason it could find.
+export function codexFailureText(raw) {
+  const type = String(raw?.type || '');
+  if (type !== 'turn.failed' && type !== 'turn.aborted') { return ''; }
+  const detail = String(
+    raw?.error?.message ?? raw?.error ?? raw?.stderr ?? '',
+  ).trim();
+  const lead = type === 'turn.failed'
+    ? 'The agent refused the turn'
+    : 'The agent stopped before finishing this turn';
+  return detail ? `${lead}: ${detail}` : `${lead}.`;
 }
 
 function assistantBubbles(raw, index, onOpenFile) {

@@ -437,7 +437,9 @@ describe('MessageForm — draft persistence (operator scenario)', () => {
 
     const textarea = screen.getByRole('textbox');
     expect(textarea).toHaveAttribute('rows', '1');
-    expect(textarea).toHaveAttribute('placeholder', 'Reply to Claude');
+    // No backend passed → the neutral name. The per-backend wording has its
+    // own tests below; this case is about the field starting single-line.
+    expect(textarea).toHaveAttribute('placeholder', 'Reply to the agent');
   });
 });
 
@@ -980,7 +982,7 @@ describe('MessageForm — @ file mention picker', () => {
       // it just sat disabled. It is exactly when you want to interrupt.
       const onStop = vi.fn();
       renderForm({ taskId: 'T1', turnInFlight: true, onStop });
-      const stop = screen.getByRole('button', { name: /stop claude/i });
+      const stop = screen.getByRole('button', { name: /^stop /i });
       expect(stop).toBeEnabled();
       fireEvent.click(stop);
       expect(onStop).toHaveBeenCalledTimes(1);
@@ -990,24 +992,24 @@ describe('MessageForm — @ file mention picker', () => {
       const onStop = vi.fn();
       renderForm({ taskId: 'T1', turnInFlight: true, onStop });
       fireEvent.change(screen.getByRole('textbox'), { target: { value: 'follow-up' } });
-      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^stop /i })).toBeNull();
       expect(screen.getByRole('button', { name: /queue/i })).toBeInTheDocument();
       expect(onStop).not.toHaveBeenCalled();
     });
 
     test('no Stop when Claude is idle', () => {
       renderForm({ taskId: 'T1', turnInFlight: false, onStop: vi.fn() });
-      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^stop /i })).toBeNull();
     });
 
     test('no Stop when the composer is disabled (no live session)', () => {
       renderForm({ taskId: 'T1', turnInFlight: true, disabled: true, onStop: vi.fn() });
-      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^stop /i })).toBeNull();
     });
 
     test('no Stop when the parent wired no handler', () => {
       renderForm({ taskId: 'T1', turnInFlight: true });
-      expect(screen.queryByRole('button', { name: /stop claude/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /^stop /i })).toBeNull();
     });
   });
 });
@@ -1116,5 +1118,71 @@ describe('MessageForm — the ultracode default does not stamp itself onto tasks
     // 'off', not null: an explicit off must stay distinguishable from
     // "never chose", or the Settings default would re-arm this task.
     expect(localStorage.getItem(ultracodeStorageKey('decided'))).toBe('off');
+  });
+});
+
+
+// The composer must name the agent it is actually talking to. It said
+// "Reply to Claude" in every tab, including Codex — the exact ambiguity
+// separate agent tabs exist to remove.
+describe('MessageForm — names the active backend', () => {
+  test('the Codex tab says Reply to Codex', () => {
+    render(<MessageForm taskId="T1" agentBackend="codex" onSubmit={() => {}} />);
+    expect(screen.getByRole('textbox'))
+      .toHaveAttribute('placeholder', 'Reply to Codex');
+  });
+
+  test('the Claude tab says Reply to Claude', () => {
+    render(<MessageForm taskId="T1" agentBackend="claude" onSubmit={() => {}} />);
+    expect(screen.getByRole('textbox'))
+      .toHaveAttribute('placeholder', 'Reply to Claude');
+  });
+
+  test('the queue hint names the backend too', () => {
+    render(
+      <MessageForm taskId="T1" agentBackend="codex" turnInFlight onSubmit={() => {}} />,
+    );
+    expect(screen.getByRole('textbox'))
+      .toHaveAttribute('placeholder', 'Queue another message… (sends when Codex is free)');
+  });
+
+  test('an unrecognised backend is echoed, not hidden', () => {
+    // backendLabel deliberately returns the raw id for a backend it has no
+    // label for, so a future transport reads correctly with no code change.
+    render(<MessageForm taskId="T1" agentBackend="zzz" onSubmit={() => {}} />);
+    expect(screen.getByRole('textbox'))
+      .toHaveAttribute('placeholder', 'Reply to zzz');
+  });
+
+  test('no backend at all falls back to a neutral name', () => {
+    // The real unknown state: before the session record has loaded.
+    render(<MessageForm taskId="T1" onSubmit={() => {}} />);
+    expect(screen.getByRole('textbox'))
+      .toHaveAttribute('placeholder', 'Reply to the agent');
+  });
+});
+
+
+// The Stop button names the agent it will stop — "Stop Claude" on a Codex
+// tab named the wrong CLI in the one control that ends a running turn.
+describe('MessageForm — Stop names the active agent', () => {
+  test('the Codex tab offers "Stop Codex"', () => {
+    render(
+      <MessageForm
+        taskId="T1" agentBackend="codex" turnInFlight onSubmit={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Stop Codex' })).toBeTruthy();
+  });
+
+  test('the Claude tab offers "Stop Claude"', () => {
+    render(
+      <MessageForm
+        taskId="T1" agentBackend="claude" turnInFlight onSubmit={() => {}}
+        onStop={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Stop Claude' })).toBeTruthy();
   });
 });

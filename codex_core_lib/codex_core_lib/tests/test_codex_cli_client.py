@@ -45,6 +45,25 @@ def _completed(stdout: str = '', stderr: str = '', returncode: int = 0):
     return SimpleNamespace(stdout=stdout, stderr=stderr, returncode=returncode)
 
 
+def _probe_runner(version: str = 'codex-cli 0.132.0\n', json_supported: bool = True):
+    """``subprocess.run`` stand-in that answers BOTH connection probes.
+
+    ``validate_connection`` runs two: ``--version``, then ``exec --help`` to
+    confirm the build supports the ``--json`` streaming flag. A stub that
+    returns one canned result for every call answers the help probe with the
+    version string, which reads as "no --json" and fails a healthy CLI.
+    """
+    help_text = 'Usage: codex exec [OPTIONS]\n      --json\n' if json_supported \
+        else 'Usage: codex exec [options]\n  --quiet\n'
+
+    def run(argv, **kwargs):
+        if '--version' in argv:
+            return _completed(stdout=version, returncode=0)
+        return _completed(stdout=help_text, returncode=0)
+
+    return run
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
@@ -166,7 +185,7 @@ class ValidateConnectionTests(unittest.TestCase):
              patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
                    return_value='/usr/bin/codex'), \
              patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
-                   return_value=_completed(stdout='codex-cli 0.132.0\n', returncode=0)):
+                   side_effect=_probe_runner()):
             client.validate_connection()
         self.assertEqual(client._binary_path, '/usr/bin/codex')
 
@@ -1065,7 +1084,7 @@ class SmokeTestPathTests(unittest.TestCase):
              patch('codex_core_lib.codex_core_lib.cli_client.shutil.which',
                    return_value='/usr/bin/codex'), \
              patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
-                   return_value=_completed(stdout='codex-cli 0.132.0\n', returncode=0)), \
+                   side_effect=_probe_runner()), \
              patch.object(client, '_run_model_access_validation') as run_smoke:
             client.validate_connection()
         run_smoke.assert_called_once()

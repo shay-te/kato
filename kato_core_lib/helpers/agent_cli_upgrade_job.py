@@ -113,12 +113,18 @@ def is_running() -> bool:
         return _state['state'] == 'running'
 
 
-def start(env: dict | None = None, spawner=None, verifier=None) -> dict:
+def start(
+    env: dict | None = None, spawner=None, verifier=None, backend: str = '',
+) -> dict:
     """Begin an upgrade in the background; return the initial snapshot.
 
     Refuses (without disturbing the running job) when one is already in flight,
     and refuses when ``upgrade_plan`` doesn't allow an in-app upgrade here.
     ``spawner``/``verifier`` are injectable for tests.
+
+    ``backend`` names the CLI to upgrade. Without it this always resolved the
+    CONFIGURED backend, so the Codex tab's upgrade button would have installed
+    a new Claude — an upgrade of something the operator was not looking at.
     """
     global _thread
     with _lock:
@@ -127,14 +133,14 @@ def start(env: dict | None = None, spawner=None, verifier=None) -> dict:
             snapshot['already_running'] = True
             return snapshot
 
-    plan = upgrade_plan(env)
+    plan = upgrade_plan(env, backend)
     if not plan['allowed']:
         with _lock:
             _state.update(_blank_state(), state='error', ok=False,
                           message=plan['reason'], finished_at=time.time())
             return _public(_state)
 
-    before = installed_version(env)
+    before = installed_version(env, backend=backend)
     with _lock:
         _state.update(
             _blank_state(),
