@@ -1741,7 +1741,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-right: 6px;
   padding: 1px 6px;
   border: 1px solid $C-NEUTRAL-19;
-  border-radius: 4px;
+  /* The shared pill radius — every badge/chip/pill in the app uses it, and a
+   * drift-guard test fails the build on a hand-picked value. */
+  border-radius: $RADIUS-PILL;
   background: $C-NEUTRAL-16;
   color: $C-NEUTRAL-64;
   font-size: $TEXT-10;
@@ -2440,12 +2442,37 @@ header .chats-menu button:not(.header-status) {
    * in the same colour is an outline around nothing. What is left is the
    * padding — the text still needs a margin from the pane edge. */
   padding: $SPACE-2 0;
-  /* Cap the MEASURE, not the pane. Typography's rule of thumb is 45-75
-   * characters per line; a wide pane was giving these paragraphs well over
-   * 100, and the eye loses the line start on the return sweep — which is
-   * what reads as "dense" long before the words are at fault. Code blocks
-   * inside still scroll on their own, so nothing is squeezed. */
-  max-width: 74ch;
+  /* The BUBBLE fills the pane. Capping the container was wrong: widening
+   * the panel left half of it empty, and a table or code block — content
+   * that genuinely wants room — sat crammed into a text measure with white
+   * space beside it. The measure belongs on prose only, below. */
+  max-width: none;
+}
+
+/* Cap the MEASURE for prose, not the pane. Typography's rule of thumb is
+ * 45-75 characters per line; an unbounded wide pane gives paragraphs well
+ * over 100 and the eye loses the line start on the return sweep — which is
+ * what reads as "dense" long before the words are at fault.
+ *
+ * ``min()`` so a NARROW pane is never over-constrained and a wide one still
+ * widens the text a little rather than pinning it at a fixed column. */
+.bubble.assistant .bubble-content > p,
+.bubble.assistant .bubble-content > ul,
+.bubble.assistant .bubble-content > ol,
+.bubble.assistant .bubble-content > blockquote {
+  max-width: min(100%, 88ch);
+}
+
+/* Content that is NOT prose takes the full width it is given. A table
+ * squeezed into a text measure wraps every cell and becomes unreadable —
+ * the exact opposite of what the measure is for. */
+.bubble.assistant .bubble-content > table,
+.bubble.assistant .bubble-content > pre,
+.bubble.assistant .bubble-content > .md-table-wrap,
+.bubble.assistant .bubble-content > figure,
+.bubble.assistant .bubble-content > img {
+  max-width: 100%;
+  width: 100%;
 }
 
 /* The inline chips are the reason the paragraph looked busy: orange on

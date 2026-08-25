@@ -2067,6 +2067,14 @@ def _register_http_routes(app: Flask) -> None:
                         # colour and no conflicts to mark.
                         'conflicted_files': [],
                         'changed_files': [],
+                        # ...and therefore nothing can ever be "changed" here.
+                        # Without this the section rendered the default
+                        # changed-files view, which for an empty changed set
+                        # says "Nothing changed yet" — so plan.md and
+                        # pr_description.md, real deliverables the agent had
+                        # just told the operator about, were listed by this
+                        # endpoint and never shown.
+                        'has_diff': False,
                     })
             if trees:
                 return jsonify({

@@ -803,6 +803,11 @@ function RepoTree({
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
+  // The task folder is not a git repo, so "changed" has no meaning there and
+  // the changed-files view can only ever say "Nothing changed yet" — hiding
+  // the plan and PR-description files the agent actually wrote. Sections
+  // without a diff always render their tree.
+  const hasDiff = repoTree.hasDiff !== false;
   const repoId = String(repoTree.repo_id || '').trim();
   const changedFilesList = useMemo(() => {
     return Array.from(diffMeta.values())
@@ -1051,7 +1056,7 @@ function RepoTree({
     body = changedTreeContent;
   } else if (!showAllForSearch && emptyChangedSearch) {
     body = emptyChangedSearch;
-  } else if (!showAllForSearch && !hasChangedFiles) {
+  } else if (!showAllForSearch && !hasChangedFiles && hasDiff) {
     // Repo has nothing changed yet AND the operator is not in All mode
     // — show a placeholder instead of falling through to the full tree
     // (which read as "All mode is on" even when it wasn't).

@@ -21,6 +21,11 @@ export function normalizeTrees(payload) {
         // Repo kato can't push to (reference / no push permission). The tree
         // badges it so the operator knows edits there won't be published.
         readOnly: !!entry?.read_only,
+        // False for the task folder, which is not a git repo: "changed" has
+        // no meaning there, so the changed-files view can only ever claim it
+        // is empty. Defaults TRUE so a real repo (and any payload from an
+        // older backend) keeps the changed-files behaviour.
+        hasDiff: entry?.has_diff !== false,
       };
     });
   }

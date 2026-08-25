@@ -1421,4 +1421,51 @@ describe('FilesTab — chaos / random button mashing', () => {
       }
     });
   });
+
+  it('shows the task folder\'s files instead of "Nothing changed yet"', async () => {
+    // The task folder is not a git repo: nothing there can ever be "changed",
+    // so the changed-files view could only ever claim it was empty — hiding
+    // plan.md and pr_description.md, deliverables the agent had just told the
+    // operator about.
+    fetchFileTree.mockResolvedValue({
+      trees: [{
+        repo_id: 'task files',
+        cwd: '/wks/PROJ-1',
+        read_only: true,
+        has_diff: false,
+        changed_files: [],
+        conflicted_files: [],
+        tree: [
+          { name: 'plan.md', relativePath: 'plan.md', path: '/wks/PROJ-1/plan.md' },
+          { name: 'resume_prompt.md', relativePath: 'resume_prompt.md',
+            path: '/wks/PROJ-1/resume_prompt.md' },
+        ],
+      }],
+    });
+
+    fetchDiff.mockResolvedValue({ files: [] });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+
+    expect(await screen.findByText('plan.md')).toBeTruthy();
+    expect(screen.queryByText('Nothing changed yet.')).toBeNull();
+  });
+
+  it('still says "Nothing changed yet" for a real repo with no changes', async () => {
+    // The placeholder is right for a git repo — it distinguishes "no changes"
+    // from "All files mode is on", which is why it exists.
+    fetchFileTree.mockResolvedValue({
+      trees: [{
+        repo_id: 'api',
+        cwd: '/wks/PROJ-1/api',
+        changed_files: [],
+        conflicted_files: [],
+        tree: [{ name: 'app.py', relativePath: 'app.py', path: '/wks/PROJ-1/api/app.py' }],
+      }],
+    });
+
+    fetchDiff.mockResolvedValue({ files: [] });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+
+    expect(await screen.findByText('Nothing changed yet.')).toBeTruthy();
+  });
 });
