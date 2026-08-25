@@ -16,6 +16,7 @@ streaming subprocess.
 
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import os
 import threading
 import time
@@ -84,7 +85,7 @@ class ClaudeSessionManager(object):
         caller (the host decides where session metadata lives); when omitted
         the lib falls back to a generic per-user default.
         """
-        if str(agent_backend or '').strip().lower() != 'claude':
+        if not AgentBackend.is_a(agent_backend, AgentBackend.CLAUDE):
             return None
         resolved = str(state_dir or '').strip() or str(
             Path.home() / cls.DEFAULT_STATE_DIR_NAME
@@ -94,7 +95,7 @@ class ClaudeSessionManager(object):
     #: The backend this manager spawns. Stamped onto every record it writes
     #: so a chat remembers which CLI produced it even after the operator
     #: switches backends.
-    AGENT_BACKEND = 'claude'
+    AGENT_BACKEND = AgentBackend.CLAUDE.value
 
     def __init__(
         self,

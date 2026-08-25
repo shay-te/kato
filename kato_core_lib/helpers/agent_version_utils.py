@@ -26,6 +26,7 @@ would never say so.
 
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import json
 import os
 import re
@@ -113,17 +114,17 @@ def _resolve_backend(env: dict) -> str:
 
 
 def _binary_for(backend: str, env: dict) -> str:
-    if backend == 'claude':
+    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
         return env.get('KATO_CLAUDE_BINARY', '').strip() or 'claude'
-    if backend == 'codex':
+    if AgentBackend.is_a(backend, AgentBackend.CODEX):
         return env.get('KATO_CODEX_BINARY', '').strip() or 'codex'
     return ''
 
 
 def _min_version(backend: str, env: dict) -> str:
-    if backend == 'claude':
+    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
         return (env.get('KATO_CLAUDE_MIN_VERSION', '') or _CLAUDE_MIN_DEFAULT).strip()
-    if backend == 'codex':
+    if AgentBackend.is_a(backend, AgentBackend.CODEX):
         return (env.get('KATO_CODEX_MIN_VERSION', '') or '').strip()
     return ''
 
@@ -188,9 +189,9 @@ def reset_latest_version_cache() -> None:
 
 
 def _download_url(backend: str, env: dict) -> str:
-    if backend == 'claude':
+    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
         return (env.get('KATO_CLAUDE_DOWNLOAD_URL', '') or _CLAUDE_DOWNLOAD_DEFAULT).strip()
-    if backend == 'codex':
+    if AgentBackend.is_a(backend, AgentBackend.CODEX):
         return (env.get('KATO_CODEX_DOWNLOAD_URL', '') or _CODEX_DOWNLOAD_DEFAULT).strip()
     return ''
 
@@ -433,7 +434,7 @@ def upgrade_plan(env: dict | None = None) -> dict:
 
     if prefers_npm:
         return _npm_plan(plan, npm, package, backend)
-    if backend == 'claude':
+    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
         claude = shutil.which(binary)
         if claude:
             plan.update(allowed=True, manager='cli', argv=[claude, 'update'],

@@ -12,10 +12,18 @@ from __future__ import annotations
 
 from enum import Enum
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+
 
 class AgentPlatform(Enum):
-    """Agent backends supported by ``agent_backend_core_lib``."""
+    """Agent backends supported by ``agent_backend_core_lib``.
 
-    CLAUDE = 'claude'
-    CODEX = 'codex'
-    OPENHANDS = 'openhands'
+    Values are DERIVED from ``AgentBackend`` rather than restated: the same
+    strings are persisted in session records and compared in libs that cannot
+    import this one, and two hand-maintained copies of a name is how a backend
+    check starts silently failing.
+    """
+
+    CLAUDE = AgentBackend.CLAUDE.value
+    CODEX = AgentBackend.CODEX.value
+    OPENHANDS = AgentBackend.OPENHANDS.value

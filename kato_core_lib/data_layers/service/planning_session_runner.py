@@ -13,6 +13,7 @@ approve permissions while the agent works.
 
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -151,7 +152,7 @@ class PlanningSessionRunner(object):
         the orchestration is wired to fall back to the one-shot path in
         those cases.
         """
-        if str(agent_backend or '').strip().lower() != 'claude':
+        if not AgentBackend.is_a(agent_backend, AgentBackend.CLAUDE):
             return None
         if session_manager is None:
             return None

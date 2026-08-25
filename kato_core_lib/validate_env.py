@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import argparse
 import logging
 import os
@@ -417,11 +418,11 @@ def _validate(
     if mode == 'agent':
         return validate_agent_env(env)
     if mode == 'openhands':
-        if _configured_agent_backend(env) == 'claude':
+        if AgentBackend.is_a(_configured_agent_backend(env), AgentBackend.CLAUDE):
             return claude_errors()
         return validate_openhands_env(env)
     errors = validate_agent_env(env)
-    if _configured_agent_backend(env) == 'claude':
+    if AgentBackend.is_a(_configured_agent_backend(env), AgentBackend.CLAUDE):
         errors.extend(claude_errors())
     else:
         errors.extend(validate_openhands_env(env))
@@ -455,7 +456,9 @@ def collect_runtime_errors(env: dict[str, str] | None = None) -> list[str]:
     (doctor, the agent-version banner) but never gate setup mode.
     """
     effective_env = dict(env) if env is not None else dict(os.environ)
-    if _configured_agent_backend(effective_env) != 'claude':
+    if not AgentBackend.is_a(
+        _configured_agent_backend(effective_env), AgentBackend.CLAUDE,
+    ):
         return []
     return validate_claude_runtime_env(effective_env)
 

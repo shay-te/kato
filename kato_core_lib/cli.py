@@ -19,6 +19,7 @@ Windows operators get the one command from ``pip install -e .`` with no
 
 from __future__ import annotations
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import argparse
 import os
 import subprocess
@@ -111,7 +112,10 @@ def cmd_compose_docker(_args: argparse.Namespace) -> int:
     env['KATO_SOURCE_FINGERPRINT'] = fingerprint
 
     profiles: list[str] = []
-    if env.get('KATO_AGENT_BACKEND', 'openhands') != 'claude':
+    if not AgentBackend.is_a(
+        env.get('KATO_AGENT_BACKEND', AgentBackend.OPENHANDS.value),
+        AgentBackend.CLAUDE,
+    ):
         profiles += ['--profile', 'openhands']
     if (env.get('OPENHANDS_SKIP_TESTING', 'false') != 'true'
             and env.get('OPENHANDS_TESTING_CONTAINER_ENABLED', 'false') == 'true'):
