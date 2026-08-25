@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import AgentBackendTabs from './AgentBackendTabs.jsx';
 import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
@@ -651,6 +652,18 @@ export default function SessionDetail({
         {headerSlot
           ? createPortal(sessionHeader, headerSlot)
           : sessionHeader}
+        {/* One tab per agent, each owning its own chat history. Sits at the
+            top of the chat pane (not in the task header) because it selects
+            which CONVERSATION is below it — the same placement the editor
+            extensions use. */}
+        <AgentBackendTabs
+          taskId={taskId}
+          activeBackend={String(session?.agent_backend || '')}
+          onBackendChanged={onChatChanged}
+          onChatChanged={onChatChanged}
+          onChatSwitchPending={onChatSwitchPending}
+          turnInFlight={stream.turnInFlight}
+        />
         {/* The working indicator is the LAST entry inside the
             scrollable log, not a floating overlay. It scrolls with
             the messages and sits just after the newest one — so it

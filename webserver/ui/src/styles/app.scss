@@ -1736,19 +1736,48 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 // Which CLI produced a chat. Reuses the existing neutrals rather than
 // introducing a per-backend colour: the chip is an identifier, not a status,
 // and colouring it would compete with the run-state dot beside it.
-/* The "New chat with Claude / Codex" row. Only rendered when more than one
- * backend is wired — with one there is nothing to choose. */
-.chats-menu-new-group {
+/* One tab per agent, at the top of the chat pane. Sits above the transcript
+ * because it selects which CONVERSATION is below it. */
+.agent-backend-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: $SPACE-4;
+  padding: 0 $SPACE-8;
+  border-bottom: 1px solid $C-NEUTRAL-19;
+  flex-shrink: 0;
+}
+
+.agent-backend-tab {
   display: flex;
   align-items: center;
   gap: $SPACE-4;
-  flex-wrap: wrap;
+  padding: $SPACE-4 0;
+  /* The active tab is marked by a rule flush with the strip's own border, so
+   * the two read as one edge rather than two competing lines. */
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
 }
 
-.chats-menu-new-label {
+.agent-backend-tab.is-active {
+  border-bottom-color: $C-NEUTRAL-64;
+}
+
+.agent-backend-tab-button {
+  background: none;
+  border: 0;
+  padding: $SPACE-4 $SPACE-8;
   color: $C-NEUTRAL-45;
-  font-size: $TEXT-12;
-  padding-left: $SPACE-8;
+  font-size: $TEXT-13;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.agent-backend-tab.is-active .agent-backend-tab-button {
+  color: $C-NEUTRAL-96;
+}
+
+.agent-backend-tab-button:disabled {
+  cursor: default;
 }
 
 .agent-backend-chip {

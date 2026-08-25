@@ -752,8 +752,16 @@ export function adoptAgentSession(taskId, agentSessionId) {
 
 // The task's chats — the active conversation plus the detached ones the
 // operator can navigate back to (chats menu in the session header).
-export function fetchTaskChats(taskId) {
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/chats`);
+export function fetchTaskChats(taskId, agentBackend = '') {
+  // Each backend tab lists only ITS own chats — a Claude tab must never
+  // offer a Codex thread it cannot resume. Empty means "this task's current
+  // chat", which is what a record predating per-backend chats holds.
+  const query = agentBackend
+    ? `?agent_backend=${encodeURIComponent(agentBackend)}`
+    : '';
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/chats${query}`,
+  );
 }
 
 // Empty ``agentSessionId`` starts a FRESH chat (next message spawns a
@@ -773,6 +781,16 @@ export function startTaskChat(taskId, agentSessionId = '', agentBackend = '') {
 // the menu falls back to a plain "New chat" rather than an empty picker.
 export function fetchAgentBackends() {
   return fetchJson('/api/agent-backends');
+}
+
+// Switch which agent this task's chat pane is talking to. The outgoing
+// conversation is parked, not ended — switching back finds it intact.
+export function switchTaskBackend(taskId, agentBackend) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/backend`,
+    { agent_backend: agentBackend },
+  );
 }
 
 // Send a chat message with optional image attachments. The endpoint

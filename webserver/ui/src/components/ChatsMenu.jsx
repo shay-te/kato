@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import AgentBackendChip, { backendLabel } from './AgentBackendChip.jsx';
-import { fetchAgentBackends, fetchTaskChats, startTaskChat } from '../api.js';
+import { fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
@@ -12,6 +12,10 @@ import Icon from './Icon.jsx';
 // picking a previous chat resumes that conversation instead. The detached
 // chat is never lost — it stays in the list and can be returned to.
 export default function ChatsMenu({
+  // Which backend's chats this menu shows and starts. Empty means "this
+  // task's current chat", which is what a record predating per-backend
+  // chats holds.
+  agentBackend = '',
   taskId,
   onChatChanged,
   onChatSwitchPending = null,
@@ -19,10 +23,6 @@ export default function ChatsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState({ status: 'idle', chats: [], error: '' });
-  // Backends this host can actually start a chat on. Empty until loaded, and
-  // empty on failure — the menu then shows a plain "New chat" rather than a
-  // picker with nothing usable in it.
-  const [backends, setBackends] = useState([]);
   const [busy, setBusy] = useState(false);
   // Mid-turn guard: switching chats KILLS the live subprocess. When Claude
   // is mid-turn, the first click arms this with the requested target and
@@ -45,7 +45,7 @@ export default function ChatsMenu({
   async function loadChats() {
     setState({ status: 'loading', chats: [], error: '' });
     try {
-      const body = await fetchTaskChats(taskId);
+      const body = await fetchTaskChats(taskId, agentBackend);
       setState({
         status: 'ready',
         chats: Array.isArray(body?.chats) ? body.chats : [],
@@ -62,12 +62,6 @@ export default function ChatsMenu({
     setConfirmTarget(null);
     if (next) {
       loadChats();
-      // Best-effort: a failure leaves the picker out, never blocks the menu.
-      fetchAgentBackends()
-        .then((body) => setBackends(
-          Array.isArray(body?.backends) ? body.backends : [],
-        ))
-        .catch(() => setBackends([]));
     }
   }
 
@@ -195,35 +189,14 @@ export default function ChatsMenu({
         aria-hidden="true"
       />
       <div className="chats-menu" role="menu">
-        {backends.length > 1 ? (
-          // More than one backend is wired: let the operator choose which CLI
-          // answers the new chat. With only one there is nothing to choose,
-          // and a picker would be a control with a single option.
-          <div className="chats-menu-new-group" role="group"
-               aria-label="Start a new chat">
-            <span className="chats-menu-new-label">New chat with</span>
-            {backends.map((backend) => (
-              <button
-                key={backend}
-                type="button"
-                className="chats-menu-new"
-                onClick={() => onNewChat(backend)}
-                disabled={busy}
-              >
-                {backendLabel(backend)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="chats-menu-new"
-            onClick={() => onNewChat()}
-            disabled={busy}
-          >
-            New chat
-          </button>
-        )}
+        <button
+          type="button"
+          className="chats-menu-new"
+          onClick={() => onNewChat(agentBackend)}
+          disabled={busy}
+        >
+          New chat
+        </button>
         {confirmWarning}
         {listContent}
       </div>

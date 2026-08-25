@@ -48,7 +48,7 @@ describe('ChatsMenu', () => {
   test('opening the menu lists the task\'s chats, active first', async () => {
     render(<ChatsMenu taskId="T1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
-    expect(fetchTaskChats).toHaveBeenCalledWith('T1');
+    expect(fetchTaskChats).toHaveBeenCalledWith('T1', '');
     await waitFor(() => {
       expect(screen.getByText('build the feature')).toBeInTheDocument();
     });
@@ -268,49 +268,9 @@ describe('ChatsMenu', () => {
     expect(screen.queryByText('Codex')).toBeNull();
   });
 
-  it('offers a choice of backend when more than one is wired', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
-    fetchTaskChats.mockResolvedValue({ chats: [] });
-    render(<ChatsMenu taskId="T1" />);
-    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
 
-    expect(await screen.findByRole('button', { name: 'Claude' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Codex' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'New chat' })).toBeNull();
-  });
 
-  it('starts the new chat on the backend that was picked', async () => {
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude', 'codex'] });
-    fetchTaskChats.mockResolvedValue({ chats: [] });
-    startTaskChat.mockResolvedValue({ ok: true, body: {} });
-    render(<ChatsMenu taskId="T1" />);
-    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Codex' }));
 
-    await waitFor(() => {
-      expect(startTaskChat).toHaveBeenCalledWith('T1', '', 'codex');
-    });
-  });
-
-  it('shows a plain button when only ONE backend is wired', async () => {
-    // A picker with a single option is a control that cannot choose anything.
-    fetchAgentBackends.mockResolvedValue({ backends: ['claude'] });
-    fetchTaskChats.mockResolvedValue({ chats: [] });
-    render(<ChatsMenu taskId="T1" />);
-    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
-
-    expect(await screen.findByRole('button', { name: 'New chat' })).toBeTruthy();
-  });
-
-  it('falls back to a plain button when the backend list cannot be read', async () => {
-    // A failed lookup must never block the operator from starting a chat.
-    fetchAgentBackends.mockRejectedValue(new Error('offline'));
-    fetchTaskChats.mockResolvedValue({ chats: [] });
-    render(<ChatsMenu taskId="T1" />);
-    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
-
-    expect(await screen.findByRole('button', { name: 'New chat' })).toBeTruthy();
-  });
 
   it('switching back to an existing chat sends NO backend override', async () => {
     // That chat resumes through the CLI that created it; overriding here
