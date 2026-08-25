@@ -1690,6 +1690,21 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 650;
 }
 
+/* The "New chat with Claude / Codex" row. Only rendered when more than one
+ * backend is wired — with one there is nothing to choose. */
+.chats-menu-new-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.chats-menu-new-label {
+  color: #737373;
+  font-size: 12px;
+  padding-left: 8px;
+}
+
 .agent-backend-chip {
   display: inline-block;
   margin-right: 6px;

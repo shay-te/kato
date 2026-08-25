@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.session.record import (
@@ -666,6 +667,61 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         self.assertIn('WORKSPACE SCOPE', prompt)
         self.assertIn('/workspaces/UNA-2763/ob-love-admin-backend', prompt)
         self.assertIn('/workspaces/UNA-2763/library-core-lib', prompt)
+
+
+
+
+class BackendGateTests(unittest.TestCase):
+    """Which backends get an interactive chat runner at all."""
+
+    def _cfg(self, **blocks):
+        return SimpleNamespace(**blocks)
+
+    def test_claude_gets_a_runner(self) -> None:
+        runner = PlanningSessionRunner.from_config(
+            self._cfg(claude=SimpleNamespace(binary='claude')),
+            'claude', MagicMock(),
+        )
+        self.assertIsNotNone(runner)
+
+    def test_codex_gets_a_runner_too(self) -> None:
+        runner = PlanningSessionRunner.from_config(
+            self._cfg(codex=SimpleNamespace(binary='codex')),
+            'codex', MagicMock(),
+        )
+        self.assertIsNotNone(runner)
+
+    def test_each_backend_reads_its_OWN_config_block(self) -> None:
+        # Reading Claude's block for a Codex spawn would hand Codex a
+        # ``claude`` binary — it would launch the wrong CLI entirely.
+        runner = PlanningSessionRunner.from_config(
+            self._cfg(
+                claude=SimpleNamespace(binary='claude', model='opus'),
+                codex=SimpleNamespace(binary='codex', model='gpt-x'),
+            ),
+            'codex', MagicMock(),
+        )
+        self.assertEqual(runner._defaults.binary, 'codex')
+        self.assertEqual(runner._defaults.model, 'gpt-x')
+
+    def test_a_backend_with_no_config_block_gets_no_runner(self) -> None:
+        # Codex not configured means Codex is not available — not that it
+        # should quietly borrow another backend's settings.
+        self.assertIsNone(PlanningSessionRunner.from_config(
+            self._cfg(claude=SimpleNamespace(binary='claude')),
+            'codex', MagicMock(),
+        ))
+
+    def test_an_api_backend_still_gets_no_runner(self) -> None:
+        # OpenHands is an API client, not a CLI session.
+        self.assertIsNone(PlanningSessionRunner.from_config(
+            self._cfg(openhands=SimpleNamespace()), 'openhands', MagicMock(),
+        ))
+
+    def test_no_session_manager_means_no_runner(self) -> None:
+        self.assertIsNone(PlanningSessionRunner.from_config(
+            self._cfg(claude=SimpleNamespace(binary='claude')), 'claude', None,
+        ))
 
 
 if __name__ == '__main__':

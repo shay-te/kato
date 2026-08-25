@@ -11,7 +11,11 @@ from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 # still touches directly — it owns the planning UI's chat-time
 # streaming sessions, which has no equivalent in OpenHands and
 # therefore intentionally lives outside ``AgentProvider``.
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 from claude_core_lib.claude_core_lib import ClaudeSessionManager
+from kato_core_lib.data_layers.service.agent_session_router import (
+    AgentSessionRouter,
+)
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
@@ -313,11 +317,10 @@ class KatoCoreLib(CoreLib):
                     'apply the new backend',
                 )
             return agent_backend, docker_mode_on
-        # kato owns where session metadata lives; the transport lib takes it
-        # as a parameter (so the lib reads no KATO_ env / no ~/.kato default).
-        self.session_manager = ClaudeSessionManager.from_config(
+        # kato owns where session metadata lives; the transport libs take it
+        # as a parameter (so no lib reads a KATO_ env or a ~/.kato default).
+        self.session_manager = self._build_session_manager(
             open_cfg, agent_backend,
-            state_dir=kato_session_state_dir(),
         )
         # Per-task workspace folders (one clone-set per ticket id) are
         # backend-agnostic — both Claude and OpenHands use them for isolation.
@@ -344,6 +347,45 @@ class KatoCoreLib(CoreLib):
         self._managers_agent_backend = agent_backend
         self.logger.info('using agent backend: %s', agent_backend)
         return agent_backend, docker_mode_on
+
+    def _build_session_manager(self, open_cfg, agent_backend: str):
+        """One session-manager face over every backend that has chats.
+
+        Claude and Codex both offer an interactive chat; OpenHands is an API
+        client with no session model and gets ``None``, exactly as before.
+
+        The Claude manager owns RECORD bookkeeping for every backend — the
+        records are backend-agnostic and share one state directory, so a
+        second record owner would fragment the chat list the UI shows as one.
+        The Codex manager owns only its live sessions and publishes the
+        records it writes back into that one view.
+        """
+        state_dir = kato_session_state_dir()
+        backend = AgentBackend.parse(agent_backend)
+        if backend not in (AgentBackend.CLAUDE, AgentBackend.CODEX):
+            return None
+        record_owner = ClaudeSessionManager(state_dir=state_dir)
+        managers = {AgentBackend.CLAUDE.value: record_owner}
+        if getattr(open_cfg, AgentBackend.CODEX.value, None) is not None:
+            from codex_core_lib.codex_core_lib.session.manager import (
+                CodexSessionManager,
+            )
+            managers[AgentBackend.CODEX.value] = CodexSessionManager(
+                state_dir=state_dir,
+                record_sink=record_owner.save_record,
+            )
+        elif backend is AgentBackend.CODEX:
+            # Configured for Codex with no Codex block: nothing can spawn.
+            self.logger.warning(
+                'agent backend is codex but no codex config block exists; '
+                'chats are unavailable',
+            )
+            return None
+        return AgentSessionRouter(
+            managers=managers,
+            record_manager=record_owner,
+            default_backend=backend.value,
+        )
 
     def _build_agent_service(self, open_cfg: DictConfig) -> AgentService:
         retry_cfg = open_cfg.retry

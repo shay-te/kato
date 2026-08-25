@@ -759,12 +759,20 @@ export function fetchTaskChats(taskId) {
 // Empty ``agentSessionId`` starts a FRESH chat (next message spawns a
 // brand-new Claude session); a non-empty id switches back to one of the
 // task's previous chats.
-export function startTaskChat(taskId, agentSessionId = '') {
+export function startTaskChat(taskId, agentSessionId = '', agentBackend = '') {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   return postEnvelope(
     `/api/sessions/${encodeURIComponent(taskId)}/chats`,
-    { [AGENT_SESSION_ID]: agentSessionId },
+    // ``agentBackend`` applies to a FRESH chat only — switching back to an
+    // existing one resumes through the CLI that created it.
+    { [AGENT_SESSION_ID]: agentSessionId, agent_backend: agentBackend },
   );
+}
+
+// Backends this host can actually start a chat on. Empty on any failure so
+// the menu falls back to a plain "New chat" rather than an empty picker.
+export function fetchAgentBackends() {
+  return fetchJson('/api/agent-backends');
 }
 
 // Send a chat message with optional image attachments. The endpoint

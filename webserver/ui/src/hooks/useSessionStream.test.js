@@ -347,3 +347,88 @@ test('Bug C: a consistent cached history still dedupes on re-replay (no doubling
 
   assert.deepEqual(state.events.map((e) => e.raw.uuid), ['h1', 'h2']);
 });
+
+// ---------------------------------------------------------------------------
+// Bug: the SAME message rendered twice.
+//
+// Reported from a long plan: the operator saw two identical CLAUDE bubbles
+// back to back. The per-source dedupe keys are namespaced ('server:<epoch>'
+// vs 'history:<fingerprint>'), so one logical message arriving BOTH live over
+// SSE and again in the JSONL replay produced two keys and appended twice.
+// ---------------------------------------------------------------------------
+
+function freshState() {
+  // Same shape the hook starts from; the reducer has no init case.
+  return {
+    events: [],
+    eventKeys: new Set(),
+    lifecycle: SESSION_LIFECYCLE.CONNECTING,
+    turnInFlight: false,
+    pendingPermission: null,
+    lastEventAt: 0,
+    streamGeneration: 0,
+  };
+}
+
+function assistant(messageId, text) {
+  return { type: 'assistant', message: { id: messageId, content: [{ type: 'text', text }] } };
+}
+
+test('the same assistant message from BOTH the live stream and history renders once', function () {
+  let state = freshState();
+  state = reducer(state, {
+    type: 'incoming_event', event: assistant('msg_1', 'the plan'), receivedAtEpoch: 100,
+  });
+  state = reducer(state, {
+    type: 'incoming_history', event: assistant('msg_1', 'the plan'), receivedAtEpoch: 99,
+  });
+
+  assert.equal(state.events.length, 1,
+    'the same message was appended twice — the operator sees the whole answer duplicated');
+});
+
+test('history first, then the live replay, also renders once', function () {
+  // Order matters: a reopened chat replays history BEFORE the SSE backlog.
+  let state = freshState();
+  state = reducer(state, {
+    type: 'incoming_history', event: assistant('msg_1', 'the plan'), receivedAtEpoch: 99,
+  });
+  state = reducer(state, {
+    type: 'incoming_event', event: assistant('msg_1', 'the plan'), receivedAtEpoch: 100,
+  });
+
+  assert.equal(state.events.length, 1);
+});
+
+test('DISTINCT messages are still both kept', function () {
+  let state = freshState();
+  state = reducer(state, {
+    type: 'incoming_event', event: assistant('msg_1', 'first'), receivedAtEpoch: 100,
+  });
+  state = reducer(state, {
+    type: 'incoming_event', event: assistant('msg_2', 'second'), receivedAtEpoch: 101,
+  });
+
+  assert.equal(state.events.length, 2);
+});
+
+test('events with NO strong identity are not deduped across sources', function () {
+  // The weak type+subtype fallback is shared by genuinely distinct events —
+  // a respawned CLI emits another ``system init`` for the same session.
+  // Dropping the second would freeze the transcript.
+  let state = freshState();
+  const init = { type: 'system', subtype: 'init' };
+  state = reducer(state, { type: 'incoming_event', event: init, receivedAtEpoch: 100 });
+  state = reducer(state, { type: 'incoming_event', event: init, receivedAtEpoch: 200 });
+
+  assert.equal(state.events.length, 2);
+});
+
+test('a tool result carried by both sources renders once', function () {
+  let state = freshState();
+  const toolEvent = { type: 'user', tool_use_id: 'toolu_9' };
+  state = reducer(state, { type: 'incoming_event', event: toolEvent, receivedAtEpoch: 100 });
+  state = reducer(state, { type: 'incoming_history', event: toolEvent, receivedAtEpoch: 99 });
+
+  assert.equal(state.events.length, 1);
+});

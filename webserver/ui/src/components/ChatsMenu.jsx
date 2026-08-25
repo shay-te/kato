@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import AgentBackendChip from './AgentBackendChip.jsx';
-import { fetchTaskChats, startTaskChat } from '../api.js';
+import AgentBackendChip, { backendLabel } from './AgentBackendChip.jsx';
+import { fetchAgentBackends, fetchTaskChats, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
@@ -19,6 +19,10 @@ export default function ChatsMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState({ status: 'idle', chats: [], error: '' });
+  // Backends this host can actually start a chat on. Empty until loaded, and
+  // empty on failure — the menu then shows a plain "New chat" rather than a
+  // picker with nothing usable in it.
+  const [backends, setBackends] = useState([]);
   const [busy, setBusy] = useState(false);
   // Mid-turn guard: switching chats KILLS the live subprocess. When Claude
   // is mid-turn, the first click arms this with the requested target and
@@ -56,7 +60,15 @@ export default function ChatsMenu({
     const next = !open;
     setOpen(next);
     setConfirmTarget(null);
-    if (next) { loadChats(); }
+    if (next) {
+      loadChats();
+      // Best-effort: a failure leaves the picker out, never blocks the menu.
+      fetchAgentBackends()
+        .then((body) => setBackends(
+          Array.isArray(body?.backends) ? body.backends : [],
+        ))
+        .catch(() => setBackends([]));
+    }
   }
 
   function notifySwitchPending(pending) {
@@ -65,7 +77,7 @@ export default function ChatsMenu({
     }
   }
 
-  async function runChatAction(agentSessionId, successToast) {
+  async function runChatAction(agentSessionId, successToast, agentBackend = '') {
     if (busy) { return; }
     if (turnInFlight && confirmTarget !== agentSessionId) {
       setConfirmTarget(agentSessionId);
@@ -78,7 +90,7 @@ export default function ChatsMenu({
     notifySwitchPending(true);
     let succeeded = false;
     try {
-      const result = await startTaskChat(taskId, agentSessionId);
+      const result = await startTaskChat(taskId, agentSessionId, agentBackend);
       if (!result.ok) {
         toast.errorFromResult(result, {
           title: 'Chat action failed', fallback: 'unknown error',
@@ -105,13 +117,14 @@ export default function ChatsMenu({
     }
   }
 
-  function onNewChat() {
+  function onNewChat(agentBackend = '') {
+    const label = backendLabel(agentBackend);
     runChatAction('', {
       kind: 'success',
-      title: 'New chat started',
+      title: label ? `New ${label} chat started` : 'New chat started',
       message: 'The previous conversation is kept in the chats menu — '
-        + 'your next message starts a fresh Claude session.',
-    });
+        + `your next message starts a fresh ${label || 'agent'} session.`,
+    }, agentBackend);
   }
 
   function onPickChat(chat) {
@@ -182,14 +195,35 @@ export default function ChatsMenu({
         aria-hidden="true"
       />
       <div className="chats-menu" role="menu">
-        <button
-          type="button"
-          className="chats-menu-new"
-          onClick={onNewChat}
-          disabled={busy}
-        >
-          New chat
-        </button>
+        {backends.length > 1 ? (
+          // More than one backend is wired: let the operator choose which CLI
+          // answers the new chat. With only one there is nothing to choose,
+          // and a picker would be a control with a single option.
+          <div className="chats-menu-new-group" role="group"
+               aria-label="Start a new chat">
+            <span className="chats-menu-new-label">New chat with</span>
+            {backends.map((backend) => (
+              <button
+                key={backend}
+                type="button"
+                className="chats-menu-new"
+                onClick={() => onNewChat(backend)}
+                disabled={busy}
+              >
+                {backendLabel(backend)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="chats-menu-new"
+            onClick={() => onNewChat()}
+            disabled={busy}
+          >
+            New chat
+          </button>
+        )}
         {confirmWarning}
         {listContent}
       </div>

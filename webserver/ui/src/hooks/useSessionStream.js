@@ -157,9 +157,35 @@ function rawFingerprint(raw) {
   return `s:${raw.type || ''}:${raw.subtype || ''}:${raw[AGENT_SESSION_ID] || ''}`;
 }
 
+// A CROSS-SOURCE identity, or '' when the event carries none.
+//
+// The per-source keys above deliberately differ: SERVER keys on the receive
+// epoch (two distinct live events can share a payload), HISTORY on content.
+// That meant one logical message arriving BOTH ways — live over SSE and again
+// in the JSONL replay when a chat is resumed or reopened — produced two keys
+// and rendered twice. On a long plan that is two full copies of the answer,
+// which is what the operator sees as "he prints the output twice".
+//
+// Only STRONG identities qualify. The weak ``type:subtype:session`` fallback
+// must not dedupe across sources: two genuinely distinct events (a respawned
+// CLI emitting another ``system init``) share it, and dropping the second
+// would freeze the transcript.
+function crossSourceIdentity(raw) {
+  if (!raw || typeof raw !== 'object') { return ''; }
+  if (raw.uuid) { return `x:u:${raw.uuid}`; }
+  const messageId = raw.message && raw.message.id;
+  if (messageId) { return `x:m:${messageId}`; }
+  if (raw.tool_use_id) { return `x:t:${raw.tool_use_id}`; }
+  return '';
+}
+
 function appendEntryIfNew(state, entry) {
   const key = entryDedupeKey(entry);
   if (state.eventKeys.has(key)) {
+    return { state, appended: false };
+  }
+  const shared = crossSourceIdentity(entry.raw);
+  if (shared && state.eventKeys.has(shared)) {
     return { state, appended: false };
   }
   // Mutate the existing Set in place. ``eventKeys`` is internal to
@@ -170,6 +196,7 @@ function appendEntryIfNew(state, entry) {
   // every appended event — significant on long-lived sessions
   // where N reaches the low thousands.
   state.eventKeys.add(key);
+  if (shared) { state.eventKeys.add(shared); }
   return {
     state: {
       ...state,
@@ -194,6 +221,8 @@ function keysFromEvents(events) {
   const keys = new Set();
   for (const entry of events || []) {
     keys.add(entryDedupeKey(entry));
+    const shared = crossSourceIdentity(entry.raw);
+    if (shared) { keys.add(shared); }
   }
   return keys;
 }

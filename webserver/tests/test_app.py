@@ -1727,5 +1727,89 @@ class TaskChatsCarryTheirBackendTests(unittest.TestCase):
 
         self.assertEqual(body['chats'][0]['agent_backend'], '')
 
+
+class NewChatBackendChoiceTests(unittest.TestCase):
+    """Starting a fresh chat may pick which CLI answers it."""
+
+    def _client(self, record, manager=None):
+        manager = manager or MagicMock()
+        manager.get_record.return_value = record
+        manager.start_new_chat.return_value = record
+        app = create_app(session_manager=manager, agent_service=MagicMock())
+        self.manager = manager
+        return app.test_client()
+
+    def _record(self, backend=''):
+        return SimpleNamespace(
+            task_id='PROJ-1', agent_session_id='', agent_backend=backend,
+            previous_session_ids=[],
+        )
+
+    def test_the_chosen_backend_is_recorded_on_the_chat(self) -> None:
+        # It is the record that routes every later turn, so an unrecorded
+        # choice would be forgotten the moment the response is sent.
+        record = self._record('claude')
+        client = self._client(record)
+
+        body = client.post('/api/sessions/PROJ-1/chats',
+                           json={'agent_backend': 'codex'}).get_json()
+
+        self.assertEqual(record.agent_backend, 'codex')
+        self.assertEqual(body['agent_backend'], 'codex')
+        self.manager.save_record.assert_called_once_with(record)
+
+    def test_an_unknown_backend_is_ignored_rather_than_recorded(self) -> None:
+        # A bad value persisted here would route nowhere for the life of
+        # the chat.
+        record = self._record('claude')
+        client = self._client(record)
+
+        client.post('/api/sessions/PROJ-1/chats', json={'agent_backend': 'gpt'})
+
+        self.assertEqual(record.agent_backend, 'claude')
+        self.manager.save_record.assert_not_called()
+
+    def test_switching_back_to_an_existing_chat_keeps_ITS_backend(self) -> None:
+        # That conversation resumes through the CLI that created it.
+        record = self._record('claude')
+        record.agent_session_id = 'old-1'
+        record.previous_session_ids = ['old-1']
+        client = self._client(record)
+
+        client.post('/api/sessions/PROJ-1/chats',
+                    json={'agent_session_id': 'old-1', 'agent_backend': 'codex'})
+
+        self.assertEqual(record.agent_backend, 'claude')
+
+    def test_no_choice_leaves_the_backend_untouched(self) -> None:
+        record = self._record('claude')
+        client = self._client(record)
+
+        client.post('/api/sessions/PROJ-1/chats', json={})
+
+        self.assertEqual(record.agent_backend, 'claude')
+
+
+class AgentBackendsRouteTests(unittest.TestCase):
+    def test_it_reports_what_the_host_can_actually_run(self) -> None:
+        manager = MagicMock()
+        manager.available_backends.return_value = ['claude', 'codex']
+        manager.default_backend = 'claude'
+        app = create_app(session_manager=manager, agent_service=MagicMock())
+
+        body = app.test_client().get('/api/agent-backends').get_json()
+
+        self.assertEqual(body['backends'], ['claude', 'codex'])
+        self.assertEqual(body['default'], 'claude')
+
+    def test_a_single_unrouted_manager_still_reports_its_backend(self) -> None:
+        manager = MagicMock(spec=['AGENT_BACKEND'])
+        manager.AGENT_BACKEND = 'claude'
+        app = create_app(session_manager=manager, agent_service=MagicMock())
+
+        body = app.test_client().get('/api/agent-backends').get_json()
+
+        self.assertEqual(body['backends'], ['claude'])
+
 if __name__ == '__main__':
     unittest.main()

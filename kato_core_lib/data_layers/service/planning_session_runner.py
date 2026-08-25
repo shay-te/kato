@@ -147,16 +147,25 @@ class PlanningSessionRunner(object):
     ) -> 'PlanningSessionRunner | None':
         """Build the runner (or return None) from the kato config block.
 
-        Returns None when the active backend has no streaming model (e.g.
-        OpenHands) or when the session manager wasn't created — the rest of
-        the orchestration is wired to fall back to the one-shot path in
-        those cases.
+        Returns None when the active backend has no interactive chat model
+        (OpenHands is an API client, not a CLI session) or when the session
+        manager wasn't created — the rest of the orchestration falls back to
+        the one-shot path in those cases.
+
+        Claude and Codex both have one, and each reads its OWN config block:
+        the binary, model, and tool settings differ per CLI, and reading
+        Claude's block for a Codex spawn would hand it a ``claude`` binary.
         """
-        if not AgentBackend.is_a(agent_backend, AgentBackend.CLAUDE):
+        backend = AgentBackend.parse(agent_backend)
+        if backend not in (AgentBackend.CLAUDE, AgentBackend.CODEX):
             return None
         if session_manager is None:
             return None
-        claude_cfg = getattr(open_cfg, 'claude', None)
+        # Each backend's own config block. Falls back to Claude's only for
+        # Claude — a missing Codex block means Codex is not configured, not
+        # that it should silently borrow Claude's binary.
+        config_key = backend.value
+        claude_cfg = getattr(open_cfg, config_key, None)
         if claude_cfg is None:
             return None
         defaults = cls._build_defaults(claude_cfg, docker_mode_on=docker_mode_on)

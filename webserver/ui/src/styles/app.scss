@@ -1736,6 +1736,21 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 // Which CLI produced a chat. Reuses the existing neutrals rather than
 // introducing a per-backend colour: the chip is an identifier, not a status,
 // and colouring it would compete with the run-state dot beside it.
+/* The "New chat with Claude / Codex" row. Only rendered when more than one
+ * backend is wired — with one there is nothing to choose. */
+.chats-menu-new-group {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-4;
+  flex-wrap: wrap;
+}
+
+.chats-menu-new-label {
+  color: $C-NEUTRAL-45;
+  font-size: $TEXT-12;
+  padding-left: $SPACE-8;
+}
+
 .agent-backend-chip {
   display: inline-block;
   margin-right: 6px;

@@ -758,6 +758,18 @@ def _no_base_error_message(repo_id: str) -> str:
 # longer 409 on branch divergence.
 
 
+def _requested_chat_backend(payload) -> str:
+    """The backend an operator picked for a new chat, or ``''``.
+
+    Validated against the known names rather than trusted: this value is
+    persisted on the record and used to route every later turn, so an
+    unrecognised string would route nowhere for the life of the chat.
+    """
+    from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+    backend = AgentBackend.parse((payload or {}).get('agent_backend'))
+    return backend.value if backend is not None else ''
+
+
 def _agent_method(agent_service, method_name: str):
     """Look up ``method_name`` on the agent service — dotted names allowed.
 
@@ -1471,10 +1483,40 @@ def _register_http_routes(app: Flask) -> None:
             )
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 404
+        # A fresh chat may pick a different backend. Recorded on the chat
+        # (not read from config at spawn time) because that record is what
+        # routes every later turn — and what tells the operator, months from
+        # now, which CLI this conversation belongs to.
+        chosen = _requested_chat_backend(payload)
+        if chosen and not agent_session_id:
+            record.agent_backend = chosen
+            saver = getattr(manager, 'save_record', None)
+            if callable(saver):
+                saver(record)
         return jsonify({
             'task_id': record.task_id,
             AGENT_SESSION_ID: record.agent_session_id,
+            'agent_backend': str(getattr(record, 'agent_backend', '') or ''),
             'previous_session_ids': list(record.previous_session_ids),
+        })
+
+    @app.get('/api/agent-backends')
+    def list_agent_backends():
+        """Backends this host can actually start a chat on.
+
+        Derived from what is WIRED, not from a static list: offering a
+        backend whose manager does not exist would hand the operator a
+        picker entry that fails at the first message.
+        """
+        manager = app.config.get('SESSION_MANAGER')
+        available = getattr(manager, 'available_backends', None)
+        backends = list(available()) if callable(available) else []
+        if not backends:
+            # A host with a single (unrouted) manager still has one backend.
+            backends = [str(getattr(manager, 'AGENT_BACKEND', '') or '')]
+        return jsonify({
+            'backends': [b for b in backends if b],
+            'default': str(getattr(manager, 'default_backend', '') or ''),
         })
 
     @app.get('/healthz')

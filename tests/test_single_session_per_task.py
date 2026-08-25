@@ -47,11 +47,16 @@ class NoAutomaticNewSessionTests(unittest.TestCase):
             text = path.read_text(encoding='utf-8', errors='replace')
             if '.start_new_chat(' in text or 'def start_new_chat' in text:
                 callers.append(str(path.relative_to(REPO_ROOT)))
-        # The definition, plus the single webserver route that exposes it.
+        # The definition, the single webserver route that exposes it, and the
+        # router that FORWARDS that route's call to the backend owning the
+        # chat. The router decides nothing: it never originates a new chat,
+        # it only picks which manager the operator's request reaches. The
+        # invariant — no automatic new chats — is unchanged.
         self.assertEqual(
             sorted(callers),
             [
                 'claude_core_lib/claude_core_lib/session/manager.py',
+                'kato_core_lib/data_layers/service/agent_session_router.py',
                 'webserver/kato_webserver/app.py',
             ],
             'a new caller of start_new_chat appeared — kato must never open a '
