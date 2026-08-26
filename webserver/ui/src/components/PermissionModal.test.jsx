@@ -563,3 +563,56 @@ describe('PermissionModal — Enter must not do two things at once', () => {
     document.body.removeEventListener('keydown', downstream);
   });
 });
+
+
+// An approval prompt must say WHO is asking. A task can hold a live chat with
+// each backend at once, so "wants permission Bash" with no name leaves the
+// operator authorising a command without knowing which agent will run it —
+// and the out-of-sandbox banner asserted "CLAUDE IS REACHING OUTSIDE THE TASK
+// FOLDER" whoever asked.
+describe('PermissionModal — names the requesting agent', () => {
+  function ask(overrides = {}) {
+    return {
+      request_id: 'r1', tool_name: 'Bash', task_id: 'UNA-1',
+      input: { command: 'ls' },
+      ...overrides,
+    };
+  }
+
+  test('a Codex ask says Codex', () => {
+    render(
+      <PermissionModal raw={ask({ agent_backend: 'codex' })} onDecide={() => {}} />,
+    );
+    expect(screen.getByText('Codex')).toBeTruthy();
+  });
+
+  test('a Claude ask says Claude', () => {
+    render(
+      <PermissionModal raw={ask({ agent_backend: 'claude' })} onDecide={() => {}} />,
+    );
+    expect(screen.getByText('Claude')).toBeTruthy();
+  });
+
+  test('an ask with no backend stays neutral rather than guessing', () => {
+    // Naming a specific agent on a guess is worse than naming none — the
+    // operator is about to authorise a command.
+    render(<PermissionModal raw={ask()} onDecide={() => {}} />);
+    expect(screen.getByText('The agent')).toBeTruthy();
+  });
+
+  test('the out-of-sandbox banner names the same agent', () => {
+    render(
+      <PermissionModal
+        raw={ask({
+          agent_backend: 'codex',
+          outside_sandbox: true,
+          outside_path: '/etc/passwd',
+        })}
+        onDecide={() => {}}
+      />,
+    );
+    const banner = document.querySelector('.permission-sandbox-warning-title');
+    expect(banner.textContent).toContain('CODEX IS REACHING OUTSIDE');
+    expect(banner.textContent).not.toContain('CLAUDE');
+  });
+});

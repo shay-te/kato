@@ -162,10 +162,49 @@ def main(argv: list[str]) -> int:
         pass
     python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
     cmd = [python, *base_args, *extra]
-    try:
-        return subprocess.call(cmd, cwd=str(repo_root))
-    except KeyboardInterrupt:
-        return 130
+    return _run_child(cmd, cwd=str(repo_root))
+
+
+#: How long Ctrl+C waits for the child to finish its own graceful shutdown
+#: before escalating. Slightly longer than the child's own grace period so
+#: its cleanup gets to finish first.
+CHILD_SHUTDOWN_GRACE_SECONDS = 10.0
+
+
+def _run_child(cmd, *, cwd):
+    """Run the real command, and do not return while it is still alive.
+
+    ``subprocess.call`` + ``except KeyboardInterrupt`` ORPHANS the child. The
+    terminal delivers SIGINT to the whole foreground process group, so both
+    processes get it — but this wrapper raised KeyboardInterrupt immediately
+    and returned, handing back a shell prompt while kato was still running.
+    The operator's report was "I can't stop kato with Ctrl+C": the prompt
+    came back, so it looked like it had stopped, and it had not.
+
+    Ctrl+C now waits for the child to exit on its own, escalates to
+    terminate, then to kill. A second Ctrl+C skips straight to the kill.
+    """
+    child = subprocess.Popen(cmd, cwd=cwd)
+    while True:
+        try:
+            return child.wait()
+        except KeyboardInterrupt:
+            # The child received the same SIGINT from the terminal, so give
+            # its own shutdown a chance before forcing anything.
+            try:
+                return child.wait(timeout=CHILD_SHUTDOWN_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            except KeyboardInterrupt:
+                # A second Ctrl+C while waiting: stop being patient.
+                pass
+            child.terminate()
+            try:
+                return child.wait(timeout=5)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                child.kill()
+                child.wait()
+                return 130
 
 
 if __name__ == '__main__':

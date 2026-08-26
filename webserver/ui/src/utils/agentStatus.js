@@ -18,17 +18,20 @@ import { deriveTabStatus, resolveTabStatus, statusDotClass } from './tabStatus.j
 
 // kind → { label (chip word), title (tooltip) }. Ported verbatim from the old
 // SessionHeader.describeClaudeStatus so the chip text/classes are unchanged.
+// kind → { label, title(agentName) }. The titles take the agent's NAME: a
+// task shows a chip per backend now, and a tooltip saying "Claude is
+// processing the current turn" on the Codex chip names the wrong agent.
 const STATUS_BY_KIND = {
-  [AGENT_STATUS_KIND.PROVISIONING]: { label: 'provisioning', title: 'Workspace is being set up.' },
-  [AGENT_STATUS_KIND.WORKING]: { label: 'working', title: 'Claude is processing the current turn.' },
-  [AGENT_STATUS_KIND.WORKFLOW]: { label: 'workflow', title: 'A background workflow is running — Claude will report back when it finishes.' },
-  [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: 'Claude is paused waiting for your approval.' },
-  [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: 'Claude is connected and waiting for input.' },
-  [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: 'Connecting to the Claude session…' },
-  [AGENT_STATUS_KIND.SLEEPING]: { label: 'sleeping', title: 'No live subprocess — kato will respawn Claude on the next message.' },
-  [AGENT_STATUS_KIND.CLOSED]: { label: 'closed', title: 'The Claude subprocess for this task has ended.' },
-  [AGENT_STATUS_KIND.MISSING]: { label: 'no record', title: 'No record for this task on the server.' },
-  [AGENT_STATUS_KIND.UNKNOWN]: { label: '—', title: 'Claude status unknown.' },
+  [AGENT_STATUS_KIND.PROVISIONING]: { label: 'provisioning', title: () => 'Workspace is being set up.' },
+  [AGENT_STATUS_KIND.WORKING]: { label: 'working', title: (n) => `${n} is processing the current turn.` },
+  [AGENT_STATUS_KIND.WORKFLOW]: { label: 'workflow', title: (n) => `A background workflow is running — ${n} will report back when it finishes.` },
+  [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: (n) => `${n} is paused waiting for your approval.` },
+  [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: (n) => `${n} is connected and waiting for input.` },
+  [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: (n) => `Connecting to the ${n} session…` },
+  [AGENT_STATUS_KIND.SLEEPING]: { label: 'sleeping', title: (n) => `No live subprocess — kato will respawn ${n} on the next message.` },
+  [AGENT_STATUS_KIND.CLOSED]: { label: 'closed', title: (n) => `The ${n} subprocess for this task has ended.` },
+  [AGENT_STATUS_KIND.MISSING]: { label: 'no record', title: () => 'No record for this task on the server.' },
+  [AGENT_STATUS_KIND.UNKNOWN]: { label: '—', title: (n) => `${n} status unknown.` },
 };
 
 const KIND_BY_LIFECYCLE = {
@@ -116,7 +119,9 @@ function dotStatusForKind(kind, resolved) {
 // SSE facts {lifecycle, turnInFlight, pendingPermission} from agentStatusStore.
 // needsAttention: the caller's attention flag.
 // Returns { kind, label, title, dotClass } — kind drives the chip and the dot.
-export function deriveAgentStatus(session, liveStatus = null, needsAttention = false) {
+export function deriveAgentStatus(
+  session, liveStatus = null, needsAttention = false, agentName = '',
+) {
   const baseStatus = deriveTabStatus(session);
   const kind = liveStatus
     ? liveKind(liveStatus, baseStatus, needsAttention)
@@ -134,5 +139,8 @@ export function deriveAgentStatus(session, liveStatus = null, needsAttention = f
     idleAlive,
   });
 
-  return { kind, label: meta.label, title: meta.title, dotClass, status: dotStatus };
+  const name = String(agentName || '').trim() || 'The agent';
+  return {
+    kind, label: meta.label, title: meta.title(name), dotClass, status: dotStatus,
+  };
 }

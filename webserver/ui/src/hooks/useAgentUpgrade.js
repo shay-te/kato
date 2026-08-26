@@ -103,7 +103,12 @@ export function useAgentUpgrade(backend = '') {
     }
     stopPolling();
     timerRef.current = setTimeout(poll, POLL_MS);
-  }, [poll, stopPolling]);
+    // ``backend`` MUST be here. Without it this callback keeps the value from
+    // the render that created it — empty, before the active tab resolved —
+    // and the server then falls back to the CONFIGURED backend. A banner
+    // correctly reading "CODEX CLI update available" ran `claude update`,
+    // because the banner re-renders and the captured callback does not.
+  }, [poll, stopPolling, backend]);
 
   // Clear the finished result so the modal can close. Never clears a RUNNING
   // job — that would hide an install still touching the host.

@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import ChatsMenu from './ChatsMenu.jsx';
 import { backendLabel } from './AgentBackendChip.jsx';
 import { fetchAgentBackends, switchTaskBackend } from '../api.js';
 import { normalizeBackendEntries, normalizeBackendEntry }
   from '../utils/agentBackendEntry.js';
 import { useActiveChatTitle } from '../hooks/useActiveChatTitle.js';
+import { activeBackendStore } from '../stores/activeBackendStore.js';
+import { useTaskAgentStatuses } from '../hooks/useTaskAgentStatuses.js';
+import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { toast } from '../stores/toastStore.js';
 
 // One tab per agent this host can run, each owning its own chat history —
@@ -57,15 +60,34 @@ export default function AgentBackendTabs({
   // than nothing — the history button must not disappear on every remount.
   // A pre-load placeholder is assumed READY: the session is already running
   // on it, so flashing a setup panel over a working chat would be a lie.
-  const tabs = backends.length > 0
-    ? backends
-    : (activeBackend ? [normalizeBackendEntry(activeBackend)] : []);
+  // Memoised: the placeholder built a NEW object on every render, so
+  // ``currentEntry`` changed identity every time, the readiness effect below
+  // fired every time, the parent re-rendered, and the whole thing spun —
+  // an infinite render loop for any session whose backend lookup had not
+  // returned yet, which is every session for the first moment of its life.
+  const tabs = useMemo(
+    () => (backends.length > 0
+      ? backends
+      : (activeBackend ? [normalizeBackendEntry(activeBackend)] : [])),
+    [backends, activeBackend],
+  );
   const current = pickedBackend || activeBackend || tabs[0]?.id || '';
   const currentEntry = tabs.find((t) => t.id === current) || null;
 
   // Bumped after any chat mutation so the title bar re-reads.
   const [chatNonce, setChatNonce] = useState(0);
   const chatName = useActiveChatTitle(taskId, current, chatNonce);
+  // Per-agent liveness, shown ON each tab: "Claude (working)". The status
+  // belongs beside the name it describes — in the header it was one chip for
+  // the focused agent (silent about the other) and then two chips detached
+  // from the tabs they referred to.
+  const statusRows = useTaskAgentStatuses(taskId, { resyncKey: current });
+  const statusById = {};
+  for (const row of statusRows) {
+    statusById[row.id] = deriveAgentStatus(
+      { live: row.live, working: row.working }, null, false, row.label,
+    );
+  }
 
   function handleChatChanged(result) {
     setChatNonce((n) => n + 1);
@@ -84,11 +106,27 @@ export default function AgentBackendTabs({
 
   // The chat area needs to know whether to render a chat or a setup panel,
   // and only this component knows what the probe said.
+  // Keyed on the VALUES the parent acts on, not the object's identity: a
+  // re-created entry that says the same thing must not re-notify.
+  const readinessKey = currentEntry
+    ? `${currentEntry.id}|${currentEntry.ready}|${currentEntry.chat_available}`
+      + `|${currentEntry.error}`
+    : '';
   useEffect(() => {
     if (typeof onReadinessChange === 'function') {
       onReadinessChange(currentEntry);
     }
-  }, [onReadinessChange, currentEntry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readinessKey]);
+
+  // This component is the ONLY thing that knows which tab is selected — it
+  // holds the operator's optimistic pick as well as the record's value. Every
+  // other surface used to substitute ``session.agent_backend``, a polled
+  // field that lags a switch, which is how a Codex-tab message got sent
+  // tagged "claude" and how the Codex banner upgraded the Claude CLI.
+  useEffect(() => {
+    if (taskId && current) { activeBackendStore.set(taskId, current); }
+  }, [taskId, current]);
 
   async function pickBackend(backend) {
     if (switching || backend === current) { return; }
@@ -164,11 +202,18 @@ export default function AgentBackendTabs({
                     + 'conversation is kept and can be switched back to'}
             >
               {backendLabel(backend)}
-              {unready && (
+              {unready ? (
                 <span className="agent-backend-tab-unready" aria-hidden="true">
                   !
                 </span>
-              )}
+              ) : statusById[backend] ? (
+                <span
+                  className={`agent-backend-tab-status is-${statusById[backend].kind}`}
+                  title={statusById[backend].title}
+                >
+                  {statusById[backend].label}
+                </span>
+              ) : null}
             </button>
           </div>
         );

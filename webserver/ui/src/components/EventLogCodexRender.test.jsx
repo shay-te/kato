@@ -102,3 +102,100 @@ describe('EventLog — Codex turn rendering', () => {
     expect(screen.getByText('Claude speaking')).toBeTruthy();
   });
 });
+
+// The assistant bubble carries the AGENT'S name. It was the constant
+// 'Claude', so Codex's own reply — in Codex's own tab — was attributed to
+// Claude. Reported as "no claude . codex!".
+describe('EventLog — the assistant bubble names the agent', () => {
+  function replyIn(agentName) {
+    return render(
+      <EventLog
+        taskId="T1"
+        agentName={agentName}
+        entries={[{
+          id: 'e0', source: 'stream', received_at_epoch: 1,
+          raw: {
+            type: 'item.completed',
+            item: { type: 'agent_message', text: 'Hello back!' },
+          },
+        }]}
+      />,
+    );
+  }
+
+  test('a Codex reply is labelled Codex', () => {
+    const { container } = replyIn('Codex');
+    expect(container.querySelector('.bubble.assistant .bubble-label').textContent)
+      .toBe('Codex');
+  });
+
+  test('a Claude reply is labelled Claude', () => {
+    const { container } = replyIn('Claude');
+    expect(container.querySelector('.bubble.assistant .bubble-label').textContent)
+      .toBe('Claude');
+  });
+
+  test('the session-started bubble names the agent too', () => {
+    const { container } = render(
+      <EventLog
+        taskId="T1"
+        agentName="Codex"
+        entries={[{
+          id: 'e0', source: 'stream', received_at_epoch: 1,
+          raw: { type: 'system', subtype: 'init', agent_session_id: 'abc12345' },
+        }]}
+      />,
+    );
+    expect(container.textContent).toContain('Codex session started');
+    expect(container.textContent).not.toContain('Claude session started');
+  });
+});
+
+// The operator's own prompt in a Codex transcript. ``codex exec`` takes it on
+// stdin and never echoes it, so the transport records it as a ``user`` event
+// in the SAME wire shape the other backend uses — which means this renderer
+// needs no Codex-specific branch for it, and the reply-then-question ordering
+// survives a page reload.
+describe('EventLog — the operator’s prompt in a Codex chat', () => {
+  function transcript() {
+    return render(
+      <EventLog
+        taskId="T1"
+        agentName="Codex"
+        entries={[
+          {
+            id: 'e0', source: 'stream', received_at_epoch: 1,
+            raw: {
+              type: 'user',
+              message: { content: [{ type: 'text', text: 'review my changes' }] },
+            },
+          },
+          {
+            id: 'e1', source: 'stream', received_at_epoch: 2,
+            raw: {
+              type: 'item.completed',
+              item: { type: 'agent_message', text: 'Looks good.' },
+            },
+          },
+        ]}
+      />,
+    );
+  }
+
+  test('the prompt is shown, not just the reply', () => {
+    transcript();
+    expect(screen.getByText(/review my changes/)).toBeTruthy();
+  });
+
+  test('the reply is still shown alongside it', () => {
+    transcript();
+    expect(screen.getByText('Looks good.')).toBeTruthy();
+  });
+
+  test('the prompt renders through the shared user path, not a Codex branch', () => {
+    const { container } = transcript();
+    // Same sticky-prompt treatment a typed message gets on the other
+    // backend — one wire shape, one renderer.
+    expect(container.querySelector('.chat-sticky-prompt')).toBeTruthy();
+  });
+});

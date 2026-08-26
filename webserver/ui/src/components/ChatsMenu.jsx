@@ -212,11 +212,15 @@ export default function ChatsMenu({
       <button
         id="session-chats"
         type="button"
-        // ``tooltip-start``, NOT the default centred anchor: this button
-        // sits a few dozen px from the chat panel's LEFT edge, so a
-        // 320px tooltip centred on it hangs ~100px past the edge and is
-        // clipped. Left-anchoring grows it rightward, into the panel.
-        className={`session-action${open ? '' : ' tooltip-start'}`}
+        // ``tooltip-end`` — right-anchored, growing LEFTWARD.
+        //
+        // The anchor has to follow the button, and this button has moved:
+        // it used to sit near the chat panel's left edge (where
+        // ``tooltip-start`` was right), and now sits at the RIGHT end of the
+        // agent chat bar, where a left-anchored tooltip runs off the panel.
+        // The dropdown's own anchor was already moved for the same reason —
+        // this is its tooltip, on the same button, and it was left behind.
+        className={`session-action${open ? '' : ' tooltip-end'}`}
         // Only while CLOSED. An open menu already shows what the button
         // explains, and the tooltip is anchored to the button — so it
         // renders on top of the very list the operator is reading.

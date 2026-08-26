@@ -1593,6 +1593,54 @@ def _register_http_routes(app: Flask) -> None:
             'previous_session_ids': list(record.previous_session_ids),
         })
 
+    @app.get('/api/sessions/<task_id>/agent-status')
+    def get_task_agent_status(task_id: str):
+        """Liveness of EVERY backend's chat for this task, not just the active one.
+
+        Both subprocesses can run at once — switching agent tabs parks the
+        outgoing conversation and leaves its process alive — so one status
+        chip could only ever describe the tab in front of the operator, and
+        said nothing about the agent still working behind it.
+
+        The ACTIVE backend's chip is still driven by the live SSE stream in
+        the UI (it alone distinguishes "sleeping" from "closed"); this answers
+        for the ones the stream says nothing about.
+        """
+        from kato_core_lib.helpers.agent_backend_readiness import (
+            CHAT_BACKENDS,
+            backend_label,
+        )
+        manager = app.config.get('SESSION_MANAGER')
+        lookup = getattr(manager, 'sessions_by_backend', None)
+        sessions = {}
+        if callable(lookup):
+            try:
+                sessions = lookup(task_id) or {}
+            except Exception:
+                app.logger.exception(
+                    'per-backend session lookup failed for task %s', task_id,
+                )
+        active = ''
+        resolver = getattr(manager, 'backend_for', None)
+        if callable(resolver):
+            try:
+                active = str(resolver(task_id) or '').strip().lower()
+            except Exception:
+                active = ''
+        rows = []
+        for backend in CHAT_BACKENDS:
+            if backend not in sessions:
+                continue
+            session = sessions.get(backend)
+            rows.append({
+                'id': backend,
+                'label': backend_label(backend),
+                'active': backend == active,
+                'live': bool(getattr(session, 'is_alive', False)),
+                'working': bool(getattr(session, 'is_working', False)),
+            })
+        return jsonify({'task_id': task_id, 'backends': rows})
+
     @app.get('/api/agent-backends')
     def list_agent_backends():
         """Backends this host can actually start a chat on.
@@ -3504,6 +3552,61 @@ def _discover_openrouter_models(app: Flask) -> list:
 
 
 def _register_post_message_route(app: Flask) -> None:
+    def _log_message_routing(app, manager, task_id, payload):
+        """Record the tab the caller named and the backend that will run it."""
+        try:
+            asked = _requested_chat_backend(payload) or '(none)'
+            resolver = getattr(manager, 'backend_for', None)
+            resolved = (
+                str(resolver(task_id) or '') if callable(resolver) else '(unrouted)'
+            )
+            app.logger.info(
+                'task %s: chat message from the %s tab → running on %s',
+                task_id, asked, resolved or '(default)',
+            )
+        except Exception:
+            # Instrumentation must never be able to fail a message send.
+            app.logger.exception('could not log message routing for %s', task_id)
+
+    def _align_backend_with_caller(app, manager, task_id, payload):
+        """Make the record agree with the tab the message was typed into.
+
+        A no-op when the caller names no backend (an older UI, or any
+        non-chat caller) or when it already matches. Never raises: a chat
+        message must not fail because the record could not be re-pointed.
+        """
+        wanted = _requested_chat_backend(payload)
+        if not wanted:
+            return
+        resolver = getattr(manager, 'backend_for', None)
+        if not callable(resolver):
+            return
+        try:
+            if str(resolver(task_id) or '').strip().lower() == wanted:
+                return
+            available = getattr(manager, 'available_backends', None)
+            wired = list(available()) if callable(available) else []
+            if wired and wanted not in wired:
+                return
+            record = manager.get_record(task_id)
+            if record is None:
+                return
+            from agent_core_lib.agent_core_lib.session.backend_chats import (
+                switch_backend,
+            )
+            switch_backend(record, wanted)
+            saver = getattr(manager, 'save_record', None)
+            if callable(saver):
+                saver(record)
+            app.logger.info(
+                'task %s: message sent from the %s tab; record re-pointed',
+                task_id, wanted,
+            )
+        except Exception:
+            app.logger.exception(
+                'could not align the backend with the caller for task %s', task_id,
+            )
+
     @app.post('/api/sessions/<task_id>/messages')
     def post_message(task_id: str):
         payload = request.get_json(silent=True) or {}
@@ -3515,6 +3618,18 @@ def _register_post_message_route(app: Flask) -> None:
             return jsonify({'error': 'text or images is required'}), 400
         _capture_prompt_lesson_candidate(app, task_id, text)
         manager = app.config['SESSION_MANAGER']
+        # The TAB the operator typed into is authoritative. The backend used
+        # to be re-derived from the record alone, so a UI whose session poll
+        # had not caught up could send from the Claude tab into a record that
+        # said Codex — and kato launched the wrong CLI (reported on Windows
+        # as "failed to launch codex: [WinError 2]" from the CLAUDE tab).
+        _align_backend_with_caller(app, manager, task_id, payload)
+        # WHICH agent this message will actually run on, every time. Routing
+        # is decided across the browser, the record and the router, and when
+        # an operator reports "it went to the wrong agent" there was no way
+        # to tell where the disagreement was — only guesses. One line in the
+        # activity log settles it.
+        _log_message_routing(app, manager, task_id, payload)
         # The CLI bakes ``--model`` and ``--effort`` at spawn, so a
         # changed model / effort only takes hold on a fresh subprocess.
         # If the operator switched to a new explicit value and the live
@@ -4176,6 +4291,14 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                 # value from its SessionDetail prop.
                 envelope['task_summary'] = str(
                     getattr(record, 'task_summary', '') or '',
+                )
+                # WHICH agent is asking. A task can hold a live chat with
+                # each backend at once, so "wants permission" with no name
+                # leaves the operator approving a command without knowing who
+                # will run it — and the warning banner asserted "CLAUDE is
+                # reaching outside the task folder" whoever asked.
+                envelope['agent_backend'] = str(
+                    getattr(record, 'agent_backend', '') or '',
                 )
                 pending.append(envelope)
         return jsonify({'pending': pending})
@@ -5374,6 +5497,7 @@ def _records_as_dicts(
         if not is_reserved_workspace_dirname(getattr(record, 'task_id', ''))
     ]
     session_ids_by_task = _session_ids_by_task(session_manager)
+    backend_by_task = _backend_by_task(session_manager, workspace_records)
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
     return [
         _workspace_record_to_dict(
@@ -5384,6 +5508,7 @@ def _records_as_dicts(
             working_session_ids=working_session_ids,
             pending_permission_session_ids=pending_permission_session_ids,
             pending_permission_tool_by_task=pending_permission_tool_by_task,
+            backend_by_task=backend_by_task,
         )
         for record in workspace_records
     ]
@@ -5603,6 +5728,35 @@ def _live_session_ids(session_manager) -> set[str]:
     return live
 
 
+def _backend_by_task(session_manager, records) -> dict[str, str]:
+    """Which agent each task's chat runs on, resolved for the whole list.
+
+    ``backend_for`` already answers "the record's backend, else the
+    configured default", which is exactly what the operator needs to see: a
+    task whose chat has never been started still runs on SOMETHING, and
+    naming that is more useful than naming nothing.
+
+    Never raises — a status chip must not be able to fail the session list.
+    """
+    resolver = getattr(session_manager, 'backend_for', None)
+    if not callable(resolver):
+        # Single-backend host: one manager, and it names itself.
+        fallback = str(getattr(session_manager, 'AGENT_BACKEND', '') or '')
+        return {
+            str(getattr(r, 'task_id', '') or ''): fallback for r in records
+        } if fallback else {}
+    found = {}
+    for record in records:
+        task_id = str(getattr(record, 'task_id', '') or '')
+        if not task_id:
+            continue
+        try:
+            found[task_id] = str(resolver(task_id) or '').strip().lower()
+        except Exception:
+            found[task_id] = ''
+    return found
+
+
 def _workspace_record_to_dict(
     record,
     live_session_ids: set[str],
@@ -5612,8 +5766,15 @@ def _workspace_record_to_dict(
     working_session_ids: set[str] | None = None,
     pending_permission_session_ids: set[str] | None = None,
     pending_permission_tool_by_task: dict[str, str] | None = None,
+    backend_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
+    # WORKSPACE records carry no backend — they predate agent tabs and are
+    # about the clone on disk, not the chat. Without this the UI had nothing
+    # to name the agent with and fell back to the literal word "Agent" on the
+    # status chip, which tells the operator nothing: the whole question is
+    # WHICH agent. The session layer knows, so it answers here.
+    payload['agent_backend'] = (backend_by_task or {}).get(record.task_id, '')
     payload['live'] = record.task_id in live_session_ids
     payload['working'] = (
         record.task_id in working_session_ids

@@ -6,6 +6,7 @@ import {
   NEVER_REMEMBERED_TOOLS,
 } from '../utils/permissionEnvelope.js';
 import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
+import { backendLabel } from './AgentBackendChip.jsx';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
@@ -14,9 +15,13 @@ export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '', queuedCount = 0,
 }) {
   const {
-    taskId, taskSummary: envelopeSummary,
+    taskId, taskSummary: envelopeSummary, agentBackend,
     requestId, toolName, toolInput, outsideSandbox, outsidePath, actionGuard,
   } = unpackPermissionEnvelope(raw);
+  // Falls back to the neutral word ONLY when the ask carries no backend (an
+  // older server). Naming a specific agent on a guess would be worse than
+  // saying "the agent" — the operator is about to authorise a command.
+  const agentName = backendLabel(agentBackend) || 'The agent';
   const [rationale, setRationale] = useState('');
 
   useEffect(() => { setRationale(''); }, [requestId]);
@@ -96,9 +101,11 @@ export default function PermissionModal({
   // never offer a remembered ("Allow always") scope. Ordinary in-task
   // commands use the normal flow.
   const fields = renderFields(toolInput);
-  const sandboxWarning = renderSandboxWarning(outsideSandbox, outsidePath, toolName);
+  const sandboxWarning = renderSandboxWarning(
+    outsideSandbox, outsidePath, toolName, agentName,
+  );
   const actionGuardBanner = renderActionGuardBanner(actionGuard);
-  const denyTooltip = `Deny this ${toolName} request (Esc). Claude will see your rationale (if any) and decide what to do next.`;
+  const denyTooltip = `Deny this ${toolName} request (Esc). ${agentName} will see your rationale (if any) and decide what to do next.`;
   const allowOnceTitle = `Approve this ${toolName} request only (Enter) — kato will ask again next time.`;
   const allowAlwaysTitle = `Approve and remember ${toolName} (Shift+Enter) — kato won't ask again, even after a kato or browser restart, until you clear it from settings.`;
   function handleRationaleChange(event) {
@@ -155,7 +162,9 @@ export default function PermissionModal({
         )}
       </span>
       <span className="permission-modal-title-line">
-        wants permission <span className="permission-modal-tool">{toolName}</span>
+        <span className="permission-modal-agent">{agentName}</span>
+        {' '}wants permission{' '}
+        <span className="permission-modal-tool">{toolName}</span>
       </span>
     </span>
   );
@@ -246,7 +255,7 @@ export default function PermissionModal({
 // its OWN line, then the single-action guidance. Returns null when the
 // ask is in-sandbox. Built outside the JSX return so the render stays
 // logic-free (AGENTS.md "no logic inside JSX").
-function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
+function renderSandboxWarning(outsideSandbox, outsidePath, toolName, agentName) {
   if (!outsideSandbox) { return null; }
   const pathLine = outsidePath
     ? <code className="permission-sandbox-warning-path">{outsidePath}</code>
@@ -254,7 +263,7 @@ function renderSandboxWarning(outsideSandbox, outsidePath, toolName) {
   return (
     <div id="permission-outside-sandbox" className="permission-sandbox-warning" role="alert">
       <h1 className="permission-sandbox-warning-title">
-        ⚠ CLAUDE IS REACHING OUTSIDE THE TASK FOLDER
+        ⚠ {agentName.toUpperCase()} IS REACHING OUTSIDE THE TASK FOLDER
       </h1>
       {pathLine}
       <p className="permission-sandbox-warning-body">

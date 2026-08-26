@@ -53,13 +53,23 @@ test('Chats menu rows override the global header icon-button skin', () => {
   assertDeclaration(body, 'padding', '8px 12px');
 });
 
-test('the chats menu opens rightward from its button', () => {
-  // It was ``right: 0`` — correct while the button sat at the right end of
-  // the session header, wrong once it moved to the agent-tab strip at the
-  // chat panel's LEFT edge: a 420px-wide menu anchored by its right edge
-  // hung ~360px off-panel and the operator saw a clipped popup.
+test('the chats menu opens away from the panel edge it sits on', () => {
+  // The anchor has to match where the BUTTON is, and the button has moved
+  // twice — session header (right), agent-tab strip (left), and now the
+  // agent chat bar, whose space-between layout puts it back at the RIGHT.
+  // Each time the anchor was left behind, the menu opened off-panel and the
+  // operator saw a clipped popup.
   const body = ruleBody('.chats-menu');
-  assertDeclaration(body, 'left', '0');
-  assertDeclaration(body, 'right', 'auto');
-  assert.doesNotMatch(body, /right:\s*0;/);
+  assertDeclaration(body, 'right', '0');
+  assertDeclaration(body, 'left', 'auto');
+});
+
+test('the chats menu is clamped to the viewport at BOTH bounds', () => {
+  // Independent of the anchor: whichever edge it grows from, it must fit.
+  // The min-width matters as much as the max: when the two conflict CSS
+  // resolves in favour of min-width, so a flat 420px floor would win over
+  // the clamp and overflow a narrow viewport regardless.
+  const body = ruleBody('.chats-menu');
+  assert.match(body, /max-width:\s*min\(640px,/);
+  assert.match(body, /min-width:\s*min\(420px,/);
 });

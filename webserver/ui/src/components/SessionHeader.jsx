@@ -19,6 +19,7 @@ import { deriveAgentStatus } from '../utils/agentStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast, toastResult } from '../stores/toastStore.js';
 import { backendLabel } from './AgentBackendChip.jsx';
+import { useActiveBackend } from '../stores/activeBackendStore.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
@@ -304,11 +305,22 @@ export default function SessionHeader({
   // pill, the resume/stop tooltips, the review and Done copy.
   // 'Agent' (capitalised) not 'the agent': it is used as a NAME in the
   // status pill ('Agent: working') as well as in prose.
-  const agentName = backendLabel(session?.agent_backend) || 'Agent';
+  // The tab the operator is ON, not the polled record — the same
+  // substitution that sent Codex-tab messages tagged "claude".
+  const activeBackend = useActiveBackend(
+    session?.task_id || '', session?.agent_backend || '',
+  );
+  const agentName = backendLabel(activeBackend) || 'Agent';
+  // The OTHER agents' status is shown on their own tabs
+  // (AgentBackendTabs), beside the name it describes. A second row of
+  // chips up here restated the same facts one surface away from what
+  // they referred to.
+
   const agent = deriveAgentStatus(
     session,
     { lifecycle: streamLifecycle, turnInFlight, awaitingBackground, backgroundIsWorkflow },
     needsAttention,
+    agentName,
   );
   const stopLabel = stopping ? 'Stopping…' : 'Stop';
   const resumeLabel = resuming ? 'Resuming…' : 'Resume';
@@ -471,16 +483,9 @@ export default function SessionHeader({
           <span id="session-task-summary">{taskSummary}</span>
         </div>
         <div className="session-header-actions">
-          <span
-            id="session-claude-status"
-            className={`claude-status claude-status-${agent.kind}`}
-            title={agent.title}
-          >
-            {/* Named from the ACTIVE backend: the pill sits directly above
-                the agent tabs, so "Claude: working" over a selected Codex
-                tab flatly contradicts what the operator is looking at. */}
-            {`${agentName}: ${agent.label}`}
-          </span>
+          {/* No status chip here. It lives ON each agent tab now, beside the
+              name it describes — a chip up here could only ever describe one
+              agent, and duplicated what the tab already says. */}
           {sessionIdBadgeRight}
           {searchSlot}
           {approvePushButton}
@@ -631,12 +636,6 @@ export function SessionHeaderPlaceholder() {
         </span>
       </div>
       <div className="session-header-actions" aria-hidden="true">
-        <span
-          id="session-claude-status"
-          className="claude-status claude-status-idle"
-        >
-          Claude: no task
-        </span>
         {buttons.map((b) => (
           <button
             key={b.icon}

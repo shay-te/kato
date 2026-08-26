@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AgentBackendTabs from './AgentBackendTabs.jsx';
 import AgentBackendSetup from './AgentBackendSetup.jsx';
 import { backendLabel } from './AgentBackendChip.jsx';
+import { useActiveBackend } from '../stores/activeBackendStore.js';
 import { createPortal } from 'react-dom';
 import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
@@ -142,7 +143,11 @@ export default function SessionDetail({
   // Either half means there is no chat to show: the CLI is missing, or it
   // works but kato has no manager wired for it yet (needs a restart).
   // One name for every agent-facing string in this component.
-  const agentName = backendLabel(session?.agent_backend) || 'the agent';
+  // The tab the operator is ON — the store's value when the tab strip has
+  // reported in, the record's otherwise (correct on first paint). NOT
+  // ``session.agent_backend`` directly: that is polled and lags a switch.
+  const activeBackend = useActiveBackend(taskId, session?.agent_backend || '');
+  const agentName = backendLabel(activeBackend) || 'the agent';
   const backendUnready = !!activeBackendEntry
     && activeBackendEntry.chat_available === false;
 
@@ -386,13 +391,15 @@ export default function SessionDetail({
       imageCount: images.length,
     });
     stream.markTurnBusy(true);
-    const result = await postChatMessage(taskId, text, images);
+    const result = await postChatMessage(
+      taskId, text, images, activeBackend,
+    );
     if (result.ok) {
       const status = result.body?.status;
       if (status === 'spawned') {
         stream.appendLocalEvent({
           source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM,
-          text: `✓ resumed — spawning ${backendLabel(session?.agent_backend) || 'the agent'}…`,
+          text: `✓ resumed — spawning ${agentName}…`,
         });
         stream.reconnect();
       } else {
@@ -599,7 +606,7 @@ export default function SessionDetail({
         // backend switch too, and the Codex tab announcing a "fresh Claude
         // session" is exactly the confusion the tabs exist to remove.
         text: `🆕 new chat — your next message starts a fresh `
-          + `${backendLabel(session?.agent_backend) || 'agent'} session. `
+          + `${agentName} session. `
           + 'The previous conversation is in the chats menu.',
       });
     }
@@ -723,7 +730,7 @@ export default function SessionDetail({
         <>
         <EventLog
           taskId={taskId}
-          agentName={backendLabel(session?.agent_backend) || 'Agent'}
+          agentName={backendLabel(activeBackend) || 'Agent'}
           entries={stream.events}
           banner={banner}
           searchQuery={searchQuery}
@@ -749,7 +756,7 @@ export default function SessionDetail({
         <MessageForm
           ref={composerRef}
           taskId={taskId}
-          agentBackend={String(session?.agent_backend || '')}
+          agentBackend={activeBackend}
           turnInFlight={stream.turnInFlight}
           onSubmit={onSendMessage}
           disabled={composerDisabled}

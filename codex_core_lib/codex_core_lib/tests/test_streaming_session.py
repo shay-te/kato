@@ -81,7 +81,11 @@ class TurnLifecycleTests(_SessionHarness):
 
         self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
         types = [e.event_type for e in session.recent_events()]
-        self.assertEqual(types[0], 'thread.started')
+        # The OPERATOR'S PROMPT leads the log. The CLI takes it on stdin and
+        # never echoes it, so without this the transcript held answers to a
+        # question that vanished on the next page reload.
+        self.assertEqual(types[0], 'user')
+        self.assertEqual(types[1], 'thread.started')
         self.assertIn('item.completed', types)
         self.assertEqual(types[-1], 'turn.completed')
         self.assertTrue(session.terminal_event.is_terminal)
@@ -198,8 +202,10 @@ class FailureTests(_SessionHarness):
         session.send_user_message('hello')
 
         self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
+        # The prompt, then the one event the CLI actually emitted — the
+        # non-JSON line is still not treated as an event.
         self.assertEqual([e.event_type for e in session.recent_events()],
-                         ['turn.completed'])
+                         ['user', 'turn.completed'])
 
     def test_a_missing_binary_is_reported_not_raised(self) -> None:
         session = StreamingCodexSession(
@@ -425,3 +431,81 @@ class TooOldCliIsRefusedUpFrontTests(unittest.TestCase):
              patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run',
                    side_effect=fake_run):
             client.validate_connection()  # must not raise
+
+
+class PromptSurvivesAReloadTests(unittest.TestCase):
+    """The operator's prompt must be in the EVENT LOG, not just the UI.
+
+    Reported as "after reload of page i don't see the codex last prompt i
+    sent him". ``codex exec`` takes the prompt on stdin and never echoes it,
+    so the log held only the agent's output; the prompt existed solely as a
+    local bubble the UI appends on send, which a reload discards. The
+    operator came back to answers with no questions above them.
+    """
+
+    def _session(self, script: str) -> StreamingCodexSession:
+        return StreamingCodexSession(task_id='T1', binary=str(_fake_cli(script)))
+
+    def test_the_prompt_is_recorded_before_the_turn_runs(self) -> None:
+        session = self._session(_ONE_TURN)
+        self.addCleanup(session.terminate, 0.2)
+        session.send_user_message('review my changes')
+
+        self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
+        first = session.recent_events()[0]
+        self.assertEqual(first.event_type, 'user')
+        self.assertEqual(
+            first.raw['message']['content'][0]['text'], 'review my changes',
+        )
+
+    def test_it_survives_the_replay_the_stream_sends_on_reconnect(self) -> None:
+        # A page reload re-reads ``recent_events`` from index 0 — exactly
+        # what the SSE endpoint replays on connect.
+        session = self._session(_ONE_TURN)
+        self.addCleanup(session.terminate, 0.2)
+        session.send_user_message('hello')
+        self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
+
+        replayed, _total = session.events_after(0)
+        texts = [
+            e.raw.get('message', {}).get('content', [{}])[0].get('text')
+            for e in replayed if e.event_type == 'user'
+        ]
+        self.assertEqual(texts, ['hello'])
+
+    def test_the_shape_matches_the_other_transport(self) -> None:
+        # One wire shape for "the operator said this" is what lets a single
+        # UI render either backend without a Codex-specific branch.
+        session = self._session(_ONE_TURN)
+        self.addCleanup(session.terminate, 0.2)
+        session.send_user_message('hi')
+        self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
+
+        raw = session.recent_events()[0].raw
+        self.assertEqual(raw['type'], 'user')
+        self.assertEqual(raw['message']['content'][0]['type'], 'text')
+
+    def test_an_empty_message_records_nothing(self) -> None:
+        session = self._session(_ONE_TURN)
+        self.addCleanup(session.terminate, 0.2)
+        session.send_user_message('   ')
+        self.assertEqual(session.recent_events(), [])
+
+    def test_a_queued_mid_turn_message_is_recorded_too(self) -> None:
+        # Messages typed while a turn is running are joined into one
+        # follow-up turn; that turn's prompt must be logged like any other.
+        session = self._session(_ONE_TURN)
+        self.addCleanup(session.terminate, 0.2)
+        session.send_user_message('first')
+        self.assertTrue(_wait_until(lambda: session.terminal_event is not None))
+        session.send_user_message('second')
+        self.assertTrue(_wait_until(
+            lambda: sum(
+                1 for e in session.recent_events() if e.event_type == 'user'
+            ) == 2,
+        ))
+        texts = [
+            e.raw['message']['content'][0]['text']
+            for e in session.recent_events() if e.event_type == 'user'
+        ]
+        self.assertEqual(texts, ['first', 'second'])

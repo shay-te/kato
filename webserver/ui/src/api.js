@@ -783,6 +783,13 @@ export function startTaskChat(taskId, agentSessionId = '', agentBackend = '') {
   );
 }
 
+// Liveness of EVERY backend's chat for one task — both subprocesses can run
+// at once, so one chip could only ever describe the tab in front of you.
+export function fetchTaskAgentStatus(taskId) {
+  if (!taskId) { return Promise.resolve({ backends: [] }); }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/agent-status`);
+}
+
 // Every chat backend with its readiness — both tabs always come back; the
 // ``ready`` flag decides whether a tab opens a chat or a setup panel. Empty
 // on any failure so the pane falls back to the backend it is already on.
@@ -813,7 +820,9 @@ export function switchTaskBackend(taskId, agentBackend) {
 // entries. Kept separate from ``postSession`` so the call site reads
 // "this is the message-with-attachments path" without having to
 // know the body shape.
-export async function postChatMessage(taskId, text, images = []) {
+export async function postChatMessage(
+  taskId, text, images = [], agentBackend = '',
+) {
   if (!taskId) { return { ok: false, status: 0, error: 'no active task' }; }
   try {
     const response = await fetch(
@@ -821,7 +830,14 @@ export async function postChatMessage(taskId, text, images = []) {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text, images }),
+        // The TAB this was typed into. The server re-points the record to
+        // it before spawning, so a session poll that has not caught up can
+        // never send a Claude-tab message through the Codex CLI.
+        body: JSON.stringify(
+          agentBackend
+            ? { text, images, agent_backend: agentBackend }
+            : { text, images },
+        ),
       },
     );
     let resultBody = null;

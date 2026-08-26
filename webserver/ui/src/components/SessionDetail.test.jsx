@@ -9,7 +9,8 @@
 //     render in EventLog (used to suppress the "waiting" banner).
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { activeBackendStore } from '../stores/activeBackendStore.js';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 // Stub the heavy children so the layout test renders fast and
 // deterministically. WorkingIndicator is kept REAL — it's the
@@ -66,6 +67,8 @@ vi.mock('../stores/toastStore.js', () => ({
   toastResult: vi.fn(),
 }));
 vi.mock('../api.js', () => ({
+  // Each agent tab shows its own status, polled from here.
+  fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   // The chat pane's agent tabs read these on mount.
   fetchAgentBackends: vi.fn().mockResolvedValue({ backends: ['claude'] }),
   switchTaskBackend: vi.fn().mockResolvedValue({ ok: true, body: {} }),
@@ -323,7 +326,7 @@ describe('SessionDetail — working indicator placement', () => {
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
 
     const { container } = render(
-      <SessionDetail session={{ task_id: 'T1' }} />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
     );
 
     const log = await waitFor(() => {
@@ -369,14 +372,14 @@ describe('SessionDetail — working indicator placement', () => {
     });
     useSessionStream.mockReturnValue(stream);
 
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     const nudge = await screen.findByRole('button', { name: /continue/i });
     fireEvent.click(nudge);
 
     expect(stream.markTurnBusy).toHaveBeenCalledWith(true);
     await waitFor(() => {
-      expect(postChatMessage).toHaveBeenCalledWith('T1', 'continue', []);
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'continue', [], 'claude');
     });
   });
 
@@ -419,15 +422,37 @@ describe('SessionDetail — outgoing message queue', () => {
     };
   }
 
+  test('the Code review prompt goes to the FOCUSED tab', async () => {
+    // It routes through the composer send path (onSendPrompt →
+    // onSendMessage) on purpose — so it wakes a sleeping session and queues
+    // mid-turn. That also means it must carry the same tab the composer
+    // does: asking Codex for a review must not send the prompt to Claude.
+    postChatMessage.mockClear();
+    useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    await waitFor(() => expect(activeBackendStore.get('T1')).toBe('claude'));
+    act(() => { activeBackendStore.set('T1', 'codex'); });
+
+    // The header's Code review button calls onSendPrompt with the stored
+    // prompt; drive the same entry point.
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      const call = postChatMessage.mock.calls.at(-1);
+      expect(call[3]).toBe('codex');
+    });
+  });
+
   test('idle: a sent message is delivered immediately', async () => {
     postChatMessage.mockClear();
     useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
     await waitFor(() => {
-      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
     });
   });
 
@@ -435,7 +460,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockClear();
     const stream = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
@@ -458,13 +483,13 @@ describe('SessionDetail — outgoing message queue', () => {
     writeSteerWhileWorking(false);
     const stream = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
     // Delivered right away despite the turn being in flight...
     await waitFor(() => {
-      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
     });
     // ...and NOT parked in the queue list.
     expect(screen.queryByRole('list', { name: /queued messages/i }))
@@ -475,7 +500,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockClear();
     const stream = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
     expect(screen.getByText('hello')).toBeInTheDocument();
@@ -494,7 +519,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockClear();
     const stream = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
     expect(postChatMessage).not.toHaveBeenCalled();
@@ -502,7 +527,7 @@ describe('SessionDetail — outgoing message queue', () => {
     fireEvent.click(screen.getByRole('button', { name: /steer/i }));
 
     await waitFor(() => {
-      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
     });
     // Steered item is removed from the queue (one-shot).
     expect(screen.queryByText('hello')).not.toBeInTheDocument();
@@ -514,16 +539,16 @@ describe('SessionDetail — outgoing message queue', () => {
     const idle = _stream({ turnInFlight: false });
 
     useSessionStream.mockReturnValue(busy);
-    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
     expect(postChatMessage).not.toHaveBeenCalled();
 
     // Turn ends → flush effect delivers the held message exactly once.
     useSessionStream.mockReturnValue(idle);
-    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     await waitFor(() => {
-      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', []);
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
     });
     expect(postChatMessage).toHaveBeenCalledTimes(1);
     expect(idle.markTurnBusy).toHaveBeenCalledWith(true);
@@ -538,7 +563,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockClear();
     const busy = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(busy);
-    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));  // queues 'hello'
     expect(screen.getByText('hello')).toBeInTheDocument();
 
@@ -547,7 +572,7 @@ describe('SessionDetail — outgoing message queue', () => {
     // …then the backend kill produces the falling edge. NO flush.
     const killed = _stream({ turnInFlight: false });
     useSessionStream.mockReturnValue(killed);
-    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     await Promise.resolve();
     expect(postChatMessage).not.toHaveBeenCalled();
 
@@ -569,9 +594,9 @@ describe('SessionDetail — outgoing message queue', () => {
     expect(readQueuedMessages('T1')).toEqual([]);
     // Later turn ends still flush nothing — the queue is gone.
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
-    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     useSessionStream.mockReturnValue(_stream({ turnInFlight: false }));
-    rerender(<SessionDetail session={{ task_id: 'T1' }} />);
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     await Promise.resolve();
     expect(postChatMessage).not.toHaveBeenCalled();
   });
@@ -580,7 +605,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockClear();
     const busy = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(busy);
-    const { rerender } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    const { rerender } = render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
     // Switch to a different task, then that task's turn goes idle.
@@ -602,7 +627,7 @@ describe('SessionDetail — outgoing message queue', () => {
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
 
     // Queue a steer message on T1 mid-turn.
-    const { unmount } = render(<SessionDetail session={{ task_id: 'T1' }} />);
+    const { unmount } = render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
     expect(screen.getByText('hello')).toBeInTheDocument();
 
@@ -612,7 +637,7 @@ describe('SessionDetail — outgoing message queue', () => {
 
     // Return to T1: a brand-new SessionDetail instance must restore the queue.
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     expect(screen.getByText('hello')).toBeInTheDocument();
     expect(screen.getByRole('list', { name: /queued messages/i }))
       .toBeInTheDocument();
@@ -635,7 +660,7 @@ describe('SessionDetail — outgoing message queue', () => {
     ]);
     useSessionStream.mockReturnValue(_stream({ turnInFlight: true }));
 
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     // Hydration is async (IndexedDB) — the queued item appears once it lands.
     expect(await screen.findByText(/steer with a screenshot/)).toBeInTheDocument();
@@ -657,7 +682,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockResolvedValueOnce({ ok: true, body: { status: 'spawned' } });
     const stream = _stream({ turnInFlight: false });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
@@ -674,7 +699,7 @@ describe('SessionDetail — outgoing message queue', () => {
     postChatMessage.mockResolvedValueOnce({ ok: false, error: 'boom' });
     const stream = _stream({ turnInFlight: false });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
 
@@ -692,13 +717,13 @@ describe('SessionDetail — outgoing message queue', () => {
     // Mid-turn: a normal composer send would QUEUE — resume must not.
     const stream = _stream({ turnInFlight: true });
     useSessionStream.mockReturnValue(stream);
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
 
     fireEvent.click(screen.getByRole('button', { name: 'mock-resume' }));
 
     await waitFor(() => {
       expect(postChatMessage).toHaveBeenCalledWith(
-        'T1', 'Please continue from where you left off.', [],
+        'T1', 'Please continue from where you left off.', [], 'claude',
       );
     });
   });
@@ -727,7 +752,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     useSessionStream.mockReturnValue(stream);
     return render(
       <SessionDetail
-        session={{ task_id: 'T1' }}
+        session={{ task_id: 'T1', agent_backend: 'claude' }}
         needsAttention={false}
         onPendingPermissionChange={vi.fn()}
         {...props}
@@ -746,7 +771,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
 
     rerender(
       <SessionDetail
-        session={{ task_id: 'T1' }}
+        session={{ task_id: 'T1', agent_backend: 'claude' }}
         needsAttention
         onPendingPermissionChange={vi.fn()}
       />,
@@ -758,14 +783,14 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
     const { rerender } = _render(stream, { needsAttention: false });
     rerender(
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />,
     );
     expect(stream.reconnect).not.toHaveBeenCalled();
 
     const idleStream = { ...stream, lifecycle: SESSION_LIFECYCLE.IDLE };
     useSessionStream.mockReturnValue(idleStream);
     rerender(
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />,
     );
     expect(stream.reconnect).toHaveBeenCalledTimes(1);
   });
@@ -776,10 +801,10 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
     const { rerender } = _render(stream, { needsAttention: false });
     rerender(
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />,
     );
     rerender(
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />,
     );
     expect(stream.reconnect).not.toHaveBeenCalled();
   });
@@ -792,7 +817,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     try {
       const stream = _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING });
       const { rerender } = _render(stream, { needsAttention: false });
-      rerender(<SessionDetail session={{ task_id: 'T1' }} needsAttention />);
+      rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />);
       expect(stream.reconnect).not.toHaveBeenCalled();
       vi.advanceTimersByTime(2000);
       expect(stream.reconnect).toHaveBeenCalledTimes(1);
@@ -808,7 +833,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     });
     const { rerender } = _render(stream, { needsAttention: false });
     rerender(
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />,
     );
     expect(stream.reconnect).not.toHaveBeenCalled();
   });
@@ -817,7 +842,7 @@ describe('SessionDetail — permission dialog auto-reconnect', () => {
     const stream = _stream({ lifecycle: SESSION_LIFECYCLE.IDLE });
     const { rerender } = _render(stream, { needsAttention: false });
     const withAttention = (
-      <SessionDetail session={{ task_id: 'T1' }} needsAttention />
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} needsAttention />
     );
     rerender(withAttention);          // false → true: rising edge
     rerender(withAttention);          // still true: no new edge
@@ -845,7 +870,7 @@ describe('SessionDetail — task header is hoisted to the global slot', () => {
     document.body.appendChild(slot);
     try {
       const { container } = render(
-        <SessionDetail session={{ task_id: 'T1' }} />,
+        <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
       );
       const header = await screen.findByTestId('session-header');
       // Rendered into the global slot, NOT inside the chat pane.
@@ -860,7 +885,7 @@ describe('SessionDetail — task header is hoisted to the global slot', () => {
   test('falls back to inline header when the slot is absent', async () => {
     useSessionStream.mockReturnValue(_stream());
     const { container } = render(
-      <SessionDetail session={{ task_id: 'T1' }} />,
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
     );
     const header = await screen.findByTestId('session-header');
     // No slot → header stays inside the chat pane (legacy position).
@@ -910,7 +935,7 @@ describe('SessionDetail — plan-mode lock wiring', () => {
 
   test('hydrates the current plan-mode value for the bound task on mount', async () => {
     fetchSessionPlanMode.mockResolvedValue({ plan_mode: true });
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     await waitFor(() => expect(fetchSessionPlanMode).toHaveBeenCalledWith('T1'));
     await waitFor(() => expect(
       screen.getByRole('button', { name: 'mock-plan-toggle' }),
@@ -918,12 +943,53 @@ describe('SessionDetail — plan-mode lock wiring', () => {
   });
 
   test('toggling persists the new value to the backend', async () => {
-    render(<SessionDetail session={{ task_id: 'T1' }} />);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
     const toggle = screen.getByRole('button', { name: 'mock-plan-toggle' });
     await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'));
     fireEvent.click(toggle);
     expect(setSessionPlanMode).toHaveBeenCalledWith('T1', true);
     // Optimistic local reflection — no reload needed.
     await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'));
+  });
+});
+
+
+// A message must be tagged with the TAB it was typed into. It was tagged from
+// the polled session record, which right after a switch is still the previous
+// backend — and the server's "the tab is authoritative" rule then re-pointed
+// the record, so the chat visibly moved on the next refresh. Reported as
+// "i put a task on codex chat, refresh the page, it moved to claude chat".
+describe('SessionDetail — the send carries the selected tab', () => {
+  beforeEach(() => { activeBackendStore.clearAll(); });
+  afterEach(() => { activeBackendStore.clearAll(); });
+
+  test('a Codex-tab message is not tagged claude', async () => {
+    // The record still says claude — the poll has not caught up.
+    postChatMessage.mockClear();
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    // The tab strip is the store's only writer, so wait for it to settle on
+    // the record's value first — then switch, exactly as the operator does.
+    await waitFor(() => expect(activeBackendStore.get('T1')).toBe('claude'));
+    act(() => { activeBackendStore.set('T1', 'codex'); });
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'codex');
+    });
+  });
+
+  test('with no selection yet, the record is used', async () => {
+    // First paint, before the tab strip has reported in: the record IS the
+    // right answer, so the fallback must not be empty.
+    postChatMessage.mockClear();
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
+    });
   });
 });

@@ -11,6 +11,7 @@ import hydra
 from omegaconf import DictConfig
 
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from kato_core_lib.helpers.deadline import run_with_deadline
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.shell_status_utils import (
     sleep_with_countdown_spinner,
@@ -1287,9 +1288,19 @@ def _open_browser_when_ready(url: str, logger) -> None:
     ).start()
 
 
+#: How long a graceful shutdown may take before kato stops waiting for it.
+#: Cleanup terminates live agent subprocesses, and one that ignores its
+#: terminate leaves the operator holding a Ctrl+C that did nothing.
+SHUTDOWN_GRACE_SECONDS = 8.0
+
+
 def _register_shutdown_hook(app) -> None:
-    def _shutdown(signum, frame):
-        app.logger.info('shutting down kato agent (signal %s)', signum)
+    #: Set by the first signal. A second one means the operator is still
+    #: pressing Ctrl+C at a process that has not died — they get an immediate
+    #: exit rather than a longer wait.
+    shutting_down = threading.Event()
+
+    def _cleanup():
         for attr in ('resume_prompt_watcher', 'comment_run_watcher'):
             watcher = getattr(app, attr, None)
             if watcher is None:
@@ -1304,6 +1315,35 @@ def _register_shutdown_hook(app) -> None:
                 service.shutdown()
             except Exception:
                 app.logger.exception('error during shutdown cleanup')
+
+    def _shutdown(signum, frame):
+        if shutting_down.is_set():
+            # Second Ctrl+C. Do NOT go back through cleanup — that is what
+            # is already stuck. os._exit skips interpreter teardown, which
+            # is the point: nothing here can block it.
+            app.logger.warning(
+                'second shutdown signal — exiting immediately, cleanup skipped',
+            )
+            os._exit(130)
+            # Unreachable in production — os._exit does not return. Explicit
+            # so the escalation cannot fall through into the graceful path it
+            # exists to bypass.
+            return
+        shutting_down.set()
+        app.logger.info('shutting down kato agent (signal %s)', signum)
+        # BOUNDED. Cleanup used to run inline in the handler, so a session
+        # whose subprocess would not terminate held the whole shutdown open
+        # and Ctrl+C looked broken. On timeout kato exits anyway — the
+        # workspace state is on disk, and a hung child is the OS's to reap.
+        run_with_deadline(
+            _cleanup,
+            seconds=SHUTDOWN_GRACE_SECONDS,
+            default=None,
+            on_timeout=lambda: app.logger.warning(
+                'graceful shutdown exceeded %ss — exiting anyway',
+                SHUTDOWN_GRACE_SECONDS,
+            ),
+        )
         raise SystemExit(0)
 
     # SIGINT works on every supported platform. SIGTERM works on POSIX

@@ -52,6 +52,7 @@ import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
+import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
   closeTab, findTab, moveTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
@@ -486,6 +487,9 @@ export default function App() {
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
+  const activeBannerBackend = useActiveBackend(
+    activeTaskId, activeSession?.agent_backend || '',
+  );
   const attentionTaskIds = useMemo(() => {
     return mergePendingPermissionTaskIds(attention.taskIds, sessions);
   }, [attention.taskIds, sessions]);
@@ -834,7 +838,11 @@ export default function App() {
         onOpenFullSettings={openSettings}
       />
       <SafetyBanner state={safetyState} />
-      <AgentVersionBanner backend={String(activeSession?.agent_backend || '')} />
+      {/* The tab the operator is on, not the record's (polled) value — the
+          banner's Upgrade button runs THAT CLI's upgrade command, and a
+          button labelled "update Codex" that ran `claude update` is exactly
+          the bug this reads around. */}
+      <AgentVersionBanner backend={activeBannerBackend} />
       <Header
         onRefresh={handleHeaderRefresh}
         statusLatest={status.latest}

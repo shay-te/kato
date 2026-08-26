@@ -74,6 +74,31 @@ class AgentSessionRouter(object):
             )
         return self._managers.get(self._default_backend) or self._record_manager
 
+    def sessions_by_backend(self, task_id: str) -> dict:
+        """Every backend's live session for ``task_id`` — not just the active one.
+
+        ``get_session`` answers only for the backend the record names, because
+        that is the chat a message would go to. But BOTH subprocesses can be
+        alive at once: switching tabs parks the outgoing conversation and
+        deliberately leaves its process running. Asking every manager is the
+        only way to tell the operator that the tab they are not looking at is
+        still working.
+        """
+        found = {}
+        for backend, manager in self._managers.items():
+            getter = getattr(manager, 'get_session', None)
+            if not callable(getter):
+                found[backend] = None
+                continue
+            try:
+                found[backend] = getter(task_id)
+            except Exception:
+                self.logger.exception(
+                    'could not read the %s session for task %s', backend, task_id,
+                )
+                found[backend] = None
+        return found
+
     def available_backends(self) -> list[str]:
         """Backends this host can actually start a chat on.
 

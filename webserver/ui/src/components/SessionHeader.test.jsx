@@ -7,6 +7,8 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
+  // The header now shows a status chip per agent, polled from here.
+  fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   finishTask: vi.fn().mockResolvedValue({ ok: true, body: { finished: true } }),
   postSession: vi.fn().mockResolvedValue({ ok: true }),
   triggerScan: vi.fn().mockResolvedValue({ ok: true, body: {} }),
@@ -49,7 +51,9 @@ vi.mock('../stores/toastStore.js', () => {
   };
 });
 
-import { postSession, triggerScan } from '../api.js';
+import {
+  postSession, triggerScan, fetchTaskAgentStatus,
+} from '../api.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { toast } from '../stores/toastStore.js';
@@ -143,15 +147,15 @@ describe('SessionHeader — task summary + status dot', () => {
       />,
     );
 
+    // The chip moved onto the agent tabs; the DOT is this test's subject.
     expect(container.querySelector('.status-dot.status-working')).toBeInTheDocument();
-    expect(screen.getByText('Claude: working')).toBeInTheDocument();
   });
 
   test('awaitingBackground reads as working too (matches the tab badge)', () => {
     // Turn closed but the agent is blocked on a Monitor / run_in_background
-    // wait. The tab badge counts this as working; the header MUST agree, or
-    // the operator sees "idle" up top while the tab dot pulses "working".
-    render(
+    // wait. The tab badge counts this as working; the header DOT must agree,
+    // or the operator sees an idle dot while the tab says "working".
+    const { container } = render(
       <SessionHeader
         session={_session({ status: TAB_STATUS.REVIEW, working: false })}
         streamLifecycle={SESSION_LIFECYCLE.STREAMING}
@@ -159,7 +163,9 @@ describe('SessionHeader — task summary + status dot', () => {
         awaitingBackground={true}
       />,
     );
-    expect(screen.getByText('Claude: working')).toBeInTheDocument();
+    expect(
+      container.querySelector('.status-dot.status-working'),
+    ).toBeInTheDocument();
   });
 
   test('needsAttention=true paints the dot with status-attention', () => {
@@ -749,31 +755,31 @@ describe('SessionHeader — manual Sync button', () => {
 });
 
 
-// The pill sits directly above the agent tabs, so a hardcoded "Claude:"
-// over a selected Codex tab contradicts what the operator is looking at.
-describe('SessionHeader — the status pill names the active backend', () => {
-  function renderFor(backend) {
-    render(
+
+// The status chip is GONE from the header — it lives on each agent tab now.
+// One chip up here could only ever describe the focused agent, and once the
+// tabs carried it the header was restating what the tab already said.
+describe('SessionHeader — no status chip', () => {
+  test('the header renders no agent status chip', () => {
+    const { container } = render(
       <SessionHeader
-        session={_session({ agent_backend: backend })}
+        session={_session({ agent_backend: 'claude', working: true })}
         streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-        turnInFlight={true}
+        turnInFlight
       />,
     );
-  }
-
-  test('a Codex session reads "Codex: working"', () => {
-    renderFor('codex');
-    expect(screen.getByText('Codex: working')).toBeInTheDocument();
+    expect(container.querySelector('#session-claude-status')).toBeNull();
+    expect(container.querySelector('.claude-status')).toBeNull();
   });
 
-  test('a Claude session still reads "Claude: working"', () => {
-    renderFor('claude');
-    expect(screen.getByText('Claude: working')).toBeInTheDocument();
-  });
-
-  test('a session with no backend yet uses a neutral name', () => {
-    renderFor('');
-    expect(screen.getByText('Agent: working')).toBeInTheDocument();
+  test('the status DOT stays — it is a different surface', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session({ agent_backend: 'claude', working: true })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        turnInFlight
+      />,
+    );
+    expect(container.querySelector('#session-status-dot')).toBeInTheDocument();
   });
 });

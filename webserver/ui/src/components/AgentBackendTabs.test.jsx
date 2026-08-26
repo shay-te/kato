@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
+  // Each tab shows its agent's status, polled from here.
+  fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   fetchAgentBackends: vi.fn(),
   switchTaskBackend: vi.fn(),
   // ChatsMenu renders inside the active tab.
@@ -14,7 +16,7 @@ vi.mock('../stores/toastStore.js', () => ({
 }));
 
 import AgentBackendTabs from './AgentBackendTabs.jsx';
-import { fetchAgentBackends, fetchTaskChats, switchTaskBackend } from '../api.js';
+import { fetchAgentBackends, fetchTaskChats, switchTaskBackend, fetchTaskAgentStatus} from '../api.js';
 import { toast } from '../stores/toastStore.js';
 
 beforeEach(() => {
@@ -460,5 +462,120 @@ describe('AgentBackendTabs — the chat bar under the tabs', () => {
     const svg = screen.getByRole('button', { name: /chats/i }).querySelector('svg');
     expect(svg.getAttribute('fill')).toBe('none');
     expect(svg.getAttribute('stroke')).toBe('currentColor');
+  });
+});
+
+
+// An infinite render loop, found when a test suite hung for 300s.
+//
+// The pre-load placeholder tab was rebuilt on every render, so the readiness
+// entry changed IDENTITY every time; the effect reporting it upward fired
+// every time; the parent re-rendered; repeat. It affected every real session
+// — they all carry a backend — for the whole window before the backends
+// lookup returned, which in production is a spinning CPU, not a hung test.
+describe('AgentBackendTabs — readiness is reported by value, not identity', () => {
+  test('a pending lookup does not re-notify on every render', async () => {
+    let resolve;
+    fetchAgentBackends.mockReturnValue(new Promise((r) => { resolve = r; }));
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    const onReadinessChange = vi.fn();
+
+    const { rerender } = render(
+      <AgentBackendTabs
+        taskId="T1" activeBackend="claude"
+        onReadinessChange={onReadinessChange}
+      />,
+    );
+    const afterFirst = onReadinessChange.mock.calls.length;
+
+    // Re-render with identical props, the way a parent state update would.
+    for (let i = 0; i < 5; i += 1) {
+      rerender(
+        <AgentBackendTabs
+          taskId="T1" activeBackend="claude"
+          onReadinessChange={onReadinessChange}
+        />,
+      );
+    }
+    expect(onReadinessChange.mock.calls.length).toBe(afterFirst);
+    resolve({ backends: [backendEntry('claude')] });
+  });
+
+  test('a genuine readiness change IS reported', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), backendEntry('codex', {
+        ready: false, chat_available: false, error: 'not installed',
+      })],
+    });
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    const onReadinessChange = vi.fn();
+    render(
+      <AgentBackendTabs
+        taskId="T1" activeBackend="codex"
+        onReadinessChange={onReadinessChange}
+      />,
+    );
+    await waitFor(() => {
+      const last = onReadinessChange.mock.calls.at(-1)[0];
+      expect(last?.ready).toBe(false);
+      expect(last?.error).toBe('not installed');
+    });
+  });
+});
+
+
+// Each agent's status sits ON its own tab — "Claude (working)". It used to
+// live in the header: first one chip for the focused agent (silent about the
+// other), then two chips detached from the tabs they referred to.
+describe('AgentBackendTabs — status on the tab', () => {
+  function withStatuses(rows) {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [backendEntry('claude'), backendEntry('codex')],
+    });
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    fetchTaskAgentStatus.mockResolvedValue({ backends: rows });
+    return render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+  }
+
+  test('a working agent says so on its own tab', async () => {
+    withStatuses([
+      { id: 'claude', label: 'Claude', active: true, live: true, working: true },
+      { id: 'codex', label: 'Codex', active: false, live: false, working: false },
+    ]);
+    const claudeTab = await screen.findByRole('tab', { name: /Claude/ });
+    await waitFor(() => expect(claudeTab.textContent).toContain('working'));
+  });
+
+  test('the OTHER agent reports its own state, not the active one’s', async () => {
+    withStatuses([
+      { id: 'claude', label: 'Claude', active: true, live: true, working: false },
+      { id: 'codex', label: 'Codex', active: false, live: true, working: true },
+    ]);
+    const codexTab = await screen.findByRole('tab', { name: /Codex/ });
+    await waitFor(() => expect(codexTab.textContent).toContain('working'));
+    const claudeTab = screen.getByRole('tab', { name: /Claude/ });
+    expect(claudeTab.textContent).not.toContain('working');
+  });
+
+  test('an unconfigured agent shows the setup marker, not a status', async () => {
+    fetchAgentBackends.mockResolvedValue({
+      backends: [
+        backendEntry('claude'),
+        backendEntry('codex', { ready: false, chat_available: false }),
+      ],
+    });
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    fetchTaskAgentStatus.mockResolvedValue({ backends: [] });
+    render(<AgentBackendTabs taskId="T1" activeBackend="claude" />);
+
+    const codexTab = await screen.findByRole('tab', { name: /Codex/ });
+    expect(codexTab.textContent).toContain('!');
+    expect(codexTab.textContent).not.toContain('idle');
+  });
+
+  test('no status yet leaves the tab as just its name', async () => {
+    withStatuses([]);
+    const claudeTab = await screen.findByRole('tab', { name: /Claude/ });
+    expect(claudeTab.textContent.trim()).toBe('Claude');
   });
 });

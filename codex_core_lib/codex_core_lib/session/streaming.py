@@ -287,7 +287,27 @@ class StreamingCodexSession(object):
                 command.extend(['--add-dir', directory])
         return command
 
+    def _record_user_message(self, message: str) -> None:
+        """Put the operator's prompt into the event log.
+
+        ``codex exec`` takes the prompt on STDIN and never echoes it back as
+        an event, so the log held only the agent's output. The UI showed the
+        prompt from a local bubble it appends on send — which a page reload
+        discards, and the operator came back to a transcript containing
+        answers to questions that were no longer there.
+
+        Recorded in the persistent-process transport's ``user`` shape rather
+        than a Codex-specific one: the chat renderer already knows how to
+        draw that, and one wire shape for "the operator said this" is what
+        lets a single UI tail either backend.
+        """
+        self._append_event({
+            'type': 'user',
+            'message': {'content': [{'type': 'text', 'text': message}]},
+        })
+
     def _start_turn_locked(self, message: str) -> None:
+        self._record_user_message(message)
         command = self._build_command(
             prompt=message, resume_id=self._agent_session_id,
         )

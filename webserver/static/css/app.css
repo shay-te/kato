@@ -1571,13 +1571,18 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 .chats-menu {
   position: absolute;
   top: calc(100% + 4px);
-  /* LEFT-anchored, growing rightward. It used to be ``right: 0`` — correct
-   * while the button lived at the right end of the session header, but the
-   * button now sits in the agent-tab strip at the chat panel's LEFT edge, so
-   * a 420px-wide menu anchored by its right edge hung ~360px off-panel and
-   * was clipped. */
-  left: 0;
-  right: auto;
+  /* Anchored to the side the BUTTON is on, which has now moved twice:
+   *   - session header, right end   → right: 0
+   *   - agent-tab strip, left edge  → left: 0
+   *   - agent chat bar, right end   → right: 0   (current)
+   * The bar is ``justify-content: space-between`` — title left, controls
+   * right — so a 420px menu growing rightward runs straight off the panel.
+   * If this button ever moves again, this anchor moves with it. */
+  right: 0;
+  left: auto;
+  /* Belt and braces: whatever the anchor, the menu can never be wider than
+   * the viewport it has to fit inside. */
+  max-width: min(640px, 100vw - 24px);
   z-index: 30;
   padding: 4px 0;
   background: #2a2a2a;
@@ -1585,8 +1590,10 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-radius: 4px;
   max-height: 360px;
   overflow-y: auto;
-  min-width: 420px;
-  max-width: min(640px, 100vw - 24px);
+  /* ``min(...)`` not a bare 420px: when the two conflict CSS resolves in
+   * favour of min-width, so a flat floor would win over the max-width clamp
+   * above and overflow a narrow viewport anyway. */
+  min-width: min(420px, 100vw - 24px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
@@ -1690,6 +1697,43 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * because it selects which CONVERSATION is below it. */
 /* Two rows: the agent tabs, then the conversation you are IN with the
  * controls that act on it — the shape the editor extensions use. */
+/* The non-active agents' chips: same shape as the live one, dimmed so the
+ * tab the operator is actually in stays the loudest thing in the row. */
+/* The agent's name in the approval title — the operator must know WHO will
+ * run the command they are about to authorise. */
+.permission-modal-agent {
+  color: #f5f5f7;
+  font-weight: 650;
+}
+
+/* The agent's state as a CHIP on its own tab. It used to be a pill in the
+ * session header, which could only ever describe one agent and said nothing
+ * about the other still working behind it. Sized down from that pill: it
+ * qualifies the tab, it is not the tab. */
+.agent-backend-tab-status {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(64, 64, 64, 0.45);
+  border-radius: 999px;
+  color: #737373;
+  /* Same size as the tab name it sits beside — inherited rather than pinned,
+   * so the two can never drift apart if the tab's own size changes. */
+  font-size: inherit;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Only the states worth interrupting for get colour; the rest stay quiet so
+ * a row of tabs does not read as a row of alerts. */
+.agent-backend-tab-status.is-working,
+.agent-backend-tab-status.is-workflow,
+.agent-backend-tab-status.is-approval {
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fde68a;
+}
+
 .agent-backend-header {
   display: flex;
   flex-direction: column;
@@ -1803,6 +1847,10 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .agent-backend-tab-button {
+  /* Flex so the status chip centres against the NAME rather than sitting on
+   * its text baseline — a bordered pill on a baseline rides visibly low. */
+  display: inline-flex;
+  align-items: center;
   background: none;
   border: 0;
   padding: 4px 8px;

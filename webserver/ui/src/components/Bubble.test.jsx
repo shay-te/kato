@@ -26,8 +26,10 @@ describe('Bubble', () => {
   });
 
   test('known kinds map to their human label', () => {
-    render(<Bubble kind={BUBBLE_KIND.ASSISTANT}>reply</Bubble>);
-    expect(screen.getByText('Claude')).toBeInTheDocument();
+    // ASSISTANT is the AGENT'S NAME, not a constant — it was hardcoded to
+    // 'Claude', which labelled Codex's replies in Codex's own tab.
+    render(<Bubble kind={BUBBLE_KIND.ASSISTANT} agentName="Codex">reply</Bubble>);
+    expect(screen.getByText('Codex')).toBeInTheDocument();
 
     render(<Bubble kind={BUBBLE_KIND.SYSTEM}>info</Bubble>);
     expect(screen.getByText('System')).toBeInTheDocument();
@@ -49,5 +51,11 @@ describe('Bubble', () => {
     const { container } = render(<Bubble />);
     expect(container.querySelector('.bubble')).toBeInTheDocument();
     expect(container.querySelector('.bubble-content')).toBeInTheDocument();
+  });
+
+  test('the assistant label falls back to a neutral name', () => {
+    // No name given and no provider above: never guess a specific agent.
+    render(<Bubble kind={BUBBLE_KIND.ASSISTANT}>reply</Bubble>);
+    expect(screen.getByText('Agent')).toBeInTheDocument();
   });
 });

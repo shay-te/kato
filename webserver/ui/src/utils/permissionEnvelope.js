@@ -17,6 +17,10 @@ export function unpackPermissionEnvelope(raw) {
     // feed; the focused-task path supplies it via prop. Title shows it
     // beside the id ("<UNA-2763> — <library add collaborators>").
     taskSummary: String(raw?.task_summary || nested.task_summary || ''),
+    // WHICH agent is asking. A task can hold a live chat with each backend at
+    // once, so an approval prompt with no name leaves the operator allowing a
+    // command without knowing who will run it.
+    agentBackend: String(raw?.agent_backend || nested.agent_backend || ''),
     requestId: String(raw?.request_id || raw?.id || nested.request_id || nested.id || ''),
     toolName: String(
       raw?.tool_name || raw?.tool

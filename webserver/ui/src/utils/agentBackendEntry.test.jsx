@@ -15,6 +15,8 @@ import {
 } from '../utils/agentBackendEntry.js';
 
 vi.mock('../api.js', () => ({
+  // Each tab shows its agent's status, polled from here.
+  fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   fetchAgentBackends: vi.fn(),
   switchTaskBackend: vi.fn(),
   // The chat-title bar under the tabs reads the same list the dropdown does.
