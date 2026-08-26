@@ -5406,18 +5406,23 @@ body.kato-resizing {
  * Soft rounded glass instead of dark squares with hard borders. */
 .files-tab-repo {
   border: 1px solid rgba(255, 255, 255, 0.06);
-  /* SQUARE, deliberately. A rounded section here cannot work: it may not
-   * clip (that would capture the sticky header and stop it sticking — see
-   * DiffPaneCss.test.js), so with ``overflow: visible`` the tree rows paint
-   * their square backgrounds straight over its rounded corners, and a
-   * header pinned mid-scroll keeps a rounded top over square rows. Both are
-   * visible while scrolling and neither can be fixed by matching radii.
+  /* TOP corners only — the tree scrolls past the bottom, where a curve
+   * would have rows sliding under it. The header below carries the same
+   * radius so the two edges coincide.
    *
-   * The curve lives on the PANEL instead: .panel-card is rounded and
-   * .panel-card-content clips to it, so everything inside can be square and
-   * still ends up inside a rounded panel at every scroll position. */
-  border-radius: 0;
+   * (An older comment here claimed the curve belonged to a wrapping
+   * ``.panel-card``. Nothing wraps this pane in one, which is why the tree
+   * met the toolbar as a hard square edge for so long.) */
+  border-radius: 10px 10px 0 0;
   margin-bottom: 6px;
+  /* The row inset that used to sit on the scroller. Applied here so the
+   * section's own box still reaches the scroller's rounded corners and gets
+   * clipped by them. */
+  padding-left: 6px;
+  padding-right: 6px;
+  /* NOT clipped — clipping here makes this a scrollport and the header
+   * stops pinning across the tree. The clip lives on the SCROLLER instead
+   * (see .files-tab-body), which keeps both. */
   overflow: visible;
   background: rgba(255, 255, 255, 0.06);
 }
@@ -5427,10 +5432,17 @@ body.kato-resizing {
   gap: 8px;
   align-items: center;
   padding: 6px 12px 6px 10px;
-  /* Square: this header pins mid-scroll, where a rounded top would float
-   * its curve over square rows. The panel's own radius is what rounds the
-   * view. */
-  border-radius: 0;
+  /* Matches the section's top corners — this header is what actually paints
+   * them, so without it the section's curve is covered by a square block.
+   *
+   * Matches the section's radius, and cancels the section's horizontal
+   * padding with negative margins so it spans the FULL section width. That
+   * padding exists to inset the tree rows; applied to the header it would
+   * leave a square block sitting inside the section's curve — the very
+   * artefact the radius is here to remove. */
+  margin-left: -6px;
+  margin-right: -6px;
+  border-radius: 10px 10px 0 0;
   background: #2a2a2a;
   cursor: pointer;
   font-size: 14px;
@@ -6752,13 +6764,26 @@ body.kato-resizing {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* THE CLIP, and the only place both requirements can be met at once.
+   *
+   * The rounded top needs content to stop at the curve: rows scroll up
+   * behind the pinned header and, outside its corners, nothing hides them.
+   * Clipping the SECTION does that but makes the section a scrollport, so
+   * its header stops pinning across the tree.
+   *
+   * This element is already the scrollport, so clipping here costs no
+   * stickiness — and a scroll container clips to its own border-radius at
+   * every scroll offset. It only works FLUSH: the horizontal padding this
+   * rule used to carry inset every child, so the header never reached these
+   * corners and the clip never touched it. That inset moved onto the rows
+   * themselves (--files-tree-inset below). */
+  border-radius: 10px 10px 0 0;
   font-size: 13px;
-  /* react-arborist sets row paddingLeft inline; pad the body instead.
-   * Kept tight and symmetric — the panel is the narrowest column and
-   * every pixel here comes straight off the filename column, which is
-   * what the operator is actually reading. */
-  padding-left: 6px;
-  padding-right: 6px;
+  /* No horizontal padding: it would inset the repo sections away from the
+   * rounded corners above, and the clip would never touch them. The inset
+   * it used to provide is applied to the sections instead. */
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .files-tab-context-menu,

@@ -140,19 +140,33 @@ test('DiffPane gutter line numbers match Bitbucket dark metrics', () => {
   assertDeclaration(deleteOnlyBody, 'background', '#5d1f1a');
 });
 
-test('The PANEL owns the curve; everything that scrolls inside is square', () => {
-  // A rounded section cannot survive scrolling: it may not clip (that
-  // captures the sticky header) so rows paint over its corners, and a
-  // header pinned mid-scroll floats a rounded top over square rows. Both
-  // were visible while scrolling. The panel is rounded and its content
-  // clips, so square children land inside a rounded panel at every scroll
-  // position.
+test('The panel still owns its own curve and clips to it', () => {
   assertDeclaration(ruleBody('.panel-card'), 'border-radius', '12px');
   assertDeclaration(ruleBody('.panel-card-content'), 'overflow', 'hidden');
   assertDeclaration(ruleBody('.panel-card-content'), 'border-radius', 'inherit');
-  assertDeclaration(ruleBody('.files-tab-repo'), 'border-radius', '0');
+});
+
+test('The file tree rounds its own top, and the SCROLLER clips it', () => {
+  // This rule once required the tree be square, on the grounds that a
+  // wrapping ``.panel-card`` supplied the curve. Nothing wraps the Files
+  // pane in one, so it never did — the tree met the toolbar as a hard
+  // square edge.
+  //
+  // Two things have to hold together, and only this arrangement gives both:
+  //   - content must STOP at the curve (rows scroll up behind the pinned
+  //     header, and outside its corners nothing hides them), and
+  //   - the header must keep pinning across the whole tree.
+  // Clipping the section satisfies the first and breaks the second, because
+  // it turns the section into a scrollport. The scroller is already the
+  // scrollport, so the clip goes there and costs nothing.
+  assertDeclaration(ruleBody('.files-tab-repo'), 'border-radius', '10px 10px 0 0');
   assertDeclaration(ruleBody('.files-tab-repo'), 'overflow', 'visible');
-  assertDeclaration(ruleBody('.files-tab-repo-header'), 'border-radius', '0');
+  assertDeclaration(
+    ruleBody('.files-tab-body'), 'border-radius', '10px 10px 0 0',
+  );
+  assertDeclaration(
+    ruleBody('.files-tab-repo-header'), 'border-radius', '10px 10px 0 0',
+  );
 });
 
 test('Scrollports with a pinned header carry no top padding', () => {
@@ -179,9 +193,14 @@ test('Files tab body scrolls changed-file trees vertically', () => {
 });
 
 test('Files tab repo headers stick while scrolling a repository', () => {
-  const repoBody = ruleBody('.files-tab-repo');
-
-  assertDeclaration(repoBody, 'overflow', 'visible');
+  // The section must NOT clip: clipping makes it a scrollport and its header
+  // stops pinning across the tree. The rounded top needs a clip, but it goes
+  // on the SCROLLER — which is already the scrollport, so it costs nothing.
+  assertDeclaration(ruleBody('.files-tab-repo'), 'overflow', 'visible');
+  assertDeclaration(ruleBody('.files-tab-body'), 'overflow-y', 'auto');
+  assertDeclaration(
+    ruleBody('.files-tab-body'), 'border-radius', '10px 10px 0 0',
+  );
 });
 
 test('The tree draws NO indent guide lines', () => {
