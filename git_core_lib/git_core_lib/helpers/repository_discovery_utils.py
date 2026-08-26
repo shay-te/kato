@@ -16,7 +16,34 @@ DISCOVERY_SKIP_DIRS = {
     '.venv',
     '__pycache__',
     'node_modules',
+    # Dependency and tool trees. Nothing an operator would call one of their
+    # own repositories, and they are where vendored third-party checkouts
+    # live — a package's own bundled ``.git`` was being discovered and
+    # offered in the repo picker as if it were the operator's.
+    'venv',
+    'site-packages',
+    '.tox',
+    '.gradle',
+    '.next',
+    '.cache',
+    'Pods',
+    'DerivedData',
 }
+
+#: How far BELOW a discovered repository to keep looking for nested ones.
+#:
+#: The walk descends into a repo it has already found, because operators do
+#: nest independent repos inside a parent checkout. But it was descending the
+#: WHOLE tree: on a normal projects folder 98% of the directories visited
+#: were inside a repo already found (33,188 of 33,868 here), which is why a
+#: scan took seconds rather than a moment.
+#:
+#: A genuinely nested repo sits a level or two down — a sibling checkout, a
+#: vendored module. Nothing legitimate is 20 levels inside another repo's
+#: source tree, and the one case that WAS found that deep in practice was a
+#: package's bundled checkout inside a virtualenv, which the skips above now
+#: exclude for its own reasons.
+MAX_DEPTH_INSIDE_REPOSITORY = 3
 
 
 @dataclass(frozen=True)
@@ -42,6 +69,10 @@ def discover_git_repositories(
         if str(folder).strip()
     }
     repositories: list[DiscoveredRepository] = []
+    # How deep the current directory sits inside an already-found repository;
+    # ``None`` means "not inside one". Seeded per directory as we descend, so
+    # the bound is per-branch rather than a single global counter.
+    depth_inside: dict[str, int | None] = {str(root_path): None}
     for current_root, dir_names, file_names in os.walk(root_path):
         has_git_metadata = '.git' in dir_names or '.git' in file_names
         dir_names[:] = [
@@ -50,6 +81,17 @@ def discover_git_repositories(
             if directory not in DISCOVERY_SKIP_DIRS
             and directory.lower() not in ignored_folder_names
         ]
+        depth = depth_inside.pop(current_root, None)
+        if has_git_metadata:
+            depth = 0
+        if depth is not None and depth >= MAX_DEPTH_INSIDE_REPOSITORY:
+            # Deep inside a repository's own source tree. Nested repos do not
+            # live here, and walking on is what made a scan slow.
+            dir_names[:] = []
+        for directory in dir_names:
+            depth_inside[os.path.join(current_root, directory)] = (
+                None if depth is None else depth + 1
+            )
         if not has_git_metadata:
             continue
         repository_path = Path(current_root).resolve()
