@@ -178,12 +178,15 @@ export default function SessionHeader({
         } else {
           kind = 'success';
         }
-        // Non-error duration stays 8000 (longer than the shared 7000
-        // default) — update-source toasts are denser, operators need
-        // the extra read time.
+        // STICKY — never auto-dismissed. This toast is a per-repo report
+        // (updated / skipped / blocked / failed, one line each), and on a
+        // task with many repos it is the only place that record exists. Any
+        // timeout means the operator can lose the answer to "what actually
+        // synced?" while still reading it. It closes on click like every
+        // other toast.
         toastResult(
           { ...formatUpdateSourceResult(result), kind },
-          { defaultMs: 8000 },
+          { defaultMs: 0, errorMs: 0 },
         );
       },
     },
