@@ -208,3 +208,52 @@ class MessagesRunOnTheSendersTabTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HistoryReplayUsesTheRightReaderTests(unittest.TestCase):
+    """Each backend's transcript is read by its own reader, never the other's.
+
+    Codex had no reader at all — its events lived in memory, so a chat
+    survived a page reload but not a restart. Adding one re-opens the mixing
+    question: the readers must stay bound to their own backend, or a Codex
+    tab shows Claude's conversation again.
+    """
+
+    def _replay(self, backend, session_id):
+        from kato_webserver import app as app_module
+        record = SimpleNamespace(
+            agent_backend=backend, agent_session_id=session_id,
+        )
+        claude_calls, codex_calls = [], []
+        with patch.object(
+            app_module, '_replay_history_from_disk',
+            lambda sid: claude_calls.append(sid) or iter(()),
+        ), patch.object(
+            app_module, '_replay_codex_history_from_disk',
+            lambda rec: codex_calls.append(rec.agent_session_id) or iter(()),
+        ):
+            list(app_module._replay_history(record, session_id))
+        return claude_calls, codex_calls
+
+    def test_a_codex_chat_uses_the_codex_reader(self) -> None:
+        claude, codex = self._replay('codex', 'codex-1')
+        self.assertEqual(codex, ['codex-1'])
+        self.assertEqual(claude, [])
+
+    def test_a_claude_chat_uses_the_claude_reader(self) -> None:
+        claude, codex = self._replay('claude', 'claude-1')
+        self.assertEqual(claude, ['claude-1'])
+        self.assertEqual(codex, [])
+
+    def test_a_legacy_record_with_no_backend_reads_as_claude(self) -> None:
+        # Records predating backend tracking are all Claude; reading them as
+        # anything else would blank every pre-existing chat.
+        claude, codex = self._replay('', 'claude-1')
+        self.assertEqual(claude, ['claude-1'])
+        self.assertEqual(codex, [])
+
+    def test_the_codex_reader_uses_the_RECORD_id(self) -> None:
+        # NOT the shared resolver: that one deliberately answers '' for a
+        # Codex chat so it can never hand back Claude's transcript id.
+        _claude, codex = self._replay('codex', 'codex-1')
+        self.assertEqual(codex, ['codex-1'])

@@ -5069,7 +5069,7 @@ def _event_stream_generator(
     session = manager.get_session(task_id) if manager is not None else None
     if session is None:
         yield from _replay_preflight_log(workspace_manager, task_id)
-        yield from _replay_history_from_disk(agent_session_id)
+        yield from _replay_history(record, agent_session_id)
         if _drain_queued_task_comment(agent_service, task_id):
             session = manager.get_session(task_id) if manager is not None else None
             if session is not None:
@@ -5085,7 +5085,7 @@ def _event_stream_generator(
         yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
     yield from _replay_preflight_log(workspace_manager, task_id)
-    yield from _replay_history_from_disk(agent_session_id)
+    yield from _replay_history(record, agent_session_id)
     replayed_count = yield from _replay_session_backlog(
         session, agent_service=agent_service, task_id=task_id, app=app,
     )
@@ -5147,6 +5147,51 @@ from claude_core_lib.claude_core_lib.helpers.context_window import (
     context_window_tokens,
     widen_window_to_observed,
 )
+
+
+def _replay_history(record, agent_session_id: str):
+    """Replay a chat's transcript, from whichever CLI wrote it.
+
+    Each backend persists its own way and neither can read the other's, so
+    the record's backend picks the reader. Codex used to have NO reader at
+    all: its events lived only in the session object's memory, so a chat
+    survived a page reload but not a restart of the process hosting it — the
+    operator came back to an empty tab.
+    """
+    from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+    backend = str(getattr(record, 'agent_backend', '') or '').strip().lower()
+    if backend == AgentBackend.CODEX.value:
+        yield from _replay_codex_history_from_disk(record)
+        return
+    # Claude, and legacy records with no backend recorded (all Claude).
+    yield from _replay_history_from_disk(agent_session_id)
+
+
+def _replay_codex_history_from_disk(record):
+    """Codex's rollout transcript, in the live stream's own wire shape.
+
+    Read from the record's OWN id rather than the resolver the other
+    transport uses: that one deliberately answers '' for a Codex chat, so it
+    can never hand Claude's transcript to a Codex tab.
+    """
+    session_id = str(getattr(record, 'agent_session_id', '') or '').strip()
+    if not session_id:
+        return
+    try:
+        from codex_core_lib.codex_core_lib.session.history import (
+            load_history_events as load_codex_history,
+        )
+    except ImportError:
+        return
+    try:
+        events = load_codex_history(session_id)
+    except Exception:
+        return
+    for raw in events:
+        yield _sse_message(
+            SSE_EVENT_SESSION_HISTORY_EVENT,
+            {'event': {'received_at_epoch': 0, 'raw': raw}},
+        )
 
 
 def _replay_history_from_disk(agent_session_id: str):

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import {
   readEnabled,
   readKindPrefs,
@@ -11,6 +12,15 @@ import {
   requestTauriPermission,
   sendTauriNotification,
 } from '../utils/tauriNotifications.js';
+
+// Kinds that fire even while the operator is on that very task.
+//
+// The general rule — do not notify about what you are already looking at —
+// assumes the on-screen UI is the better signal. That breaks for a long job
+// the operator deliberately walked away from: "update source" across a
+// multi-repo task can run for minutes, and a focused window is not evidence
+// anyone is watching it.
+const ALWAYS_NOTIFY_KINDS = new Set([NOTIFICATION_KIND.SOURCE_UPDATE]);
 
 export function useNotifications({ activeTaskId, onTaskClick }) {
   // Two delivery paths. The web API is the browser one; inside the desktop
@@ -90,7 +100,15 @@ export function useNotifications({ activeTaskId, onTaskClick }) {
     // Only the web path can consult Notification.permission synchronously;
     // on the desktop the granted-check already gated ``enabled`` above.
     if (!desktopShell && Notification.permission !== 'granted') { return; }
-    if (!document.hidden && taskId && taskId === activeTaskIdRef.current) { return; }
+    // Suppressed for the task you are LOOKING at — its own UI already told
+    // you. Except for kinds that report a long job finishing: those exist
+    // precisely so the operator can start one and stop watching, and the
+    // window being focused says nothing about whether they are still there.
+    const alwaysNotify = ALWAYS_NOTIFY_KINDS.has(kind);
+    if (!alwaysNotify
+        && !document.hidden && taskId && taskId === activeTaskIdRef.current) {
+      return;
+    }
     // Per-kind opt-out. Unknown kinds are allowed by default so a new
     // notification surface doesn't get silently swallowed.
     const kindKey = kind || 'info';
