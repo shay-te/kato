@@ -490,6 +490,99 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         """
         return not self.push_skip_reason(repository, branch_name)
 
+    def pull_request_skip_reason(self, repository, branch_name: str) -> str:
+        """Why a pull request here would have nothing in it — ``''`` to open one.
+
+        Opening a PR whose branch matches its destination produces an EMPTY
+        pull request: no files, no diff, nothing to review. The operator has
+        to notice and decline it, once per repo, every time.
+
+        Two ways a task branch ends up with nothing to show, both reported:
+
+        * the agent made a change and then reverted it, so the branch's
+          commits cancel out;
+        * a multi-repo task where one repo has the fix and the others were
+          already merged — publishing re-opens a PR for every repo.
+
+        The test is the DIFF against the destination, not the commit count:
+        a revert leaves commits behind but no net change, and a commit-count
+        check would call that publishable.
+
+        Compared against the REMOTE destination (``origin/<branch>``) where
+        possible — the local copy of it can be many commits stale, which
+        would make an already-merged branch look like it still has work.
+
+        Best-effort in the SAFE direction: any git failure returns ``''`` so
+        the PR is still attempted. A missed empty PR is an annoyance; a
+        suppressed real one loses work.
+        """
+        normalized_branch = (branch_name or '').strip()
+        if not normalized_branch:
+            return ''
+        # Deliberately NOT ``_resolve_branch_state``: that also reads which
+        # branch is checked out, which this comparison does not care about —
+        # the refs are compared directly. Depending on it would make the
+        # guard silently pass (publish) for a clone sitting on another
+        # branch, which is one of the states that produces an empty PR.
+        local_path = str(getattr(repository, 'local_path', '') or '').strip()
+        if not local_path:
+            return ''
+        try:
+            if not (Path(local_path) / '.git').is_dir():
+                return ''
+        except OSError:
+            return ''
+        try:
+            destination = self.destination_branch(repository)
+        except Exception:
+            return ''
+        if not destination or destination == normalized_branch:
+            return ''
+        base = self._pull_request_base_ref(local_path, destination)
+        if not base:
+            return ''
+        try:
+            # ``--quiet`` exits 1 when there IS a difference. Three dots so
+            # the comparison is against the merge base: destination commits
+            # the branch has not merged are not the branch's changes.
+            self._run_git(
+                local_path,
+                ['diff', '--quiet', f'{base}...{normalized_branch}'],
+                'diff check failed',
+                repository,
+            )
+        except Exception:
+            # Non-zero exit — there IS a diff, which is the publishable case.
+            return ''
+        return (
+            f'no changes on {normalized_branch!r} compared with '
+            f'{base!r} — a pull request would be empty'
+        )
+
+    def _pull_request_base_ref(self, local_path: str, destination: str) -> str:
+        """``origin/<destination>`` when it exists, else the local branch."""
+        remote_ref = f'origin/{destination}'
+        try:
+            self._run_git(
+                local_path,
+                ['rev-parse', '--verify', '--quiet', remote_ref],
+                'remote ref check failed',
+                None,
+            )
+            return remote_ref
+        except Exception:
+            pass
+        try:
+            self._run_git(
+                local_path,
+                ['rev-parse', '--verify', '--quiet', destination],
+                'local ref check failed',
+                None,
+            )
+            return destination
+        except Exception:
+            return ''
+
     def push_skip_reason(self, repository, branch_name: str) -> str:
         """Why ``Push`` would do nothing here — ``''`` when it would push.
 

@@ -20,6 +20,7 @@ import {
   SESSION_LIFECYCLE,
   useSessionStream,
   clearTaskStreamCache,
+  reducer,
 } from './useSessionStream.js';
 
 
@@ -536,5 +537,86 @@ describe('useSessionStream — Codex turn lifecycle', () => {
     emit({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } });
     emit({ type: 'turn.completed' });
     expect(result.current.turnInFlight).toBe(false);
+  });
+});
+
+
+// A live Codex chat replays from TWO sources at once: the CLI's rollout
+// transcript on disk (everything before this kato process started) and the
+// live session's in-memory log (everything since). Codex turns carry no id —
+// no uuid, no message id — so with nothing to match on, every turn present in
+// both rendered TWICE. It shows up the moment the operator sends a message in
+// an existing chat after a restart.
+describe('useSessionStream — Codex history and live never double up', () => {
+  function bothSources(raw) {
+    let state = reducer(
+      { events: [], eventKeys: new Set(), lifecycle: 'connecting' },
+      { type: 'incoming_history', event: raw, receivedAtEpoch: 0 },
+    );
+    state = reducer(
+      state, { type: 'incoming_event', event: raw, receivedAtEpoch: 5 },
+    );
+    return state.events;
+  }
+
+  test('a prompt from disk and from memory renders once', () => {
+    expect(bothSources({
+      type: 'user',
+      message: { content: [{ type: 'text', text: 'review my changes' }] },
+    })).toHaveLength(1);
+  });
+
+  test('a reply from disk and from memory renders once', () => {
+    expect(bothSources({
+      type: 'item.completed',
+      item: { type: 'agent_message', text: 'Looks good.' },
+    })).toHaveLength(1);
+  });
+
+  test('DIFFERENT prompts both render', () => {
+    let state = reducer(
+      { events: [], eventKeys: new Set(), lifecycle: 'connecting' },
+      {
+        type: 'incoming_history',
+        event: {
+          type: 'user',
+          message: { content: [{ type: 'text', text: 'first' }] },
+        },
+        receivedAtEpoch: 0,
+      },
+    );
+    state = reducer(state, {
+      type: 'incoming_event',
+      event: {
+        type: 'user',
+        message: { content: [{ type: 'text', text: 'second' }] },
+      },
+      receivedAtEpoch: 5,
+    });
+    expect(state.events).toHaveLength(2);
+  });
+
+  test('a non-message item is not collapsed by content', () => {
+    // Two identical commands are two real runs, not a duplicate.
+    let state = reducer(
+      { events: [], eventKeys: new Set(), lifecycle: 'connecting' },
+      {
+        type: 'incoming_event',
+        event: {
+          type: 'item.completed',
+          item: { type: 'command_execution', command: 'npm test' },
+        },
+        receivedAtEpoch: 1,
+      },
+    );
+    state = reducer(state, {
+      type: 'incoming_event',
+      event: {
+        type: 'item.completed',
+        item: { type: 'command_execution', command: 'npm test' },
+      },
+      receivedAtEpoch: 2,
+    });
+    expect(state.events).toHaveLength(2);
   });
 });

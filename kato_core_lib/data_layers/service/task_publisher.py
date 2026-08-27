@@ -251,6 +251,21 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         agent_session_id: str,
     ):
         branch_name = prepared_task.repository_branches[repository.id]
+        # An empty pull request — nothing to review — which the operator then
+        # has to notice and decline, once per repo. The existing no-changes
+        # path catches a branch with no COMMITS; this catches a branch whose
+        # commits cancel out (a change made and then reverted) and the
+        # multi-repo case where one repo has the fix and the rest were
+        # already merged, where publishing re-opened a PR for every one.
+        empty_reason = self._empty_pull_request_reason(repository, branch_name)
+        if empty_reason:
+            self._log_task_step(
+                task.id,
+                'skipping the pull request for %s — %s',
+                repository.id,
+                empty_reason,
+            )
+            return _NO_CHANGES_SENTINEL
         pull_request = self._create_repository_pull_request(
             task,
             repository,
@@ -294,6 +309,33 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
             pull_request,
         )
         return pull_request
+
+    def _empty_pull_request_reason(self, repository, branch_name: str) -> str:
+        """Why a PR here would be empty — ``''`` when there is work to open.
+
+        Delegated, and failure-tolerant in the SAFE direction: a repository
+        service without the check, or a check that errors, publishes as
+        before. A missed empty PR is an annoyance; a suppressed real one
+        loses the work.
+        """
+        probe = getattr(
+            self._repository_service, 'pull_request_skip_reason', None,
+        )
+        if not callable(probe):
+            return ''
+        try:
+            reason = probe(repository, branch_name)
+        except Exception:
+            self.logger.exception(
+                'empty-PR check failed for repository %s', repository.id,
+            )
+            return ''
+        # Only a real, non-empty STRING blocks a publish. A stub or a
+        # service that answers with anything else (a bool, an object)
+        # would otherwise read as truthy and silently suppress every
+        # pull request — losing work, which is the one outcome this
+        # guard must never cause.
+        return reason.strip() if isinstance(reason, str) else ''
 
     def _create_repository_pull_request(
         self,

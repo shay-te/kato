@@ -797,6 +797,32 @@ class TaskPublishService(object):
             'pending_repositories': pending,
         }
 
+    def _empty_pull_request_reason(self, repository, branch_name: str) -> str:
+        """Why a PR here would be empty — ``''`` when there is work to open.
+
+        Delegated so a repository service that predates the check (or a test
+        double) simply publishes as before, rather than failing.
+        """
+        probe = getattr(
+            self._repository_service, 'pull_request_skip_reason', None,
+        )
+        if not callable(probe):
+            return ''
+        try:
+            reason = probe(repository, branch_name)
+        except Exception:
+            # Never block a publish on the guard itself failing.
+            self.logger.exception(
+                'empty-PR check failed for repository %s', repository.id,
+            )
+            return ''
+        # Only a real, non-empty STRING blocks a publish. A stub or a
+        # service that answers with anything else (a bool, an object)
+        # would otherwise read as truthy and silently suppress every
+        # pull request — losing work, which is the one outcome this
+        # guard must never cause.
+        return reason.strip() if isinstance(reason, str) else ''
+
     def create_pull_request_for_task(self, task_id: str) -> dict[str, object]:
         """Open a PR for every repo of the task that doesn't already have one.
 
@@ -844,6 +870,25 @@ class TaskPublishService(object):
                 skipped.append({
                     'repository_id': repository.id,
                     'url': str(first.get('url', '') or ''),
+                })
+                continue
+            empty_reason = self._empty_pull_request_reason(
+                repository, branch_name,
+            )
+            if empty_reason:
+                # An EMPTY pull request — no files, no diff, nothing to
+                # review — which the operator then has to notice and
+                # decline, once per repo. Most visible on a multi-repo task
+                # where one repo has the fix and the rest were already
+                # merged: publishing re-opened a PR for every one of them.
+                self.logger.info(
+                    'PR for task %s: skipping repository %s — %s',
+                    normalized, repository.id, empty_reason,
+                )
+                skipped.append({
+                    'repository_id': repository.id,
+                    'url': '',
+                    'reason': empty_reason,
                 })
                 continue
             try:

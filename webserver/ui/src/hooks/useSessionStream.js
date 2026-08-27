@@ -1,7 +1,9 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
-import { CODEX_EVENT, isCodexTerminal } from '../constants/codexEvent.js';
+import {
+  CODEX_EVENT, CODEX_ITEM, isCodexTerminal,
+} from '../constants/codexEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { safeParseJSON } from '../utils/sse.js';
 
@@ -177,7 +179,43 @@ function crossSourceIdentity(raw) {
   const messageId = raw.message && raw.message.id;
   if (messageId) { return `x:m:${messageId}`; }
   if (raw.tool_use_id) { return `x:t:${raw.tool_use_id}`; }
+  return codexCrossSourceIdentity(raw);
+}
+
+// Codex's turns carry NO id — not a uuid, not a message id. That matters
+// because a live chat replays from two sources at once: the CLI's rollout
+// transcript on disk (everything before this process started) and the live
+// session's in-memory log (everything since). With no identity to match on,
+// every prompt and reply present in both rendered TWICE.
+//
+// The content is the identity here. That is weaker than an id and the cost
+// is real — two genuinely identical consecutive turns ("continue",
+// "continue") collapse into one — but it is bounded to the two shapes that
+// have no id at all, and the alternative is a transcript that doubles every
+// message the moment the operator sends one after a restart.
+function codexCrossSourceIdentity(raw) {
+  if (raw.type === CLAUDE_EVENT.USER) {
+    const text = userMessageTextFor(raw);
+    return text ? `x:cu:${text}` : '';
+  }
+  if (raw.type === CODEX_EVENT.ITEM_COMPLETED) {
+    const item = raw.item || {};
+    if (item.type !== CODEX_ITEM.AGENT_MESSAGE) { return ''; }
+    const text = String(item.text || '').trim();
+    return text ? `x:ca:${text}` : '';
+  }
   return '';
+}
+
+// The text of a ``user`` envelope, for identity only.
+function userMessageTextFor(raw) {
+  const content = (raw.message && raw.message.content) || [];
+  if (!Array.isArray(content)) { return ''; }
+  return content
+    .filter((block) => block && block.type === 'text' && block.text)
+    .map((block) => String(block.text))
+    .join('\n')
+    .trim();
 }
 
 function appendEntryIfNew(state, entry) {
