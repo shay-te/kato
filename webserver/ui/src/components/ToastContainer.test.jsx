@@ -98,3 +98,71 @@ describe('ToastContainer', () => {
     expect(screen.getByText('ℹ')).toBeInTheDocument();
   });
 });
+
+
+// A STICKY toast (no auto-dismiss) is a report the operator is meant to
+// read — the per-repo Update-source result runs to a dozen lines. Clicking
+// anywhere to dismiss made that impossible to read carefully: selecting a
+// repo name or a file path out of it destroyed the only copy of it.
+describe('ToastContainer — sticky toasts close on the × only', () => {
+  beforeEach(() => { toastStore.clear(); });
+  afterEach(() => { toastStore.clear(); });
+
+  function showSticky() {
+    act(() => {
+      toastStore.push({
+        kind: 'warning',
+        title: 'Source partially updated — 1 problem',
+        message: '⚠ 1 repo(s) need your attention',
+        durationMs: 0,
+      });
+    });
+  }
+
+  test('clicking the body does NOT dismiss a sticky toast', () => {
+    const { container } = render(<ToastContainer />);
+    showSticky();
+    act(() => {
+      fireEvent.click(container.querySelector('.toast-message'));
+      fireEvent.click(container.querySelector('.toast'));
+    });
+    expect(container.querySelectorAll('.toast')).toHaveLength(1);
+  });
+
+  test('the × still dismisses it', () => {
+    const { container } = render(<ToastContainer />);
+    showSticky();
+    act(() => {
+      fireEvent.click(container.querySelector('.toast-close'));
+    });
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
+  test('Escape still dismisses it — a keypress is deliberate', () => {
+    const { container } = render(<ToastContainer />);
+    showSticky();
+    act(() => {
+      fireEvent.keyDown(container.querySelector('.toast'), { key: 'Escape' });
+    });
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
+  test('a TIMED toast still closes on a body click', () => {
+    // The right affordance for something about to vanish by itself.
+    const { container } = render(<ToastContainer />);
+    act(() => {
+      toastStore.push({ kind: 'info', title: 'timed', durationMs: 7000 });
+    });
+    act(() => { fireEvent.click(container.querySelector('.toast')); });
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
+  test('a toast with no duration given behaves as timed', () => {
+    // The store defaults it; click-anywhere is the long-standing behaviour
+    // and stays the default.
+    const { container } = render(<ToastContainer />);
+    act(() => { toastStore.push({ kind: 'info', title: 'default' }); });
+    act(() => { fireEvent.click(container.querySelector('.toast')); });
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+});

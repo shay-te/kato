@@ -43,7 +43,15 @@ export const toastStore = {
     const id = _nextId++;
     _toasts = [
       ..._toasts,
-      { id, kind, title, message, taskId, taskSummary, createdAt: Date.now() },
+      {
+        id, kind, title, message, taskId, taskSummary,
+        // Carried on the entry so the card can tell a STICKY toast from a
+        // timed one. A sticky toast is one the operator is meant to read,
+        // so a stray click — selecting a repo name out of the report, for
+        // instance — must not destroy it.
+        durationMs,
+        createdAt: Date.now(),
+      },
     ];
     _emit();
     if (durationMs > 0) {

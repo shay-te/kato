@@ -30,13 +30,24 @@ function ToastCard({ entry, onDismiss }) {
   // caller didn't pass a summary.
   const taskId = String(entry.taskId || '').trim();
   const taskSummary = String(entry.taskSummary || '').trim();
+  // A STICKY toast (no auto-dismiss) is a report the operator is meant to
+  // read — the per-repo Update-source result runs to a dozen lines. Clicking
+  // anywhere to dismiss makes that report impossible to read carefully:
+  // selecting a repo name or a file path out of it destroys the only copy.
+  // Those close on the × alone. Timed toasts keep click-anywhere, which is
+  // the right affordance for something about to vanish by itself.
+  const sticky = entry.durationMs === 0;
   return (
     <div
       className={className}
-      onClick={onDismiss}
+      onClick={sticky ? undefined : onDismiss}
       role="alert"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') { onDismiss(); } }}
+      // Escape still closes either kind: a keypress is deliberate in a way
+      // a stray click is not, and it is the standard way out of a dialog.
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' || (!sticky && e.key === 'Enter')) { onDismiss(); }
+      }}
     >
       <span className="toast-glyph" aria-hidden="true">{_glyph(entry.kind)}</span>
       <div className="toast-body">
