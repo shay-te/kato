@@ -7,7 +7,9 @@ import { groupContentMatchesByFile } from '../FilesTabHelpers.js';
 // lists them grouped by file. Clicking a line opens that file in the
 // editor (via onOpenFile). Complements the filename Cmd+P tree filter —
 // this is how you find a symbol like ``project_list`` by its content.
-export default function ContentSearchResults({ taskId, query, onOpenFile }) {
+export default function ContentSearchResults({
+  taskId, query, onOpenFile, scopeRepoId = '',
+}) {
   const [state, setState] = useState({ status: 'idle', matches: [], truncated: false });
 
   useEffect(() => {
@@ -35,7 +37,13 @@ export default function ContentSearchResults({ taskId, query, onOpenFile }) {
 
   if (state.status === 'idle') { return null; }
 
-  const groups = groupContentMatchesByFile(state.matches);
+  // Scoped to the same repo the file list is. Searching a multi-repo task
+  // put the operator's repo behind a wall of another repo's hits; a scope
+  // that applied to only half the results would be worse than none.
+  const scoped = scopeRepoId
+    ? state.matches.filter((m) => (m && m.repo_id) === scopeRepoId)
+    : state.matches;
+  const groups = groupContentMatchesByFile(scoped);
   let inner;
   if (state.status === 'loading') {
     inner = <p className="files-tab-message">Searching contents…</p>;

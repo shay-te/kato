@@ -5409,6 +5409,24 @@ body.kato-resizing {
   display: none;
 }
 
+/* Repo scope picker, beside the search box. Only rendered on a multi-repo
+ * task — a single-repo task has nothing to scope to. */
+.files-tab-filter-scope {
+  flex-shrink: 0;
+  max-width: 120px;
+  padding: 2px $SPACE-4;
+  border: 1px solid $C-NEUTRAL-25-A45;
+  border-radius: $RADIUS-4;
+  background: none;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  cursor: pointer;
+}
+
+.files-tab-filter-scope:hover {
+  color: $C-NEUTRAL-96;
+}
+
 .files-tab-filter-clear {
   position: absolute;
   right: 6px;

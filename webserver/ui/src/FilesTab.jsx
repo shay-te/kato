@@ -33,6 +33,7 @@ import {
   folderContainsChange,
   matchTreeNode,
   repoCommentStatus,
+  countVisibleTreeRows,
 } from './FilesTabHelpers.js';
 import { cssEscapeAttr } from './utils/dom.js';
 import { countNoun } from './utils/pluralize.js';
@@ -137,6 +138,13 @@ export default function FilesTab({
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [showAllFiles, setShowAllFiles] = useState(false);
   const [pathMenu, setPathMenu] = useState(null);
+  // Which repo the search is limited to; '' searches every one.
+  //
+  // A task with several large repos put the operator's repo behind a
+  // thousand rows of someone else's matches. Scoping is per TASK and resets
+  // with it — a scope silently carried into a different task would hide
+  // matches with no visible cause.
+  const [scopeRepoId, setScopeRepoId] = useState('');
   const [discarding, setDiscarding] = useState(false);
   const [discardNotice, setDiscardNotice] = useState('');
   const containerRef = useRef(null);
@@ -496,7 +504,12 @@ export default function FilesTab({
     const selectionRepoKey = resolveSelectionRepoKey(
       openFile, trees, diffMetaByRepo,
     );
-    body = trees.map((repoTree) => {
+    const scopedTrees = scopeRepoId
+      ? trees.filter(
+        (entry) => (entry.repo_id || entry.cwd) === scopeRepoId,
+      )
+      : trees;
+    body = scopedTrees.map((repoTree) => {
       const repoKey = repoTree.repo_id || repoTree.cwd;
       const diffMeta = diffMetaByRepo.get(repoKey) || EMPTY_DIFF_META;
       const commentMeta = commentMetaByRepo.get(repoTree.repo_id)
@@ -545,6 +558,21 @@ export default function FilesTab({
         spellCheck={false}
         autoComplete="off"
       />
+      {trees.length > 1 && (
+        <select
+          className="files-tab-filter-scope"
+          value={scopeRepoId}
+          onChange={(e) => setScopeRepoId(e.target.value)}
+          aria-label="Limit the search to one repository"
+          title="Limit the search to one repository"
+        >
+          <option value="">All repos</option>
+          {trees.map((entry) => {
+            const id = entry.repo_id || entry.cwd;
+            return <option key={id} value={id}>{id}</option>;
+          })}
+        </select>
+      )}
       {query && (
         <button
           type="button"
@@ -565,13 +593,16 @@ export default function FilesTab({
       {toolbar}
     </header>
   );
-  // Content (grep) results — only when there's a query. Shown above the
-  // (filename-filtered) trees so a symbol like ``project_list`` is findable
-  // by its CONTENT, not just by filename.
+  // Content (grep) results — only when there's a query. Rendered BELOW the
+  // filename matches: searching for a file is the common case, and putting a
+  // 200-row grep dump above the tree pushed the thing the operator was
+  // looking for off the screen. Content matches are the fallback, so they
+  // read as the fallback.
   const contentResults = deferredQuery.trim().length >= 2 ? (
     <ContentSearchResults
       taskId={taskId}
       query={deferredQuery}
+      scopeRepoId={scopeRepoId}
       onOpenFile={onOpenFile}
     />
   ) : null;
@@ -596,8 +627,8 @@ export default function FilesTab({
         ref={containerRef}
         onScroll={(e) => { scrollTopRef.current = e.currentTarget.scrollTop; }}
       >
-        {contentResults}
         {body}
+        {contentResults}
       </div>
       {pathMenu && (
         <div
@@ -841,7 +872,17 @@ function RepoTree({
   // While filtering, expand by default so the operator sees every
   // matching descendant without clicking through ancestor folders.
   const isFiltering = !!searchTerm.trim();
-  const treeHeight = Math.max(120, Math.min(treeData.length * 28 + 8, 800));
+  // Sized to the rows actually drawn, not the root count. The old formula
+  // ignored the filter: searching in a large repo left an 800px section
+  // showing nine files, and the operator scrolled past the empty space to
+  // reach the next repo.
+  const visibleRowCount = useMemo(
+    () => countVisibleTreeRows(treeData, isFiltering ? searchTerm : ''),
+    [treeData, isFiltering, searchTerm],
+  );
+  const treeHeight = Math.max(
+    28, Math.min(visibleRowCount * 28 + 8, 800),
+  );
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   const [closedChangedFolders, setClosedChangedFolders] = useState(() => new Set());
   // Selection is DERIVED from the centre pane's open file — the single

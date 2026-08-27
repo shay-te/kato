@@ -13,6 +13,7 @@
 // JSX file (see AGENTS.md "no logic inside JSX").
 
 import { apiErrorMessage } from '../utils/apiError.js';
+import { countNoun } from '../utils/pluralize.js';
 
 // Render the "✓ pushed N repo(s) / • push skipped / ✗ push failed"
 // line that both the ``Done`` and ``Update source`` toasts emit
@@ -52,6 +53,28 @@ export function formatPushSummary(pushed, options = {}) {
 // Format an arbitrary list of per-repo failure entries — used by
 // both the pull and update-source flows. Each entry is
 // ``{repository_id, error}``. Returns one bullet per entry.
+// The title has to carry the verdict on its own: it is the only part still
+// visible once the toast is glanced at rather than read.
+function updateSourceTitle(anyUpdated, problemCount) {
+  if (problemCount > 0) {
+    return anyUpdated
+      ? `Source partially updated — ${countNoun(problemCount, 'problem')}`
+      : `Source not updated — ${countNoun(problemCount, 'problem')}`;
+  }
+  return anyUpdated ? 'Source updated' : 'Source not updated';
+}
+
+// Raw git output, indented so it reads as DETAIL of the line above rather
+// than as more repositories. Unindented, a multi-line git error ran straight
+// into the next repo's entry with nothing marking the boundary.
+function indentDetail(text) {
+  return String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `      ${line}`);
+}
+
 export function formatFailedLines(failed) {
   return (failed || []).map((entry) => `✗ ${entry.repository_id}: ${entry.error}`);
 }
@@ -132,40 +155,68 @@ export function formatUpdateSourceResult(result) {
     return formatRequestFailure(result, 'Update source failed');
   }
   const body = result.body || {};
-  const lines = [];
-  const pushLine = formatPushSummary(body.pushed || {}, { pushedSummary: 'count_only' });
-  if (pushLine) { lines.push(pushLine); }
   const updated = body.updated_repositories || [];
-  if (updated.length) {
-    lines.push(`✓ source updated for ${updated.length} repo(s): ${updated.join(', ')}`);
+  const failed = body.failed_repositories || [];
+  const skipped = body.skipped_repositories || [];
+  const warnings = body.warnings || [];
+  // ``blocked`` = git refused and nothing changed, so the operator has to
+  // decide. ``stash_conflict`` is the old shape, still read so an in-flight
+  // response from a pre-upgrade kato is not silently downgraded.
+  const blocked = warnings.filter((e) => !!(e.blocked || e.stash_conflict));
+  const notes = warnings.filter((e) => !(e.blocked || e.stash_conflict));
+
+  // PROBLEMS FIRST. This report is read to answer one question — "what
+  // didn't work?" — and the answer used to sit under a list of successes,
+  // with raw git output running into the next repo's line so the boundary
+  // between them was invisible.
+  const problems = [];
+  const problemCount = blocked.length + failed.length;
+  if (problemCount > 0) {
+    problems.push(
+      `⚠ ${problemCount} repo(s) need your attention`,
+    );
   }
-  for (const entry of (body.warnings || [])) {
+  for (const entry of failed) {
+    problems.push(`  ✗ ${entry.repository_id}`);
+    problems.push(...indentDetail(entry.error));
+  }
+  for (const entry of blocked) {
     const text = String(entry.warning || '').trim();
-    if (text) {
-      // ``blocked`` = git refused and nothing changed, so the operator
-      // has to decide. ``stash_conflict`` is the old shape, still read so
-      // an in-flight response from a pre-upgrade kato is not silently
-      // downgraded to a bullet.
-      const needsAttention = !!(entry.blocked || entry.stash_conflict);
-      lines.push(`${needsAttention ? '⚠' : '•'} ${text}`);
-    }
+    if (!text) { continue; }
+    const [headline, ...rest] = text.split('\n');
+    problems.push(
+      `  ⚠ ${entry.repository_id ? `${entry.repository_id}: ` : ''}${headline}`,
+    );
+    problems.push(...indentDetail(rest.join('\n')));
   }
-  for (const entry of (body.skipped_repositories || [])) {
-    lines.push(`• skipped ${entry.repository_id}: ${entry.reason}`);
+
+  const progress = [];
+  const pushLine = formatPushSummary(body.pushed || {}, { pushedSummary: 'count_only' });
+  if (pushLine) { progress.push(pushLine); }
+  if (updated.length) {
+    // "repo(s)" not countNoun: the pushed line directly above it says
+    // "repo(s)" too, and two neighbouring lines counting the same thing in
+    // different words reads as a bug.
+    progress.push(
+      `✓ source updated for ${updated.length} repo(s): ${updated.join(', ')}`,
+    );
   }
-  lines.push(...formatFailedLines(body.failed_repositories || []));
-  if (lines.length === 0
-      || (!updated.length && !(body.failed_repositories || []).length
-          && !(body.skipped_repositories || []).length)) {
-    if (!updated.length && !(body.failed_repositories || []).length
-        && !(body.skipped_repositories || []).length) {
-      lines.push('• no source repositories updated');
-    }
+  for (const entry of notes) {
+    const text = String(entry.warning || '').trim();
+    if (text) { progress.push(`• ${text}`); }
   }
+  for (const entry of skipped) {
+    progress.push(`• skipped ${entry.repository_id}: ${entry.reason}`);
+  }
+  if (!updated.length && !failed.length && !skipped.length) {
+    progress.push('• no source repositories updated');
+  }
+
+  const lines = problems.length
+    ? [...problems, '', ...progress]
+    : progress;
   return {
-    title: body.updated
-      ? ((body.failed_repositories || []).length ? 'Source partially updated' : 'Source updated')
-      : 'Source not updated',
+    title: updateSourceTitle(body.updated, problemCount),
     message: lines.join('\n'),
   };
 }

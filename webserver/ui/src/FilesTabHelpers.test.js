@@ -11,6 +11,7 @@ import {
   matchTreeNode,
   normalizeTrees,
   repoCommentStatus,
+  countVisibleTreeRows,
 } from './FilesTabHelpers.js';
 import { moreUrgentCommentStatus } from './utils/commentStatus.js';
 
@@ -420,4 +421,61 @@ test('findTreeNodeIdByRelativePath returns null for unknown / blank paths', () =
   assert.equal(findTreeNodeIdByRelativePath(nodes, 'missing.js'), null);
   assert.equal(findTreeNodeIdByRelativePath(nodes, ''), null);
   assert.equal(findTreeNodeIdByRelativePath(null, 'a.js'), null);
+});
+
+
+// ----- countVisibleTreeRows (how tall a repo section should be) -----
+//
+// The height came from the number of ROOT entries, which ignores the filter:
+// searching a large repo left an 800px-tall section showing nine matching
+// files, and the operator scrolled past the empty space to reach the next
+// repo.
+
+const _TREE = [
+  {
+    name: 'src',
+    children: [
+      { name: 'auth.py' },
+      { name: 'profile.py' },
+      { name: 'nested', children: [{ name: 'deep_profile.py' }] },
+    ],
+  },
+  { name: 'README.md' },
+  { name: 'tests', children: [{ name: 'test_auth.py' }] },
+];
+
+test('countVisibleTreeRows: no filter counts only the roots', function () {
+  // Folders start closed, so the roots are all that is drawn.
+  assert.equal(countVisibleTreeRows(_TREE, ''), 3);
+  assert.equal(countVisibleTreeRows(_TREE, '   '), 3);
+});
+
+test('countVisibleTreeRows: a filter counts matches AND their ancestors', function () {
+  // "profile" matches src/profile.py and src/nested/deep_profile.py; the
+  // folders leading to them are drawn too, because filtering opens them.
+  //   src, src/profile.py, src/nested, src/nested/deep_profile.py
+  assert.equal(countVisibleTreeRows(_TREE, 'profile'), 4);
+});
+
+test('countVisibleTreeRows: a filter matching nothing draws nothing', function () {
+  assert.equal(countVisibleTreeRows(_TREE, 'zzzz-no-such-file'), 0);
+});
+
+test('countVisibleTreeRows: a matching FOLDER brings its subtree', function () {
+  // The folder itself matches, so it is drawn; its children are visible
+  // beneath it only when they match too.
+  const rows = countVisibleTreeRows(_TREE, 'tests');
+  assert.ok(rows >= 1, `expected the matching folder to be drawn, got ${rows}`);
+});
+
+test('countVisibleTreeRows: empty / malformed input is 0', function () {
+  assert.equal(countVisibleTreeRows([], 'x'), 0);
+  assert.equal(countVisibleTreeRows(null, ''), 0);
+  assert.equal(countVisibleTreeRows(undefined, 'x'), 0);
+});
+
+test('countVisibleTreeRows: a filtered count never exceeds the whole tree', function () {
+  // 8 nodes in total (3 roots + 3 under src + 1 under nested + 1 under
+  // tests); a filter can only ever draw a subset of them.
+  assert.ok(countVisibleTreeRows(_TREE, 'p') <= 8);
 });

@@ -128,6 +128,35 @@ export function matchTreeNode(node, term) {
   return fuzzyMatches(term, [data.name, data.relativePath]);
 }
 
+// How many rows the tree will actually draw, for sizing its viewport.
+//
+// The height used to come from the number of ROOT entries, which ignores the
+// filter completely: searching in a large repo left an 800px-tall section
+// showing nine matching files, and the operator scrolled past all that empty
+// space to reach the next repo.
+//
+//   - filtering  → every matching node, plus the ancestors that must be
+//                  drawn to reach it (the tree opens by default while
+//                  filtering, so those ancestors are visible rows too);
+//   - otherwise  → the roots, since folders start closed.
+export function countVisibleTreeRows(nodes, term) {
+  const query = String(term || '').trim();
+  if (!query) { return Array.isArray(nodes) ? nodes.length : 0; }
+
+  function countMatching(list) {
+    if (!Array.isArray(list)) { return 0; }
+    let rows = 0;
+    for (const node of list) {
+      const children = countMatching(node?.children);
+      const self = matchTreeNode({ data: node || {} }, query);
+      // A folder is drawn when it matches OR when it leads to a match.
+      if (self || children > 0) { rows += 1 + children; }
+    }
+    return rows;
+  }
+  return countMatching(nodes);
+}
+
 function relativePathForRepo(path, cwd) {
   const normalizedPath = String(path || '').replace(/\\/g, '/');
   const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
