@@ -633,6 +633,27 @@ export function fetchSessionContextUsage(taskId) {
 // so this supersedes the plan-mode pair above for the composer's picker.
 // Persisted per task server-side (survives restart) and applied on the next
 // (re)spawn, which RESUMES the same Claude session.
+// Remote Control — hand this task's live Claude session to claude.ai / the
+// Claude app so the conversation can be picked up on another device.
+// ``{ supported, enabled, live, session_url, connect_url }``: ``enabled`` is
+// the operator's persisted preference, ``live`` whether a running subprocess
+// is bridged right now. They differ legitimately — an idle tab has no
+// subprocess, so nothing is bridged until the next message respawns it.
+export function fetchSessionRemoteControl(taskId) {
+  if (!taskId) {
+    return Promise.resolve({ supported: false, enabled: false, live: false });
+  }
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/remote-control`);
+}
+
+export function setSessionRemoteControl(taskId, enabled) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/remote-control`,
+    { enabled: !!enabled },
+  );
+}
+
 export function fetchSessionAgentMode(taskId) {
   if (!taskId) { return Promise.resolve({ mode: '' }); }
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/agent-mode`);

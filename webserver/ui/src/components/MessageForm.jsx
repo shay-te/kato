@@ -102,6 +102,8 @@ const MessageForm = forwardRef(function MessageForm({
   onOpenPlan,
   agentMode = '',
   onAgentModeChange,
+  remoteControl = null,
+  onRemoteControlChange,
   contextUsage = null,
   onStop,
 }, ref) {
@@ -402,6 +404,21 @@ const MessageForm = forwardRef(function MessageForm({
   // typing into the Codex tab that they were replying to Claude — the exact
   // ambiguity separate agent tabs exist to remove.
   const agentName = backendLabel(agentBackend) || 'the agent';
+  // Remote Control is a Claude Code feature, so the row only exists on a
+  // Claude tab — and only when the host says the installed CLI has it.
+  // Offering it on the Codex tab would be a switch with nothing behind it.
+  // ``null`` (not a disabled row) so the section disappears entirely.
+  //
+  // An UNKNOWN backend counts as Claude here, not as "not Claude": a
+  // single-backend host leaves the tab id empty, and gating on an exact
+  // ``'claude'`` match would hide the toggle on precisely the hosts that can
+  // use it. The server's ``supported`` is the authority either way — it
+  // resolves the task's real backend and probes the CLI.
+  const remoteControlOption = (
+    backendLabel(agentBackend) !== 'Claude' && agentBackend
+      ? null
+      : (remoteControl && remoteControl.supported ? remoteControl : null)
+  );
   const placeholder = disabled
     ? disabledReason || 'Session is not live — chat resumes when kato re-spawns it.'
     : isQueueing
@@ -738,6 +755,8 @@ const MessageForm = forwardRef(function MessageForm({
             effortLevels={effortLevels}
             selectedEffort={effectiveEffort(effortLevels, selectedEffort, effortDefault)}
             onEffortChange={onEffortChange}
+            remoteControl={remoteControlOption}
+            onRemoteControlChange={onRemoteControlChange}
           />
         </div>
         <div className="composer-toolbar-right">

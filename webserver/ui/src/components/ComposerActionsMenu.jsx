@@ -24,6 +24,8 @@ export default function ComposerActionsMenu({
   effortLevels = [],
   selectedEffort = '',
   onEffortChange,
+  remoteControl = null,
+  onRemoteControlChange,
 }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState('');
@@ -52,7 +54,7 @@ export default function ComposerActionsMenu({
       <button
         type="button"
         className={`composer-actions-trigger tooltip-above tooltip-start ${open ? 'is-open' : ''}`}
-        data-tooltip="Actions — Claude commands, model, and reasoning effort."
+        data-tooltip="Actions — Claude commands, model, reasoning effort, and Remote Control."
         aria-label="Actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -118,8 +120,66 @@ export default function ComposerActionsMenu({
               )}
             </>
           )}
+
+          {remoteControl && (
+            <>
+              <div className="composer-actions-section">Remote Control</div>
+              <div className="composer-actions-row">
+                <span className="composer-actions-row-label">
+                  Remote Control
+                </span>
+                <select
+                  className="composer-actions-select"
+                  aria-label="Remote Control"
+                  value={remoteControl.enabled ? 'on' : 'off'}
+                  disabled={!!remoteControl.busy}
+                  onChange={(e) => (
+                    onRemoteControlChange && onRemoteControlChange(e.target.value === 'on')
+                  )}
+                >
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                </select>
+              </div>
+              <p className="composer-actions-note">
+                {remoteControlNote(remoteControl)}
+              </p>
+              {remoteControl.enabled && remoteControl.session_url && (
+                <a
+                  className="composer-actions-link"
+                  href={remoteControl.session_url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  Open this session on another device →
+                </a>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+// One line under the toggle, and the only place the operator learns what the
+// switch actually did. It has to distinguish three states that look identical
+// from a boolean: bridged now, on-but-waiting-for-the-next-message (an idle
+// tab has no subprocess to bridge), and refused.
+export function remoteControlNote(remoteControl) {
+  // Enabling is a network round trip through the CLI and can take tens of
+  // seconds. Without this the select just locked and the note kept showing
+  // the OLD state, which reads as the toggle having done nothing.
+  if (remoteControl.busy) {
+    return remoteControl.enabled ? 'Connecting…' : 'Disconnecting…';
+  }
+  if (remoteControl.error) { return remoteControl.error; }
+  if (!remoteControl.enabled) {
+    return 'This session stays on this machine.';
+  }
+  if (remoteControl.live) {
+    return 'Live — pick this chat up in the Claude app or at claude.ai/code. '
+      + 'It keeps running here.';
+  }
+  return 'On — the chat connects when you send your next message.';
 }

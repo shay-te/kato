@@ -1186,3 +1186,58 @@ describe('MessageForm — Stop names the active agent', () => {
     expect(screen.getByRole('button', { name: 'Stop Claude' })).toBeTruthy();
   });
 });
+
+
+// Remote Control hands a task's live session to claude.ai / the Claude app.
+// It is a Claude Code feature, so the row must not appear on a Codex tab —
+// the operator asked for it "on the Claude input only".
+describe('MessageForm — Remote Control is Claude-only', () => {
+  const SUPPORTED = { supported: true, enabled: false, live: false, session_url: '' };
+
+  function remoteControlSelect() {
+    if (!screen.queryByRole('menu')) { openActions(); }
+    return screen.queryByRole('combobox', { name: /remote control/i });
+  }
+
+  test('the Claude tab offers the toggle', () => {
+    renderForm({ agentBackend: 'claude', remoteControl: SUPPORTED });
+    expect(remoteControlSelect()).toBeTruthy();
+  });
+
+  test('the Codex tab does not', () => {
+    // Even if the server answered ``supported`` — the tab is what the
+    // operator is looking at, and Codex has no equivalent feature.
+    renderForm({ agentBackend: 'codex', remoteControl: SUPPORTED });
+    expect(remoteControlSelect()).toBeNull();
+  });
+
+  test('an unknown backend is treated as Claude', () => {
+    // A single-backend host leaves the tab id empty; gating on an exact
+    // 'claude' match would hide the toggle on exactly the hosts that can
+    // use it.
+    renderForm({ agentBackend: '', remoteControl: SUPPORTED });
+    expect(remoteControlSelect()).toBeTruthy();
+  });
+
+  test('a CLI too old for the feature gets no toggle', () => {
+    renderForm({
+      agentBackend: 'claude',
+      remoteControl: { ...SUPPORTED, supported: false },
+    });
+    expect(remoteControlSelect()).toBeNull();
+  });
+
+  test('no server answer yet means no toggle', () => {
+    renderForm({ agentBackend: 'claude', remoteControl: null });
+    expect(remoteControlSelect()).toBeNull();
+  });
+
+  test('the toggle reports the operator choice upward', () => {
+    const onRemoteControlChange = vi.fn();
+    renderForm({
+      agentBackend: 'claude', remoteControl: SUPPORTED, onRemoteControlChange,
+    });
+    fireEvent.change(remoteControlSelect(), { target: { value: 'on' } });
+    expect(onRemoteControlChange).toHaveBeenCalledWith(true);
+  });
+});

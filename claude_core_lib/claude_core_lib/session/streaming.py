@@ -57,6 +57,12 @@ from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
     classify_command_sandbox,
     classify_tool_input_sandbox,
 )
+from claude_core_lib.claude_core_lib.helpers.remote_control import (
+    REMOTE_CONTROL_OFF,
+    REMOTE_CONTROL_SUBTYPE,
+    REMOTE_CONTROL_TIMEOUT_SECONDS,
+    remote_control_state,
+)
 from claude_core_lib.claude_core_lib.helpers.context_window import (
     context_window_tokens,
     prompt_tokens_from_usage,
@@ -351,6 +357,20 @@ class StreamingClaudeSession(object):
         # arguments the agent intended. Cleared once a response is sent.
         self._pending_control_requests: dict[str, dict[str, Any]] = {}
         self._pending_control_requests_lock = threading.Lock()
+        # The OTHER direction of the same protocol: host → CLI. We mint a
+        # ``request_id``, write a ``control_request`` on stdin, and the CLI
+        # answers with a ``control_response`` echoing that id. Each in-flight
+        # id parks a waiter here and the stdout reader thread resolves it —
+        # the reader is the only thing draining stdout, so a caller can never
+        # read its own answer directly. Used by ``set_remote_control``.
+        self._outbound_control_waiters: dict[str, dict[str, Any]] = {}
+        self._outbound_control_lock = threading.Lock()
+        # Remote Control state for THIS subprocess. Unlike model / effort /
+        # permission-mode this is not baked at spawn: the CLI accepts the
+        # toggle on a live session over the control channel, so this is
+        # observed state rather than a spawn flag. Reset on every spawn
+        # because the bridge dies with the subprocess.
+        self._remote_control: dict[str, Any] = dict(REMOTE_CONTROL_OFF)
         # Full per-session history. Browsers join late and need to replay
         # everything; the orchestration also reads through it. Memory grows
         # linearly with events, which is fine for the bounded lifetime of a
@@ -667,6 +687,194 @@ class StreamingClaudeSession(object):
         """
         return self._permission_mode
 
+    @property
+    def remote_control(self) -> dict[str, Any]:
+        """Remote Control state for the LIVE subprocess (never ``None``).
+
+        Deliberately not shaped like ``model`` / ``effort`` /
+        ``permission_mode``: those are spawn flags, so "what the operator
+        asked for" and "what is running" can disagree until a respawn.
+        Remote Control is toggled on the running process over the control
+        channel, so there is only ever one answer — this one. A dead
+        session reports off, because the bridge dies with the subprocess.
+        """
+        if not self.is_alive:
+            return dict(REMOTE_CONTROL_OFF)
+        with self._outbound_control_lock:
+            return dict(self._remote_control)
+
+    def set_remote_control(
+        self,
+        enabled: bool,
+        name: str = '',
+        timeout: float = REMOTE_CONTROL_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Turn Remote Control on/off for this live session.
+
+        Returns the new state (see ``remote_control``); enabling yields the
+        ``session_url`` to open on the other device. Raises ``RuntimeError``
+        if there is no live subprocess, if the CLI refuses (not signed in,
+        already remote, too old to know the subtype), or if it doesn't
+        answer within ``timeout``.
+
+        ``name`` labels the session in the Claude app's list. Blank is
+        allowed — the CLI then names it after this machine — but a host
+        juggling many sessions should pass something the operator will
+        recognise, because the list is all they get to choose from.
+        """
+        if not self.is_alive:
+            raise RuntimeError(
+                f'no live claude session for task {self._task_id} — '
+                'remote control applies to a running session',
+            )
+        request: dict[str, Any] = {
+            'subtype': REMOTE_CONTROL_SUBTYPE,
+            'enabled': bool(enabled),
+        }
+        label = normalized_text(name)
+        if label:
+            request['name'] = label
+        try:
+            response = self._send_control_request(request, timeout=timeout)
+        except RuntimeError:
+            # An ENABLE that we report as failed must not be able to come up
+            # anyway. The failure modes here are "no answer within timeout"
+            # and "answered with an error" — and the first one does NOT mean
+            # the CLI didn't act. It registers the bridge with the service
+            # before it can reply, so a reply that arrives at t+35s on a 30s
+            # timeout leaves the session genuinely exposed while every layer
+            # above has already been told it is off. Converge the CLI to what
+            # we reported. Fire-and-forget: the caller has waited long enough,
+            # and disabling a bridge that never came up is a no-op.
+            if enabled:
+                self._schedule_remote_control_cleanup()
+            raise
+        state = (
+            remote_control_state(response) if enabled
+            else dict(REMOTE_CONTROL_OFF)
+        )
+        with self._outbound_control_lock:
+            self._remote_control = dict(state)
+        self.logger.info(
+            'task %s: remote control %s%s',
+            self._task_id,
+            'enabled' if enabled else 'disabled',
+            f' ({state["session_url"]})' if state.get('session_url') else '',
+        )
+        return state
+
+    def _schedule_remote_control_cleanup(self) -> None:
+        """Best-effort ``enabled: false`` after an enable we reported as failed.
+
+        Runs on its own thread and swallows everything: this is a correction,
+        not an operation anyone is waiting on, and it must never turn one
+        failure into two. If the subprocess is already gone the bridge went
+        with it and there is nothing to undo.
+        """
+        def _worker() -> None:
+            try:
+                self._send_control_request(
+                    {'subtype': REMOTE_CONTROL_SUBTYPE, 'enabled': False},
+                    timeout=REMOTE_CONTROL_TIMEOUT_SECONDS,
+                )
+            except Exception:
+                self.logger.warning(
+                    'task %s: could not confirm remote control is off after a '
+                    'failed enable — check the Claude app for a stray session',
+                    self._task_id,
+                )
+
+        if not self.is_alive:
+            return
+        threading.Thread(
+            target=_worker,
+            name=f'claude-remote-control-cleanup-{self._task_id}',
+            daemon=True,
+        ).start()
+
+    def _send_control_request(
+        self, request: dict[str, Any], timeout: float,
+    ) -> dict[str, Any]:
+        """Write one host → CLI ``control_request`` and block on its answer.
+
+        The stdout reader thread owns the pipe, so the answer cannot be read
+        here — a waiter is registered under the minted ``request_id`` first,
+        THEN the line is written (registering after the write would race a
+        fast CLI whose response lands before the waiter exists), and the
+        reader hands the body back through it.
+        """
+        # Prefixed so a request id in a debug log is obviously the HOST's,
+        # not one the CLI minted for a permission ask.
+        request_id = f'host-{uuid.uuid4()}'
+        waiter: dict[str, Any] = {'event': threading.Event()}
+        with self._outbound_control_lock:
+            self._outbound_control_waiters[request_id] = waiter
+        try:
+            self._write_stdin_line({
+                'type': CLAUDE_EVENT_CONTROL_REQUEST,
+                'request_id': request_id,
+                'request': request,
+            })
+            if not waiter['event'].wait(max(1.0, float(timeout))):
+                raise RuntimeError(
+                    f'{request.get("subtype", "control")} request timed out '
+                    f'after {timeout:.0f}s',
+                )
+        finally:
+            with self._outbound_control_lock:
+                self._outbound_control_waiters.pop(request_id, None)
+        error = str(waiter.get('error', '') or '')
+        if error:
+            raise RuntimeError(error)
+        response = waiter.get('response')
+        return response if isinstance(response, dict) else {}
+
+    def _resolve_outbound_control_response(self, event: SessionEvent) -> bool:
+        """Hand a ``control_response`` to its waiter; True when it was OURS.
+
+        The same event type carries answers to the CLI's own asks, so the
+        request id is what distinguishes them. A True return tells the
+        reader loop to swallow the event: it is plumbing for a call that is
+        already blocked on it, not a turn the operator should see replayed
+        in their chat log.
+        """
+        if event.event_type != CLAUDE_EVENT_CONTROL_RESPONSE:
+            return False
+        response = event.raw.get('response')
+        if not isinstance(response, dict):
+            return False
+        request_id = str(response.get('request_id', '') or '').strip()
+        if not request_id:
+            return False
+        with self._outbound_control_lock:
+            waiter = self._outbound_control_waiters.get(request_id)
+            if waiter is None:
+                return False
+            if str(response.get('subtype', '') or '') == 'error':
+                waiter['error'] = (
+                    str(response.get('error', '') or '') or 'control request failed'
+                )
+            else:
+                waiter['response'] = response.get('response')
+        waiter['event'].set()
+        return True
+
+    def _fail_outbound_control_waiters(self, reason: str) -> None:
+        """Release every blocked control-request caller with an error.
+
+        Called when the subprocess goes away. Without it a caller parked in
+        ``_send_control_request`` would sit out its whole timeout waiting
+        for an answer from a process that no longer exists — and the
+        webserver request it is serving would sit there with it.
+        """
+        with self._outbound_control_lock:
+            waiters = list(self._outbound_control_waiters.values())
+            self._outbound_control_waiters.clear()
+            self._remote_control = dict(REMOTE_CONTROL_OFF)
+        for waiter in waiters:
+            waiter['error'] = reason
+            waiter['event'].set()
+
     def _sandbox_mount(self) -> tuple[str, str]:
         """``(bind_mount_root, workdir_subpath)`` for the docker sandbox.
 
@@ -755,6 +963,13 @@ class StreamingClaudeSession(object):
                 )
             command = self._build_command()
             env = self._build_env()
+            # A Remote Control bridge belongs to ONE subprocess and dies with
+            # it, so a respawn starts disconnected no matter what the previous
+            # process had. Anything that wants the preference to survive a
+            # respawn re-sends the toggle; carrying stale state here would
+            # tell the operator they are connected to a bridge that is gone.
+            with self._outbound_control_lock:
+                self._remote_control = dict(REMOTE_CONTROL_OFF)
             # Docker mode wraps the spawn in the hardened sandbox —
             # see ``the orchestrator.sandbox.manager``. The container bind-mounts
             # the workspace, blocks egress to anything but
@@ -979,6 +1194,12 @@ class StreamingClaudeSession(object):
         # operator's pending-permissions poll ("still see requests after Stop").
         with self._pending_control_requests_lock:
             self._pending_control_requests.clear()
+        # Same for the other direction: a Remote Control toggle waiting on a
+        # subprocess we just killed will never be answered. The bridge dies
+        # with the process, so the state resets to off here too.
+        self._fail_outbound_control_waiters(
+            f'streaming session for task {self._task_id} was stopped',
+        )
 
     def _escalate_to_sigterm(self, proc: subprocess.Popen) -> None:
         self.logger.info(
@@ -1357,6 +1578,11 @@ class StreamingClaudeSession(object):
                 # audit signal. Detective-only: the agent's text has
                 # already crossed to Anthropic.
                 self._scan_terminal_for_credentials(event)
+            # An answer to one of OUR control requests (Remote Control) is
+            # plumbing for a caller already blocked on it — hand it over and
+            # drop it, rather than replaying it into the operator's chat log.
+            if self._resolve_outbound_control_response(event):
+                continue
             # Capture + sandbox-annotate the control request BEFORE
             # publishing: ``_publish_event`` appends to ``_recent_events``
             # and wakes SSE tailers, so annotating after it would race a
@@ -1370,6 +1596,12 @@ class StreamingClaudeSession(object):
             self._log_event_for_operator(event)
                 # Don't break here — let the subprocess close stdout itself.
         # stdout closed; the subprocess is winding down or already gone.
+        # Nothing will ever answer an in-flight control request now, so
+        # release its caller instead of making it sit out the full timeout.
+        self._fail_outbound_control_waiters(
+            f'streaming session for task {self._task_id} ended '
+            'before the control request was answered',
+        )
         # Wake any SSE tailers blocked in ``wait_for_new_events`` so
         # they observe the impending ``is_alive=False`` without having
         # to sleep through the heartbeat interval. Same rationale as

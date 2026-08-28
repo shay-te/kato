@@ -42,6 +42,9 @@ from kato_core_lib.helpers.explain_mode_utils import (
     resolve_explain_spawn,
 )
 from kato_core_lib.helpers.plan_mode_store import task_permission_mode
+from kato_core_lib.helpers.remote_control_store import (
+    schedule_remote_control_for_spawn,
+)
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.workspace_refusal_guidance import (
     KATO_AGENT_GUIDANCE,
@@ -733,7 +736,7 @@ class PlanningSessionRunner(object):
         # The CLI this task's chat is actually on. Resolved per spawn, not
         # captured at boot: the operator picks it with the agent tabs.
         defaults = self._defaults_for(task_id)
-        return self._session_manager.start_session(
+        session = self._session_manager.start_session(
             task_id=task_id,
             task_summary=task_summary,
             initial_prompt=initial_prompt,
@@ -771,6 +774,16 @@ class PlanningSessionRunner(object):
             sandbox_root=workspace_root,
             additional_dirs=additional_dirs,
         )
+        # Remote Control, applied HERE for the same reason the mode lock is:
+        # this is the single funnel every spawn goes through. The bridge that
+        # hands a session to claude.ai / the Claude app belongs to ONE
+        # subprocess and dies with it, so a task the operator switched on
+        # comes back disconnected on every respawn. Hooked only into the
+        # webserver's chat-send route, it survived the operator typing and
+        # nothing else — a comment run or review fix respawns through here and
+        # silently dropped the bridge they were watching from their phone.
+        schedule_remote_control_for_spawn(session, task_id, logger=self.logger)
+        return session
 
     def _raise_if_terminal_failed(
         self,

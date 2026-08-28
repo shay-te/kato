@@ -10436,6 +10436,26 @@ body.kato-resizing {
   font-size: 13px;
 }
 
+/* The one line under a toggle that says what it actually did. Reuses the
+ * item-description colour and size — it is the same kind of text, just
+ * attached to a row instead of a command. */
+.composer-actions-note {
+  margin: 0;
+  padding: 0 8px 6px;
+  color: #a3a3a3;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.composer-actions-link {
+  display: block;
+  padding: 0 8px 8px;
+  color: #2997ff;
+  font-size: 11px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
 .composer-actions-select {
   max-width: 60%;
   padding: 3px 8px;

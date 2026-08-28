@@ -1041,6 +1041,16 @@ def create_app(
     from kato_core_lib.helpers.plan_mode_store import read_task_modes
     app.config['TASK_PLAN_MODE_OVERRIDES'] = dict(read_task_modes())
 
+    # Per-task Remote Control preference (the composer's ``/`` menu, Claude
+    # only): the set of tasks whose chat session should be reachable from
+    # claude.ai / the Claude app. Unlike model / effort / permission-mode
+    # this is NOT a spawn flag — it is a control request sent to the running
+    # subprocess — but it still has to be remembered, because the bridge dies
+    # with that subprocess and kato respawns chat sessions constantly. Loaded
+    # from ``remote_control.json`` at boot and re-applied on every spawn.
+    from kato_core_lib.helpers.remote_control_store import read_remote_control_tasks
+    app.config['TASK_REMOTE_CONTROL'] = set(read_remote_control_tasks())
+
     # Cache-bust the unhashed static bundles. ``static/build/app.js``
     # and ``static/css/app.css`` keep fixed names across rebuilds, so
     # ``url_for('static', …)`` yields a stable URL the browser caches
@@ -1264,6 +1274,50 @@ def _register_http_routes(app: Flask) -> None:
         set_task_mode(task_id, mode)
         stopped = _stop_live_session_on_tightening(app, task_id, mode)
         return jsonify({'mode': mode, 'session_stopped': stopped})
+
+    @app.get('/api/sessions/<task_id>/remote-control')
+    def get_session_remote_control(task_id: str):
+        """Remote Control status for a task's chat session.
+
+        ``{supported, enabled, live, session_url, connect_url}``. ``enabled``
+        is the operator's PREFERENCE (persisted); ``live`` says whether a
+        running subprocess is actually bridged right now. The two differ
+        legitimately — an idle tab has no subprocess, so the preference is on
+        and nothing is bridged until the next message respawns it.
+        """
+        return jsonify(_remote_control_status(app, task_id))
+
+    @app.post('/api/sessions/<task_id>/remote-control')
+    def set_session_remote_control(task_id: str):
+        """Turn Remote Control on/off for a task's chat session.
+
+        Applies to the live subprocess when there is one, and is persisted
+        either way so the next spawn re-applies it.
+        """
+        body = request.get_json(silent=True) or {}
+        on = bool(body.get('enabled'))
+        store = app.config.get('TASK_REMOTE_CONTROL')
+        if store is None:
+            return jsonify({'error': 'not available'}), 503
+        if on and not _remote_control_supported(app, task_id):
+            return jsonify({
+                'error': 'this agent CLI does not support remote control',
+            }), 400
+        applied, error = _apply_remote_control(app, task_id, on)
+        # Turning it OFF is persisted even when the live call failed: the
+        # operator has said "stop exposing this session", and a preference
+        # that stayed on would quietly re-bridge on the next spawn. Turning
+        # it ON is only persisted once the CLI has actually agreed, so a
+        # refusal (not signed in, CLI too old) never leaves kato claiming a
+        # bridge that was never built.
+        if not on or not error:
+            _store_remote_control(app, task_id, on)
+        status = _remote_control_status(app, task_id)
+        if error:
+            status['error'] = error
+            return jsonify(status), 502
+        status['applied'] = applied
+        return jsonify(status)
 
     @app.get('/api/sessions/<task_id>/plan')
     def get_session_plan(task_id: str):
@@ -3223,6 +3277,9 @@ def _register_http_routes(app: Flask) -> None:
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode
         set_plan_mode(task_id, False)
         _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, '')
+        # Same for Remote Control: a forgotten task must not come back
+        # bridged to the Claude app the next time it is adopted.
+        _store_remote_control(app, task_id, False)
         # Drop the task's registry state — PR contexts AND its persisted
         # processed-review-comment marks — so ~/.kato/processed_review_comments.json
         # never keeps marks for a task that no longer exists. Best-effort: this
@@ -3399,6 +3456,135 @@ def _configured_chat_effort(app: Flask) -> str:
         str(getattr(defaults, 'effort', '') or '') if defaults is not None else ''
     )
     return configured or DEFAULT_CHAT_EFFORT
+
+
+# ----- Remote Control (composer ``/`` menu, Claude only) -----
+#
+# Claude Code can hand a session it is already running to claude.ai / the
+# Claude app, so the operator can pick the same conversation up from another
+# device. Kato exposes that per task, because kato runs many sessions at once
+# and "expose all of them" is a much bigger statement than the operator makes
+# when they want to follow ONE task from their phone.
+#
+# It is not a spawn flag. The CLI takes it as a control request on the live
+# subprocess (``claude_core_lib/helpers/remote_control.py``), which is why
+# these helpers talk to the session object rather than to the spawn argv.
+
+
+def _remote_control_backend(app: Flask, task_id: str) -> str:
+    """The chat backend a task is bound to ('' when unknown)."""
+    manager = app.config.get('SESSION_MANAGER')
+    resolver = getattr(manager, 'backend_for', None)
+    if not callable(resolver):
+        return str(getattr(manager, 'AGENT_BACKEND', '') or '').strip().lower()
+    try:
+        return str(resolver(task_id) or '').strip().lower()
+    except Exception:
+        return ''
+
+
+def _remote_control_supported(app: Flask, task_id: str) -> bool:
+    """Whether this task's agent can be remote-controlled at all.
+
+    Two conditions, both required: the task is on Claude (Codex and OpenHands
+    have no equivalent), and the installed Claude CLI advertises the feature.
+    The second is probed from ``--help`` rather than compared against a
+    version floor — see ``supports_remote_control``.
+    """
+    from claude_core_lib.claude_core_lib.helpers.remote_control import (
+        supports_remote_control,
+    )
+    backend = _remote_control_backend(app, task_id)
+    if backend and backend != 'claude':
+        return False
+    return supports_remote_control(_claude_binary(app))
+
+
+def _claude_binary(app: Flask) -> str:
+    """The CLAUDE binary to probe — not whatever the default runner holds.
+
+    On a multi-backend host the planning runner's ``binary`` is one backend's
+    CLI, so a Claude task on a Codex-default host would have been probed with
+    ``codex --help``, found no ``--remote-control``, and reported the feature
+    unsupported on exactly the tab that can use it. ``AGENT_BINARIES`` is the
+    per-backend map the readiness probe already keys on.
+    """
+    configured = str((app.config.get('AGENT_BINARIES') or {}).get('claude', '') or '')
+    if configured.strip():
+        return configured.strip()
+    defaults = _chat_runner_defaults(app)
+    binary = str(getattr(defaults, 'binary', '') or '') if defaults else ''
+    # The default runner's binary is only usable when it IS the claude one.
+    return binary.strip() if 'claude' in binary.lower() else 'claude'
+
+
+def _remote_control_status(app: Flask, task_id: str) -> dict:
+    store = app.config.get('TASK_REMOTE_CONTROL')
+    enabled = bool(store is not None and task_id in store)
+    live = {'enabled': False, 'session_url': '', 'connect_url': ''}
+    manager = app.config.get('SESSION_MANAGER')
+    if manager is not None:
+        try:
+            session = manager.get_session(task_id)
+        except Exception:
+            session = None
+        state = getattr(session, 'remote_control', None) if session else None
+        if isinstance(state, dict):
+            live = state
+    return {
+        'supported': _remote_control_supported(app, task_id),
+        'enabled': enabled,
+        'live': bool(live.get('enabled')),
+        'session_url': str(live.get('session_url', '') or ''),
+        'connect_url': str(live.get('connect_url', '') or ''),
+    }
+
+
+def _store_remote_control(app: Flask, task_id: str, on: bool) -> None:
+    store = app.config.get('TASK_REMOTE_CONTROL')
+    if store is None:
+        return
+    if on:
+        store.add(task_id)
+    else:
+        store.discard(task_id)
+    # Best-effort persistence — a write failure must not fail the toggle the
+    # operator just made on the live session.
+    from kato_core_lib.helpers.remote_control_store import set_remote_control_enabled
+    try:
+        set_remote_control_enabled(task_id, on)
+    except Exception:
+        app.logger.warning(
+            'task %s: could not persist the remote control preference', task_id,
+        )
+
+
+def _apply_remote_control(app: Flask, task_id: str, on: bool) -> tuple[bool, str]:
+    """Push the toggle to the live subprocess. ``(applied, error_message)``.
+
+    Synchronous, unlike the spawn-time path: the operator clicked the switch
+    and is owed both the URL and any refusal. No live session is not an
+    error — the preference is stored and the next spawn applies it, which is
+    the common case for a tab nobody has typed in for a while.
+    """
+    from kato_core_lib.helpers.remote_control_store import apply_remote_control
+
+    manager = app.config.get('SESSION_MANAGER')
+    if manager is None:
+        return False, ''
+    try:
+        session = manager.get_session(task_id)
+    except Exception:
+        session = None
+    try:
+        applied = apply_remote_control(session, task_id, on)
+    except Exception as exc:
+        app.logger.warning(
+            'task %s: remote control %s failed: %s',
+            task_id, 'enable' if on else 'disable', exc,
+        )
+        return False, str(exc)
+    return bool(applied), ''
 
 
 def _discover_chat_effort_levels(app: Flask) -> list:

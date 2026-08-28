@@ -45,7 +45,9 @@ vi.mock('./EventLog.jsx', () => ({
 // without the real composer. Layout tests only look for #message-form
 // / its absence, so the extra button is harmless.
 vi.mock('./MessageForm.jsx', () => ({
-  default: ({ onSubmit, planMode, onPlanModeChange }) => (
+  default: ({
+    onSubmit, planMode, onPlanModeChange, remoteControl, onRemoteControlChange,
+  }) => (
     <form id="message-form">
       <button type="button" onClick={() => onSubmit('hello', [])}>
         mock-send
@@ -57,6 +59,14 @@ vi.mock('./MessageForm.jsx', () => ({
       >
         mock-plan-toggle
       </button>
+      <button
+        type="button"
+        onClick={() => onRemoteControlChange
+          && onRemoteControlChange(!(remoteControl && remoteControl.enabled))}
+      >
+        mock-remote-control-toggle
+      </button>
+      <output data-testid="remote-control">{JSON.stringify(remoteControl)}</output>
     </form>
   ),
 }));
@@ -90,6 +100,11 @@ vi.mock('../api.js', () => ({
     { used_tokens: 0, limit_tokens: 0, model: '' },
   ),
   setSessionPlanMode: vi.fn().mockResolvedValue({}),
+  // The composer's Remote Control toggle reads this on mount.
+  fetchSessionRemoteControl: vi.fn().mockResolvedValue(
+    { supported: true, enabled: false, live: false, session_url: '' },
+  ),
+  setSessionRemoteControl: vi.fn().mockResolvedValue({ ok: true, body: {} }),
 }));
 vi.mock('../hooks/useSessionStream.js', async (importActual) => {
   const actual = await importActual();
@@ -110,7 +125,7 @@ import SessionDetail, {
   lifecycleBanner,
 } from './SessionDetail.jsx';
 import { SESSION_LIFECYCLE, useSessionStream } from '../hooks/useSessionStream.js';
-import { postChatMessage, fetchSessionPlanMode, setSessionPlanMode } from '../api.js';
+import { postChatMessage, fetchSessionPlanMode, setSessionPlanMode, fetchSessionRemoteControl, setSessionRemoteControl } from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
@@ -991,5 +1006,188 @@ describe('SessionDetail — the send carries the selected tab', () => {
     await waitFor(() => {
       expect(postChatMessage).toHaveBeenCalledWith('T1', 'hello', [], 'claude');
     });
+  });
+});
+
+
+// Remote Control hands the task's live Claude session to claude.ai / the
+// Claude app. The state is the SERVER's — whether the CLI supports it, and
+// whether a subprocess is bridged right now — so this pane holds the last
+// answer rather than a local boolean, and never invents one.
+describe('SessionDetail — Remote Control toggle', () => {
+  const RC = { supported: true, enabled: false, live: false, session_url: '' };
+
+  function _stream(overrides = {}) {
+    return {
+      events: [],
+      lifecycle: SESSION_LIFECYCLE.STREAMING,
+      turnInFlight: false,
+      pendingPermission: null,
+      lastEventAt: 0,
+      appendLocalEvent: vi.fn(),
+      markTurnBusy: vi.fn(),
+      reconnect: vi.fn(),
+      resetChat: vi.fn(),
+      dismissPermission: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function state() {
+    return JSON.parse(screen.getByTestId('remote-control').textContent || 'null');
+  }
+
+  function toggle() {
+    fireEvent.click(screen.getByRole('button', { name: 'mock-remote-control-toggle' }));
+  }
+
+  beforeEach(() => {
+    fetchSessionRemoteControl.mockResolvedValue({ ...RC });
+    setSessionRemoteControl.mockReset();
+  });
+
+  test('reads the server state on mount', async () => {
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => expect(state()).toMatchObject({ supported: true, enabled: false }));
+    expect(fetchSessionRemoteControl).toHaveBeenCalledWith('T1');
+  });
+
+  test('turning it on adopts the URL the server hands back', async () => {
+    setSessionRemoteControl.mockResolvedValue({
+      ok: true,
+      body: {
+        ...RC, enabled: true, live: true,
+        session_url: 'https://claude.ai/code/session/abc',
+      },
+    });
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => expect(state()).toBeTruthy());
+
+    toggle();
+
+    await waitFor(() => expect(state()).toMatchObject({
+      enabled: true, live: true, session_url: 'https://claude.ai/code/session/abc',
+    }));
+    expect(setSessionRemoteControl).toHaveBeenCalledWith('T1', true);
+  });
+
+  test('a refused enable puts the switch back and shows why', async () => {
+    setSessionRemoteControl.mockResolvedValue({
+      ok: false,
+      body: { ...RC, enabled: false, error: 'not signed in' },
+    });
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => expect(state()).toBeTruthy());
+
+    toggle();
+
+    await waitFor(() => expect(state()).toMatchObject({
+      enabled: false, error: 'not signed in',
+    }));
+  });
+
+  test('a network failure keeps the row (and reverts the switch)', async () => {
+    // The failure answers with an empty body; taking that literally would
+    // report ``supported: false`` and make the toggle vanish mid-click.
+    setSessionRemoteControl.mockResolvedValue({ ok: false, error: 'TypeError: fetch' });
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => expect(state()).toBeTruthy());
+
+    toggle();
+
+    await waitFor(() => expect(state()).toMatchObject({
+      supported: true, enabled: false,
+    }));
+    expect(state().error).toBeTruthy();
+  });
+
+  test('turning it off asks for off', async () => {
+    fetchSessionRemoteControl.mockResolvedValue({ ...RC, enabled: true, live: true });
+    setSessionRemoteControl.mockResolvedValue({ ok: true, body: { ...RC } });
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => expect(state()).toMatchObject({ enabled: true }));
+
+    toggle();
+
+    await waitFor(() => expect(setSessionRemoteControl).toHaveBeenCalledWith('T1', false));
+    await waitFor(() => expect(state()).toMatchObject({ enabled: false, live: false }));
+  });
+
+  test('no bound task means no state at all', () => {
+    render(<SessionDetail session={null} />);
+    expect(screen.queryByTestId('remote-control')).toBeNull();
+  });
+
+  test('re-reads when the session lifecycle changes', async () => {
+    // ``live`` is a fact about a subprocess this pane does not own. Toggling
+    // on an idle tab bridges nothing; the bridge is built by the spawn the
+    // next message triggers. Keyed on taskId alone, the row went on saying
+    // "connects when you send your next message" forever and the link to the
+    // other device never appeared.
+    fetchSessionRemoteControl.mockClear();
+    useSessionStream.mockReturnValue(_stream({ lifecycle: SESSION_LIFECYCLE.IDLE }));
+    const { rerender } = render(
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
+    );
+    await waitFor(() => expect(fetchSessionRemoteControl).toHaveBeenCalledTimes(1));
+
+    fetchSessionRemoteControl.mockResolvedValue({
+      supported: true, enabled: true, live: true,
+      session_url: 'https://claude.ai/code/session/abc',
+    });
+    useSessionStream.mockReturnValue(
+      _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    await waitFor(() => expect(state()).toMatchObject({ live: true }));
+  });
+
+  test('a lifecycle re-read does not clobber a toggle in flight', async () => {
+    // The re-read is driven by the session, so it can land mid-click.
+    let release;
+    setSessionRemoteControl.mockReturnValue(
+      new Promise((resolve) => { release = resolve; }),
+    );
+    useSessionStream.mockReturnValue(_stream({ lifecycle: SESSION_LIFECYCLE.IDLE }));
+    const { rerender } = render(
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
+    );
+    await waitFor(() => expect(state()).toBeTruthy());
+
+    toggle();
+    await waitFor(() => expect(state()).toMatchObject({ busy: true, enabled: true }));
+
+    fetchSessionRemoteControl.mockResolvedValue({ ...RC, enabled: false });
+    useSessionStream.mockReturnValue(
+      _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await new Promise((r) => setTimeout(r, 10));
+    // Still the operator's pending choice, not the stale server answer.
+    expect(state()).toMatchObject({ busy: true, enabled: true });
+
+    await act(async () => {
+      release({ ok: true, body: { ...RC, enabled: true, live: true } });
+    });
+    await waitFor(() => expect(state()).toMatchObject({ busy: false, live: true }));
+  });
+
+  test('a failed re-read keeps the last good answer', async () => {
+    // Losing it would make the whole row vanish from the menu.
+    useSessionStream.mockReturnValue(_stream({ lifecycle: SESSION_LIFECYCLE.IDLE }));
+    const { rerender } = render(
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
+    );
+    await waitFor(() => expect(state()).toMatchObject({ supported: true }));
+
+    fetchSessionRemoteControl.mockRejectedValue(new Error('offline'));
+    useSessionStream.mockReturnValue(
+      _stream({ lifecycle: SESSION_LIFECYCLE.STREAMING }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(state()).toMatchObject({ supported: true });
   });
 });

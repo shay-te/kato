@@ -29,7 +29,7 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode,
+import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode, setSessionRemoteControl,
   refreshAgentBackends,
 } from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
@@ -289,6 +289,71 @@ export default function SessionDetail({
       .then((result) => setAgentMode(String((result && result.mode) || '')))
       .catch(() => {});
   }, [taskId]);
+  // Remote Control — the composer's ``/`` menu toggle that hands this task's
+  // live Claude session to claude.ai / the Claude app. Server-owned state
+  // (whether the CLI supports it, whether a subprocess is bridged right now),
+  // so this holds the last answer rather than a local boolean, and re-reads
+  // it after every write. The row is hidden entirely unless the server says
+  // the task's agent supports it — see MessageForm.
+  // Held in the SERVER's shape (``supported``/``enabled``/``live``/
+  // ``session_url``) plus two client-only fields, so a response can be
+  // merged onto it without a translation layer that has to be right in
+  // both directions.
+  const [remoteControl, setRemoteControl] = useState(null);
+  const remoteControlTaskRef = useRef('');
+  useEffect(() => {
+    if (!taskId) { setRemoteControl(null); return; }
+    if (remoteControlTaskRef.current !== taskId) {
+      // A different task's bridge (and its URL) must never be on screen for
+      // this one, not even for the length of a fetch.
+      remoteControlTaskRef.current = taskId;
+      setRemoteControl(null);
+    }
+    // Re-read on every LIFECYCLE change, not just on the task. ``live`` is a
+    // fact about a subprocess this pane does not own: switching the toggle on
+    // an idle tab stores a preference and bridges nothing — the bridge is
+    // built later, by the spawn the operator's next message triggers. Keyed
+    // on ``taskId`` alone, the row went on saying "connects when you send
+    // your next message" for the rest of the session, long after it had, and
+    // the link to the other device never appeared at all.
+    fetchSessionRemoteControl(taskId)
+      .then((result) => setRemoteControl((prev) => {
+        // Drop an answer the operator has already moved past: a toggle still
+        // in flight owns the state, and so does a task switch mid-fetch.
+        if (prev && prev.busy) { return prev; }
+        if (remoteControlTaskRef.current !== taskId) { return prev; }
+        return result || null;
+      }))
+      // Keep the last good answer on a transient failure — losing it would
+      // make the whole row disappear from the menu.
+      .catch(() => {});
+  }, [taskId, stream.lifecycle]);
+  const handleRemoteControlChange = useCallback(async (on) => {
+    // Optimistic on the switch position only — never on ``live`` or the URL,
+    // which are the server's answer about a subprocess this tab cannot see.
+    // Claiming a bridge before one exists is the one thing this toggle must
+    // not do. ``busy`` locks the select so a double-click can't race.
+    setRemoteControl((prev) => (
+      prev ? { ...prev, enabled: on, busy: true, error: '' } : prev
+    ));
+    const result = await setSessionRemoteControl(taskId, on);
+    const ok = !!(result && result.ok);
+    const body = (result && result.body) || {};
+    setRemoteControl((prev) => ({
+      ...(prev || {}),
+      ...body,
+      // A failed request answers with an empty body, and taking that
+      // literally would report the feature unsupported and make the whole
+      // row vanish mid-click. Keep what we already knew, and put the switch
+      // back where the server actually left it.
+      enabled: body.enabled === undefined ? !on : !!body.enabled,
+      error: ok
+        ? ''
+        : body.error || (result && result.error) || 'could not reach kato',
+      busy: false,
+    }));
+  }, [taskId]);
+
   const handleAgentModeChange = useCallback((mode) => {
     const next = String(mode ?? '');
     setAgentMode(next);
@@ -772,6 +837,8 @@ export default function SessionDetail({
           onPlanModeChange={handlePlanModeChange}
           agentMode={agentMode}
           onAgentModeChange={handleAgentModeChange}
+          remoteControl={remoteControl}
+          onRemoteControlChange={handleRemoteControlChange}
           contextUsage={contextUsage}
           onStop={onComposerStop}
           planAvailable={planAvailable}

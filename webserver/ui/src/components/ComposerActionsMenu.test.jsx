@@ -148,4 +148,89 @@ describe('ComposerActionsMenu', () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('menu')).toBeNull();
   });
+
+  // ----- Remote Control -----
+  //
+  // Hands this task's live Claude session to claude.ai / the Claude app.
+  // The row is absent unless the caller supplies state, which is how the
+  // Claude-only gate is expressed (see MessageForm).
+
+  const RC_OFF = { supported: true, enabled: false, live: false, session_url: '' };
+  const RC_LIVE = {
+    supported: true, enabled: true, live: true,
+    session_url: 'https://claude.ai/code/session/abc',
+  };
+
+  test('no Remote Control row without state', () => {
+    open({ models: MODELS });
+    expect(screen.queryByRole('combobox', { name: /remote control/i })).toBeNull();
+  });
+
+  test('the toggle shows the current state', () => {
+    open({ remoteControl: RC_LIVE });
+    expect(
+      screen.getByRole('combobox', { name: /remote control/i }),
+    ).toHaveValue('on');
+  });
+
+  test('turning it on reports a boolean, not a string', () => {
+    const onRemoteControlChange = vi.fn();
+    open({ remoteControl: RC_OFF, onRemoteControlChange });
+    fireEvent.change(screen.getByRole('combobox', { name: /remote control/i }),
+                     { target: { value: 'on' } });
+    expect(onRemoteControlChange).toHaveBeenCalledWith(true);
+  });
+
+  test('turning it off reports false', () => {
+    const onRemoteControlChange = vi.fn();
+    open({ remoteControl: RC_LIVE, onRemoteControlChange });
+    fireEvent.change(screen.getByRole('combobox', { name: /remote control/i }),
+                     { target: { value: 'off' } });
+    expect(onRemoteControlChange).toHaveBeenCalledWith(false);
+  });
+
+  test('a live bridge offers the link to the other device', () => {
+    open({ remoteControl: RC_LIVE });
+    expect(screen.getByRole('link', { name: /open this session/i }))
+      .toHaveAttribute('href', RC_LIVE.session_url);
+  });
+
+  test('on-but-not-yet-bridged says so instead of offering a dead link', () => {
+    // An idle tab has no subprocess to bridge, so "on" is a promise about the
+    // next message — claiming a live session here would be a lie the operator
+    // discovers on their phone.
+    open({ remoteControl: { ...RC_OFF, enabled: true } });
+    expect(screen.getByText(/connects when you send/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open this session/i })).toBeNull();
+  });
+
+  test('a refusal is shown in place of the status line', () => {
+    open({ remoteControl: { ...RC_OFF, error: 'not signed in' } });
+    expect(screen.getByText('not signed in')).toBeInTheDocument();
+  });
+
+  test('the toggle is locked while a change is in flight', () => {
+    open({ remoteControl: { ...RC_OFF, busy: true } });
+    expect(screen.getByRole('combobox', { name: /remote control/i })).toBeDisabled();
+  });
+
+  test('an in-flight change says so instead of showing the old state', () => {
+    // Enabling is a network round trip and can take tens of seconds. With the
+    // select locked AND the note still reading "stays on this machine", the
+    // toggle looked like it had done nothing at all.
+    open({ remoteControl: { ...RC_OFF, enabled: true, busy: true } });
+    expect(screen.getByText(/connecting/i)).toBeInTheDocument();
+    expect(screen.queryByText(/stays on this machine/i)).toBeNull();
+  });
+
+  test('an in-flight disable says disconnecting', () => {
+    open({ remoteControl: { ...RC_LIVE, enabled: false, busy: true } });
+    expect(screen.getByText(/disconnecting/i)).toBeInTheDocument();
+  });
+
+  test('pressing the toggle does NOT close the menu', () => {
+    open({ remoteControl: RC_OFF, onRemoteControlChange: vi.fn() });
+    fireEvent.pointerDown(screen.getByRole('combobox', { name: /remote control/i }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
 });
