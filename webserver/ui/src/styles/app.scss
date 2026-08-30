@@ -512,6 +512,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * it shrink all the way out — never from the centre. Keep this 360px in
    * sync with CENTER_PANE_MIN_WIDTH in App.jsx. */
   grid-template-columns: minmax(0, var(--left-pane-width, 320px)) minmax(360px, 1fr) minmax(0, var(--right-pane-width, 420px));
+
+  /* Maximized: the chat gets the whole width and the files / preview columns
+   * collapse to nothing.
+   *
+   * The columns go to zero rather than the panes being unmounted or
+   * ``display: none``-d. Monaco (the editor pane) keeps view state — scroll
+   * position, folds, the find widget — in the live editor instance, and
+   * tearing it down to restore it a moment later is exactly the "UI shifts
+   * while you are reading it" behaviour the diff viewer already has rules
+   * against. A zero-width column keeps the instance mounted and its own
+   * ``overflow: hidden`` does the hiding. */
+  &.is-chat-maximized {
+    grid-template-columns: 0 0 minmax(0, 1fr);
+  }
   /* row 1: task tab strip · row 2: full-width task header bar ·
    * row 3: the three panels */
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1804,6 +1818,36 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   white-space: nowrap;
   color: $C-NEUTRAL-64;
   font-size: $TEXT-12;
+}
+
+/* Maximize toggle — pushed to the right end of the agent-tab row, so it reads
+ * as acting on the CHAT rather than on any one agent tab. */
+.agent-backend-maximize {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: $ICON-BOX-LG;
+  height: $ICON-BOX-LG;
+  padding: 0;
+  border: 0;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  font-size: $ICON-GLYPH-LG;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.agent-backend-maximize:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+}
+
+.agent-backend-maximize[aria-pressed='true'] {
+  color: $C-CYAN-58;
 }
 
 .agent-backend-tabs {
@@ -5141,6 +5185,14 @@ code {
  *
  * Offsets are measured from the card's PADDING box, so the 9px over an
  * 8px gutter is the gutter plus the card's 1px border. */
+/* While the chat is maximized there is nothing to resize AGAINST — the other
+ * two columns are zero-width — and a live drag would silently rewrite the
+ * stored widths the restore depends on. Hidden rather than merely disabled so
+ * the grip does not sit over the chat's left edge. */
+#layout.is-chat-maximized .pane-resizer {
+  display: none;
+}
+
 .pane-resizer {
   position: absolute;
   top: 0;

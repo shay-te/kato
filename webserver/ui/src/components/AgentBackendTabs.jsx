@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import ChatsMenu from './ChatsMenu.jsx';
 import { backendLabel } from './AgentBackendChip.jsx';
+import {
+  readChatMaximized,
+  subscribeChatMaximized,
+  toggleChatMaximized,
+} from '../utils/chatMaximizedPref.js';
 import { fetchAgentBackends, switchTaskBackend } from '../api.js';
 import { normalizeBackendEntries, normalizeBackendEntry }
   from '../utils/agentBackendEntry.js';
@@ -162,6 +167,12 @@ export default function AgentBackendTabs({
     }
   }
 
+  // The maximize toggle reads the shared preference rather than local state:
+  // the pane grid it controls belongs to Layout, several levels up and across
+  // a component App remounts on every task switch.
+  const [maximized, setMaximized] = useState(() => readChatMaximized());
+  useEffect(() => subscribeChatMaximized(setMaximized), []);
+
   if (tabs.length === 0) { return null; }
 
   const showChatBar = !!currentEntry && currentEntry.chat_available !== false;
@@ -218,6 +229,18 @@ export default function AgentBackendTabs({
           </div>
         );
       })}
+      <button
+        type="button"
+        className="agent-backend-maximize"
+        aria-pressed={maximized}
+        onClick={() => setMaximized(toggleChatMaximized())}
+        title={maximized
+          ? 'Restore the files and preview panes'
+          : 'Give the chat the whole window'}
+        aria-label={maximized ? 'Restore panes' : 'Maximize chat'}
+      >
+        <span aria-hidden="true">{maximized ? '\u2921' : '\u26F6'}</span>
+      </button>
     </div>
     {/* Second row: the conversation you are IN, and the controls that act on
         it. The chats control used to sit inside the active tab pill, where it

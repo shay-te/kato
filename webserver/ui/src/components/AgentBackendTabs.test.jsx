@@ -16,6 +16,11 @@ vi.mock('../stores/toastStore.js', () => ({
 }));
 
 import AgentBackendTabs from './AgentBackendTabs.jsx';
+import {
+  readChatMaximized,
+  writeChatMaximized,
+  _resetChatMaximizedPref,
+} from '../utils/chatMaximizedPref.js';
 import { fetchAgentBackends, fetchTaskChats, switchTaskBackend, fetchTaskAgentStatus} from '../api.js';
 import { toast } from '../stores/toastStore.js';
 
@@ -577,5 +582,69 @@ describe('AgentBackendTabs — status on the tab', () => {
     withStatuses([]);
     const claudeTab = await screen.findByRole('tab', { name: /Claude/ });
     expect(claudeTab.textContent.trim()).toBe('Claude');
+  });
+});
+
+
+// The maximize toggle — it sits on this row (rather than the task header)
+// because it acts on the CHAT, and it drives a shared preference rather than
+// local state, because the pane grid it collapses belongs to Layout.
+describe('AgentBackendTabs — maximize chat', () => {
+  beforeEach(() => {
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetChatMaximizedPref();
+  });
+
+  async function renderTabs() {
+    render(<AgentBackendTabs taskId="T1" />);
+    return screen.findByRole('button', { name: /maximize chat|restore panes/i });
+  }
+
+  it('offers a maximize control', async () => {
+    const button = await renderTabs();
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('clicking it maximizes, and the label becomes the way back', async () => {
+    // The same control restores — an operator who hid two panes must not have
+    // to guess where the way back is.
+    const button = await renderTabs();
+    fireEvent.click(button);
+
+    expect(readChatMaximized()).toBe(true);
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /restore panes/i }),
+      ).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
+
+  it('clicking again restores', async () => {
+    const button = await renderTabs();
+    fireEvent.click(button);
+    await waitFor(() => expect(readChatMaximized()).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: /restore panes/i }));
+    expect(readChatMaximized()).toBe(false);
+  });
+
+  it('opens in the stored state after a reload', async () => {
+    writeChatMaximized(true);
+    const button = await renderTabs();
+    expect(button).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('follows a change made elsewhere', async () => {
+    // Two chat panes can be open across windows; the control must not drift
+    // from the layout it describes.
+    const button = await renderTabs();
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+
+    await waitFor(() => {
+      writeChatMaximized(true);
+      expect(
+        screen.getByRole('button', { name: /restore panes/i }),
+      ).toHaveAttribute('aria-pressed', 'true');
+    });
   });
 });
