@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { deriveAgentStatus, badgeKindFor } from './agentStatus.js';
+import { deriveAgentStatus, badgeKindFor, isAgentActive } from './agentStatus.js';
 import { AGENT_STATUS_KIND } from '../constants/agentStatusKind.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 
@@ -192,4 +192,80 @@ test('a non-workflow background wait (Monitor) still reads working, not workflow
     false,
   );
   assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
+});
+
+
+// The task-cache poller picks its cadence from this: chase a working agent at
+// 5s, back off to 30s for a sleeping one. Derived here, next to
+// deriveAgentStatus, so agent liveness keeps exactly one definition.
+
+test('isAgentActive: a turn in flight is active', () => {
+  assert.equal(
+    isAgentActive({ lifecycle: SESSION_LIFECYCLE.IDLE, turnInFlight: true }), true,
+  );
+});
+
+test('isAgentActive: a background wait the turn scheduled is still active', () => {
+  // Monitor / Workflow / run_in_background — the turn has closed but edits can
+  // still land, so the panes must keep chasing it.
+  assert.equal(
+    isAgentActive({ lifecycle: SESSION_LIFECYCLE.IDLE, awaitingBackground: true }), true,
+  );
+});
+
+test('isAgentActive: a connected session with NO turn is quiet', () => {
+  // STREAMING means the stream is OPEN — this module maps it to the "idle"
+  // chip. It is where a new turn flips turnInFlight within one frame, so it is
+  // the SAFEST state to slow down in, not the least safe. Calling it active
+  // made the backoff inert in the state a task sits in for as long as the
+  // operator reads a diff.
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.STREAMING }), false);
+});
+
+test('isAgentActive: a connecting session is active', () => {
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.CONNECTING }), true);
+});
+
+test('isAgentActive: a sleeping session is not', () => {
+  // IDLE means no live subprocess — it cannot be editing anything.
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.IDLE }), false);
+});
+
+test('isAgentActive: a CLOSED or MISSING session counts as ACTIVE', () => {
+  // Not an oversight — the narrow case is deliberate. useSessionStream's retry
+  // effect early-returns for any lifecycle but IDLE, so a closed stream is
+  // never reopened and this client-side view can never correct itself. kato's
+  // scan loop or a draining comment can spawn a subprocess the client will
+  // never hear about, so a wrong "quiet" here would never be revisited.
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.CLOSED }), true);
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.MISSING }), true);
+});
+
+test('isAgentActive: quiet is about how fast the client would find out', () => {
+  // STREAMING: open stream, immediate. IDLE: no subprocess, and the stream
+  // reconnects on a <=30s backoff. Anything else — including a lifecycle this
+  // build has never heard of — is active, because it cannot be shown to
+  // correct itself.
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.STREAMING }), false);
+  assert.equal(isAgentActive({ lifecycle: SESSION_LIFECYCLE.IDLE }), false);
+  assert.equal(isAgentActive({ lifecycle: 'something-new' }), true);
+});
+
+test('isAgentActive: a turn on an OPEN stream is still active', () => {
+  // The quiet cases are gated on there being no work — not on the lifecycle
+  // alone.
+  assert.equal(isAgentActive({
+    lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: true,
+  }), true);
+  assert.equal(isAgentActive({
+    lifecycle: SESSION_LIFECYCLE.STREAMING, awaitingBackground: true,
+  }), true);
+});
+
+test('isAgentActive: unknown status counts as ACTIVE', () => {
+  // First paint, before SessionDetail publishes. Under-polling a busy task
+  // shows the operator stale code; over-polling an idle one only costs the
+  // thing we are trimming — so the unknown case fails toward correctness.
+  assert.equal(isAgentActive(null), true);
+  assert.equal(isAgentActive(undefined), true);
 });

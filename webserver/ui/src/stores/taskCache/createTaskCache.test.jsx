@@ -41,7 +41,11 @@ function makeManualPoller() {
   };
 }
 
-function makeCache({ retain = 5 } = {}) {
+function makeCache({ retain = 5, ...extra } = {}) {
+  // Wall clock the test drives — the idle gate measures elapsed TIME, not
+  // ticks, so that hidden stretches (when createPoller skips the tick
+  // entirely) still count.
+  const clock = { ms: 0, advance(by) { this.ms += by; } };
   const fetchers = {};
   function mk(name) {
     const { fetch, s } = makeFetcher({ [name]: 1 });
@@ -53,9 +57,11 @@ function makeCache({ retain = 5 } = {}) {
   const evicted = [];
   const cache = createTaskCache({
     children, retain, polledTypes: ['diff'], intervalMs: 5000, createPoller: poller.factory,
+    now: () => clock.ms,
+    ...extra,
   });
   cache.registerOnEvict((id) => evicted.push(id));
-  return { cache, children, fetchers, poller, evicted };
+  return { cache, children, fetchers, poller, evicted, clock };
 }
 
 
@@ -153,5 +159,155 @@ describe('createTaskCache — orchestrator', () => {
     poller.fireTick(); await flush();                      // only B (active) refreshes
     // Exactly one new diff call (for B), none for the retained-idle A.
     expect(fetchers.diff.calls).toBe(aBefore + 1);
+  });
+});
+
+
+// Idle backoff.
+//
+// Each polled tick costs ~13 git subprocesses PER REPO on the server — about
+// 150 a minute — almost all re-deriving a byte-identical answer that the store
+// then discards on an unchanged signature. A sleeping agent cannot be what
+// changed those files.
+//
+// It backs OFF rather than stopping: diff/tree/comments also change from
+// outside the agent (the operator's own terminal in the workspace, server-side
+// comment ingestion), and neither routes through the event-driven revalidate.
+describe('createTaskCache — polls slower while the agent is asleep', () => {
+  function makeLiveness(initial = true) {
+    const state = { live: initial };
+    return { state, isTaskLive: () => state.live };
+  }
+
+  test('an active agent is polled on every tick', async () => {
+    const { state, isTaskLive } = makeLiveness(true);
+    const { cache, fetchers, poller } = makeCache({ isTaskLive });
+    cache.setActiveTask('A'); await flush();
+    const before = fetchers.diff.calls;
+
+    poller.fireTick(); await flush();
+    poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 2);
+    expect(state.live).toBe(true);
+  });
+
+  test('a sleeping agent skips ticks until the idle interval elapses', async () => {
+    const { isTaskLive } = makeLiveness(false);
+    // 5s ticks, 30s idle cadence → one fetch every SIXTH tick.
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    const before = fetchers.diff.calls;
+
+    for (let i = 0; i < 5; i += 1) { clock.advance(5000); poller.fireTick(); await flush(); }
+    expect(fetchers.diff.calls).toBe(before); // 25s in — still nothing
+
+    clock.advance(5000); poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 1); // 30s — one refresh
+  });
+
+  test('waking up restores the fast cadence on the very next tick', async () => {
+    const { state, isTaskLive } = makeLiveness(false);
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    poller.fireTick(); await flush();
+    const before = fetchers.diff.calls;
+
+    state.live = true; // the agent starts a turn
+    poller.fireTick(); await flush();
+    poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 2);
+  });
+
+  test('going quiet waits a FULL idle interval, not the remainder of one', async () => {
+    // Every live tick stamps lastPolledAt, so a task that had been idle 25s,
+    // worked for one tick, then slept again waits a fresh 30s — the backoff
+    // does not leak away under an agent that stops and starts, which is
+    // exactly what an agent does.
+    const { state, isTaskLive } = makeLiveness(false);
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    for (let i = 0; i < 5; i += 1) { clock.advance(5000); poller.fireTick(); await flush(); } // 25s idle
+
+    state.live = true;
+    poller.fireTick(); await flush();                                   // one live tick
+    state.live = false;
+    const before = fetchers.diff.calls;
+
+    for (let i = 0; i < 5; i += 1) { clock.advance(5000); poller.fireTick(); await flush(); }
+    expect(fetchers.diff.calls).toBe(before);                           // not 5s later
+    clock.advance(5000); poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 1);                       // a full 30s later
+  });
+
+  test('an idle task is still polled eventually — the poll is not switched off', async () => {
+    // Out-of-band changes (the operator editing in their own terminal, or
+    // server-side comment ingestion) have no event to ride, so stopping
+    // entirely would leave the panes stale with nothing to refresh them.
+    const { isTaskLive } = makeLiveness(false);
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    const before = fetchers.diff.calls;
+
+    for (let i = 0; i < 18; i += 1) { clock.advance(5000); poller.fireTick(); await flush(); } // 90s
+    expect(fetchers.diff.calls).toBe(before + 3);
+  });
+
+  test('a hidden stretch counts — returning to the tab refreshes at once', async () => {
+    // THE REGRESSION this measures against. createPoller SKIPS the tick
+    // entirely while the tab is hidden, so a tick COUNTER stops advancing
+    // exactly when the most time is passing. Counting ticks, the operator
+    // came back to ten-minute-old file and diff content and then waited a
+    // further 30 seconds for it — where before the backoff the wait was 5.
+    // Measuring wall time, the catch-up tick createPoller fires on return
+    // refreshes immediately.
+    const { isTaskLive } = makeLiveness(false);
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    const before = fetchers.diff.calls;
+
+    // Ten minutes hidden: time passes, no ticks run at all.
+    clock.advance(600000);
+
+    // The catch-up tick on return.
+    poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 1);
+  });
+
+  test('a refresh that just happened is not repeated by the catch-up', async () => {
+    // The flip side: returning to a tab that was refreshed a moment ago must
+    // not fire a redundant round of git work just because the event arrived.
+    const { isTaskLive } = makeLiveness(false);
+    const { cache, fetchers, poller, clock } = makeCache({
+      isTaskLive, idleIntervalMs: 30000,
+    });
+    cache.setActiveTask('A'); await flush();
+    clock.advance(30000); poller.fireTick(); await flush();
+    const before = fetchers.diff.calls;
+
+    clock.advance(1000);
+    poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before);
+  });
+
+  test('with no liveness source the cadence is unchanged', async () => {
+    // The default is "always active", so any caller that does not inject a
+    // predicate keeps the original fixed 5s poll.
+    const { cache, fetchers, poller } = makeCache();
+    cache.setActiveTask('A'); await flush();
+    const before = fetchers.diff.calls;
+
+    poller.fireTick(); await flush();
+    poller.fireTick(); await flush();
+    expect(fetchers.diff.calls).toBe(before + 2);
   });
 });

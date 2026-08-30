@@ -24,7 +24,7 @@ const POLL_INTERVAL_MS = 15_000;
 // `mvn`, `docker`, `ls` — not the verbatim, path-specific line), so the
 // operator curates which programs auto-run (allowing `mvn` never
 // allows `docker`). A filter box narrows a long list.
-export default function ClaudePermissionsSettingsPanel() {
+export default function ClaudePermissionsSettingsPanel({ open = true }) {
   const [rows, setRows] = useState([]);
   const [filter, setFilter] = useState('');
 
@@ -39,7 +39,13 @@ export default function ClaudePermissionsSettingsPanel() {
     })));
   }, []);
 
-  usePolling(refresh, POLL_INTERVAL_MS, [], { enabled: true });
+  // Gated on the drawer being OPEN, not just mounted. SettingsDrawer never
+  // unmounts — ``open`` only drives a CSS transform — and the selected tab
+  // survives closing, so a literal ``true`` here kept this polling for the
+  // rest of the page's life whenever Permissions happened to be the last tab
+  // viewed. Nothing was on screen to show for it. (usePolling's visibility
+  // guard covers the hidden-window case; this covers the closed-drawer one.)
+  usePolling(refresh, POLL_INTERVAL_MS, [], { enabled: open });
 
   const visible = useMemo(() => filterPermissionRows(rows, filter), [rows, filter]);
 

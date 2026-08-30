@@ -232,6 +232,138 @@ class FilesEndpointTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class DiffRepoScopeTests(unittest.TestCase):
+    """``?repo=<id>`` scopes the diff to ONE clone.
+
+    The client had been sending this parameter all along and the handler
+    ignored it, so de-eliding a single file re-ran ``_compute_repo_diff`` for
+    EVERY repository in the task — each a fresh set of git subprocesses,
+    nothing cached — and shipped the lot for the client to pick one entry out
+    of with a ``.find``. On a multi-repo task that is the whole changeset
+    recomputed to open one file.
+    """
+
+    def setUp(self) -> None:
+        # ``_repository_cwd`` validates the directory exists, so the clones
+        # have to be real ones on disk.
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self._paths = {}
+        for repo_id in ('backend', 'client'):
+            (root / repo_id).mkdir()
+            self._paths[('PROJ-1', repo_id)] = str(root / repo_id)
+
+    def _app(self):
+        manager = _FakeManager(records=[_FakeRecord(task_id='PROJ-1')])
+        workspace = _FakeWorkspaceManager(
+            records=[_FakeWorkspaceRecord(
+                task_id='PROJ-1', repository_ids=['backend', 'client'],
+            )],
+            repo_paths=self._paths,
+        )
+        return create_app(session_manager=manager, workspace_manager=workspace)
+
+    def _computed(self, response):
+        return [d['repo_id'] for d in response.get_json()['diffs']]
+
+    def _patched(self, app, seen):
+        def _compute(repo_id, cwd, **kwargs):
+            seen.append(repo_id)
+            return {
+                'repo_id': repo_id, 'base': 'origin/master',
+                'head': 'PROJ-1', 'diff': f'diff for {repo_id}',
+            }
+        return patch('kato_webserver.app._compute_repo_diff', _compute)
+
+    def test_unscoped_still_returns_every_repo(self):
+        # The Changes tab's own poll sends no ``repo`` and must be unchanged.
+        seen = []
+        app = self._app()
+        with self._patched(app, seen):
+            response = app.test_client().get('/api/sessions/PROJ-1/diff')
+        self.assertEqual(self._computed(response), ['backend', 'client'])
+        self.assertEqual(seen, ['backend', 'client'])
+
+    def test_a_scoped_request_computes_ONLY_that_repo(self):
+        # The point of the fix: the other repo's git work never happens.
+        seen = []
+        app = self._app()
+        with self._patched(app, seen):
+            response = app.test_client().get(
+                '/api/sessions/PROJ-1/diff?full=src/x.py&repo=client',
+            )
+        self.assertEqual(self._computed(response), ['client'])
+        self.assertEqual(seen, ['client'])
+
+    def test_the_scoped_response_carries_that_repo_in_the_scalar_fields(self):
+        app = self._app()
+        with self._patched(app, []):
+            payload = app.test_client().get(
+                '/api/sessions/PROJ-1/diff?repo=client',
+            ).get_json()
+        self.assertEqual(payload['repo_id'], 'client')
+        self.assertEqual(payload['diff'], 'diff for client')
+
+    def test_an_unknown_repo_returns_EMPTY_not_everything(self):
+        # Silently widening a scoped request is how a filter becomes a no-op
+        # nobody notices — and it would answer "just this repo" with a
+        # different repo's diff.
+        seen = []
+        app = self._app()
+        with self._patched(app, seen):
+            payload = app.test_client().get(
+                '/api/sessions/PROJ-1/diff?repo=not-a-repo',
+            ).get_json()
+        self.assertEqual(payload['diffs'], [])
+        self.assertEqual(payload['diff'], '')
+        self.assertEqual(seen, [])
+
+    def test_a_LEGACY_task_still_serves_a_scoped_request(self):
+        """A task with no enumerated repos must still answer ``?repo``.
+
+        The client synthesizes a repo id for the legacy payload — it carries
+        ``repo_id: ''`` plus a real cwd, and diffModel falls back to the cwd's
+        basename — then sends it back on ``?repo`` when de-eliding a file.
+        Bailing on that answered empty, so "load full diff" on an oversized
+        file reported the file missing. It is the only way to read that diff;
+        the editor pane shows current contents, not the change.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='PROJ-1', cwd=tmp),
+            ])
+            app = create_app(session_manager=manager)
+            with patch(
+                'kato_webserver.app._compute_repo_diff',
+                lambda repo_id, cwd, **kw: {
+                    'repo_id': repo_id, 'base': 'origin/master',
+                    'head': 'PROJ-1', 'diff': 'diff --git a/x b/x',
+                },
+            ):
+                payload = app.test_client().get(
+                    f'/api/sessions/PROJ-1/diff?full=x&repo={Path(tmp).name}',
+                ).get_json()
+        self.assertEqual(payload['diff'], 'diff --git a/x b/x')
+
+    def test_an_unknown_repo_does_not_fall_back_to_the_record_cwd(self):
+        # The legacy single-repo path keys off the session record, which is a
+        # DIFFERENT clone — falling through to it would be the same silent
+        # widening by another route.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            manager = _FakeManager(records=[
+                _FakeRecord(task_id='PROJ-1', cwd=tmp),
+            ])
+            app = create_app(session_manager=manager)
+            payload = app.test_client().get(
+                '/api/sessions/PROJ-1/diff?repo=nope',
+            ).get_json()
+        self.assertEqual(payload['diffs'], [])
+        self.assertEqual(payload['diff'], '')
+
+
 class DiffEndpointTests(unittest.TestCase):
     def test_returns_empty_diff_when_no_workspace_and_no_record_cwd(self):
         manager = _FakeManager(records=[_FakeRecord(task_id='PROJ-1')])
@@ -1197,40 +1329,6 @@ class StatusEventsEndpointTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# /api/status/recent — not in original list but lives next to /events
-# ---------------------------------------------------------------------------
-
-
-class StatusRecentEndpointTests(unittest.TestCase):
-    def test_returns_empty_entries_when_no_broadcaster(self):
-        app = create_app(session_manager=_FakeManager())
-        response = app.test_client().get('/api/status/recent')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {
-            'entries': [], 'latest_sequence': 0,
-        })
-
-    def test_returns_recent_when_broadcaster_wired(self):
-        entry = SimpleNamespace(
-            sequence=4,
-            to_dict=lambda: {'sequence': 4, 'message': 'tick'},
-        )
-        broadcaster = SimpleNamespace(
-            recent=lambda: [entry],
-            latest_sequence=lambda: 4,
-        )
-        app = create_app(
-            session_manager=_FakeManager(),
-            status_broadcaster=broadcaster,
-        )
-        response = app.test_client().get('/api/status/recent')
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json()
-        self.assertEqual(payload['latest_sequence'], 4)
-        self.assertEqual(payload['entries'][0]['message'], 'tick')
-
-
-# ---------------------------------------------------------------------------
 # /api/sessions/<task_id>/publish-state — used by Push button state
 # ---------------------------------------------------------------------------
 
@@ -1406,91 +1504,6 @@ class EffortRoutesTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('turbo', response.get_json()['error'])
-
-
-class PlanModeRoutesTests(unittest.TestCase):
-    """Per-task plan-mode lock: get/set the boolean + respawn helper."""
-
-    def setUp(self):
-        # Isolate the persistent plan-mode store so POSTs never touch the
-        # real ``~/.kato/plan_mode.json`` (plan mode now persists to disk).
-        self._td = tempfile.TemporaryDirectory()
-        self.addCleanup(self._td.cleanup)
-        patcher = patch.dict(
-            os.environ,
-            {'KATO_PLAN_MODE_PATH': str(Path(self._td.name) / 'plan_mode.json')},
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-    def _client(self):
-        return create_app(session_manager=_FakeManager()).test_client()
-
-    def test_defaults_off(self):
-        self.assertFalse(
-            self._client().get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
-        )
-
-    def test_set_and_clear_plan_mode(self):
-        client = self._client()
-        on = client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
-        self.assertEqual(on.status_code, 200)
-        self.assertTrue(on.get_json()['plan_mode'])
-        self.assertTrue(
-            client.get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
-        )
-        off = client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': False})
-        self.assertFalse(off.get_json()['plan_mode'])
-        self.assertFalse(
-            client.get('/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
-        )
-
-    def test_stores_literal_plan_value(self):
-        # The override stored for the spawn path is the raw CLI value, not
-        # the boolean — so it can flow straight into ``--permission-mode``.
-        app = create_app(session_manager=_FakeManager())
-        app.test_client().post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
-        self.assertEqual(app.config['TASK_PLAN_MODE_OVERRIDES']['T-1'], 'plan')
-
-    def test_set_returns_503_when_store_unwired(self):
-        app = create_app(session_manager=_FakeManager())
-        app.config['TASK_PLAN_MODE_OVERRIDES'] = None
-        response = app.test_client().post(
-            '/api/sessions/T-1/plan-mode', json={'plan_mode': True},
-        )
-        self.assertEqual(response.status_code, 503)
-
-    def test_plan_mode_survives_restart(self):
-        # Turn it on, then build a FRESH app (simulating a restart): the
-        # boot path reloads the lock from disk so GET still reports on.
-        client = self._client()
-        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
-        restarted = create_app(session_manager=_FakeManager())
-        self.assertEqual(
-            restarted.config['TASK_PLAN_MODE_OVERRIDES'].get('T-1'), 'plan',
-        )
-        self.assertTrue(
-            restarted.test_client().get(
-                '/api/sessions/T-1/plan-mode').get_json()['plan_mode'],
-        )
-
-    def test_cleared_plan_mode_does_not_return_after_restart(self):
-        client = self._client()
-        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': True})
-        client.post('/api/sessions/T-1/plan-mode', json={'plan_mode': False})
-        restarted = create_app(session_manager=_FakeManager())
-        self.assertNotIn('T-1', restarted.config['TASK_PLAN_MODE_OVERRIDES'])
-
-    def test_forget_clears_persisted_plan_lock(self):
-        workspace = _FakeWorkspaceManager()
-        app = create_app(session_manager=_FakeManager(), workspace_manager=workspace)
-        client = app.test_client()
-        client.post('/api/sessions/T-9/plan-mode', json={'plan_mode': True})
-        client.delete('/api/sessions/T-9/workspace')
-        # Gone from the live map AND from disk (no resurrection on restart).
-        self.assertNotIn('T-9', app.config['TASK_PLAN_MODE_OVERRIDES'])
-        restarted = create_app(session_manager=_FakeManager())
-        self.assertNotIn('T-9', restarted.config['TASK_PLAN_MODE_OVERRIDES'])
 
 
 class PlanFileRouteTests(unittest.TestCase):

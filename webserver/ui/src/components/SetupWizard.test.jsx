@@ -649,3 +649,32 @@ describe('humanizeFieldKey', () => {
     expect(humanizeFieldKey('REPOSITORY_ROOT_PATH', 'jira')).toBe('Repository root path');
   });
 });
+
+
+// The three load fetches have no data dependency on each other, and the
+// heaviest — /api/all-settings, which resolves ~121 fields through an
+// uncached per-key settings read — was last in a serial chain. First-run
+// load therefore cost the SUM of three round trips instead of the longest
+// one, on the screen where kato makes its first impression.
+describe('SetupWizard — the initial load is issued in parallel', () => {
+  test('all three requests are in flight before any of them resolves', async () => {
+    let releaseProviders;
+    fetchTaskProviders.mockReturnValue(
+      new Promise((resolve) => { releaseProviders = resolve; }),
+    );
+    fetchSettings.mockResolvedValue({ ok: true, body: {} });
+    fetchAllSettings.mockResolvedValue({ ok: true, body: { sections: [] } });
+
+    render(<SetupWizard />);
+
+    // The first request is deliberately left pending. Serially, that would
+    // block the other two from ever being issued.
+    await waitFor(() => {
+      expect(fetchSettings).toHaveBeenCalled();
+      expect(fetchAllSettings).toHaveBeenCalled();
+    });
+    expect(fetchTaskProviders).toHaveBeenCalled();
+
+    releaseProviders({ ok: true, body: { providers: {}, active: 'youtrack' } });
+  });
+});

@@ -156,3 +156,40 @@ describe('ClaudePermissionsSettingsPanel', () => {
     expect(screen.queryByText('Edit')).toBeNull();
   });
 });
+
+
+// SettingsDrawer never unmounts — ``open`` only drives a CSS transform — and
+// the selected tab survives closing. So a panel that polls unconditionally
+// keeps polling for the rest of the page's life whenever it happened to be
+// the last tab viewed, with nothing on screen to show for it.
+describe('ClaudePermissionsSettingsPanel — polls only while the drawer is open', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  test('a closed drawer issues no request at all', async () => {
+    render(<ClaudePermissionsSettingsPanel open={false} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchToolDecisions).not.toHaveBeenCalled();
+  });
+
+  test('an open drawer reads immediately', async () => {
+    render(<ClaudePermissionsSettingsPanel open />);
+    await waitFor(() => expect(fetchToolDecisions).toHaveBeenCalled());
+  });
+
+  test('mounted with no prop still reads', async () => {
+    // The default keeps the component usable on its own; the drawer is what
+    // supplies the real answer.
+    render(<ClaudePermissionsSettingsPanel />);
+    await waitFor(() => expect(fetchToolDecisions).toHaveBeenCalled());
+  });
+
+  test('closing the drawer stops the polling', async () => {
+    const { rerender } = render(<ClaudePermissionsSettingsPanel open />);
+    await waitFor(() => expect(fetchToolDecisions).toHaveBeenCalled());
+
+    rerender(<ClaudePermissionsSettingsPanel open={false} />);
+    fetchToolDecisions.mockClear();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchToolDecisions).not.toHaveBeenCalled();
+  });
+});

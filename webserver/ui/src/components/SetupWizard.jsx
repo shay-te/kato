@@ -4,9 +4,12 @@ import {
   updateTaskProvider,
   fetchSettings,
   updateSettings,
-  fetchAllSettings,
   updateAllSettings,
 } from '../api.js';
+import {
+  invalidateAllSettings,
+  loadAllSettings,
+} from '../stores/allSettingsStore.js';
 import { isSecretKey } from '../utils/providerFields.js';
 import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
 import { credentialGuideFor } from '../utils/credentialGuides.js';
@@ -152,7 +155,16 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const providersResult = await fetchTaskProviders();
+      // Issued together, not in sequence. None of the three depends on
+      // another's result, and the heaviest — /api/all-settings, which
+      // resolves ~121 fields through an uncached per-key settings read — was
+      // last in the chain, so first-run load cost the SUM of three round
+      // trips. The Flask server runs threaded, so this genuinely overlaps.
+      const [providersResult, settingsResult, allResult] = await Promise.all([
+        fetchTaskProviders(),
+        fetchSettings(),
+        loadAllSettings(),
+      ]);
       if (cancelled) { return; }
       if (providersResult.ok) {
         setProviders(providersResult.body?.providers || {});
@@ -160,16 +172,13 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       } else {
         setLoadError('Could not load ticket-system options — check the server logs.');
       }
-      const settingsResult = await fetchSettings();
-      if (cancelled) { return; }
       if (settingsResult.ok) {
         setRepoRoot(String(settingsResult.body?.repository_root_path?.value || ''));
       }
       // Agent-backend values come from the schema-driven all-settings API
       // (same store the Settings drawer edits). Secrets are never seeded
       // into the draft — knowing THAT they're set is enough.
-      const allResult = await fetchAllSettings();
-      if (cancelled || !allResult?.ok) { return; }
+      if (!allResult?.ok) { return; }
       const values = {};
       for (const section of (allResult.body?.sections || [])) {
         for (const field of (section.fields || [])) {
@@ -375,6 +384,12 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
     }
     // NOTE: updateAllSettings wraps the map in {updates: …} itself.
     const ok = await runSave(() => updateAllSettings(updates));
+    // The Settings drawer and every schema panel read this payload through a
+    // shared cache. Writing without dropping it leaves them seeding from
+    // pre-save values for the rest of the page — reachable here because
+    // StepFinish offers "Open full settings", and a failed start sends the
+    // operator back to re-save.
+    if (ok) { invalidateAllSettings(); }
     if (!ok) { return; }
     toast.show({
       kind: 'success', title: 'AI agent saved', message: `${agent.label} selected.`,

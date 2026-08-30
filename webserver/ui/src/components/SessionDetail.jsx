@@ -29,7 +29,7 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionPlanMode, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionPlanMode, setSessionRemoteControl,
+import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionRemoteControl,
   refreshAgentBackends,
 } from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
@@ -261,25 +261,12 @@ export default function SessionDetail({
       defaultKey: 'default',
     },
   );
-  // Plan-mode lock — a per-task boolean (not a catalogue), so it doesn't
-  // fit useSessionOption's list shape. Fetch the current value when the
-  // bound task changes; reset to off with no task. Optimistically reflect
-  // the toggle, then persist it; takes effect on the next session spawn.
-  const [planMode, setPlanMode] = useState(false);
-  useEffect(() => {
-    if (!taskId) { setPlanMode(false); return; }
-    fetchSessionPlanMode(taskId)
-      .then((result) => setPlanMode(!!(result && result.plan_mode)))
-      .catch(() => {});
-  }, [taskId]);
-  const handlePlanModeChange = useCallback((on) => {
-    setPlanMode(on);
-    setSessionPlanMode(taskId, on);
-  }, [taskId]);
-
-  // The composer's Modes picker. Plan is one of the modes, so this and
-  // ``planMode`` describe the same server-side override — keep them in step
-  // so "View plan" still appears when Plan is chosen from the menu.
+  // Plan mode is NOT tracked separately here. It used to be: a ``planMode``
+  // boolean with its own fetch, its own setter, its own endpoint — and a line
+  // in handleAgentModeChange hand-syncing it against ``agentMode``, because
+  // the two described the same server-side override through two clients. The
+  // composer read only ``agentMode``, so the boolean was written and never
+  // read. ``agentMode === 'plan'`` is the whole of it.
   const contextUsage = useContextUsage(taskId, stream.turnInFlight);
 
   const [agentMode, setAgentMode] = useState('');
@@ -357,7 +344,6 @@ export default function SessionDetail({
   const handleAgentModeChange = useCallback((mode) => {
     const next = String(mode ?? '');
     setAgentMode(next);
-    setPlanMode(next === 'plan');
     setSessionAgentMode(taskId, next);
   }, [taskId]);
   useEffect(() => {
@@ -833,8 +819,6 @@ export default function SessionDetail({
           selectedEffort={selectedEffort}
           effortDefault={effortDefault}
           onEffortChange={handleEffortChange}
-          planMode={planMode}
-          onPlanModeChange={handlePlanModeChange}
           agentMode={agentMode}
           onAgentModeChange={handleAgentModeChange}
           remoteControl={remoteControl}

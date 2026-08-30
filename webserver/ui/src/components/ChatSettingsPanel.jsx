@@ -15,6 +15,9 @@ import { useAgentVersion } from '../hooks/useAgentVersion.js';
 // while Claude is still working on the previous turn. Pure client-side
 // (localStorage) — the delivery transport is identical either way; only the
 // composer's default decision changes. See utils/composerSteerPref.js.
+// The only backend the server ever reports ``supports_workflows`` for.
+const WORKFLOW_CAPABLE_BACKEND = 'claude';
+
 export default function ChatSettingsPanel() {
   const [steer, setSteer] = useState(() => readSteerWhileWorking());
   useEffect(() => subscribeSteerWhileWorking(setSteer), []);
@@ -23,10 +26,22 @@ export default function ChatSettingsPanel() {
     () => readUltracodeByDefault(),
   );
   useEffect(() => subscribeUltracodeByDefault(setUltracodeByDefault), []);
-  // Same gate the composer chip uses: only offer this where the installed
-  // agent CLI actually runs multi-agent workflows, or the setting promises
-  // something the keyword cannot deliver.
-  const agentVersion = useAgentVersion();
+  // Gate on whether THIS HOST can run workflows at all — not on whichever
+  // task tab happens to be in front.
+  //
+  // The setting behind this toggle is host-global: one localStorage key, read
+  // by every Claude task's composer. So the question it depends on is global
+  // too. Keying it to the ACTIVE TASK's backend made a global control vanish
+  // from the Settings drawer whenever the operator was looking at a Codex
+  // task — they could not switch off an expensive default from where they
+  // were standing.
+  //
+  // Asking about ``claude`` specifically is the honest phrasing of "can this
+  // host run workflows": the server sets ``supports_workflows`` only for that
+  // backend (agent_version_utils.py), so it is the one CLI whose answer can
+  // ever be true. useAgentVersion caches per backend, so this is one probe
+  // shared with the composer's own gate rather than a second question.
+  const agentVersion = useAgentVersion(WORKFLOW_CAPABLE_BACKEND);
   const supportsWorkflows = !!(agentVersion && agentVersion.supports_workflows);
 
   return (

@@ -144,3 +144,42 @@ export function deriveAgentStatus(
     kind, label: meta.label, title: meta.title(name), dotClass, status: dotStatus,
   };
 }
+
+// Is this task's agent doing anything that could be CHANGING the workspace
+// right now? Derived here rather than at the call site so agent liveness keeps
+// having exactly one definition — the same reason deriveAgentStatus exists.
+//
+// Read by the task-cache poller to pick its cadence: a working agent rewrites
+// files between ticks, so the diff/tree/comments views must chase it; a quiet
+// one cannot, and polling it at the same rate spends ~150 git subprocesses a
+// minute per repo re-deriving a byte-identical answer.
+//
+// The axis that matters is NOT "is a subprocess alive" — it is "how fast would
+// this client find out if work started". Getting that backwards made the
+// backoff inert: ``STREAMING`` means the stream is OPEN (this module maps it
+// to the ``idle`` chip), which is where a new turn flips ``turnInFlight``
+// within one frame, and treating it as active meant a live-but-quiet session —
+// the state a task sits in for as long as the operator reads a diff — never
+// backed off at all.
+//
+//   STREAMING, no turn   quiet   — open stream, correction is immediate, and
+//                                  agent edits also arrive as tool events that
+//                                  trigger their own revalidate
+//   IDLE                 quiet   — no subprocess at all, and the stream
+//                                  reconnects on a backoff capped at 30s, so a
+//                                  subprocess appearing server-side is noticed
+//   CLOSED / MISSING     active  — no subprocess AND the retry effect
+//                                  early-returns for any lifecycle but IDLE,
+//                                  so this view can never correct itself
+//   unknown              active  — nothing published yet (first paint)
+//
+// Under-polling a busy task shows the operator stale code; over-polling a quiet
+// one costs only what we are trimming. Every uncertain case takes the second.
+export function isAgentActive(liveStatus) {
+  if (!liveStatus) { return true; }
+  // A turn in flight, or a background wait the turn scheduled (Monitor /
+  // Workflow / run_in_background) — both mean edits can still land.
+  if (liveStatus.turnInFlight || liveStatus.awaitingBackground) { return true; }
+  return liveStatus.lifecycle !== SESSION_LIFECYCLE.STREAMING
+    && liveStatus.lifecycle !== SESSION_LIFECYCLE.IDLE;
+}

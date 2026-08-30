@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { fetchAllSettings, updateAllSettings } from '../api.js';
+import { updateAllSettings } from '../api.js';
+import {
+  invalidateAllSettings,
+  loadAllSettings,
+} from '../stores/allSettingsStore.js';
 import { useRestartingSave } from './useRestartingSave.js';
 import { useSettingsResource } from './useSettingsResource.js';
 import { countNoun } from '../utils/pluralize.js';
@@ -24,7 +28,10 @@ export function useSchemaSectionDraft(sectionId, { onSaved, successMessage } = {
     setDraft(seed);
   }
 
-  const { loading, error, refresh } = useSettingsResource(fetchAllSettings, (body) => {
+  // Through the shared store, not a fetch of its own: this panel is mounted
+  // with ``key={sectionId}``, so every schema-tab click remounts it — and a
+  // direct fetch meant re-reading all ~121 settings for one section's fields.
+  const { loading, error, refresh } = useSettingsResource(loadAllSettings, (body) => {
     const sections = Array.isArray(body.sections) ? body.sections : [];
     setMeta({ sections, settingsFilePath: String(body.settings_file_path || '') });
     const section = sections.find((s) => s.id === sectionId);
@@ -53,6 +60,11 @@ export function useSchemaSectionDraft(sectionId, { onSaved, successMessage } = {
   const saveOpts = {
     onSaved: (result) => {
       setRestartRequired(result?.body?.restart_required !== false);
+      // Drop the shared payload BEFORE re-reading, or refresh() would replay
+      // the cached pre-save answer. This is also what un-stales the drawer's
+      // search index, which never remounts and would otherwise keep serving
+      // pre-save values until a full page reload.
+      invalidateAllSettings();
       refresh();
       if (onSaved) { onSaved(result); }
     },

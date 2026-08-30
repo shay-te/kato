@@ -50,4 +50,56 @@ describe('createPoller', () => {
     expect(tick).toHaveBeenCalledTimes(1); // resumes without a restart
     poller.stop();
   });
+
+  test('returning to the tab ticks immediately, without waiting out the interval', () => {
+    // Going quiet while hidden is only half the deal. Without this, a poller
+    // that skipped ticks for ten minutes also leaves the view stale for a
+    // full interval at the moment someone looks at it — and for the task
+    // cache that means the operator reading the wrong file contents.
+    const tick = vi.fn();
+    const poller = createPoller(tick, 5000);
+    poller.start();
+
+    vi.advanceTimersByTime(20000);
+    expect(tick).toHaveBeenCalledTimes(4);
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(tick).toHaveBeenCalledTimes(5); // no timer advance needed
+    poller.stop();
+  });
+
+  test('a visibilitychange while still hidden does not tick', () => {
+    const tick = vi.fn();
+    const poller = createPoller(tick, 1000);
+    poller.start();
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(tick).not.toHaveBeenCalled();
+
+    delete document.hidden;
+    poller.stop();
+  });
+
+  test('a stopped poller does not tick on visibilitychange', () => {
+    // A leaked listener keeps firing requests for a poller that is gone.
+    const tick = vi.fn();
+    const poller = createPoller(tick, 1000);
+    poller.start();
+    poller.stop();
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(tick).not.toHaveBeenCalled();
+  });
+
+  test('survives a document with no addEventListener', () => {
+    // The store tests swap document for a bare { hidden } object AFTER the
+    // poller is built; resolving the listener per call keeps stop() from
+    // throwing on it.
+    const tick = vi.fn();
+    const poller = createPoller(tick, 1000);
+    poller.start();
+    vi.stubGlobal('document', { hidden: false });
+    expect(() => poller.stop()).not.toThrow();
+  });
 });

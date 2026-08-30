@@ -11,6 +11,8 @@
 
 import { useEffect } from 'react';
 
+import { agentStatusStore } from '../agentStatusStore.js';
+import { isAgentActive } from '../../utils/agentStatus.js';
 import { createTaskCache } from './createTaskCache.js';
 import { diffChild } from './slices/diffChild.js';
 import { commentsChild } from './slices/commentsChild.js';
@@ -20,6 +22,13 @@ import { pullRequestChild } from './slices/pullRequestChild.js';
 
 const RETAIN = 5;
 const POLL_INTERVAL_MS = 5000;
+// Cadence once the task's agent is asleep. Each polled tick costs ~13 git
+// subprocesses PER REPO on the server (``/files`` walks the tree, resolves the
+// diff base and scans for conflicts; ``/diff`` checks out the branch, resolves
+// the base, reads the remote and diffs) — about 150 a minute per repo, almost
+// all of it re-deriving a byte-identical answer the store then discards on an
+// unchanged signature. A sleeping agent cannot be the thing that changed them.
+const IDLE_POLL_INTERVAL_MS = 30000;
 
 // PRIVATE children — one single-concern store per data type.
 const children = {
@@ -41,6 +50,14 @@ const cache = createTaskCache({
   retain: RETAIN,
   polledTypes: POLLED_TYPES,
   intervalMs: POLL_INTERVAL_MS,
+  idleIntervalMs: IDLE_POLL_INTERVAL_MS,
+  // Liveness comes from the SAME place every other agent-status surface reads
+  // it — the active task's SessionDetail publishes its live SSE state to
+  // agentStatusStore, and utils/agentStatus.js owns the derivation. Re-deriving
+  // "is it working" from the polled session fields here would be a second
+  // definition of agent liveness, which is the bug that store exists to
+  // prevent.
+  isTaskLive: (taskId) => isAgentActive(agentStatusStore.getStatus(taskId)),
 });
 
 export const {

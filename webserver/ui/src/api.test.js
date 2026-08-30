@@ -7,6 +7,7 @@ import {
   fetchClaudeSessions,
   fetchTaskPublishState,
   fetchTaskPullRequestState,
+  fetchSessionContextUsage,
   postChatMessage,
 } from './api.js';
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
@@ -263,4 +264,46 @@ test('postChatMessage refuses without a task id', async function () {
   const result = await postChatMessage('', 'hi', []);
   assert.equal(result.ok, false);
   assert.equal(calls.length, 0);
+});
+
+
+// The composer's context meter used to read its four numbers off
+// GET /api/sessions/<id> and discard the rest of the payload — including
+// ``recent_events``, which is the WHOLE session transcript rather than a
+// bounded tail, with each event's full CLI stream-json ``raw``. It refreshes
+// at every turn boundary, so the cost grew with the conversation and peaked
+// exactly when the operator was waiting on the next turn.
+
+test('fetchSessionContextUsage hits the dedicated route, not the session record', async () => {
+  const calls = _stubFetch({
+    ok: true,
+    json: () => Promise.resolve({
+      used_tokens: 10, limit_tokens: 100, model: 'opus', baseline_tokens: 2,
+    }),
+  });
+
+  const usage = await fetchSessionContextUsage('T1');
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/sessions/T1/context-usage');
+  assert.equal(usage.used_tokens, 10);
+});
+
+test('fetchSessionContextUsage encodes the task id', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchSessionContextUsage('PROJ/1 2');
+  assert.equal(calls[0].url, '/api/sessions/PROJ%2F1%202/context-usage');
+});
+
+test('fetchSessionContextUsage makes no request without a task', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  assert.equal(await fetchSessionContextUsage(''), null);
+  assert.equal(calls.length, 0);
+});
+
+test('fetchSessionContextUsage REJECTS on a failed request', async () => {
+  // Unchanged contract: useContextUsage catches and keeps the previous
+  // reading, because a dropped request is not evidence the window emptied.
+  _stubFetch({ ok: false, status: 404, statusText: 'Not Found', json: () => Promise.resolve({}) });
+  await assert.rejects(() => fetchSessionContextUsage('T1'));
 });

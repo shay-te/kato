@@ -46,18 +46,11 @@ vi.mock('./EventLog.jsx', () => ({
 // / its absence, so the extra button is harmless.
 vi.mock('./MessageForm.jsx', () => ({
   default: ({
-    onSubmit, planMode, onPlanModeChange, remoteControl, onRemoteControlChange,
+    onSubmit, remoteControl, onRemoteControlChange,
   }) => (
     <form id="message-form">
       <button type="button" onClick={() => onSubmit('hello', [])}>
         mock-send
-      </button>
-      <button
-        type="button"
-        aria-pressed={planMode ? 'true' : 'false'}
-        onClick={() => onPlanModeChange && onPlanModeChange(!planMode)}
-      >
-        mock-plan-toggle
       </button>
       <button
         type="button"
@@ -92,14 +85,12 @@ vi.mock('../api.js', () => ({
   fetchEffortLevels: vi.fn().mockResolvedValue({ levels: [], default: '' }),
   fetchSessionEffort: vi.fn().mockResolvedValue({ effort: '' }),
   setSessionEffort: vi.fn().mockResolvedValue({}),
-  fetchSessionPlanMode: vi.fn().mockResolvedValue({ plan_mode: false }),
   // The composer's Modes picker and context meter both read on mount.
   fetchSessionAgentMode: vi.fn().mockResolvedValue({ mode: '' }),
   setSessionAgentMode: vi.fn().mockResolvedValue({ ok: true }),
   fetchSessionContextUsage: vi.fn().mockResolvedValue(
     { used_tokens: 0, limit_tokens: 0, model: '' },
   ),
-  setSessionPlanMode: vi.fn().mockResolvedValue({}),
   // The composer's Remote Control toggle reads this on mount.
   fetchSessionRemoteControl: vi.fn().mockResolvedValue(
     { supported: true, enabled: false, live: false, session_url: '' },
@@ -125,7 +116,7 @@ import SessionDetail, {
   lifecycleBanner,
 } from './SessionDetail.jsx';
 import { SESSION_LIFECYCLE, useSessionStream } from '../hooks/useSessionStream.js';
-import { postChatMessage, fetchSessionPlanMode, setSessionPlanMode, fetchSessionRemoteControl, setSessionRemoteControl } from '../api.js';
+import { postChatMessage, fetchSessionRemoteControl, setSessionRemoteControl } from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
@@ -931,40 +922,6 @@ describe('SessionDetail — task header is hoisted to the global slot', () => {
     render(<SessionDetail session={null} />);
     expect(screen.getByTestId('session-header-placeholder'))
       .toBeInTheDocument();
-  });
-});
-
-
-describe('SessionDetail — plan-mode lock wiring', () => {
-  beforeEach(() => {
-    fetchSessionPlanMode.mockClear();
-    setSessionPlanMode.mockClear();
-    fetchSessionPlanMode.mockResolvedValue({ plan_mode: false });
-    useSessionStream.mockReturnValue({
-      events: [], lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false,
-      pendingPermission: null, lastEventAt: 0, appendLocalEvent: vi.fn(),
-      markTurnBusy: vi.fn(), reconnect: vi.fn(), resetChat: vi.fn(),
-      dismissPermission: vi.fn(),
-    });
-  });
-
-  test('hydrates the current plan-mode value for the bound task on mount', async () => {
-    fetchSessionPlanMode.mockResolvedValue({ plan_mode: true });
-    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
-    await waitFor(() => expect(fetchSessionPlanMode).toHaveBeenCalledWith('T1'));
-    await waitFor(() => expect(
-      screen.getByRole('button', { name: 'mock-plan-toggle' }),
-    ).toHaveAttribute('aria-pressed', 'true'));
-  });
-
-  test('toggling persists the new value to the backend', async () => {
-    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
-    const toggle = screen.getByRole('button', { name: 'mock-plan-toggle' });
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'));
-    fireEvent.click(toggle);
-    expect(setSessionPlanMode).toHaveBeenCalledWith('T1', true);
-    // Optimistic local reflection — no reload needed.
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'));
   });
 });
 

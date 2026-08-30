@@ -17,7 +17,21 @@ export function createTaskCache({
   retain = 5,
   polledTypes,
   intervalMs = 5000,
+  // Cadence for a task whose agent is asleep. The poll cannot simply STOP
+  // when idle: diff/tree/comments also change from outside the agent — the
+  // operator's own terminal in the workspace, and server-side comment
+  // ingestion — and neither routes through ``bumpWorkspaceVersion``, the
+  // event-driven revalidate that covers agent edits. So it backs off instead.
+  idleIntervalMs = 30000,
+  // ``(taskId) => boolean`` — is the agent doing anything that could change
+  // the workspace? Injected like ``children`` and ``createPoller`` so the
+  // orchestrator stays testable without the status store. Defaults to "always
+  // active", i.e. the original fixed cadence.
+  isTaskLive = () => true,
   createPoller = defaultCreatePoller,
+  // Injectable clock. The idle gate measures WALL time, not ticks — see
+  // ensurePoller — so the tests need to drive it.
+  now = () => Date.now(),
 }) {
   const childList = Object.values(children);
   const polled = polledTypes && polledTypes.length ? polledTypes : Object.keys(children);
@@ -69,11 +83,35 @@ export function createTaskCache({
     }
   }
 
+  // Ticks stay on ``intervalMs`` and the IDLE ones are dropped, rather than
+  // restarting the poller at a second interval. A tick that decides to do
+  // nothing costs a closure call; a stop/start dance on every liveness flip
+  // would add a state machine to the one place that must not get complicated,
+  // and the poller's own visibility skip already assumes a fixed cadence.
   function ensurePoller() {
     if (poller) { return; }
+    // WALL time since the last refresh, not a count of ticks.
+    //
+    // Counting ticks looks equivalent and is not: ``createPoller`` SKIPS the
+    // tick entirely while the tab is hidden, so a tick counter stops
+    // advancing exactly when the most time is passing. After ten minutes in
+    // the background the counter still read zero, and the operator came back
+    // to ten-minute-old file and diff content — then waited a further 30
+    // seconds for it. Before the backoff that wait was 5 seconds, so the
+    // counter turned a saving into a regression on the one path where stale
+    // means "you are reading the wrong code".
+    //
+    // Against the clock, a hidden stretch counts in full, so the catch-up
+    // tick ``createPoller`` fires on return refreshes immediately.
+    let lastPolledAt = 0;
     poller = createPoller(() => {
       const id = parent.getState().activeTaskId;
-      if (id) { revalidate(id, polled); }
+      if (!id) { return; }
+      const at = now();
+      if (isTaskLive(id) || at - lastPolledAt >= idleIntervalMs) {
+        lastPolledAt = at;
+        revalidate(id, polled);
+      }
     }, intervalMs);
     poller.start();
   }

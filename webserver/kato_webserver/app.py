@@ -38,7 +38,6 @@ Endpoints:
     POST /api/sessions/<task_id>/comments/<id>/edit     — edit queued local comment body / kato_status
     POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
     GET  /api/claude/sessions                           — list adoptable Claude Code sessions
-    GET  /api/status/recent                             — recent kato-process log entries
     GET  /api/status/events                             — SSE: live kato-process log feed
 """
 
@@ -928,6 +927,43 @@ def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> b
 # does not actually hold in this app.
 _CSRF_EXEMPT_HTTP_METHODS = frozenset({'OPTIONS'})
 
+#: ``Sec-Fetch-Site`` values that may reach the app. ``same-origin`` is the UI
+#: itself; ``none`` is a user-initiated navigation (typed URL, bookmark) — the
+#: same case the missing-header bail already lets through. ``same-site`` is
+#: deliberately absent: the Origin compare is per-netloc, so another port on
+#: the same host is cross-origin to it, and this must not be the looser rule.
+_CSRF_ALLOWED_FETCH_SITES = frozenset({'same-origin', 'none'})
+
+
+def _is_page_navigation(req) -> bool:
+    """A TOP-LEVEL navigation to a page — not an API call.
+
+    Carved out of the fetch-metadata check for two reasons, one of them
+    load-bearing for the desktop app.
+
+    The Tauri shell points its webview at ``http://localhost:<port>/?_=<nonce>``
+    via ``WebviewUrl::External`` (desktop/src-tauri/src/main.rs). That is an
+    embedder-initiated navigation, and the platform webviews (WKWebView on
+    macOS, WebView2 on Windows) are not obliged to label it ``none`` the way a
+    typed URL in a browser is. If one of them reports ``cross-site``, a strict
+    check would answer the desktop app's very first request with a 403 and the
+    operator would see an error page instead of kato.
+
+    It is also not a CSRF vector. A top-level navigation loads a DOCUMENT the
+    initiating page cannot read — no response body crosses back to it. The
+    vector this guard exists to stop is the SUBRESOURCE one (``<img>``,
+    ``fetch``), which is never ``Sec-Fetch-Mode: navigate``.
+
+    ``/api/*`` is deliberately excluded from the carve-out: those routes have
+    real side effects (permission auto-resolve, comment dispatch, merge
+    commits), and while a navigation to one is noisy — it opens a visible
+    window — there is no reason to permit it.
+    """
+    return (
+        req.headers.get('Sec-Fetch-Mode') == 'navigate'
+        and not req.path.startswith('/api/')
+    )
+
 
 def _register_csrf_guard(app: Flask) -> None:
     """Reject cross-origin requests — including GET.
@@ -956,7 +992,14 @@ def _register_csrf_guard(app: Flask) -> None:
     more than ``<img src="http://127.0.0.1:5050/api/sessions">`` on
     any page the operator's browser visits, no JavaScript required.
     Browsers DO send ``Referer`` on a cross-origin ``<img>`` request
-    even though they skip ``Origin`` for it, so this still catches it.
+    even though they skip ``Origin`` for it — but ONLY under the default
+    referrer policy, which the requesting page chooses. That made the
+    Origin/Referer pair alone insufficient for GET: ``referrerpolicy=
+    "no-referrer"`` on the image (or a document-wide ``<meta name=
+    "referrer">``) suppresses both headers and lands on the
+    no-header bail. ``Sec-Fetch-Site`` is checked first for exactly that
+    reason — the browser sets it, the page cannot suppress it, and
+    non-browser callers omit it so the bail still covers them.
 
     Comparison is allowlist-style (reject unless it resolves to OUR
     host), not blocklist-style (reject only a resolvable mismatch).
@@ -973,6 +1016,42 @@ def _register_csrf_guard(app: Flask) -> None:
     def _reject_cross_origin_request():
         if request.method in _CSRF_EXEMPT_HTTP_METHODS:
             return None
+        # Fetch metadata FIRST, because the Origin/Referer pair below can be
+        # switched off by the very page this guard exists to stop.
+        #
+        # The docstring's justification for covering GET — "browsers DO send
+        # Referer on a cross-origin <img>" — holds only under the DEFAULT
+        # referrer policy, and the requesting page picks the policy. All three
+        # of these reach the ``if not origin: return None`` bail below with
+        # neither header, and were allowed:
+        #
+        #     <img src="http://127.0.0.1:5050/api/sessions" referrerpolicy="no-referrer">
+        #     <meta name="referrer" content="no-referrer">  (document-wide)
+        #     fetch(url, {mode: 'no-cors', referrerPolicy: 'no-referrer'})
+        #
+        # ``Sec-Fetch-Site`` is a forbidden header name: the browser sets it,
+        # page script cannot forge or clear it, and referrer policy has no
+        # effect on it. Non-browser callers (curl, the /healthz probe,
+        # server-to-server) omit it entirely, so the deliberate
+        # no-ambient-context exemption below survives untouched.
+        #
+        # Only ``same-origin`` and ``none`` (direct navigation — typed URL or
+        # bookmark) are accepted, matching what the Origin compare already
+        # enforces: it compares ``netloc``, so a different PORT on the same
+        # host is cross-origin and rejected. Accepting ``same-site`` here
+        # would be looser than the check it backs up.
+        #
+        # Deliberately no ``Sec-Fetch-Dest`` rule: browsers send Dest and Site
+        # together, so for the attack this closes, Dest adds nothing Site has
+        # not already caught — and a Dest allowlist is one more thing to get
+        # wrong against a future request type.
+        fetch_site = request.headers.get('Sec-Fetch-Site', '')
+        if (
+            fetch_site
+            and fetch_site not in _CSRF_ALLOWED_FETCH_SITES
+            and not _is_page_navigation(request)
+        ):
+            return jsonify({'error': 'cross-origin request rejected'}), 403
         origin = request.headers.get('Origin') or request.headers.get('Referer') or ''
         if not origin:
             return None
@@ -1217,27 +1296,21 @@ def _register_http_routes(app: Flask) -> None:
         _set_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id, effort)
         return jsonify({'effort': effort})
 
-    @app.get('/api/sessions/<task_id>/plan-mode')
-    def get_session_plan_mode(task_id: str):
-        # ``on`` is the operator-facing boolean; the stored override is the
-        # literal CLI value ('plan' or '') so the spawn path can use it raw.
-        on = _get_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id) == PLAN_PERMISSION_MODE
-        return jsonify({'plan_mode': on})
-
-    @app.post('/api/sessions/<task_id>/plan-mode')
-    def set_session_plan_mode(task_id: str):
-        body = request.get_json(silent=True) or {}
-        on = bool(body.get('plan_mode'))
-        value = PLAN_PERMISSION_MODE if on else ''
-        if not _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, value):
-            return jsonify({'error': 'not available'}), 503
-        # Persist the lock so it survives a restart (the boot path reloads
-        # it into the override map). Best-effort — a write failure must not
-        # fail the toggle the operator just made in the live session.
-        from kato_core_lib.helpers.plan_mode_store import set_plan_mode
-        set_plan_mode(task_id, on)
-        stopped = _stop_live_session_on_tightening(app, task_id, value)
-        return jsonify({'plan_mode': on, 'session_stopped': stopped})
+    # NOTE: there is no ``/plan-mode`` route pair. It was the boolean ancestor
+    # of ``/agent-mode`` below, superseded when Plan became one entry in the
+    # composer's modes picker, and by then nothing called it: MessageForm took
+    # ``planMode``/``onPlanModeChange`` as props and referenced neither, so the
+    # GET fed state no one read and the POST was unreachable from any UI.
+    #
+    # Removed rather than left dormant because the POST was not inert. Both
+    # routes wrote the SAME override map and the same ``plan_mode.json`` record
+    # as ``/agent-mode``, but through a boolean — so ``{"plan_mode": false}``
+    # wrote '' over whatever was there, including a ``bypassPermissions`` lock,
+    # and then called ``_stop_live_session_on_tightening`` on the way out. A
+    # dead endpoint that can clear a safety lock and kill a live session is
+    # worse than one that merely wastes a request.
+    #
+    # Read "is this task plan-locked" as ``mode == 'plan'`` off ``/agent-mode``.
 
     @app.get('/api/sessions/<task_id>/agent-mode')
     def get_session_agent_mode(task_id: str):
@@ -1385,6 +1458,29 @@ def _register_http_routes(app: Flask) -> None:
             payload['recent_events'] = []
         payload['context_usage'] = _session_context_usage(app, session, record)
         return jsonify(payload)
+
+    @app.get('/api/sessions/<task_id>/context-usage')
+    def get_session_context_usage(task_id: str):
+        """Just the composer's context-window reading.
+
+        Exists because the meter used to read it off ``GET /api/sessions/<id>``
+        above and discard everything else — and "everything else" includes
+        ``recent_events``, which is not a bounded tail. ``_recent_events`` in
+        the streaming session is a plain list ("Memory grows linearly with
+        events... A bounded deque was a footgun"), and each event's ``raw`` is
+        the whole CLI stream-json object, tool inputs and outputs included.
+
+        The meter refreshes on mount, on task switch, and at every TURN
+        BOUNDARY — precisely when that log is longest — so the cost grew with
+        the conversation and peaked exactly when the operator was waiting on
+        the next turn. Four fields were paid for with the entire transcript.
+        """
+        manager = app.config['SESSION_MANAGER']
+        record = manager.get_record(task_id)
+        if record is None:
+            return jsonify({'error': 'session not found'}), 404
+        session = manager.get_session(task_id)
+        return jsonify(_session_context_usage(app, session, record))
 
     @app.get('/api/claude/sessions')
     def list_claude_sessions():
@@ -2389,8 +2485,30 @@ def _register_http_routes(app: Flask) -> None:
         # elision. Per-path on purpose: a blanket "send everything" would let a
         # 40-file changeset undo the protection the cap exists for.
         full_paths = tuple(request.args.getlist('full'))
+        # ``?repo=<id>`` scopes the response to ONE clone.
+        #
+        # The client has been sending it all along and the handler ignored it,
+        # so de-eliding a single file re-ran ``_compute_repo_diff`` for EVERY
+        # repository in the task — each one a fresh set of git subprocesses,
+        # nothing cached — and shipped the lot, for the client to pick one
+        # entry out of with a ``.find`` and discard the rest. On a multi-repo
+        # task that is the whole changeset recomputed to open one file.
+        #
+        # An unknown id yields an EMPTY result rather than falling back to
+        # every repo: silently widening a scoped request is how a filter
+        # becomes a no-op nobody notices.
+        wanted_repo = str(request.args.get('repo', '') or '').strip()
         workspace_status = _workspace_status(workspace_manager, task_id)
         repository_ids = _task_repository_ids(workspace_manager, task_id)
+        # Whether this task has ENUMERATED repos at all, recorded before the
+        # filter empties the list — the legacy single-repo path below keys off
+        # it, and a scoped miss must not be confused with "no repos".
+        has_enumerated_repos = bool(repository_ids)
+        if wanted_repo and repository_ids:
+            repository_ids = [
+                repo_id for repo_id in repository_ids
+                if str(repo_id) == wanted_repo
+            ]
         # Multi-repo task: compute one diff per clone so the UI can
         # render accordions side by side. Single-repo / legacy path:
         # fall back to the session record cwd, same shape as before.
@@ -2417,7 +2535,25 @@ def _register_http_routes(app: Flask) -> None:
                     'diff': first['diff'],
                 })
         cwd = _record_cwd_or_none(manager, task_id)
-        if cwd is None:
+        # Did a scoped request miss?
+        #
+        # A scope that misses must NOT fall through to the legacy whole-record
+        # path — answering "just this repo" with a different repo's diff is
+        # worse than answering nothing.
+        #
+        # But the legacy path has a repo identity of its own, even though the
+        # payload reports ``repo_id: ''``: the client synthesizes one from the
+        # cwd's basename (``diffModel.js``) and sends THAT back on ``?repo``
+        # when de-eliding a file. Treating every scoped request as a miss here
+        # broke the only way to read an oversized file's diff — the request
+        # answered empty and the pane reported the file missing. So compare
+        # against the same name the client derived, rather than either
+        # rejecting all of them or serving any of them.
+        legacy_repo_id = os.path.basename(str(cwd or '').rstrip('/\\'))
+        scoped_miss = bool(wanted_repo) and (
+            has_enumerated_repos or wanted_repo != legacy_repo_id
+        )
+        if cwd is None or scoped_miss:
             # Same rationale as the Files endpoint above: prefer an
             # empty diff payload over a 404 so the Changes tab shows
             # "No repositories for this task." instead of an error.
@@ -2891,7 +3027,21 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/sessions/<task_id>/comments')
     def list_task_comments(task_id: str):
-        """Every comment on the task workspace (optionally per-repo)."""
+        """Every comment on the task workspace (optionally per-repo).
+
+        ``?repo`` works — it reaches ``comment_store.list_for_repo``, which has
+        its own tests including case-insensitive matching — but NO client sends
+        it, and that is deliberate rather than an oversight. One unscoped fetch
+        feeds the file-tree badges, the diff-pane threads, the editor threads
+        and the chat tint (``stores/taskCache/slices/commentsChild.js``);
+        narrowing it would make four surfaces each ask for their own slice.
+        ``DiffPane.test.jsx`` pins the unscoped call.
+
+        Kept because it is a working, tested capability rather than rot — the
+        same call made for ``sync_remote_comments`` above. The dead half, a
+        ``repoId`` parameter on the client function that the one call site
+        never passed, is gone.
+        """
         agent_service = app.config.get('AGENT_SERVICE')
         if agent_service is None:
             return jsonify({'error': 'agent service not wired'}), 503
@@ -3026,7 +3176,21 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.post('/api/sessions/<task_id>/comments/sync')
     def sync_task_comments(task_id: str):
-        """Pull remote PR comments + ``git pull`` the workspace clone."""
+        """Pull remote PR comments + ``git pull`` the workspace clone.
+
+        BUILT BUT NOT WIRED. No client calls this: ``api.js`` has no
+        ``syncTaskComments`` export, and the Changes tab's sync icon calls
+        ``syncTaskRepositories`` — a different operation. An audit flagged the
+        pair as dead and proposed deleting it along with
+        ``task_comment_service.sync_remote_comments``.
+
+        Kept deliberately. The backing method is a working, ~15-test-covered
+        capability (it upserts PROVIDER comments into the same local store the
+        agent reads, which ``test_comment_prompt_framing_parity`` reasons about
+        as an invariant), so deleting it destroys built work rather than
+        removing rot. Whether to wire it to a control or drop it is a product
+        call, not a cleanup — flagged for the operator rather than decided here.
+        """
         sync, err = _resolve_agent_method(
             app, 'comments.sync_remote_comments',
             not_callable_message='comments not supported',
@@ -3334,15 +3498,11 @@ def _register_http_routes(app: Flask) -> None:
 
 def _register_status_routes(app: Flask) -> None:
 
-    @app.get('/api/status/recent')
-    def status_recent():
-        broadcaster = app.config.get('STATUS_BROADCASTER')
-        if broadcaster is None:
-            return jsonify({'entries': [], 'latest_sequence': 0})
-        return jsonify({
-            'entries': [entry.to_dict() for entry in broadcaster.recent()],
-            'latest_sequence': broadcaster.latest_sequence(),
-        })
+    # NOTE: no ``/api/status/recent``. It served ``broadcaster.recent()`` as a
+    # one-shot poll, which ``/api/status/events`` below already ships as the
+    # connect backlog before it starts streaming — and the SSE stream is what
+    # the UI actually opens (hooks/useStatusFeed.js). Nothing called the poll.
+    # It read as live because the module header above listed it.
 
     @app.get('/api/status/events')
     def status_events_stream():

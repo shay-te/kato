@@ -9,7 +9,10 @@ import RepositoriesSettingsPanel from './RepositoriesSettingsPanel.jsx';
 import RepositoryApprovalsSettingsPanel from './RepositoryApprovalsSettingsPanel.jsx';
 import SchemaSettingsPanel from './SchemaSettingsPanel.jsx';
 import TaskProviderSettingsPanel from './TaskProviderSettingsPanel.jsx';
-import { fetchAllSettings } from '../api.js';
+import {
+  loadAllSettings,
+  subscribeAllSettings,
+} from '../stores/allSettingsStore.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { cx } from '../utils/cx.js';
 import { buildSettingsIndex, filterSettingsIndex } from '../utils/settingsSearch.js';
@@ -63,18 +66,36 @@ export default function SettingsDrawer({
   const [query, setQuery] = useState('');
   const [highlightKey, setHighlightKey] = useState('');
 
+  // Read through the shared store, and re-read whenever a panel saves.
+  //
+  // The load is still latched (``schemaLoaded``) so opening the drawer does
+  // not refetch — but latched-and-never-unmounted was exactly the bug: this
+  // component's ``open`` prop only drives a CSS transform, so the drawer lives
+  // for the whole page. Its search index therefore served pre-save values
+  // until a full reload. Subscribing to the store's invalidation is what
+  // closes that; the cache is the cheap part.
   useEffect(() => {
-    if (!open || schemaLoaded) { return; }
+    if (!open) { return undefined; }
     let cancelled = false;
-    fetchAllSettings().then((result) => {
-      if (cancelled) { return; }
-      const sections = Array.isArray(result.body?.sections)
-        ? result.body.sections
-        : [];
-      setSchemaSections(sections);
-      setSchemaLoaded(true);
-    });
-    return () => { cancelled = true; };
+    const read = () => {
+      loadAllSettings().then((result) => {
+        // A FAILED read must leave the last good index alone. ``requestEnvelope``
+        // never rejects — a non-2xx resolves ``{ok:false, body:{error}}`` and a
+        // network throw resolves ``{ok:false}`` with no body at all — so the
+        // catch below is dead for the real failure modes, and taking the empty
+        // branch would blank every schema tab AND the search index. With the
+        // load latched and the drawer never unmounting, that state never
+        // recovered short of a page reload. Now reachable on every save, since
+        // the store notifies subscribers after each one.
+        if (cancelled || !result?.ok) { return; }
+        if (!Array.isArray(result.body?.sections)) { return; }
+        setSchemaSections(result.body.sections);
+        setSchemaLoaded(true);
+      }).catch(() => { /* keep the last good index */ });
+    };
+    if (!schemaLoaded) { read(); }
+    const unsubscribe = subscribeAllSettings(read);
+    return () => { cancelled = true; unsubscribe(); };
   }, [open, schemaLoaded]);
 
   // Exclude the Action Guard section from the generic schema tabs + search
@@ -108,7 +129,7 @@ export default function SettingsDrawer({
   } else if (tab === TAB_APPROVALS) {
     panel = <RepositoryApprovalsSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_PERMISSIONS) {
-    panel = <ClaudePermissionsSettingsPanel />;
+    panel = <ClaudePermissionsSettingsPanel open={open} />;
   } else if (tab === TAB_ACTION_GUARD) {
     panel = <ActionGuardSettingsPanel />;
   } else if (tab === TAB_PROMPTS) {

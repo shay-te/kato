@@ -96,8 +96,6 @@ const MessageForm = forwardRef(function MessageForm({
   selectedEffort = '',
   effortDefault = '',
   onEffortChange,
-  planMode = false,
-  onPlanModeChange,
   planAvailable = false,
   onOpenPlan,
   agentMode = '',

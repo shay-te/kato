@@ -20,11 +20,17 @@ import ChatSettingsPanel from './ChatSettingsPanel.jsx';
 // The installed agent CLI's capability gates the ultracode setting — offering
 // it against a CLI with no workflow support would promise something the
 // keyword cannot deliver. Default: supported.
-const { _agentVer } = vi.hoisted(
-  () => ({ _agentVer: { value: { supports_workflows: true } } }),
+const { _agentVer, _versionCalls } = vi.hoisted(
+  () => ({
+    _agentVer: { value: { supports_workflows: true } },
+    _versionCalls: { args: [] },
+  }),
 );
 vi.mock('../hooks/useAgentVersion.js', () => ({
-  useAgentVersion: () => _agentVer.value,
+  useAgentVersion: (backend) => {
+    _versionCalls.args.push(backend);
+    return _agentVer.value;
+  },
   resetAgentVersionCacheForTests: () => {},
 }));
 
@@ -102,6 +108,53 @@ describe('ChatSettingsPanel — ultracode default', () => {
 
   test('is hidden while the agent version is still unknown', () => {
     _agentVer.value = null;
+    render(<ChatSettingsPanel />);
+    expect(
+      screen.queryByRole('checkbox', { name: /ultracode for new tasks/i }),
+    ).toBeNull();
+  });
+});
+
+
+// The ultracode toggle is gated on whether THIS HOST can run workflows —
+// deliberately NOT on the task tab the operator happens to be looking at.
+//
+// The setting is host-global: one localStorage key, read by every Claude
+// task's composer. Two wrong gates preceded this one. A bare
+// ``useAgentVersion()`` asks about the CONFIGURED backend, so a
+// codex-configured host hid the toggle from a Claude user. Keying it to the
+// ACTIVE TASK's backend fixed that and broke the mirror case: a global control
+// vanished from Settings whenever a Codex task was in front, so the operator
+// could not switch off an expensive default from where they were standing.
+//
+// ``supports_workflows`` is only ever true for claude (the server sets it for
+// no other backend), so asking about claude IS asking "can this host run
+// workflows at all".
+describe('ChatSettingsPanel — the workflow gate is host-scoped', () => {
+  beforeEach(() => { _versionCalls.args.length = 0; });
+
+  test('asks about claude, whatever tab is in front', () => {
+    render(<ChatSettingsPanel />);
+    expect(_versionCalls.args).toEqual(['claude']);
+  });
+
+  test('never asks about the configured-backend key', () => {
+    // '' is "the configured backend" — the original bug, which answered a
+    // different question on a codex-configured host.
+    render(<ChatSettingsPanel />);
+    expect(_versionCalls.args).not.toContain('');
+  });
+
+  test('the toggle is offered when the host supports workflows', () => {
+    _agentVer.value = { supports_workflows: true };
+    render(<ChatSettingsPanel />);
+    expect(
+      screen.getByRole('checkbox', { name: /ultracode for new tasks/i }),
+    ).toBeInTheDocument();
+  });
+
+  test('and hidden when it does not', () => {
+    _agentVer.value = { supports_workflows: false };
     render(<ChatSettingsPanel />);
     expect(
       screen.queryByRole('checkbox', { name: /ultracode for new tasks/i }),

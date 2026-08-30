@@ -170,5 +170,202 @@ class CsrfGuardTests(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class FetchMetadataGuardTests(unittest.TestCase):
+    """``Sec-Fetch-Site`` — the half the Origin/Referer pair cannot cover.
+
+    The Origin/Referer check is defeated by the page it defends against: the
+    REQUESTING page picks the referrer policy, so ``referrerpolicy=
+    "no-referrer"`` on an ``<img>``, a document-wide ``<meta name="referrer">``,
+    or a ``no-cors`` fetch all arrive with neither header and hit the
+    deliberate "no ambient browser context" bail.
+
+    ``Sec-Fetch-Site`` is a forbidden header name — set by the browser, not
+    forgeable or clearable by script, and unaffected by referrer policy — so
+    it still tells the truth about those requests.
+    """
+
+    def setUp(self) -> None:
+        self.app = create_app(session_manager=_FakeManager())
+        self.client = self.app.test_client()
+
+    def test_cross_site_is_rejected_with_no_origin_and_no_referer(self) -> None:
+        # THE BUG. `<img src="http://127.0.0.1:5050/api/sessions"
+        # referrerpolicy="no-referrer">` on any page the operator visits.
+        # Before the fetch-metadata check this reached the handler, and
+        # GET /api/sessions can auto-resolve a live agent's pending
+        # tool-permission ask.
+        response = self.client.get(
+            '/api/sessions',
+            headers={'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Dest': 'image'},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_same_site_is_rejected_too(self) -> None:
+        # Another port on the same host is same-SITE but cross-ORIGIN, and the
+        # Origin compare (per-netloc) rejects it. This must not be looser than
+        # the check it backs up.
+        response = self.client.get(
+            '/api/sessions',
+            headers={'Sec-Fetch-Site': 'same-site'},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_same_origin_is_allowed(self) -> None:
+        # The UI's own fetch() calls.
+        response = self.client.get(
+            '/api/sessions',
+            headers={'Sec-Fetch-Site': 'same-origin'},
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_none_is_allowed(self) -> None:
+        # A user-initiated navigation — typed URL or bookmark.
+        response = self.client.get(
+            '/',
+            headers={'Sec-Fetch-Site': 'none', 'Sec-Fetch-Mode': 'navigate'},
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_a_client_that_sends_no_fetch_metadata_is_unaffected(self) -> None:
+        # curl, the /healthz probe, server-to-server. The deliberate
+        # no-ambient-context exemption must survive this change intact —
+        # that is what keeps kato scriptable from a local shell.
+        response = self.client.get('/api/sessions')
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_cross_site_is_rejected_on_post_too(self) -> None:
+        response = self.client.post(
+            '/api/scan',
+            json={},
+            headers={'Sec-Fetch-Site': 'cross-site'},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_options_stays_exempt(self) -> None:
+        # The preflight must not be answered with a 403, or the real request
+        # never happens.
+        response = self.client.open(
+            '/api/sessions',
+            method='OPTIONS',
+            headers={'Sec-Fetch-Site': 'cross-site'},
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_a_forged_same_origin_still_faces_the_origin_check(self) -> None:
+        # Belt and braces: the fetch-metadata check runs FIRST and does not
+        # replace the Origin compare. A non-browser client can send anything,
+        # so a hand-set 'same-origin' must not buy a pass past a mismatched
+        # Origin.
+        response = self.client.get(
+            '/api/sessions',
+            headers={
+                'Sec-Fetch-Site': 'same-origin',
+                'Origin': 'https://evil.example',
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_an_unknown_future_value_is_rejected(self) -> None:
+        # Allowlist, not blocklist — the same reasoning that made
+        # ``Origin: null`` a rejection rather than a silent pass.
+        response = self.client.get(
+            '/api/sessions',
+            headers={'Sec-Fetch-Site': 'some-future-value'},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_the_guarded_get_routes_are_actually_covered(self) -> None:
+        # The three GET routes with real side effects, named in the guard's
+        # own docstring. Each must 403 on the suppressed-header vector.
+        for path in (
+            '/api/sessions',
+            '/api/permissions/pending',
+            '/api/sessions/T1/files',
+            '/api/sessions/T1/diff',
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(
+                    path, headers={'Sec-Fetch-Site': 'cross-site'},
+                )
+                self.assertEqual(response.status_code, 403)
+
+class PageNavigationCarveOutTests(unittest.TestCase):
+    """A cross-site TOP-LEVEL navigation to a PAGE is allowed; to /api is not.
+
+    The Tauri shell points its webview at ``http://localhost:<port>/?_=<nonce>``
+    with ``WebviewUrl::External``. That is an embedder-initiated navigation and
+    the platform webviews are not obliged to label it ``none``; if one reports
+    ``cross-site``, a strict check answers the desktop app's first request with
+    a 403 and the operator sees an error page instead of kato.
+
+    Allowing it costs nothing: a navigation loads a document the initiating
+    page cannot read. The vector the guard exists to stop is the SUBRESOURCE
+    one, which is never ``Sec-Fetch-Mode: navigate``.
+    """
+
+    def setUp(self) -> None:
+        self.app = create_app(session_manager=_FakeManager())
+        self.client = self.app.test_client()
+
+    def test_a_cross_site_navigation_to_the_app_shell_is_allowed(self) -> None:
+        response = self.client.get(
+            '/',
+            headers={
+                'Sec-Fetch-Site': 'cross-site',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Dest': 'document',
+            },
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_the_desktop_shell_cache_busted_url_is_allowed(self) -> None:
+        # The exact shape main.rs navigates to.
+        response = self.client.get(
+            '/?_=abc123',
+            headers={'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'navigate'},
+        )
+        self.assertNotEqual(response.status_code, 403)
+
+    def test_a_navigation_to_an_api_route_is_STILL_rejected(self) -> None:
+        # /api/* has real side effects; a navigation to one is noisy but
+        # pointless to permit.
+        response = self.client.get(
+            '/api/sessions',
+            headers={
+                'Sec-Fetch-Site': 'cross-site',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Dest': 'document',
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_subresource_load_of_a_page_route_is_still_rejected(self) -> None:
+        # Same path, but fetched as an <img>/script rather than navigated to —
+        # the carve-out must key on the MODE, not the path alone.
+        response = self.client.get(
+            '/',
+            headers={
+                'Sec-Fetch-Site': 'cross-site',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Dest': 'image',
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_cross_origin_referer_on_a_navigation_still_wins(self) -> None:
+        # The carve-out only skips the FETCH-METADATA check. The Origin/Referer
+        # compare below it is untouched, and still rejects.
+        response = self.client.get(
+            '/',
+            headers={
+                'Sec-Fetch-Site': 'cross-site',
+                'Sec-Fetch-Mode': 'navigate',
+                'Referer': 'https://evil.example/',
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+
 if __name__ == '__main__':
     unittest.main()

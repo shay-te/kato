@@ -48,7 +48,7 @@ export default function SessionHeader({
 }) {
   const [resuming, setResuming] = useState(false);
   const [adoptModalOpen, setAdoptModalOpen] = useState(false);
-  const pushApproval = usePushApproval(session?.task_id || '');
+  const pushApproval = usePushApproval(session);
   const taskPublish = useTaskPublish(session?.task_id || '');
 
   // Manual scan trigger — fires the autonomous scan job NOW so the

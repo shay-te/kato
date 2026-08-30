@@ -324,11 +324,18 @@ export function updateTaskSource(taskId) {
 
 // Diff-tab review comments: list / create / resolve / reopen /
 // delete + sync from the source git platform.
-export function fetchTaskComments(taskId, repoId = '') {
+// Every comment on the task, deliberately UNSCOPED.
+//
+// One fetch feeds the file-tree badges, the diff-pane threads, the editor
+// threads and the chat tint, so narrowing it per-repo would mean four
+// surfaces each asking for their own slice. The route still accepts ``?repo``
+// (and the store still has ``list_for_repo`` behind it) — there is simply no
+// caller for it, and this signature used to carry a ``repoId`` parameter that
+// the one call site never passed.
+export function fetchTaskComments(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
-  const params = repoId ? `?repo=${encodeURIComponent(repoId)}` : '';
   return requestEnvelopeStrict(
-    `/api/sessions/${encodeURIComponent(taskId)}/comments${params}`,
+    `/api/sessions/${encodeURIComponent(taskId)}/comments`,
   );
 }
 
@@ -601,22 +608,11 @@ export function setSessionEffort(taskId, effort) {
   );
 }
 
-// Plan-mode lock: when on, the chat session spawns with Claude's
-// ``--permission-mode plan`` so the agent only plans and never edits.
-// Persisted per task server-side (survives reload / browser switch) and,
-// like model/effort, applied on the next session (re)spawn.
-export function fetchSessionPlanMode(taskId) {
-  if (!taskId) { return Promise.resolve({ plan_mode: false }); }
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/plan-mode`);
-}
-
-export function setSessionPlanMode(taskId, on) {
-  if (!taskId) { return { ok: false, error: 'no task id' }; }
-  return postEnvelope(
-    `/api/sessions/${encodeURIComponent(taskId)}/plan-mode`,
-    { plan_mode: !!on },
-  );
-}
+// Plan-mode had its own boolean pair here (fetchSessionPlanMode /
+// setSessionPlanMode) until Plan became one entry in the composer's modes
+// picker. Use ``fetchSessionAgentMode`` / ``setSessionAgentMode`` below and
+// compare against ``'plan'`` — one value, one endpoint, no second copy of the
+// same state to keep in step.
 
 // Context-window usage for a task's live session:
 // ``{ used_tokens, limit_tokens, model }``. Zeros mean "unknown" (no live
@@ -624,8 +620,16 @@ export function setSessionPlanMode(taskId, on) {
 // unknown rather than as 0% used.
 export function fetchSessionContextUsage(taskId) {
   if (!taskId) { return Promise.resolve(null); }
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}`)
-    .then((payload) => (payload && payload.context_usage) || null);
+  // A dedicated route, not ``/api/sessions/<id>`` with the rest thrown away.
+  // That record carries ``recent_events`` — the WHOLE session transcript, not
+  // a bounded tail — and this fires on mount, on task switch and at every turn
+  // boundary, so the meter's four numbers were costing the entire conversation
+  // exactly when it was longest.
+  // Rejects on a failed request, exactly as before — useContextUsage catches
+  // and keeps the previous reading, because a dropped request is not evidence
+  // the context window emptied.
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/context-usage`)
+    .then((payload) => payload || null);
 }
 
 // The task's agent MODE — the literal ``--permission-mode`` kato spawns the
@@ -755,10 +759,13 @@ export async function fetchBaseFileContent(
   throw new Error(body.error || `${response.status} ${response.statusText}`);
 }
 
-export function fetchDiff(taskId, { repoId = '' } = {}) {
-  const url = `/api/sessions/${encodeURIComponent(taskId)}/diff`;
-  const query = repoId ? `?repo_id=${encodeURIComponent(repoId)}` : '';
-  return fetchJson(`${url}${query}`);
+// The whole task's diff, one entry per repo. No scoping parameter: this is
+// the Changes tab's view and it is deliberately task-wide. (There used to be a
+// ``repoId`` option here that built ``?repo_id=`` — a name the server has
+// never read — from a call site that never passed it. The real per-repo scope
+// is ``?repo``, used by fetchFullFileDiff below.)
+export function fetchDiff(taskId) {
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/diff`);
 }
 
 export function fetchClaudeSessions(query = '') {
@@ -932,11 +939,12 @@ export async function fetchFullFileDiff(taskId, { repoId = '', path = '' } = {})
   const response = await fetch(`${url}?${query.toString()}`, { cache: 'no-store' });
   if (!response.ok) { throw new Error(`diff request failed (${response.status})`); }
   const payload = await response.json();
+  // The server scopes on ``?repo`` now, so the response holds the one repo we
+  // asked for. It used to ignore the parameter and return every repo's diff —
+  // recomputed from scratch — for this to pick one out of with a find() and
+  // throw the rest away.
   const diffs = Array.isArray(payload?.diffs) ? payload.diffs : [];
-  const match = repoId
-    ? diffs.find((d) => String(d?.repo_id || '') === String(repoId))
-    : diffs[0];
-  return String((match || payload || {}).diff || '');
+  return String((diffs[0] || payload || {}).diff || '');
 }
 
 // Discard uncommitted changes to ONE file in a task clone (Files-tree

@@ -17,6 +17,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import patch
 
 from kato_webserver.app import create_app
@@ -95,32 +97,136 @@ class AgentModeRouteTests(unittest.TestCase):
         self.assertEqual(
             client.get('/api/sessions/T9/agent-mode').get_json()['mode'], 'plan',
         )
-        self.assertTrue(client.get('/api/sessions/T9/plan-mode').get_json()['plan_mode'])
 
-    def test_plan_chosen_from_the_modes_menu_shows_as_plan_mode(self) -> None:
-        # Both surfaces describe the same override; they must not disagree.
+    def test_plan_is_just_one_of_the_modes(self) -> None:
+        # There is no second surface to disagree with any more: the boolean
+        # ``/plan-mode`` pair that used to describe this same override is gone.
+        # "Is this task plan-locked" is ``mode == 'plan'``.
         self._set('plan')
-        self.assertTrue(self.client.get('/api/sessions/T1/plan-mode').get_json()['plan_mode'])
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/agent-mode').get_json()['mode'], 'plan',
+        )
         self._set('')
-        self.assertFalse(self.client.get('/api/sessions/T1/plan-mode').get_json()['plan_mode'])
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/agent-mode').get_json()['mode'], '',
+        )
+
+    def test_the_plan_mode_route_pair_is_gone(self) -> None:
+        # It was unreachable from any UI, and its POST wrote '' over whatever
+        # mode was stored — including a bypassPermissions lock — then stopped
+        # the live session. Deleted, not deprecated.
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/plan-mode').status_code, 404,
+        )
+        self.assertEqual(
+            self.client.post(
+                '/api/sessions/T1/plan-mode', json={'plan_mode': False},
+            ).status_code, 404,
+        )
+
+    def test_forget_clears_the_persisted_plan_lock(self) -> None:
+        """Deleting a task must not leave it plan-locked for its next life.
+
+        This guard went out with the /plan-mode route tests. The production
+        code was untouched, but nothing asserted it any more — and the failure
+        is silent: the autonomous spawn re-reads plan_mode.json per spawn, so a
+        resurrected lock applies on the next 180s scan tick with no restart and
+        nothing on screen to explain why the agent will not edit.
+        """
+        self._set('plan')
+        self.assertEqual(
+            self.client.get('/api/sessions/T1/agent-mode').get_json()['mode'], 'plan',
+        )
+
+        # The forget route needs a workspace manager wired, or it 503s before
+        # reaching the clear.
+        workspace = SimpleNamespace(
+            get=lambda task_id: None,
+            delete=lambda task_id: None,
+            workspace_path=lambda task_id: Path('/missing'),
+        )
+        app = create_app(session_manager=_Manager(), workspace_manager=workspace)
+        client = app.test_client()
+        client.post('/api/sessions/T1/agent-mode', json={'mode': 'plan'})
+        self.assertEqual(
+            client.get('/api/sessions/T1/agent-mode').get_json()['mode'], 'plan',
+        )
+
+        response = client.delete('/api/sessions/T1/workspace')
+        self.assertNotEqual(response.status_code, 503)
+
+        self.assertEqual(
+            client.get('/api/sessions/T1/agent-mode').get_json()['mode'], '',
+        )
+        # And it stays cleared across a restart — the lock is read off disk.
+        reborn = create_app(session_manager=_Manager()).test_client()
+        self.assertEqual(
+            reborn.get('/api/sessions/T1/agent-mode').get_json()['mode'], '',
+        )
+
+    def test_set_returns_503_when_the_override_store_is_unwired(self) -> None:
+        # Also lost with the deleted suite. A host with no override store must
+        # say so rather than accept a mode it will silently drop.
+        app = create_app(session_manager=_Manager())
+        app.config['TASK_PLAN_MODE_OVERRIDES'] = None
+        response = app.test_client().post(
+            '/api/sessions/T1/agent-mode', json={'mode': 'plan'},
+        )
+        self.assertEqual(response.status_code, 503)
+
+
+UNKNOWN_USAGE = {
+    # ``baseline_tokens`` (the cost indicator's floor) is part of the one shape
+    # every path returns — zeros here, same as the rest.
+    'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0,
+}
+
+
+class _Recorded(_Manager):
+    def get_record(self, task_id):  # noqa: ARG002
+        return {'task_id': 'T1'}
 
 
 class SessionContextUsageTests(unittest.TestCase):
-    """``/api/sessions/<id>`` carries context usage for the composer meter."""
+    """``/api/sessions/<id>/context-usage`` — the composer meter's reading.
 
-    def test_missing_session_reports_unknown_not_zero_percent(self) -> None:
-        class _Recorded(_Manager):
-            def get_record(self, task_id):  # noqa: ARG002
-                return {'task_id': 'T1'}
+    It has its OWN route because it used to be read off ``/api/sessions/<id>``
+    with the rest of the payload discarded — and that payload carries
+    ``recent_events``, the whole session transcript rather than a bounded tail.
+    The meter refreshes at every turn boundary, so four numbers were costing
+    the entire conversation, at its longest, exactly when the operator was
+    waiting on the next turn.
+    """
 
-        app = create_app(session_manager=_Recorded())
-        body = app.test_client().get('/api/sessions/T1').get_json()
+    def setUp(self) -> None:
+        self.client = create_app(session_manager=_Recorded()).test_client()
+
+    def test_reports_unknown_not_zero_percent_with_no_session(self) -> None:
+        # Zeros render as "unknown". Reporting 0% used would read as
+        # "plenty of room" — the opposite of the truth for a full window.
+        body = self.client.get('/api/sessions/T1/context-usage').get_json()
+        self.assertEqual(body, UNKNOWN_USAGE)
+
+    def test_the_payload_carries_no_transcript(self) -> None:
+        # THE POINT of the route. ``recent_events`` is unbounded, and every
+        # event's ``raw`` is a full CLI stream-json object — tool inputs and
+        # outputs included.
+        body = self.client.get('/api/sessions/T1/context-usage').get_json()
+        self.assertNotIn('recent_events', body)
+        self.assertEqual(set(body), set(UNKNOWN_USAGE))
+
+    def test_an_unknown_task_is_a_404(self) -> None:
+        app = create_app(session_manager=_Manager())
         self.assertEqual(
-            body['context_usage'],
-            # ``baseline_tokens`` (the cost indicator's floor) is part of the
-            # one shape every path returns — zeros here, same as the rest.
-            {'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0},
+            app.test_client().get('/api/sessions/nope/context-usage').status_code,
+            404,
         )
+
+    def test_the_fat_route_still_carries_it_for_its_own_consumers(self) -> None:
+        # The field was not moved OFF /api/sessions/<id> — other readers of
+        # that record still get it. Only the meter stopped paying for it.
+        body = self.client.get('/api/sessions/T1').get_json()
+        self.assertEqual(body['context_usage'], UNKNOWN_USAGE)
 
 
 if __name__ == '__main__':
