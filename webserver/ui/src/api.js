@@ -1,3 +1,5 @@
+import { refreshCache, REFRESH_TARGET } from './utils/refreshCache.js';
+
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
 
 async function fetchJson(url, { timeoutMs = 0 } = {}) {
@@ -133,15 +135,14 @@ export function fetchDirectoryListing(path) {
   return fetchJson(`/api/fs/dirs?path=${encodeURIComponent(path || '~')}`);
 }
 
-export function fetchAgentVersion(force = false, backend = '') {
+export async function fetchAgentVersion(force = false, backend = '') {
   // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
-  // a CLI or settings change with no kato restart).
+  // a CLI or settings change with no kato restart) — a POST, because probing
+  // runs ``<binary> --version`` and calls the npm registry. See refreshCache.
   // ``backend`` scopes the answer to the agent the operator is looking at —
   // each tab has its own CLI and its own "out of date".
-  const params = [];
-  if (force) { params.push('refresh=1'); }
-  if (backend) { params.push(`backend=${encodeURIComponent(backend)}`); }
-  const query = params.length ? `?${params.join('&')}` : '';
+  if (force) { await refreshCache(REFRESH_TARGET.AGENT_VERSION); }
+  const query = backend ? `?backend=${encodeURIComponent(backend)}` : '';
   return fetchJson(`/api/agent-version${query}`);
 }
 
@@ -526,10 +527,13 @@ export function createTaskPullRequest(taskId) {
   );
 }
 
-export function fetchModels(force = false) {
+export async function fetchModels(force = false) {
   // ``force`` bypasses the server-side discovery cache so a refresh updates the
   // model labels (e.g. after a CLI upgrade) without a kato restart.
-  return fetchJson(force ? '/api/models?refresh=1' : '/api/models');
+  // A forced re-probe is a POST (it spawns a subprocess and calls the models
+  // API); the read that follows is still a plain GET. See refreshCache.
+  if (force) { await refreshCache(REFRESH_TARGET.MODELS); }
+  return fetchJson('/api/models');
 }
 
 // Live OpenRouter catalogue for the settings model-field autocomplete. Parallels
@@ -828,8 +832,11 @@ export function fetchAgentBackends() {
 // Drop the server's memoised readiness probe so the NEXT fetch re-runs it.
 // Backs the setup panel's "Check again" — an operator who just installed the
 // CLI must not be told to wait out a cache they cannot see.
-export function refreshAgentBackends() {
-  return fetchJson('/api/agent-backends?refresh=1');
+export async function refreshAgentBackends() {
+  // The probe cache is process-GLOBAL, so clearing it is a POST. See
+  // refreshCache.
+  await refreshCache(REFRESH_TARGET.AGENT_BACKENDS);
+  return fetchJson('/api/agent-backends');
 }
 
 // Switch which agent this task's chat pane is talking to. The outgoing

@@ -8,6 +8,9 @@ import {
   fetchTaskPublishState,
   fetchTaskPullRequestState,
   fetchSessionContextUsage,
+  fetchAgentVersion,
+  fetchModels,
+  refreshAgentBackends,
   postChatMessage,
 } from './api.js';
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
@@ -306,4 +309,69 @@ test('fetchSessionContextUsage REJECTS on a failed request', async () => {
   // reading, because a dropped request is not evidence the window emptied.
   _stubFetch({ ok: false, status: 404, statusText: 'Not Found', json: () => Promise.resolve({}) });
   await assert.rejects(() => fetchSessionContextUsage('T1'));
+});
+
+
+// Refreshing a discovery cache is an ACTION — it spawns a CLI subprocess,
+// calls the npm registry or the models API, and for the backend probe clears
+// a cache global to the whole server process. It used to ride ``?refresh=1``
+// on the GET, where a browser prefetch could fire it. Now: POST first, then
+// the plain read.
+
+test('fetchAgentVersion(force) POSTs the refresh, then GETs', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchAgentVersion(true, 'claude');
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, '/api/refresh');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(JSON.parse(calls[0].init.body).target, 'agent-version');
+  // The read that follows carries no refresh flag at all.
+  assert.equal(calls[1].url, '/api/agent-version?backend=claude');
+});
+
+test('fetchAgentVersion without force makes ONE plain GET', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchAgentVersion(false, 'claude');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/agent-version?backend=claude');
+});
+
+test('fetchModels(force) POSTs the refresh, then GETs', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchModels(true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, '/api/refresh');
+  assert.equal(JSON.parse(calls[0].init.body).target, 'models');
+  assert.equal(calls[1].url, '/api/models');
+});
+
+test('fetchModels without force does not refresh', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchModels();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/models');
+});
+
+test('refreshAgentBackends POSTs then re-reads', async () => {
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await refreshAgentBackends();
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[0].init.body).target, 'agent-backends');
+  assert.equal(calls[1].url, '/api/agent-backends');
+});
+
+test('a failed refresh still performs the read', async () => {
+  // A refresh that fails leaves the cache warm — slightly stale data beats
+  // turning a Refresh button into an error dialog.
+  let first = true;
+  const calls = [];
+  globalThis.fetch = function (url, init) {
+    calls.push({ url, init });
+    if (first) { first = false; return Promise.reject(new Error('offline')); }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ models: [] }) });
+  };
+  const body = await fetchModels(true);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(body, { models: [] });
 });

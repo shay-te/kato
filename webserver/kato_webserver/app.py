@@ -1180,6 +1180,22 @@ def _register_http_routes(app: Flask) -> None:
             app=app,
         ))
 
+    @app.post('/api/refresh')
+    def refresh_discovery_cache():
+        """Drop a named discovery cache. See ``cache_refresh`` for the why.
+
+        One route rather than a refresh verb per resource, so the whole
+        feature is a file, a route and a client util — removable in one go.
+        """
+        from kato_webserver.cache_refresh import TARGET_NAMES, refresh_target
+        body = request.get_json(silent=True) or {}
+        target = text_from_mapping(body, 'target')
+        ok, error = refresh_target(app, target)
+        if not ok:
+            status = 400 if target not in TARGET_NAMES else 500
+            return jsonify({'ok': False, 'error': error}), status
+        return jsonify({'ok': True, 'target': target})
+
     @app.get('/api/models')
     def list_models():
         # Discovered, not hardcoded: Claude serves the stable CLI aliases
@@ -1187,10 +1203,9 @@ def _register_http_routes(app: Flask) -> None:
         # available; Codex reads its own model cache. The picker can no longer
         # show a stale version (it used to hardcode "Opus 4.7"). ``?refresh=1``
         # bypasses the discovery cache so the UI refresh updates labels live.
-        return jsonify({
-            'models': _discover_chat_models(
-                app, force=_truthy_arg(request.args.get('refresh'))),
-        })
+        # No ``?refresh``: re-probing spawns a subprocess and calls out to
+        # the models API, so it is POST /api/refresh now. This stays a read.
+        return jsonify({'models': _discover_chat_models(app)})
 
     @app.get('/api/openrouter/models')
     def list_openrouter_models():
@@ -1799,14 +1814,12 @@ def _register_http_routes(app: Flask) -> None:
         backend whose manager does not exist would hand the operator a
         picker entry that fails at the first message.
         """
+        # No ``?refresh``: clearing the probe cache is process-GLOBAL, so it
+        # is POST /api/refresh now (the setup panel's "Check again" posts
+        # first, then re-reads). This stays a read.
         from kato_core_lib.helpers.agent_backend_readiness import (
             probe_chat_backends,
-            reset_probe_cache,
         )
-        if request.args.get('refresh'):
-            # The setup panel's "Check again": an operator who just installed
-            # the CLI must not have to wait out a cache they cannot see.
-            reset_probe_cache()
         manager = app.config.get('SESSION_MANAGER')
         available = getattr(manager, 'available_backends', None)
         wired = set(available()) if callable(available) else set()
@@ -4408,18 +4421,8 @@ def _register_agent_version_route(app: Flask) -> None:
         # a stale Codex CLI on a Claude-configured host.
         wanted = str(request.args.get('backend', '') or '').strip().lower()
         cache_key = f'AGENT_VERSION_INFO::{wanted}' if wanted else 'AGENT_VERSION_INFO'
-        if _truthy_arg(request.args.get('refresh')):
-            app.config.pop(cache_key, None)
-            # A manual refresh must also re-ask the registry — otherwise a
-            # release published during this process's lifetime stays invisible
-            # until the published-version TTL lapses.
-            try:
-                from kato_core_lib.helpers.agent_version_utils import (
-                    reset_latest_version_cache,
-                )
-                reset_latest_version_cache()
-            except Exception:
-                app.logger.exception('could not reset the published-version cache')
+        # No ``?refresh``: re-probing runs ``<binary> --version`` and calls the
+        # npm registry, so it is POST /api/refresh now. This stays a read.
         cached = app.config.get(cache_key)
         if cached is None:
             try:
