@@ -1,6 +1,12 @@
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 
 export function chatTitle(chat) {
+  // An operator-given name always wins. The first-user-message preview below
+  // is a reasonable GUESS and a poor name — the opening line of a
+  // conversation is usually the least memorable thing about it, and two
+  // chats that began "fix the failing test" are indistinguishable a week on.
+  const named = String(chat?.name || '').trim();
+  if (named) { return named; }
   const preview = String(chat?.first_user_message || '').trim();
   if (preview) { return preview; }
   const sid = String(chat?.[AGENT_SESSION_ID] || '').trim();

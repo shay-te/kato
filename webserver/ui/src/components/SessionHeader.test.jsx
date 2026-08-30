@@ -208,20 +208,20 @@ describe('SessionHeader — always prints the Claude session id', () => {
     expect(info.querySelector('.claude-session-id')).toBeNull();
   });
 
-  test('rendered adjacent to the Claude: <status> chip on the right', () => {
-    // The id badge lives next to the right-side ``Claude: <status>``
-    // chip so operators can see which conversation is working.
+  test('the session id is NOT in the global header at all', () => {
+    // It moved to the chat bar, beside the chats control. It is a
+    // PER-BACKEND fact, and one chip in a header shared by every agent tab
+    // could only ever name one backend's session — on a task with both a
+    // Claude and a Codex chat it showed a single id and silently implied it
+    // belonged to whichever tab was in front. See AgentBackendTabs.
     const { container } = render(
       <SessionHeader
         session={_session({ [AGENT_SESSION_ID]: 'abcdef12-3456-7890-abcd-ef1234567890' })}
         streamLifecycle={SESSION_LIFECYCLE.STREAMING}
       />,
     );
-    const aside = container.querySelector(
-      '.session-header-actions .claude-session-id.is-aside-status',
-    );
-    expect(aside).toBeInTheDocument();
-    expect(aside).toHaveTextContent('sid:abcdef12…');
+    expect(container.querySelector('.claude-session-id')).toBeNull();
+    expect(container.textContent).not.toContain('sid:');
   });
 
   test('right-side badge omitted when there is no session id yet', () => {

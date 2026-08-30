@@ -802,6 +802,17 @@ export function fetchTaskChats(taskId, agentBackend = '') {
   );
 }
 
+// Name a chat. An empty name CLEARS it, and the list falls back to the
+// first-user-message preview — so rename and un-rename are one call.
+export function renameTaskChat(taskId, chatId, name) {
+  if (!taskId || !chatId) { return { ok: false, error: 'no chat' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}`
+    + `/chats/${encodeURIComponent(chatId)}/name`,
+    { name: String(name ?? '') },
+  );
+}
+
 // Empty ``agentSessionId`` starts a FRESH chat (next message spawns a
 // brand-new Claude session); a non-empty id switches back to one of the
 // task's previous chats.

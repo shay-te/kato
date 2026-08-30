@@ -402,19 +402,12 @@ export default function SessionHeader({
   // here so the JSX below is pure rendering.
   const taskSummary = session.task_summary || '';
   // Session id chip lives only next to the ``Claude: <status>`` pill on
-  // the right. It used to ALSO sit beside the task id on the left, but
-  // that crowded the task code/title, so it was removed there.
-  const sessionIdBadgeRight = agentSessionId ? (
-    <span
-      className="claude-session-id is-aside-status"
-      title={
-        `Agent session id: ${agentSessionId}\n`
-        + 'Resumed across restarts — same string on the chat panel.'
-      }
-    >
-      sid:{agentSessionId.slice(0, 8)}…
-    </span>
-  ) : null;
+  // The agent session id is NOT shown here any more. It is a per-backend
+  // fact, and one chip in the global task header could only ever name one
+  // backend's session — on a task with both a Claude and a Codex chat it
+  // showed a single id and silently implied it was whichever tab you were
+  // looking at. It now sits in the chat bar beside the chats control, where
+  // the backend it belongs to is unambiguous. See AgentBackendTabs.
   const pushButtonLabel = taskPublish.pushBusy ? 'Pushing…' : 'Push';
   const pullButtonLabel = taskPublish.pullBusy ? 'Pulling…' : 'Pull';
   const prButtonLabel = taskPublish.prBusy ? 'Opening PR…' : 'Pull request';
@@ -489,7 +482,6 @@ export default function SessionHeader({
           {/* No status chip here. It lives ON each agent tab now, beside the
               name it describes — a chip up here could only ever describe one
               agent, and duplicated what the tab already says. */}
-          {sessionIdBadgeRight}
           {searchSlot}
           {approvePushButton}
           <button

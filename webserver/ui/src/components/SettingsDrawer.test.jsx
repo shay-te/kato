@@ -205,3 +205,60 @@ describe('SettingsDrawer — a failed re-read keeps the last good index', () => 
     });
   });
 });
+
+
+// Hovering a Settings tab should say what is inside it, so the operator can
+// aim at a tab rather than opening each one to look.
+//
+// The schema-driven tabs take their text from the schema itself — each section
+// already declares a description — so those stay correct as settings are added
+// without anyone remembering to update a second copy in the UI.
+describe('SettingsDrawer — tab tooltips', () => {
+  function tab(name) {
+    return screen.getByRole('tab', { name });
+  }
+
+  test('a bespoke tab says what it holds', async () => {
+    render(<SettingsDrawer open onClose={() => {}} />);
+    await waitFor(() => expect(_state.calls).toBe(1));
+    expect(tab('Permissions').getAttribute('title'))
+      .toMatch(/remembered .*Allow always/i);
+    expect(tab('Chat').getAttribute('title')).toMatch(/ultracode/i);
+  });
+
+  test('a schema tab uses the SCHEMA\'s own description', async () => {
+    _state.sections = [{
+      id: 'general',
+      label: 'General',
+      description: 'Core orchestration knobs — backend, logging, scan cadence.',
+      fields: [],
+    }];
+    render(<SettingsDrawer open onClose={() => {}} />);
+    await waitFor(() => expect(_state.calls).toBe(1));
+    await waitFor(() => {
+      expect(tab('General').getAttribute('title'))
+        .toBe('Core orchestration knobs — backend, logging, scan cadence.');
+    });
+  });
+
+  test('a schema section with no description gets no empty tooltip', async () => {
+    // An empty title renders as a blank hover box — worse than none.
+    _state.sections = [{ id: 'general', label: 'General', fields: [] }];
+    render(<SettingsDrawer open onClose={() => {}} />);
+    await waitFor(() => expect(_state.calls).toBe(1));
+    await waitFor(() => expect(tab('General')).toBeInTheDocument());
+    expect(tab('General').hasAttribute('title')).toBe(false);
+  });
+
+  test('every bespoke tab has one', async () => {
+    // A missing description is invisible until someone hovers, so pin the set.
+    render(<SettingsDrawer open onClose={() => {}} />);
+    await waitFor(() => expect(_state.calls).toBe(1));
+    for (const label of [
+      'Repositories', 'Approvals', 'Permissions', 'Action Guard', 'Prompts',
+      'Task provider', 'Git provider', 'Notifications', 'Chat',
+    ]) {
+      expect(tab(label).getAttribute('title'), label).toBeTruthy();
+    }
+  });
+});

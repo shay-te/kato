@@ -1712,6 +1712,60 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-bottom: 1px solid $C-NEUTRAL-100-A10;
 }
 
+/* A chat row is a switch action PLUS a rename affordance, so the row is a
+ * wrapper rather than a single button — a button inside a button is invalid
+ * and the browser drops one of them. */
+.chats-menu-row-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.chats-menu-row-wrap .chats-menu-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.chats-menu-rename {
+  flex-shrink: 0;
+  width: $ICON-BOX-LG;
+  border: 0;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  color: $C-NEUTRAL-45;
+  font-size: $TEXT-11;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+/* Revealed on hover/focus so the list stays a list of chats rather than a
+ * column of icons — but ALWAYS reachable by keyboard. */
+.chats-menu-row-wrap:hover .chats-menu-rename,
+.chats-menu-rename:focus-visible {
+  opacity: 1;
+}
+
+.chats-menu-rename:hover {
+  color: $C-NEUTRAL-96;
+}
+
+.chats-menu-row.is-renaming {
+  display: flex;
+  padding: $SPACE-4 $SPACE-8;
+}
+
+.chats-menu-rename-input {
+  width: 100%;
+  padding: $SPACE-3 $SPACE-6;
+  border: 1px solid $C-CYAN-58;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+  font: inherit;
+  font-size: $TEXT-12;
+}
+
 .chats-menu-row {
   display: flex;
   gap: $SPACE-8;
@@ -1812,6 +1866,22 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   gap: $SPACE-8;
   padding: $SPACE-4 $SPACE-8 $SPACE-4 $SPACE-12;
   min-height: 30px;
+}
+
+/* Session id, beside the chats control rather than in the global task header.
+ * It is a PER-BACKEND fact: one chip up there could only ever name one
+ * backend's session, and on a task with both a Claude and a Codex chat it
+ * silently implied the id belonged to whichever tab was in front. */
+.agent-chat-bar-sid {
+  flex-shrink: 0;
+  padding: 2px $SPACE-6;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-64;
+  font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: default;
 }
 
 .agent-chat-bar-title {

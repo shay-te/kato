@@ -1618,12 +1618,17 @@ def _register_http_routes(app: Flask) -> None:
         ]
         ordered = ([active_id] if active_id else []) + list(reversed(previous_ids))
         meta_by_id = _claude_session_metadata_by_id(set(ordered))
+        # Operator-given names, if any. The UI falls back to the first user
+        # message when a chat has never been renamed — see chat_name_store.
+        from kato_core_lib.helpers.chat_name_store import read_chat_names
+        names = read_chat_names()
         chats = []
         for sid in ordered:
             row = meta_by_id.get(sid)
             chats.append({
                 AGENT_SESSION_ID: sid,
                 'active': sid == active_id,
+                'name': names.get(sid, ''),
                 # Which CLI produced this chat. Read from the RECORD, not from
                 # current config: the operator can switch backends between
                 # chats, and yesterday's chat still belongs to the CLI that
@@ -1636,6 +1641,42 @@ def _register_http_routes(app: Flask) -> None:
                 'last_user_message': row.last_user_message if row else '',
             })
         return jsonify({'task_id': record.task_id, 'chats': chats})
+
+    @app.post('/api/sessions/<task_id>/chats/<chat_id>/name')
+    def rename_task_chat(task_id: str, chat_id: str):
+        """Name a chat, or clear the name with an empty string.
+
+        Purely an operator label: the agent never sees it and no behaviour
+        keys on it. Cleared names fall back to the first-user-message preview
+        the list derived before, so rename and un-rename are one operation.
+
+        The chat must belong to THIS task. Without that check any session id
+        on the machine could be labelled through a task the operator happens
+        to have open, which is both wrong and a way to discover ids.
+        """
+        from kato_core_lib.helpers.chat_name_store import set_chat_name
+
+        manager = app.config['SESSION_MANAGER']
+        record = manager.get_record(task_id)
+        if record is None:
+            return jsonify({'ok': False, 'error': 'session not found'}), 404
+
+        from agent_core_lib.agent_core_lib.session.backend_chats import parked_chat
+        requested_backend = _requested_chat_backend(request.args) or str(
+            getattr(record, 'agent_backend', '') or '',
+        )
+        chat = parked_chat(record, requested_backend)
+        known = {str(chat['agent_session_id'] or '')}
+        known.update(str(sid) for sid in chat['previous_session_ids'] if sid)
+        known.discard('')
+        if chat_id not in known:
+            return jsonify({
+                'ok': False, 'error': 'that chat does not belong to this task',
+            }), 404
+
+        body = request.get_json(silent=True) or {}
+        stored = set_chat_name(chat_id, text_from_mapping(body, 'name'))
+        return jsonify({'ok': True, 'name': stored})
 
     @app.post('/api/sessions/<task_id>/chats')
     def start_task_chat(task_id: str):

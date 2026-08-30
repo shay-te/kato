@@ -40,16 +40,68 @@ const TAB_CHAT = 'chat';
 const ACTION_GUARD_SECTION_ID = 'action_guard';
 
 // Bespoke (non-schema) tabs, in display order.
+//
+// ``description`` is the hover tooltip — what you will find inside, so the
+// operator can aim at a tab instead of opening each one to look. The
+// schema-driven tabs get theirs from the schema itself (each section already
+// declares one); only these hand-built tabs need it written out.
 const BESPOKE_TABS = [
-  { id: TAB_REPOS, label: 'Repositories' },
-  { id: TAB_APPROVALS, label: 'Approvals' },
-  { id: TAB_PERMISSIONS, label: 'Permissions' },
-  { id: TAB_ACTION_GUARD, label: 'Action Guard' },
-  { id: TAB_PROMPTS, label: 'Prompts' },
-  { id: TAB_TASK_PROVIDER, label: 'Task provider' },
-  { id: TAB_GIT_PROVIDER, label: 'Git provider' },
-  { id: TAB_NOTIFICATIONS, label: 'Notifications' },
-  { id: TAB_CHAT, label: 'Chat' },
+  {
+    id: TAB_REPOS,
+    label: 'Repositories',
+    description: 'Which repositories kato works on, and the root path it '
+      + 'scans to discover them.',
+  },
+  {
+    id: TAB_APPROVALS,
+    label: 'Approvals',
+    description: 'Which repositories the agent is allowed to touch, and the '
+      + 'scope granted to each.',
+  },
+  {
+    id: TAB_PERMISSIONS,
+    label: 'Permissions',
+    description: 'Every remembered "Allow always" / "Deny always" tool '
+      + 'decision. Revoke one here and it stops applying immediately.',
+  },
+  {
+    id: TAB_ACTION_GUARD,
+    label: 'Action Guard',
+    description: 'What the agent is blocked from doing regardless of '
+      + 'permission mode — the always-blocked floor and the per-category '
+      + 'postures above it.',
+  },
+  {
+    id: TAB_PROMPTS,
+    label: 'Prompts',
+    description: 'The prompt text kato sends the agent — task framing, '
+      + 'review-comment handling, and the learned-lessons file.',
+  },
+  {
+    id: TAB_TASK_PROVIDER,
+    label: 'Task provider',
+    description: 'Where tasks come from — YouTrack, Jira, Bitbucket, GitHub '
+      + 'or GitLab — and the credentials for it.',
+  },
+  {
+    id: TAB_GIT_PROVIDER,
+    label: 'Git provider',
+    description: 'Where branches are pushed and pull requests opened, and '
+      + 'the token used to do it.',
+  },
+  {
+    id: TAB_NOTIFICATIONS,
+    label: 'Notifications',
+    description: 'Which events raise a desktop notification — approval '
+      + 'requests, finished turns, failures.',
+  },
+  {
+    id: TAB_CHAT,
+    label: 'Chat',
+    description: 'How the composer behaves: whether a message sent mid-turn '
+      + 'is queued or delivered immediately, and the ultracode default for '
+      + 'new tasks.',
+  },
 ];
 
 export default function SettingsDrawer({
@@ -104,7 +156,13 @@ export default function SettingsDrawer({
     (s) => s.id !== ACTION_GUARD_SECTION_ID,
   );
   const schemaTabs = genericSchemaSections.map((s) => ({
-    id: `schema:${s.id}`, sectionId: s.id, label: s.label,
+    id: `schema:${s.id}`,
+    sectionId: s.id,
+    label: s.label,
+    // Straight from the schema — each section already declares what it
+    // covers, so the tooltip stays correct as settings are added without
+    // anyone remembering to update a second copy here.
+    description: s.description || '',
   }));
   const searchResults = filterSettingsIndex(
     buildSettingsIndex(genericSchemaSections, BESPOKE_TABS), query,
@@ -224,6 +282,10 @@ export default function SettingsDrawer({
               aria-selected={tab === t.id}
               className={`settings-drawer-tab ${tab === t.id ? 'is-active' : ''}`}
               onClick={() => setTab(t.id)}
+              // Native title rather than the app's data-tooltip CSS: this list
+              // scrolls inside a narrow drawer, and a positioned
+              // pseudo-element would be clipped by the nav's own overflow.
+              title={t.description || undefined}
             >
               {t.label}
             </button>

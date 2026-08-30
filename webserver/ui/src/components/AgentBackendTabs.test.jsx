@@ -648,3 +648,44 @@ describe('AgentBackendTabs — maximize chat', () => {
     });
   });
 });
+
+
+// The agent session id sits HERE, beside the chats control — not in the global
+// task header it used to live in. It is a per-backend fact, and one chip in a
+// header shared by every agent tab could only ever name one backend's session:
+// on a task with both a Claude and a Codex chat it showed a single id and
+// silently implied it belonged to whichever tab was in front.
+describe('AgentBackendTabs — the session id chip', () => {
+  it('shows the ACTIVE chat\'s id, truncated', async () => {
+    fetchTaskChats.mockResolvedValue({
+      chats: [
+        { agent_session_id: 'aaaa1111-2222-3333-4444-555566667777', active: true },
+        { agent_session_id: 'bbbb9999-0000-1111-2222-333344445555', active: false },
+      ],
+    });
+    render(<AgentBackendTabs taskId="T1" />);
+
+    const chip = await screen.findByText(/^sid:aaaa1111…$/);
+    expect(chip).toBeInTheDocument();
+  });
+
+  it('names the backend the id belongs to', async () => {
+    // The whole reason it moved: the tooltip must say WHOSE session this is.
+    fetchTaskChats.mockResolvedValue({
+      chats: [{ agent_session_id: 'aaaa1111-2222', active: true }],
+    });
+    render(<AgentBackendTabs taskId="T1" />);
+
+    const chip = await screen.findByText(/^sid:aaaa1111…$/);
+    expect(chip.getAttribute('title')).toMatch(/session id: aaaa1111-2222/);
+  });
+
+  it('shows nothing when the chat has no session id yet', async () => {
+    // A brand-new chat has no id until the first message spawns it. An empty
+    // chip would read as a broken one.
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    render(<AgentBackendTabs taskId="T1" />);
+    await screen.findByRole('tablist');
+    expect(screen.queryByText(/^sid:/)).toBeNull();
+  });
+});

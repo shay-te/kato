@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AgentBackendChip, { backendLabel } from './AgentBackendChip.jsx';
-import { fetchTaskChats, startTaskChat } from '../api.js';
+import { fetchTaskChats, renameTaskChat, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
@@ -28,10 +28,25 @@ export default function ChatsMenu({
   // is mid-turn, the first click arms this with the requested target and
   // shows a warning; only a second click on the same target proceeds.
   const [confirmTarget, setConfirmTarget] = useState(null);
+  // The chat being renamed, and the text so far. ``null`` = nobody is. The
+  // list derives its label from the first user message otherwise, which is a
+  // reasonable guess and a poor name.
+  const [renaming, setRenaming] = useState(null);
+  // Escape cancels, but the input also commits on blur — and clearing the
+  // rename state unmounts the input, which fires that blur. Without this the
+  // cancel handler's own teardown would save the text the operator just
+  // discarded. A ref, not state: the blur runs before a re-render would
+  // deliver a new value.
+  const renameCancelledRef = useRef(false);
 
   function close() {
     setOpen(false);
     setConfirmTarget(null);
+    // Drop a half-typed name rather than keeping it armed for the next open,
+    // where it would reappear over a row the operator has moved on from.
+    // Closing is a cancel, not a save — same teardown-fires-blur reason.
+    renameCancelledRef.current = true;
+    setRenaming(null);
   }
   useEscapeKey(close, open);
 
@@ -54,6 +69,28 @@ export default function ChatsMenu({
     } catch (err) {
       setState({ status: 'error', chats: [], error: String(err.message || err) });
     }
+  }
+
+  async function commitRename() {
+    if (renameCancelledRef.current) {
+      renameCancelledRef.current = false;
+      return;
+    }
+    if (!renaming) { return; }
+    const { sid, value } = renaming;
+    setRenaming(null);
+    const result = await renameTaskChat(taskId, sid, value);
+    if (!result.ok) {
+      toast.errorFromResult(result, {
+        title: 'Rename failed', fallback: 'unknown error',
+      });
+      return;
+    }
+    // Re-read rather than patching the row: an empty name CLEARS it, and the
+    // label then falls back to the derived preview, which only the server
+    // knows how to produce.
+    loadChats();
+    if (typeof onChatChanged === 'function') { onChatChanged({}); }
   }
 
   function toggle() {
@@ -153,27 +190,74 @@ export default function ChatsMenu({
       const sid = String(chat[AGENT_SESSION_ID] || '');
       const title = chatTitle(chat);
       const meta = chatMeta(chat);
+      if (renaming && renaming.sid === sid) {
+        return (
+          <form
+            key={sid}
+            className="chats-menu-row is-renaming"
+            onSubmit={(e) => { e.preventDefault(); commitRename(); }}
+          >
+            <input
+              className="chats-menu-rename-input"
+              value={renaming.value}
+              autoFocus
+              aria-label="Chat name"
+              placeholder="Name this chat — empty clears it"
+              maxLength={120}
+              onChange={(e) => setRenaming({ sid, value: e.target.value })}
+              onKeyDown={(e) => {
+                // Escape cancels the rename WITHOUT closing the menu — the
+                // drawer's own Escape handler would otherwise take the whole
+                // menu down and lose the operator's place in the list.
+                if (e.key === 'Escape') {
+                  e.stopPropagation();
+                  renameCancelledRef.current = true;
+                  setRenaming(null);
+                }
+              }}
+              onBlur={commitRename}
+            />
+          </form>
+        );
+      }
       return (
-        <button
+        <div
           key={sid}
-          type="button"
-          className={`chats-menu-row${chat.active ? ' is-active' : ''}`}
-          onClick={() => onPickChat(chat)}
-          disabled={busy}
-          // No tooltip on the active row: it already SAYS "current" beside
-          // the agent chip, and a hover label repeating that only had
-          // somewhere to be clipped. The switch hint stays, because
-          // "clicking this replaces your current chat" is not visible.
-          title={chat.active
-            ? undefined
-            : 'Switch back to this chat — the next message resumes it.'}
+          className={`chats-menu-row-wrap${chat.active ? ' is-active' : ''}`}
         >
-          <span className="chats-menu-row-title">{title}</span>
-          <span className="chats-menu-row-meta">
-            <AgentBackendChip backend={chat.agent_backend} />
-            {meta}
-          </span>
-        </button>
+          <button
+            type="button"
+            className={`chats-menu-row${chat.active ? ' is-active' : ''}`}
+            onClick={() => onPickChat(chat)}
+            disabled={busy}
+            // No tooltip on the active row: it already SAYS "current" beside
+            // the agent chip, and a hover label repeating that only had
+            // somewhere to be clipped. The switch hint stays, because
+            // "clicking this replaces your current chat" is not visible.
+            title={chat.active
+              ? undefined
+              : 'Switch back to this chat — the next message resumes it.'}
+          >
+            <span className="chats-menu-row-title">{title}</span>
+            <span className="chats-menu-row-meta">
+              <AgentBackendChip backend={chat.agent_backend} />
+              {meta}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="chats-menu-rename"
+            // Seeded with the STORED name, not the displayed label: opening
+            // the box on a never-renamed chat should offer an empty field,
+            // not the first-message preview for the operator to delete.
+            onClick={() => setRenaming({ sid, value: String(chat.name || '') })}
+            disabled={busy}
+            aria-label={`Rename ${title}`}
+            title="Rename this chat"
+          >
+            <span aria-hidden="true">✎</span>
+          </button>
+        </div>
       );
     });
   }

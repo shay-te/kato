@@ -180,14 +180,28 @@ class BackendsEndpointTests(unittest.TestCase):
         self.assertEqual(codex['chat_available'], codex['wired'])
 
     def test_refresh_forces_a_re_probe(self) -> None:
+        # Clearing the probe cache is a POST now. It is process-GLOBAL — one
+        # client's refresh invalidates it for every other client — and browsers
+        # issue GETs nobody asked for, so it had no business on a read. See
+        # webserver/kato_webserver/cache_refresh.py.
         with patch.object(readiness, '_build_probe_client') as build:
             build.return_value.validate_connection.return_value = None
             self._get()
             first = build.call_count
             self._get()
             self.assertEqual(build.call_count, first, 'second call was not cached')
-            self._get('/api/agent-backends?refresh=1')
+
+            self.client.post('/api/refresh', json={'target': 'agent-backends'})
+            self._get()
             self.assertGreater(build.call_count, first)
+
+    def test_the_GET_no_longer_forces_a_re_probe(self) -> None:
+        with patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.return_value = None
+            self._get()
+            first = build.call_count
+            self._get('/api/agent-backends?refresh=1')
+            self.assertEqual(build.call_count, first, 'the GET still re-probed')
 
 
 if __name__ == '__main__':

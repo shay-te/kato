@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 vi.mock('../api.js', () => ({
   fetchTaskChats: vi.fn(),
   startTaskChat: vi.fn(),
+  renameTaskChat: vi.fn(),
   // Default: one backend wired, so the menu shows the plain "New chat"
   // button. Tests that exercise the picker override this.
   fetchAgentBackends: vi.fn().mockResolvedValue({ backends: ['claude'] }),
@@ -16,7 +17,9 @@ vi.mock('../stores/toastStore.js', () => ({
 }));
 
 import ChatsMenu from './ChatsMenu.jsx';
-import { fetchAgentBackends, fetchTaskChats, startTaskChat } from '../api.js';
+import {
+  fetchAgentBackends, fetchTaskChats, renameTaskChat, startTaskChat,
+} from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { toast } from '../stores/toastStore.js';
 
@@ -287,5 +290,111 @@ describe('ChatsMenu', () => {
     await waitFor(() => {
       expect(startTaskChat).toHaveBeenCalledWith('T1', 'old-1', '');
     });
+  });
+});
+
+
+// Naming a chat. The list labels each conversation with its first user
+// message otherwise — a reasonable guess and a poor name: two chats that
+// began "fix the failing test" are indistinguishable a week later.
+describe('ChatsMenu — rename', () => {
+  const CHATS = [
+    {
+      agent_session_id: 'chat-1', active: true, turn_count: 3,
+      first_user_message: 'fix the failing test', name: '',
+    },
+    {
+      agent_session_id: 'chat-2', active: false, turn_count: 9,
+      first_user_message: 'fix the failing test', name: 'The flaky hunt',
+    },
+  ];
+
+  beforeEach(() => {
+    fetchTaskChats.mockResolvedValue({ chats: CHATS });
+    renameTaskChat.mockClear();
+    renameTaskChat.mockResolvedValue({ ok: true, body: { name: 'Renamed' } });
+    toast.errorFromResult.mockClear();
+  });
+
+  async function openMenu() {
+    render(<ChatsMenu taskId="T1" />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    await screen.findByText('The flaky hunt');
+  }
+
+  test('a stored name is shown instead of the message preview', async () => {
+    await openMenu();
+    // Both chats opened with the same sentence; only the named one is
+    // distinguishable.
+    expect(screen.getByText('The flaky hunt')).toBeInTheDocument();
+    expect(screen.getByText('fix the failing test')).toBeInTheDocument();
+  });
+
+  test('every row offers a rename control', async () => {
+    await openMenu();
+    expect(screen.getAllByRole('button', { name: /^Rename / })).toHaveLength(2);
+  });
+
+  test('renaming posts the new name', async () => {
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename fix the failing test' }));
+
+    const input = screen.getByRole('textbox', { name: /chat name/i });
+    fireEvent.change(input, { target: { value: 'Login bug' } });
+    fireEvent.submit(input.closest('form'));
+
+    await waitFor(() => {
+      expect(renameTaskChat).toHaveBeenCalledWith('T1', 'chat-1', 'Login bug');
+    });
+  });
+
+  test('the box opens EMPTY on a never-renamed chat', async () => {
+    // Seeded from the stored name, not the displayed label — otherwise the
+    // operator has to delete the message preview before typing.
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename fix the failing test' }));
+    expect(screen.getByRole('textbox', { name: /chat name/i })).toHaveValue('');
+  });
+
+  test('the box opens with the CURRENT name on a renamed chat', async () => {
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename The flaky hunt' }));
+    expect(screen.getByRole('textbox', { name: /chat name/i }))
+      .toHaveValue('The flaky hunt');
+  });
+
+  test('an empty name is allowed — it clears the stored one', async () => {
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename The flaky hunt' }));
+    const input = screen.getByRole('textbox', { name: /chat name/i });
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.submit(input.closest('form'));
+
+    await waitFor(() => {
+      expect(renameTaskChat).toHaveBeenCalledWith('T1', 'chat-2', '');
+    });
+  });
+
+  test('Escape cancels without posting and without closing the menu', async () => {
+    // The menu's own Escape handler would take the whole dropdown down and
+    // lose the operator's place in the list.
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename The flaky hunt' }));
+    const input = screen.getByRole('textbox', { name: /chat name/i });
+    fireEvent.change(input, { target: { value: 'discarded' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(renameTaskChat).not.toHaveBeenCalled();
+    expect(screen.getByText('The flaky hunt')).toBeInTheDocument();
+  });
+
+  test('a failed rename is reported', async () => {
+    renameTaskChat.mockResolvedValue({ ok: false, error: 'nope' });
+    await openMenu();
+    fireEvent.click(screen.getByRole('button', { name: 'Rename The flaky hunt' }));
+    const input = screen.getByRole('textbox', { name: /chat name/i });
+    fireEvent.submit(input.closest('form'));
+
+    await waitFor(() => expect(toast.errorFromResult).toHaveBeenCalled());
   });
 });

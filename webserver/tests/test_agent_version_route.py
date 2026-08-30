@@ -67,16 +67,29 @@ class AgentVersionRouteTests(unittest.TestCase):
     def test_refresh_also_rechecks_the_published_version(self):
         # Without this the banner can't learn about a release published while
         # this process has been up — the version TTL would have to lapse first.
+        #
+        # Now a POST: re-probing runs ``<binary> --version`` and calls the npm
+        # registry, which is an action rather than a read, and browsers issue
+        # GETs nobody asked for. See kato_webserver/cache_refresh.py.
         app = self._app()
         app.config['AGENT_VERSION_INFO'] = dict(_SAMPLE)
         with mock.patch(
             'kato_core_lib.helpers.agent_version_utils.reset_latest_version_cache',
-        ) as reset, mock.patch(
-            'kato_core_lib.helpers.agent_version_utils.agent_version_info',
-            return_value=dict(_SAMPLE),
-        ):
-            app.test_client().get('/api/agent-version?refresh=1')
+        ) as reset:
+            app.test_client().post('/api/refresh', json={'target': 'agent-version'})
         reset.assert_called_once()
+
+    def test_the_GET_no_longer_refreshes(self):
+        # The whole point of the move: a prefetch or a link preview must not be
+        # able to respawn a subprocess and hit the registry.
+        app = self._app()
+        app.config['AGENT_VERSION_INFO'] = dict(_SAMPLE)
+        with mock.patch(
+            'kato_core_lib.helpers.agent_version_utils.reset_latest_version_cache',
+        ) as reset:
+            app.test_client().get('/api/agent-version?refresh=1')
+        reset.assert_not_called()
+        self.assertEqual(app.config.get('AGENT_VERSION_INFO'), dict(_SAMPLE))
 
 
 _RUNNING = {

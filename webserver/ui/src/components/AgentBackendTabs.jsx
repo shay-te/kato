@@ -9,7 +9,7 @@ import {
 import { fetchAgentBackends, switchTaskBackend } from '../api.js';
 import { normalizeBackendEntries, normalizeBackendEntry }
   from '../utils/agentBackendEntry.js';
-import { useActiveChatTitle } from '../hooks/useActiveChatTitle.js';
+import { useActiveChat } from '../hooks/useActiveChatTitle.js';
 import { activeBackendStore } from '../stores/activeBackendStore.js';
 import { useTaskAgentStatuses } from '../hooks/useTaskAgentStatuses.js';
 import { deriveAgentStatus } from '../utils/agentStatus.js';
@@ -81,7 +81,8 @@ export default function AgentBackendTabs({
 
   // Bumped after any chat mutation so the title bar re-reads.
   const [chatNonce, setChatNonce] = useState(0);
-  const chatName = useActiveChatTitle(taskId, current, chatNonce);
+  const activeChat = useActiveChat(taskId, current, chatNonce);
+  const chatName = activeChat.title;
   // Per-agent liveness, shown ON each tab: "Claude (working)". The status
   // belongs beside the name it describes — in the header it was one chip for
   // the focused agent (silent about the other) and then two chips detached
@@ -259,6 +260,18 @@ export default function AgentBackendTabs({
           onChatSwitchPending={onChatSwitchPending}
           turnInFlight={turnInFlight}
         />
+        {activeChat.agentSessionId ? (
+          <span
+            className="agent-chat-bar-sid"
+            title={
+              `${backendLabel(current) || 'Agent'} session id: `
+              + `${activeChat.agentSessionId}\n`
+              + 'Resumed across restarts. Each agent tab has its own.'
+            }
+          >
+            sid:{activeChat.agentSessionId.slice(0, 8)}…
+          </span>
+        ) : null}
       </div>
     )}
     </div>
