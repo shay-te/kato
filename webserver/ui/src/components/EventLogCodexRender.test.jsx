@@ -135,7 +135,12 @@ describe('EventLog — the assistant bubble names the agent', () => {
       .toBe('Claude');
   });
 
-  test('the session-started bubble names the agent too', () => {
+  // This bubble USED to be drawn, and used to say 'Claude' in a Codex tab.
+  // It is gone entirely now: the init event fires on every reconnect, so
+  // merely opening a tab reprinted 'session started' into the transcript over
+  // and over. Dropping it also settles the mislabelling for good — a bubble
+  // that is never drawn cannot name the wrong agent.
+  test('no session-started bubble is drawn at all', () => {
     const { container } = render(
       <EventLog
         taskId="T1"
@@ -146,8 +151,7 @@ describe('EventLog — the assistant bubble names the agent', () => {
         }]}
       />,
     );
-    expect(container.textContent).toContain('Codex session started');
-    expect(container.textContent).not.toContain('Claude session started');
+    expect(container.textContent).not.toContain('session started');
   });
 });
 

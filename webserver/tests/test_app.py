@@ -194,7 +194,7 @@ class WebserverAppTests(unittest.TestCase):
                 {'CLAUDE_SESSIONS_ROOT': str(root)},
                 clear=False,
             ):
-                response = self.client.get('/api/claude/sessions')
+                response = self.client.get('/api/agent/sessions')
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(len(payload['sessions']), 1)
@@ -230,7 +230,7 @@ class WebserverAppTests(unittest.TestCase):
                 {'CLAUDE_SESSIONS_ROOT': str(root)},
                 clear=False,
             ):
-                response = self.client.get('/api/claude/sessions')
+                response = self.client.get('/api/agent/sessions')
         self.assertEqual(response.status_code, 200)
         rows = response.get_json()['sessions']
         self.assertEqual(len(rows), 1)
@@ -1850,3 +1850,99 @@ class AgentBackendsRouteTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AdoptSessionIsBackendScopedTests(unittest.TestCase):
+    """Adoption has to know WHOSE session it is adopting.
+
+    It used to be Claude-only from the route path up. A Codex operator who
+    had already started a conversation in the CLI had no way to hand it over
+    — and worse, the id would have been pinned onto a record still reading
+    ``claude``, which resumes by handing that id to the Claude CLI. It finds
+    no transcript, opens blank, and the conversation looks lost.
+    """
+
+    def _app(self, record, *, calls):
+        import types
+        from webserver.kato_webserver.app import create_app
+
+        class _Manager(object):
+            def get_session(self, task_id):
+                return None
+
+            def get_record(self, task_id):
+                return record
+
+            def save_record(self, saved):
+                calls.setdefault('saved', []).append(saved)
+
+            def list_records(self):
+                return [record]
+
+            def adopt_session_id(self, task_id, *, agent_session_id, **kwargs):
+                calls['adopt'] = (task_id, agent_session_id, kwargs)
+                record.agent_session_id = agent_session_id
+                return record
+
+        app = create_app(agent_service=types.SimpleNamespace())
+        app.config['SESSION_MANAGER'] = _Manager()
+        return app
+
+    def _record(self, backend='claude', session_id='claude-1'):
+        from agent_core_lib.agent_core_lib.session.record import (
+            AgentSessionRecord,
+        )
+        return AgentSessionRecord(
+            task_id='T1', task_summary='', agent_backend=backend,
+            agent_session_id=session_id, previous_session_ids=[],
+            chats_by_backend={},
+        )
+
+    def test_the_backend_reaches_the_manager(self):
+        calls: dict = {}
+        record = self._record()
+        app = self._app(record, calls=calls)
+        response = app.test_client().post(
+            '/api/sessions/T1/adopt-agent-session',
+            json={AGENT_SESSION_ID: 'thread-9', 'agent_backend': 'codex'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls['adopt'][2].get('agent_backend'), 'codex')
+
+    def test_adopting_for_another_backend_parks_the_current_chat(self):
+        # The Claude conversation must survive: switching is a park, not a
+        # discard, so the operator can go back to the tab and find it.
+        calls: dict = {}
+        record = self._record(backend='claude', session_id='claude-1')
+        app = self._app(record, calls=calls)
+        app.test_client().post(
+            '/api/sessions/T1/adopt-agent-session',
+            json={AGENT_SESSION_ID: 'thread-9', 'agent_backend': 'codex'},
+        )
+        self.assertEqual(record.agent_backend, 'codex')
+        self.assertEqual(
+            record.chats_by_backend['claude']['agent_session_id'], 'claude-1',
+        )
+
+    def test_no_backend_keeps_the_original_call_shape(self):
+        # A manager predating per-backend adoption must not be handed a
+        # keyword it never declared.
+        calls: dict = {}
+        app = self._app(self._record(), calls=calls)
+        response = app.test_client().post(
+            '/api/sessions/T1/adopt-agent-session',
+            json={AGENT_SESSION_ID: 'sess-1'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls['adopt'][2], {})
+
+    def test_a_codex_adoption_does_not_migrate_a_transcript(self):
+        # Codex resolves a rollout by id in one flat store — it is already
+        # where ``codex exec resume`` looks. Copying would duplicate it.
+        calls: dict = {}
+        app = self._app(self._record(backend='codex', session_id=''), calls=calls)
+        body = app.test_client().post(
+            '/api/sessions/T1/adopt-agent-session',
+            json={AGENT_SESSION_ID: 'thread-9', 'agent_backend': 'codex'},
+        ).get_json()
+        self.assertEqual(body['transcript_migrated_to'], '')

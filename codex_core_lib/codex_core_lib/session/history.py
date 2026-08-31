@@ -24,6 +24,8 @@ import json
 import os
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.session.index_utils import text_from_content
+
 #: Payload roles worth showing. ``developer`` is the injected system preamble
 #: (permissions, AGENTS.md) — machinery the operator did not write and did not
 #: ask to read.
@@ -115,7 +117,11 @@ def _event_from_line(line: str) -> dict | None:
     role = str(payload.get('role', '') or '')
     if role not in _VISIBLE_ROLES:
         return None
-    text = _text_from_content(payload.get('content'))
+    text = text_from_content(
+        payload.get('content'),
+        types=('input_text', 'output_text', 'text'),
+        separator='\n',
+    ).strip()
     if not text:
         return None
     if role == 'user':
@@ -131,21 +137,3 @@ def _event_from_line(line: str) -> dict | None:
     }
 
 
-def _text_from_content(content) -> str:
-    """Join the text parts of a message's content list.
-
-    User turns carry ``input_text`` and assistant turns ``output_text``; both
-    are read, since the distinction is the CLI's, not the operator's.
-    """
-    if not isinstance(content, list):
-        return ''
-    parts = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get('type') not in ('input_text', 'output_text', 'text'):
-            continue
-        text = str(block.get('text', '') or '')
-        if text:
-            parts.append(text)
-    return '\n'.join(parts).strip()

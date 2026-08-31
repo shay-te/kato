@@ -17,12 +17,31 @@ const TASK_NOTIFICATION_PREFIX = '<task-notification>';
 // `permission_*` is handled by the modal/audit-bubble path, not the
 // transcript. `rate_limit_event` is plan-throttle metadata — informative
 // for ops but not a chat message.
+//
+// The rest are TELEMETRY the CLI emits alongside the conversation, carrying
+// no text of their own. An unrecognised type does not vanish — EventLog falls
+// back to printing the bare type name — so leaving one out puts rows reading
+// literally "tool_progress" in the transcript, which look like a message that
+// failed to load rather than a heartbeat that should never have been drawn.
+//
+// `tool_progress` is the one that surfaced: a per-tool heartbeat
+// (`tool_use_id`, `tool_name`, `elapsed_time_seconds`) emitted while a tool
+// runs. The others are listed beside it in the CLI's own non-display switch,
+// so they will read the same way the first time one arrives.
 const HIDDEN_CHAT_EVENT_TYPES = new Set([
   CLAUDE_EVENT.STREAM_EVENT,
   CLAUDE_EVENT.PERMISSION_REQUEST,
   CLAUDE_EVENT.CONTROL_REQUEST,
   CLAUDE_EVENT.PERMISSION_RESPONSE,
   'rate_limit_event',
+  'tool_progress',
+  'stream_request_start',
+  'command_lifecycle',
+  'auth_status',
+  'sdk_status',
+  'compact_progress',
+  'stream_mode',
+  'tombstone',
 ]);
 
 export class MessageFilter {

@@ -1,7 +1,12 @@
-// Component-level tests for AdoptSessionModal — the "Adopt a Claude
-// Code session" picker. Mounts → lists existing Claude sessions from
-// ~/.claude/, search box re-queries the api, operator picks a row,
-// confirm calls /adopt-agent-session.
+// Component-level tests for AdoptSessionModal — the "adopt an existing CLI
+// session" picker. Mounts → lists that backend's sessions, search box
+// re-queries the api, operator picks a row, confirm calls
+// /adopt-agent-session.
+//
+// The picker is backend-SCOPED. It used to be Claude-only, from the api
+// function up: a Codex operator could not hand over a conversation they had
+// already started, and the one control lived in a header toolbar that had no
+// backend in scope to pass anyway.
 //
 // Interesting wiring:
 //   - Lists each session: cwd + relative time + turn count + preview.
@@ -9,14 +14,15 @@
 //   - Adopt button stays disabled until a row is selected.
 //   - Confirm calls adoptAgentSession(taskId, sessionId), then onAdopted + onClose.
 //   - Error path: ok:false → toast error, modal stays open.
-//   - fetchClaudeSessions throws → error rendered in the empty area.
+//   - fetchAgentSessions throws → error rendered in the empty area.
+//   - The backend scopes the listing AND travels with the adoption.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
   adoptAgentSession: vi.fn(),
-  fetchClaudeSessions: vi.fn(),
+  fetchAgentSessions: vi.fn(),
 }));
 
 vi.mock('../stores/toastStore.js', () => {
@@ -39,7 +45,7 @@ vi.mock('../stores/toastStore.js', () => {
 });
 
 import AdoptSessionModal from './AdoptSessionModal.jsx';
-import { adoptAgentSession, fetchClaudeSessions } from '../api.js';
+import { adoptAgentSession, fetchAgentSessions } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { toast } from '../stores/toastStore.js';
 
@@ -78,7 +84,7 @@ function renderModal({
 
 
 beforeEach(() => {
-  fetchClaudeSessions.mockReset();
+  fetchAgentSessions.mockReset();
   adoptAgentSession.mockReset();
   toast.show.mockReset();
 });
@@ -87,7 +93,7 @@ beforeEach(() => {
 describe('AdoptSessionModal — render + load', () => {
 
   test('renders title with task id and the help copy', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
 
     renderModal({ taskId: 'KAT-9' });
 
@@ -98,7 +104,7 @@ describe('AdoptSessionModal — render + load', () => {
   });
 
   test('shows loading state then renders the session list', async () => {
-    fetchClaudeSessions.mockResolvedValue({
+    fetchAgentSessions.mockResolvedValue({
       sessions: [_session('abc-1'), _session('xyz-9')],
     });
 
@@ -112,7 +118,7 @@ describe('AdoptSessionModal — render + load', () => {
   });
 
   test('fetch rejected: renders the error text', async () => {
-    fetchClaudeSessions.mockRejectedValue(new Error('disk read failed'));
+    fetchAgentSessions.mockRejectedValue(new Error('disk read failed'));
 
     renderModal();
 
@@ -122,17 +128,17 @@ describe('AdoptSessionModal — render + load', () => {
   });
 
   test('empty list: shows "no sessions found" message', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
 
     await waitFor(() => {
-      expect(screen.getByText(/No Claude Code sessions found/i)).toBeInTheDocument();
+      expect(screen.getByText(/No Claude sessions found/i)).toBeInTheDocument();
     });
   });
 
   test('confirm button is initially disabled (nothing picked)', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [_session('abc-1')] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [_session('abc-1')] });
 
     renderModal();
 
@@ -145,20 +151,20 @@ describe('AdoptSessionModal — render + load', () => {
 describe('AdoptSessionModal — search + select', () => {
 
   test('typing in search triggers a refetch with the query string', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
 
     renderModal();
-    await waitFor(() => expect(fetchClaudeSessions).toHaveBeenCalledWith(''));
+    await waitFor(() => expect(fetchAgentSessions).toHaveBeenCalledWith('', ''));
 
     fireEvent.change(screen.getByPlaceholderText(/Search by path/i), {
       target: { value: 'kato' },
     });
 
-    await waitFor(() => expect(fetchClaudeSessions).toHaveBeenCalledWith('kato'));
+    await waitFor(() => expect(fetchAgentSessions).toHaveBeenCalledWith('', 'kato'));
   });
 
   test('clicking a session enables the adopt button', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [_session('abc-1')] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [_session('abc-1')] });
 
     renderModal();
     await waitFor(() => expect(screen.getByText(/last message in abc-1/)).toBeInTheDocument());
@@ -173,7 +179,7 @@ describe('AdoptSessionModal — search + select', () => {
 describe('AdoptSessionModal — submit', () => {
 
   test('success: calls adoptAgentSession(taskId, sessionId) then onAdopted + onClose', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [_session('claude-sess-1')] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [_session('claude-sess-1')] });
     adoptAgentSession.mockResolvedValue({ ok: true, body: {} });
 
     const { onAdopted, onClose } = renderModal({ taskId: 'TASK-7' });
@@ -184,14 +190,14 @@ describe('AdoptSessionModal — submit', () => {
     fireEvent.click(screen.getByRole('button', { name: /Adopt selected/i }));
 
     await waitFor(() => {
-      expect(adoptAgentSession).toHaveBeenCalledWith('TASK-7', 'claude-sess-1');
+      expect(adoptAgentSession).toHaveBeenCalledWith('TASK-7', 'claude-sess-1', '');
     });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(onAdopted).toHaveBeenCalled();
   });
 
   test('failure: surfaces error toast, modal stays open', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [_session('claude-sess-1')] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [_session('claude-sess-1')] });
     adoptAgentSession.mockResolvedValue({
       ok: false,
       body: { error: 'session is locked' },
@@ -218,7 +224,7 @@ describe('AdoptSessionModal — submit', () => {
 describe('AdoptSessionModal — close affordances', () => {
 
   test('Cancel button calls onClose', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
     const { onClose } = renderModal();
 
     fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
@@ -227,11 +233,58 @@ describe('AdoptSessionModal — close affordances', () => {
   });
 
   test('× close button calls onClose', async () => {
-    fetchClaudeSessions.mockResolvedValue({ sessions: [] });
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
     const { onClose } = renderModal();
 
     fireEvent.click(screen.getByRole('button', { name: /^Close$/i }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The whole point of the rewrite. Both halves have to carry the backend:
+// listing the wrong store offers threads that do not exist for this agent,
+// and adopting without it pins a Codex id onto a record still reading
+// ``claude`` — which then resumes into a blank conversation.
+describe('AdoptSessionModal — the backend scopes the picker', () => {
+  test('lists the sessions of the backend it was given', async () => {
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
+    render(
+      <AdoptSessionModal
+        taskId="TASK-7" agentBackend="codex"
+        onClose={() => {}} onAdopted={() => {}}
+      />,
+    );
+    await waitFor(
+      () => expect(fetchAgentSessions).toHaveBeenCalledWith('codex', ''),
+    );
+  });
+
+  test('adoption carries the backend with the id', async () => {
+    fetchAgentSessions.mockResolvedValue({
+      sessions: [_session('codex-thread-9')],
+    });
+    adoptAgentSession.mockResolvedValue({ ok: true });
+    render(
+      <AdoptSessionModal
+        taskId="TASK-7" agentBackend="codex"
+        onClose={() => {}} onAdopted={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByText('/home/dev/codex-thread-9'));
+    fireEvent.click(screen.getByRole('button', { name: /Adopt selected/i }));
+    await waitFor(() => expect(adoptAgentSession)
+      .toHaveBeenCalledWith('TASK-7', 'codex-thread-9', 'codex'));
+  });
+
+  test('it names the agent it is adopting for, not always Claude', async () => {
+    fetchAgentSessions.mockResolvedValue({ sessions: [] });
+    render(
+      <AdoptSessionModal
+        taskId="TASK-7" agentBackend="codex"
+        onClose={() => {}} onAdopted={() => {}}
+      />,
+    );
+    expect(await screen.findByText(/Adopt Codex session for TASK-7/)).toBeTruthy();
   });
 });

@@ -44,6 +44,32 @@ def parked_chat(record: AgentSessionRecord, backend: str) -> dict:
     }
 
 
+def record_accepts_backend(record: AgentSessionRecord, backend: str) -> bool:
+    """May ``backend`` write its session id onto ``record`` right now?
+
+    Switching the operator's chat PARKS the outgoing agent: ``switch_backend``
+    moves the record and clears its session id, but the outgoing subprocess is
+    deliberately left running so switching back resumes it. That subprocess can
+    then report its id after the switch — and writing it onto a record now
+    owned by another agent leaves the record claiming ONE id for TWO backends,
+    because the next switch-back parks the foreign id under its own key.
+
+    The damage is not cosmetic: resuming that chat hands one CLI the other's
+    transcript id. It finds no transcript, starts blank, and the conversation
+    looks lost.
+
+    An EMPTY backend is a record written before backends were tracked — it
+    belongs to whoever is running, so it is accepted.
+
+    Lives here rather than in each transport's manager: Claude and Codex face
+    the identical race and had the identical hole, and two copies of a rule
+    like this drift. It also shares ``_key`` with ``parked_chat`` and
+    ``switch_backend``, so all three normalise a backend name the same way.
+    """
+    current = _key(getattr(record, 'agent_backend', ''))
+    return not current or current == _key(backend)
+
+
 def switch_backend(record: AgentSessionRecord, backend: str) -> AgentSessionRecord:
     """Make ``backend`` the active chat, parking the one it replaces.
 

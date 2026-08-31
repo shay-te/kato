@@ -37,7 +37,7 @@ Endpoints:
     DEL  /api/sessions/<task_id>/comments/<id>          — delete comment + replies
     POST /api/sessions/<task_id>/comments/<id>/edit     — edit queued local comment body / kato_status
     POST /api/sessions/<task_id>/comments/sync          — git pull + pull remote PR comments
-    GET  /api/claude/sessions                           — list adoptable Claude Code sessions
+    GET  /api/agent/sessions                            — list a backend's adoptable CLI sessions
     GET  /api/status/events                             — SSE: live kato-process log feed
 """
 
@@ -1497,34 +1497,64 @@ def _register_http_routes(app: Flask) -> None:
         session = manager.get_session(task_id)
         return jsonify(_session_context_usage(app, session, record))
 
-    @app.get('/api/claude/sessions')
-    def list_claude_sessions():
-        """List Claude Code sessions available for adoption.
+    @app.get('/api/agent/sessions')
+    def list_agent_sessions():
+        """List an agent backend's local sessions, for the adoption picker.
 
-        Reads ``~/.claude/projects/`` (or ``CLAUDE_SESSIONS_ROOT``
-        for tests) and returns every transcript with metadata: cwd,
-        last-modified epoch, turn count, and first/last user-message
-        previews. The UI dropdown sorts by recency and lets the
-        operator pick one to adopt for a task.
+        ``backend=<claude|codex>`` chooses whose store is read; each
+        transport knows its own layout (Claude's cwd-keyed transcripts under
+        ``~/.claude/projects``, Codex's date-foldered rollouts under
+        ``~/.codex/sessions``) and every one returns the same row shape, so
+        the response needs no per-backend branch. An unset backend keeps the
+        historical behaviour and reads Claude's.
 
-        Query string ``q=<text>`` filters by case-insensitive substring
-        match against cwd and either preview. Empty ``q`` returns all
-        (capped server-side).
+        This replaced ``/api/claude/sessions``, which could only ever offer
+        Claude sessions — adoption was unavailable to a Codex operator purely
+        because the route named one backend in its path.
+
+        Query string ``q=<text>`` filters case-insensitively against cwd and
+        either message preview. Empty ``q`` returns all (capped server-side).
         """
-        from claude_core_lib.claude_core_lib.session.index import (
-            list_sessions as list_claude_session_metadata,
+        from agent_backend_core_lib.agent_backend_core_lib.client.session_index_factory import (  # noqa: E501
+            list_adoptable_sessions,
         )
+        from agent_core_lib.agent_core_lib.session.backend_chats import parked_chat
 
         query = request.args.get('q', '') or ''
-        rows = list_claude_session_metadata(query=query)
-        # Mark sessions already adopted by a kato task so the UI can
-        # warn before re-adoption. Cheap O(N*M) — N = sessions on
-        # disk, M = task records — both small in practice.
+        # Resolved ONCE. Listing rows and the adopted-by lookup below must
+        # agree on which backend this is: with an unset parameter,
+        # ``parked_chat(record, '')`` returns each record's ACTIVE chat, so a
+        # parked Claude id would be reported as un-adopted — exactly the case
+        # the comment below says is handled.
+        backend = (
+            (request.args.get('backend', '') or '').strip().lower() or 'claude'
+        )
+        rows = list_adoptable_sessions(backend, query=query)
+        # Mark sessions already adopted by a task so the UI can warn before
+        # re-adoption. Cheap O(N*M) — N = sessions on disk, M = task records
+        # — both small in practice.
+        #
+        # Read the id for the backend BEING LISTED, not the record's active
+        # one: a task whose operator is currently in the Claude tab still
+        # holds its adopted Codex thread, parked. Checking only the active
+        # chat would report that thread as free and invite a second task to
+        # adopt it.
         manager = app.config['SESSION_MANAGER']
         adopted_by: dict[str, str] = {}
         try:
             for record in manager.list_records():
-                sid = read_session_id_from(record)
+                # A record written before backends were tracked has no
+                # ``agent_backend`` and exactly one chat — a Claude one, since
+                # Claude was then the only backend. Asking it for a NAMED
+                # backend would find nothing and report its session as free to
+                # adopt, so such a record answers with the chat it holds.
+                asked = (
+                    '' if not str(getattr(record, 'agent_backend', '') or '')
+                    else backend
+                )
+                sid = fix_session_id(
+                    parked_chat(record, asked).get('agent_session_id', ''),
+                )
                 if sid and sid not in adopted_by:
                     adopted_by[sid] = record.task_id
         except Exception:  # pragma: no cover — defensive
@@ -1548,16 +1578,26 @@ def _register_http_routes(app: Flask) -> None:
     def adopt_agent_session(task_id: str):
         """Bind an existing agent session id to ``task_id``.
 
-        Body: keyed by ``AGENT_SESSION_ID``. The next agent spawn
+        Body: keyed by ``AGENT_SESSION_ID``, plus an optional
+        ``agent_backend`` naming whose session it is. The next agent spawn
         for ``task_id`` will ``--resume`` that session instead of
         starting a fresh conversation. Refuses when a live session is
         already running for ``task_id`` — the operator must close it
         first to avoid two writers on the same record.
+
+        The backend is what makes this work for more than one agent. An
+        id is only meaningful to the CLI that issued it, so adopting a
+        Codex thread onto a record still pointing at Claude would hand the
+        wrong CLI an id it cannot resolve — it would start blank and the
+        adopted conversation would look lost. Switching the record first
+        parks the outgoing chat rather than discarding it, so an operator
+        who adopts into a Codex tab still finds their Claude thread waiting.
         """
         payload = request.get_json(silent=True) or {}
         agent_session_id = fix_session_id(payload.get(AGENT_SESSION_ID))
         if not agent_session_id:
             return jsonify({'error': 'agent_session_id is required'}), 400
+        backend = str(payload.get('agent_backend', '') or '').strip().lower()
         manager = app.config['SESSION_MANAGER']
         live_session = manager.get_session(task_id)
         if live_session is not None and live_session.is_alive:
@@ -1567,17 +1607,42 @@ def _register_http_routes(app: Flask) -> None:
                     'stop it before adopting a different agent session'
                 ),
             }), 409
+        if backend:
+            from agent_core_lib.agent_core_lib.session.backend_chats import (
+                record_accepts_backend,
+                switch_backend,
+            )
+            existing = manager.get_record(task_id)
+            if existing is not None and not record_accepts_backend(
+                existing, backend,
+            ):
+                switch_backend(existing, backend)
+                manager.save_record(existing)
+        # Only sent when the caller actually named one, so a manager that
+        # predates per-backend adoption keeps its original call shape rather
+        # than being handed a parameter it never declared.
+        backend_kwargs = {'agent_backend': backend} if backend else {}
         try:
             record = manager.adopt_session_id(
                 task_id,
                 agent_session_id=agent_session_id,
+                **backend_kwargs,
             )
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
         except RuntimeError as exc:
             return jsonify({'error': str(exc)}), 409
-        migration = _migrate_adopted_session_transcript(
-            app, task_id, agent_session_id,
+        # Claude resolves a transcript through a cwd-keyed directory, so an
+        # adopted one has to be snapshotted under this task's workspace.
+        # Codex resolves a rollout by id in one flat store — it is already
+        # where ``codex exec resume`` looks, and copying would duplicate it.
+        from agent_backend_core_lib.agent_backend_core_lib.client.session_index_factory import (  # noqa: E501
+            requires_transcript_migration,
+        )
+        migration = (
+            _migrate_adopted_session_transcript(app, task_id, agent_session_id)
+            if requires_transcript_migration(backend or 'claude')
+            else None
         )
         migration_path = str(migration) if migration else ''
         return jsonify({
@@ -1858,6 +1923,9 @@ def _register_http_routes(app: Flask) -> None:
         # No ``?refresh``: clearing the probe cache is process-GLOBAL, so it
         # is POST /api/refresh now (the setup panel's "Check again" posts
         # first, then re-reads). This stays a read.
+        from agent_backend_core_lib.agent_backend_core_lib.client.session_index_factory import (  # noqa: E501
+            supports_session_adoption,
+        )
         from kato_core_lib.helpers.agent_backend_readiness import (
             probe_chat_backends,
         )
@@ -1878,6 +1946,15 @@ def _register_http_routes(app: Flask) -> None:
                 **probe,
                 'wired': probe['id'] in wired,
                 'chat_available': probe['ready'] and probe['id'] in wired,
+                # Whether this backend keeps conversations on THIS machine, so
+                # the UI can hide the adopt control for one that does not.
+                # OpenHands runs its sessions server-side; offering adoption
+                # there opens a picker that can only ever come back empty.
+                # Reported by the server rather than re-derived in the client,
+                # so the rule lives in exactly one place.
+                'supports_session_adoption': supports_session_adoption(
+                    probe['id'],
+                ),
             })
         return jsonify({
             'backends': entries,

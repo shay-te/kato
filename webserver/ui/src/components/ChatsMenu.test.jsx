@@ -11,6 +11,10 @@ vi.mock('../api.js', () => ({
   // Default: one backend wired, so the menu shows the plain "New chat"
   // button. Tests that exercise the picker override this.
   fetchAgentBackends: vi.fn().mockResolvedValue({ backends: ['claude'] }),
+  // The adoption picker moved INTO this menu, so its api surface has to be
+  // mocked here too.
+  fetchAgentSessions: vi.fn().mockResolvedValue({ sessions: [] }),
+  adoptAgentSession: vi.fn(),
 }));
 vi.mock('../stores/toastStore.js', () => ({
   toast: { show: vi.fn(), errorFromResult: vi.fn() },
@@ -18,7 +22,9 @@ vi.mock('../stores/toastStore.js', () => ({
 
 import ChatsMenu from './ChatsMenu.jsx';
 import {
-  fetchAgentBackends, fetchTaskChats, renameTaskChat, startTaskChat,
+  adoptAgentSession, fetchAgentBackends, fetchAgentSessions, fetchTaskChats,
+  renameTaskChat,
+  startTaskChat,
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { toast } from '../stores/toastStore.js';
@@ -396,5 +402,94 @@ describe('ChatsMenu — rename', () => {
     fireEvent.submit(input.closest('form'));
 
     await waitFor(() => expect(toast.errorFromResult).toHaveBeenCalled());
+  });
+});
+
+// Adoption used to be a button in the session-header toolbar. That toolbar
+// has no backend in scope, so the one button could only ever mean Claude —
+// a Codex operator had no way to hand over a conversation at all. It lives
+// here now, where the menu already knows which agent's chats it is showing.
+describe('ChatsMenu — adopting an existing session', () => {
+  beforeEach(() => {
+    fetchTaskChats.mockResolvedValue({ chats: CHATS });
+  });
+
+  test('the menu offers adoption, named for the backend it is showing', async () => {
+    render(<ChatsMenu taskId="T1" agentBackend="codex" onChatChanged={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    expect(
+      await screen.findByRole('button', { name: /Adopt existing Codex session/i }),
+    ).toBeTruthy();
+  });
+
+  test('it names Claude in a Claude tab', async () => {
+    render(<ChatsMenu taskId="T1" agentBackend="claude" onChatChanged={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    expect(
+      await screen.findByRole('button', { name: /Adopt existing Claude session/i }),
+    ).toBeTruthy();
+  });
+
+  // Adoption must NOT be reported as a fresh chat: SessionDetail reads a
+  // missing session id as "new chat" and posts a bubble saying the next
+  // message starts a fresh session — directly contradicting the adoption.
+  test('it reports the adopted chat, not an empty one', async () => {
+    const onChatChanged = vi.fn();
+    fetchAgentSessions.mockResolvedValue({
+      sessions: [{
+        [AGENT_SESSION_ID]: 'adopted-9', cwd: '/w', turn_count: 1,
+        last_modified_epoch: 1, first_user_message: 'hi',
+        last_user_message: 'hi', adopted_by_task_id: '',
+      }],
+    });
+    adoptAgentSession.mockResolvedValue({ ok: true });
+    render(
+      <ChatsMenu taskId="T1" agentBackend="codex" onChatChanged={onChatChanged} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Adopt existing Codex session/i }),
+    );
+    fireEvent.click(await screen.findByText('/w'));
+    fireEvent.click(screen.getByRole('button', { name: /Adopt selected/i }));
+    await waitFor(() => {
+      expect(onChatChanged).toHaveBeenCalled();
+      const arg = onChatChanged.mock.calls.at(-1)[0];
+      expect(arg && arg[AGENT_SESSION_ID]).toBe('adopted-9');
+    });
+  });
+
+  // A backend whose conversations do not live on this machine has nothing to
+  // adopt. OpenHands runs its sessions server-side, so the control there
+  // opened a picker that could only ever come back empty.
+  test('the control is hidden for a backend with no local sessions', async () => {
+    render(
+      <ChatsMenu
+        taskId="T1" agentBackend="openhands" supportsAdoption={false}
+        onChatChanged={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    await screen.findByRole('button', { name: /New chat/i });
+    expect(screen.queryByRole('button', { name: /Adopt existing/i })).toBeNull();
+  });
+
+  test('an unknown answer still shows it — hiding a working feature is worse', async () => {
+    render(<ChatsMenu taskId="T1" agentBackend="claude" onChatChanged={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    expect(
+      await screen.findByRole('button', { name: /Adopt existing/i }),
+    ).toBeTruthy();
+  });
+
+  test('choosing it opens the picker scoped to that backend', async () => {
+    render(<ChatsMenu taskId="T1" agentBackend="codex" onChatChanged={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /chats/i }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Adopt existing Codex session/i }),
+    );
+    await waitFor(
+      () => expect(fetchAgentSessions).toHaveBeenCalledWith('codex', ''),
+    );
   });
 });

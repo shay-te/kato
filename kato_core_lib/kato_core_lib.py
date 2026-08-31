@@ -380,6 +380,10 @@ class KatoCoreLib(CoreLib):
             managers[AgentBackend.CODEX.value] = CodexSessionManager(
                 state_dir=state_dir,
                 record_sink=record_owner.save_record,
+                # The read side, so a Codex spawn can see an id the operator
+                # adopted and can update the task's existing record instead
+                # of overwriting it.
+                record_source=record_owner.get_record,
             )
         elif backend is AgentBackend.CODEX:
             # Configured for Codex with no Codex block: nothing can spawn.

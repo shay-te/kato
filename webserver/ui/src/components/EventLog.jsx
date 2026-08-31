@@ -51,7 +51,11 @@ export default function EventLog({
   // header tracks the resolved id on ``session[AGENT_SESSION_ID]``;
   // passing it here lets the bubble swap "(none yet)" for the real
   // short id once known, without rewriting the underlying event.
-  liveAgentSessionId = '',
+  // Bumped by SessionDetail whenever the operator sends (or queues) a
+  // message. Not a scroll command — an INTENT signal, handled exactly like a
+  // task switch below: re-arm the pin, then let the existing machinery do
+  // the scrolling.
+  pinRequestId = 0,
   // Display name of the agent this transcript belongs to. Every assistant
   // bubble is labelled with it — a constant here attributed Codex's replies
   // to Claude, in Codex's own tab.
@@ -146,6 +150,25 @@ export default function EventLog({
     scrollToBottom(containerRef.current);
   }, [taskId]);
 
+  // The operator sent a message. Same treatment as a task switch, and for
+  // the same reason: both are explicit intent, and intent outranks whatever
+  // the scroll position happened to be.
+  //
+  // This is the gap that made the composer feel broken. Reading back through
+  // history unsticks the log — correctly, so the stream cannot yank you away
+  // mid-sentence — but that left the operator's OWN next message appended
+  // off-screen, with nothing to suggest it had been sent. Re-arming here
+  // means the one pin flag now hears every intent, rather than a second
+  // scroll path existing to cover the case the first one missed.
+  //
+  // Guarded on the initial 0 so a fresh mount does not scroll twice.
+  useEffect(() => {
+    if (!pinRequestId) { return; }
+    pinnedRef.current = true;
+    setAtBottom(true);
+    scrollToBottom(containerRef.current);
+  }, [pinRequestId]);
+
   // Stay glued to the newest message while the operator's intent is
   // "pinned" — even when content/layout grows AFTER the count-based
   // effect already ran. On a tab switch the log is empty, then the
@@ -237,10 +260,10 @@ export default function EventLog({
   const eventBubbles = useMemo(
     () => window.visible.flatMap(
       (entry, index) => bubblesFor(
-        entry, index, onOpenFile, liveAgentSessionId, agentLabel,
+        entry, index, onOpenFile, agentLabel,
       ),
     ),
-    [window.visible, onOpenFile, liveAgentSessionId],
+    [window.visible, onOpenFile],
   );
   // Group the flat bubble stream into per-prompt turns. Each turn is a
   // ``StickyPrompt`` followed by every bubble until the next prompt.
@@ -369,7 +392,7 @@ function groupIntoTurns(bubbles) {
 }
 
 function bubblesFor(
-  entry, index, onOpenFile, liveAgentSessionId = '', agentLabel = 'Agent',
+  entry, index, onOpenFile, agentLabel = 'Agent',
 ) {
   if (entry?.source === ENTRY_SOURCE.LOCAL) {
     const text = entry.text || '';
@@ -393,14 +416,13 @@ function bubblesFor(
     index,
     entry?.source === ENTRY_SOURCE.HISTORY,
     onOpenFile,
-    liveAgentSessionId,
     entry?.receivedAtEpoch,
     agentLabel,
   );
 }
 
 function serverBubblesFor(
-  raw, index, isHistory = false, onOpenFile, liveAgentSessionId = '', epoch = 0,
+  raw, index, isHistory = false, onOpenFile, epoch = 0,
   agentLabel = 'Agent',
 ) {
   if (!raw || !raw.type) { return []; }
@@ -414,21 +436,17 @@ function serverBubblesFor(
   switch (raw.type) {
     case CLAUDE_EVENT.SYSTEM:
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.INIT) {
-        // Prefer the id on the event itself; fall back to the live
-        // value tracked by the parent stream when the SYSTEM init
-        // arrived before Claude emitted its session id (without the
-        // fallback the bubble stayed "(none yet)" even after Claude
-        // was clearly answering — operator's report).
-        const sid = raw[AGENT_SESSION_ID] || liveAgentSessionId || '';
-        const sidShort = sid ? sid.slice(0, 8) : '(none yet)';
-        const sidFull = sid || '(unknown)';
-        return [
-          <Bubble key={keyOf(raw, index, 'sys')} kind={BUBBLE_KIND.SYSTEM}>
-            <span title={`Full session id: ${sidFull}`}>
-              {`${agentLabel} session started · ${sidShort}${sid ? '…' : ''}`}
-            </span>
-          </Bubble>,
-        ];
+        // Not rendered. This used to be a "<agent> session started · <id>"
+        // bubble, and it stacked up: kato re-spawns and re-connects on every
+        // tab switch, and each one emits another init, so a transcript
+        // collected a run of identical rows carrying the same id — eight of
+        // them in the operator's report, all saying nothing new.
+        //
+        // The id itself is not lost. It now sits in the chat bar beside the
+        // chats control (AgentBackendTabs), where it is per-backend and
+        // always visible, rather than buried at whatever scroll position the
+        // subprocess happened to restart at.
+        return [];
       }
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.PREFLIGHT) {
         const message = String(raw.message || '').trim();

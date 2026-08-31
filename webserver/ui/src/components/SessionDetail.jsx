@@ -286,6 +286,10 @@ export default function SessionDetail({
   // ``session_url``) plus two client-only fields, so a response can be
   // merged onto it without a translation layer that has to be right in
   // both directions.
+  // Bumped whenever the operator says something. EventLog re-arms its
+  // sticky-scroll intent on the change — reusing the ONE pin flag it already
+  // has rather than adding a second scrolling mechanism beside it.
+  const [pinRequestId, setPinRequestId] = useState(0);
   const [remoteControl, setRemoteControl] = useState(null);
   const remoteControlTaskRef = useRef('');
   useEffect(() => {
@@ -481,6 +485,11 @@ export default function SessionDetail({
   //     exactly like Claude Code in VS Code (Claude reads it on its next pump
   //     while still working). No queue, no wait.
   async function onSendMessage(text, images = []) {
+    // Sending is the operator SPEAKING, which is the clearest possible
+    // "show me the bottom" intent — clearer even than scrolling there.
+    // Bumped for the queued path too: a queued message appears in the list
+    // under the composer, and it is no more use off-screen than a sent one.
+    setPinRequestId((n) => n + 1);
     if (stream.turnInFlight && readSteerWhileWorking()) {
       commitQueue((prev) => [
         ...prev,
@@ -722,7 +731,6 @@ export default function SessionDetail({
       needsAttention={needsAttention}
       onStopped={onStopped}
       onResume={onResume}
-      onSessionAdopted={onSessionAdopted}
       onChatChanged={onChatChanged}
       onChatSwitchPending={onChatSwitchPending}
       streamLifecycle={stream.lifecycle}
@@ -760,6 +768,8 @@ export default function SessionDetail({
           onBackendChanged={onChatChanged}
           onChatChanged={onChatChanged}
           onChatSwitchPending={onChatSwitchPending}
+          onSessionAdopted={onSessionAdopted}
+          liveAgentSessionId={String(session?.[AGENT_SESSION_ID] || '')}
           onReadinessChange={setActiveBackendEntry}
           turnInFlight={stream.turnInFlight}
         />
@@ -788,7 +798,7 @@ export default function SessionDetail({
           searchCurrentIndex={searchCurrentIndex}
           onSearchMatchCount={handleSearchMatchCount}
           onOpenFile={onOpenFile}
-          liveAgentSessionId={String(session?.[AGENT_SESSION_ID] || '')}
+          pinRequestId={pinRequestId}
           footer={
             <WorkingIndicator
               active={stream.turnInFlight || hasPendingPermission}

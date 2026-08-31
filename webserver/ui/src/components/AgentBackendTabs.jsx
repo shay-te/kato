@@ -33,6 +33,14 @@ export default function AgentBackendTabs({
   onBackendChanged,
   onChatChanged,
   onChatSwitchPending,
+  onSessionAdopted,
+  // The session id the live stream knows about. The chat bar's own lookup is
+  // a one-shot fetch, and a BRAND NEW chat has no id at fetch time — nothing
+  // re-runs it when the first turn learns one, so without this the id is
+  // shown nowhere for the whole first turn. That used to be covered by a
+  // "session started" bubble in the log, which was removed because it
+  // reprinted on every reconnect.
+  liveAgentSessionId = '',
   onReadinessChange,
   turnInFlight = false,
 }) {
@@ -83,6 +91,12 @@ export default function AgentBackendTabs({
   const [chatNonce, setChatNonce] = useState(0);
   const activeChat = useActiveChat(taskId, current, chatNonce);
   const chatName = activeChat.title;
+  // The chat bar's own lookup wins when it has an answer; the live stream's
+  // id is the fallback for a chat too new for that fetch to have seen one.
+  // Only for the tab that IS the record's active backend — another tab's
+  // chip must never borrow this tab's id.
+  const chatBarSessionId = activeChat.agentSessionId
+    || (current === activeBackend ? String(liveAgentSessionId || '') : '');
   // Per-agent liveness, shown ON each tab: "Claude (working)". The status
   // belongs beside the name it describes — in the header it was one chip for
   // the focused agent (silent about the other) and then two chips detached
@@ -258,18 +272,20 @@ export default function AgentBackendTabs({
           agentBackend={current}
           onChatChanged={handleChatChanged}
           onChatSwitchPending={onChatSwitchPending}
+          onSessionAdopted={onSessionAdopted}
+          supportsAdoption={currentEntry?.supports_session_adoption !== false}
           turnInFlight={turnInFlight}
         />
-        {activeChat.agentSessionId ? (
+        {chatBarSessionId ? (
           <span
             className="agent-chat-bar-sid"
             title={
               `${backendLabel(current) || 'Agent'} session id: `
-              + `${activeChat.agentSessionId}\n`
+              + `${chatBarSessionId}\n`
               + 'Resumed across restarts. Each agent tab has its own.'
             }
           >
-            sid:{activeChat.agentSessionId.slice(0, 8)}…
+            sid:{chatBarSessionId.slice(0, 8)}…
           </span>
         ) : null}
       </div>

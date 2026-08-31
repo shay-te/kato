@@ -497,6 +497,26 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * hidden`` does the hiding. */
 #layout.has-top-tabs.is-chat-maximized {
   grid-template-columns: 0 0 minmax(0, 1fr);
+  /* "Maximized" has to mean edge-to-edge, and zero-WIDTH is not the same as
+   * gone. Each collapsed column still painted its card's 1px left and right
+   * borders, and the grid still opened an 8px gutter on either side of it —
+   * so the maximized chat sat behind two hairlines and ~24px of dead space,
+   * pinned off the left edge of the window.
+   *
+   * Collapsing the gutter here rather than unmounting the panes: the
+   * zero-width column is deliberate (see above) because it keeps Monaco
+   * alive with its scroll position, folds and find widget intact. */
+  column-gap: 0;
+  padding-left: 0;
+}
+
+/* The two collapsed panes — ``#right-pane`` is the file tree (it renders in
+ * the LEFT slot despite the name) and ``#center-pane`` the editor. Still in
+ * the layout, now painting nothing: a card at zero width is all border, which
+ * is exactly the pair of hairlines this removes. */
+#layout.has-top-tabs.is-chat-maximized > #right-pane,
+#layout.has-top-tabs.is-chat-maximized > #center-pane {
+  border-width: 0;
 }
 
 #layout.has-top-tabs > #tabs-pane {
@@ -3813,7 +3833,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font: inherit;
   line-height: 1.4;
   resize: none;
-  min-height: calc(1.4em + 8px);
+  /* MUST equal SINGLE_LINE_TEXTAREA_HEIGHT in MessageForm.jsx — pinned by
+   * ComposerCss.test.js.
+   *
+   * These two disagreed by 8px, and the effect was visible on every single
+   * keystroke of the first character: an EMPTY composer is sized by the JS
+   * constant, and the moment there is text the hook switches to scrollHeight,
+   * which this floor governs. One line of text measures 1.4em + 8px (the
+   * 4px top and bottom padding), so the box silently dropped 8px as soon as
+   * you started typing and grew back when you cleared it.
+   *
+   * Floored at the TALLER of the two so the toolbar row never shifts under
+   * the pointer — a control that moves as you type is worse than one that
+   * takes a little more room. */
+  min-height: calc(1.4em + 16px);
   max-height: min(260px, 40vh);
   overflow-y: auto;
   outline: none;

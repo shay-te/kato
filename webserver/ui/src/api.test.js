@@ -4,7 +4,7 @@ import test, { afterEach } from 'node:test';
 import {
   adoptAgentSession,
   fetchBaseFileContent,
-  fetchClaudeSessions,
+  fetchAgentSessions,
   fetchTaskPublishState,
   fetchTaskPullRequestState,
   fetchSessionContextUsage,
@@ -40,23 +40,44 @@ afterEach(function () {
 });
 
 
-test('fetchClaudeSessions hits /api/claude/sessions with no query when empty', async function () {
+test('fetchAgentSessions hits /api/agent/sessions bare when nothing is scoped', async function () {
   const calls = _stubFetch({
     ok: true,
     json: () => Promise.resolve({ sessions: [] }),
   });
-  await fetchClaudeSessions('');
+  await fetchAgentSessions('', '');
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, '/api/claude/sessions');
+  assert.equal(calls[0].url, '/api/agent/sessions');
 });
 
-test('fetchClaudeSessions URL-encodes the query string', async function () {
+test('fetchAgentSessions URL-encodes the query string', async function () {
   const calls = _stubFetch({
     ok: true,
     json: () => Promise.resolve({ sessions: [] }),
   });
-  await fetchClaudeSessions('auth flow');
-  assert.equal(calls[0].url, '/api/claude/sessions?q=auth%20flow');
+  await fetchAgentSessions('', 'auth flow');
+  assert.equal(calls[0].url, '/api/agent/sessions?q=auth+flow');
+});
+
+// The backend has to reach the server, or the picker lists Claude's store
+// no matter which tab the operator opened it from — which is exactly the
+// bug that made adoption Claude-only.
+test('fetchAgentSessions scopes the listing to a backend', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    json: () => Promise.resolve({ sessions: [] }),
+  });
+  await fetchAgentSessions('codex', '');
+  assert.equal(calls[0].url, '/api/agent/sessions?backend=codex');
+});
+
+test('fetchAgentSessions sends backend and query together', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    json: () => Promise.resolve({ sessions: [] }),
+  });
+  await fetchAgentSessions('codex', 'auth flow');
+  assert.equal(calls[0].url, '/api/agent/sessions?backend=codex&q=auth+flow');
 });
 
 test('fetchTaskPublishState resolves the publish-state body from the task route', async function () {
@@ -104,7 +125,7 @@ test('fetchTaskPullRequestState short-circuits an empty taskId without a request
   assert.equal(calls.length, 0);
 });
 
-test('fetchClaudeSessions throws when the response is not ok', async function () {
+test('fetchAgentSessions throws when the response is not ok', async function () {
   _stubFetch({
     ok: false,
     status: 500,
@@ -112,7 +133,7 @@ test('fetchClaudeSessions throws when the response is not ok', async function ()
     json: () => Promise.resolve({ error: 'storage corrupt' }),
   });
   await assert.rejects(
-    () => fetchClaudeSessions(''),
+    () => fetchAgentSessions('', ''),
     /storage corrupt/,
   );
 });
@@ -171,9 +192,28 @@ test('adoptAgentSession posts the session id as JSON', async function () {
   assert.equal(calls[0].url, '/api/sessions/PROJ-1/adopt-agent-session');
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.headers['content-type'], 'application/json');
-  assert.deepEqual(JSON.parse(calls[0].init.body), { [AGENT_SESSION_ID]: 'sess-1' });
+  assert.deepEqual(
+    JSON.parse(calls[0].init.body),
+    { [AGENT_SESSION_ID]: 'sess-1', agent_backend: '' },
+  );
   assert.equal(result.ok, true);
   assert.equal(result.body[AGENT_SESSION_ID], 'sess-1');
+});
+
+// An id only resolves in the CLI that issued it, so the backend has to be
+// part of the request: without it the server pins a Codex thread onto a
+// record still reading ``claude``, and the resume comes back blank.
+test('adoptAgentSession sends the backend the session belongs to', async function () {
+  const calls = _stubFetch({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({ task_id: 'PROJ-1' }),
+  });
+  await adoptAgentSession('PROJ-1', 'thread-9', 'codex');
+  assert.deepEqual(
+    JSON.parse(calls[0].init.body),
+    { [AGENT_SESSION_ID]: 'thread-9', agent_backend: 'codex' },
+  );
 });
 
 test('adoptAgentSession returns ok=false without calling fetch when task_id is empty', async function () {

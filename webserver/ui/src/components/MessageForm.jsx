@@ -75,7 +75,11 @@ import ChatCostDot from './ChatCostDot.jsx';
 // keystroke lets the next mount (on tab return) read the in-progress
 // draft back out — matches VS Code's per-tab draft behaviour.
 // Submit / clear / mount-on-empty all wipe the key.
-const SINGLE_LINE_TEXTAREA_HEIGHT = 'calc(1.4em + 16px)';
+// The height of an EMPTY composer. Must equal ``#message-input``'s
+// ``min-height`` in app.scss, or the box changes height on the first
+// keystroke — empty is sized by this, typed is sized by scrollHeight with
+// that CSS floor. Exported so ComposerCss.test.js can pin the two together.
+export const SINGLE_LINE_TEXTAREA_HEIGHT = 'calc(1.4em + 16px)';
 
 // Composer @-mention (workspace file picker) — closed state + dropdown cap so a
 // huge repo never renders thousands of rows.

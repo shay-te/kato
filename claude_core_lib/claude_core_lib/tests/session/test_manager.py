@@ -2084,12 +2084,20 @@ class _ChatFakeWorkspaceManager:
     def __init__(self) -> None:
         self.cleared: list[str] = []
         self.updated: list[tuple] = []
+        #: The backend stamped alongside each mirrored id. The mirror holds
+        #: ONE id field, and this manager also writes it on behalf of another
+        #: backend, so the stamp is what stops a Codex id being recovered as
+        #: a Claude one at the next boot.
+        self.backends: list[str] = []
 
     def list_workspaces(self):
         return []
 
-    def update_agent_session(self, task_id, *, agent_session_id='', cwd=''):
+    def update_agent_session(
+        self, task_id, *, agent_session_id='', agent_backend='', cwd='',
+    ):
         self.updated.append((task_id, agent_session_id, cwd))
+        self.backends.append(agent_backend)
 
     def clear_agent_session(self, task_id):
         self.cleared.append(task_id)
@@ -2225,6 +2233,8 @@ class StartNewChatTests(unittest.TestCase):
         self.assertIn(
             ('PROJ-1', first_id, '/tmp/repo'), workspaces.updated,
         )
+        # Stamped with whose id it is, so the boot seed can tell.
+        self.assertEqual(set(workspaces.backends), {'claude'})
 
     def test_previous_session_ids_round_trip_from_disk(self) -> None:
         first = self.manager.start_session(task_id='PROJ-1')

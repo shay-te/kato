@@ -16,12 +16,15 @@ streaming subprocess.
 
 from __future__ import annotations
 
-from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import os
 import threading
 import time
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+from agent_core_lib.agent_core_lib.session.backend_chats import (
+    record_accepts_backend,
+)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.session.record_files import (
     delete_record,
@@ -45,15 +48,6 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
 )
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 from claude_core_lib.claude_core_lib.session.streaming import StreamingClaudeSession
-
-
-
-
-
-
-
-
-
 
 
 class ClaudeSessionManager(object):
@@ -169,6 +163,14 @@ class ClaudeSessionManager(object):
                 # for the bound agent session id.
                 agent_session_id = read_session_id_from(workspace)
                 if not agent_session_id:
+                    continue
+                # ...and it is only OURS to recover if this backend issued
+                # it. Seeding another agent's id here would hand the next
+                # ``--resume`` an id this CLI cannot resolve: it finds no
+                # transcript, opens blank, and the operator's conversation
+                # looks lost. An empty backend predates the stamp, and back
+                # then this was the only backend, so it is ours.
+                if not record_accepts_backend(workspace, self.AGENT_BACKEND):
                     continue
                 lookup_key = self._lookup_key(workspace.task_id)
                 existing = self._records.get(lookup_key)
@@ -723,6 +725,16 @@ class ClaudeSessionManager(object):
             record = self._records.get(lookup_key)
             if record is None:
                 return
+            # The record must still be on THIS transport's backend — see
+            # ``record_accepts_backend`` for the race and what it costs.
+            if not record_accepts_backend(record, self.AGENT_BACKEND):
+                self.logger.info(
+                    'task %s: ignoring session id %s reported by a parked %s '
+                    'session — the record is on %s now',
+                    task_id, actual_id, self.AGENT_BACKEND,
+                    getattr(record, 'agent_backend', ''),
+                )
+                return
             record_id = fix_session_id(record.agent_session_id)
             if same_session_id(record_id, actual_id):
                 if record.agent_session_id != actual_id:
@@ -865,8 +877,19 @@ class ClaudeSessionManager(object):
         *,
         agent_session_id: str,
         task_summary: str = '',
+        agent_backend: str = '',
     ) -> AgentSessionRecord:
         """Bind ``agent_session_id`` to ``task_id`` so the next spawn resumes it.
+
+        ``agent_backend`` names whose session the id is, defaulting to this
+        manager's own. It exists because a session id means nothing outside
+        the CLI that issued it: adopting a Codex thread while the record reads
+        ``claude`` would hand the wrong CLI an unresolvable id, and the
+        adopted conversation would come back blank. The caller is expected to
+        have switched the record to that backend already (which parks the
+        outgoing chat rather than dropping it); this only makes sure a record
+        created HERE, for a task that has none yet, is not stamped with the
+        wrong backend on the way in.
 
         Used by the planning UI when an operator picks an existing
         Claude Code session (e.g. a VS Code extension chat) to hand
@@ -922,7 +945,10 @@ class ClaudeSessionManager(object):
                 record = self._records.get(lookup_key)
                 if record is None:
                     record = AgentSessionRecord(
-                        agent_backend=self.AGENT_BACKEND,
+                        agent_backend=(
+                            str(agent_backend or '').strip().lower()
+                            or self.AGENT_BACKEND
+                        ),
                         task_id=normalized_task_id,
                         task_summary=str(task_summary or ''),
                         status=SESSION_STATUS_TERMINATED,
@@ -1235,6 +1261,15 @@ class ClaudeSessionManager(object):
             self._workspace_manager.update_agent_session(
                 record.task_id,
                 agent_session_id=fix_session_id(record.agent_session_id),
+                # Whose id this is. The mirror holds ONE id field, and this
+                # manager also writes it on behalf of another backend (an
+                # adoption for Codex is routed through the record owner), so
+                # without this stamp a Codex id sits in the mirror looking
+                # exactly like a Claude one — and the boot seed below then
+                # pins it onto the Claude record.
+                agent_backend=str(
+                    getattr(record, 'agent_backend', '') or self.AGENT_BACKEND,
+                ),
                 cwd=record.cwd,
             )
         except Exception:
@@ -1308,6 +1343,28 @@ class ClaudeSessionManager(object):
                     'task %s: live Claude reports session id %s, but '
                     'record is pinned to %s; keeping the persisted id',
                     record.task_id, live_id, record_id,
+                )
+                return record
+            # The record must still be on THIS transport's backend.
+            #
+            # This path is the one the operator actually hit. Switching tabs
+            # leaves the record with an EMPTY id (the outgoing chat is parked)
+            # and deliberately leaves the outgoing subprocess ALIVE — which is
+            # precisely the two conditions above. Without this guard a single
+            # ``get_record``/``list_records`` writes the parked agent's id onto
+            # a record owned by the other one, and the next switch-back parks
+            # that foreign id under its key.
+            #
+            # It is the easiest of the three writers to reach: the permission
+            # poller calls ``list_records`` every couple of seconds, so the
+            # corruption reappeared within seconds of a tab switch even after
+            # the other two writers were guarded.
+            if not record_accepts_backend(record, self.AGENT_BACKEND):
+                self.logger.info(
+                    'task %s: ignoring live session id %s reported by a '
+                    'parked %s session — the record is on %s now',
+                    record.task_id, live_id, self.AGENT_BACKEND,
+                    getattr(record, 'agent_backend', ''),
                 )
                 return record
             record.agent_session_id = live_id

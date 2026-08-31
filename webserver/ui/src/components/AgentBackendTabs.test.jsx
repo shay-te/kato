@@ -689,3 +689,40 @@ describe('AgentBackendTabs — the session id chip', () => {
     expect(screen.queryByText(/^sid:/)).toBeNull();
   });
 });
+
+// Removing the "session started" bubble from the log (it reprinted on every
+// reconnect) left the id with only one surface: this chip. But the chat bar's
+// lookup is a one-shot fetch, and a brand-new chat has no id when it runs —
+// so for the whole first turn the id appeared nowhere at all.
+describe('AgentBackendTabs — the sid chip during a brand-new chat', () => {
+  test('it falls back to the id the live stream knows', async () => {
+    fetchTaskChats.mockResolvedValue({ chats: [] });   // fetch has no id yet
+    render(
+      <AgentBackendTabs
+        taskId="T1"
+        activeBackend="claude"
+        liveAgentSessionId="abc12345-live"
+        onChatChanged={() => {}}
+      />,
+    );
+    expect(await screen.findByText(/sid:abc12345/)).toBeTruthy();
+  });
+
+  test('another tab never borrows the active backend\u2019s id', async () => {
+    fetchTaskChats.mockResolvedValue({ chats: [] });
+    render(
+      <AgentBackendTabs
+        taskId="T1"
+        activeBackend="claude"
+        liveAgentSessionId="abc12345-live"
+        onChatChanged={() => {}}
+      />,
+    );
+    const codexTab = screen.queryByRole('tab', { name: 'Codex' });
+    if (!codexTab) { return; }          // single-backend host: nothing to check
+    fireEvent.click(codexTab);
+    await waitFor(
+      () => expect(screen.queryByText(/sid:abc12345/)).toBeNull(),
+    );
+  });
+});

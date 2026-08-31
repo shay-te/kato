@@ -194,20 +194,32 @@ class WorkspaceService(Service):
         task_id: str,
         *,
         agent_session_id: str = '',
+        agent_backend: str = '',
         cwd: str = '',
     ) -> WorkspaceRecord | None:
-        """Persist the bound agent's session id and/or cwd.
+        """Persist the bound agent's session id, its backend, and/or cwd.
 
-        Both fields are optional — pass only what you have. Existing
+        All fields are optional — pass only what you have. Existing
         values are kept when the corresponding argument is empty so
         a partial update doesn't blank a previously-recorded id.
+
+        ``agent_backend`` says which agent the id belongs to. Write it
+        whenever you write an id: an id alone is ambiguous on a host that
+        runs more than one agent, and a reader that guesses wrong resumes
+        with an id its CLI cannot resolve.
         """
         new_session = fix_session_id(agent_session_id)
+        new_backend = str(agent_backend or '').strip().lower()
         new_cwd = str(cwd or '').strip()
 
         def apply(record: WorkspaceRecord) -> None:
             if new_session:
                 record.agent_session_id = new_session
+                # Cleared alongside the id it describes, so a stale backend
+                # can never outlive the id it was recorded for.
+                record.agent_backend = new_backend
+            elif new_backend:
+                record.agent_backend = new_backend
             if new_cwd:
                 record.cwd = new_cwd
 

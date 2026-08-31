@@ -20,7 +20,6 @@ import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { toast, toastResult } from '../stores/toastStore.js';
 import { backendLabel } from './AgentBackendChip.jsx';
 import { useActiveBackend } from '../stores/activeBackendStore.js';
-import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 import {
   formatFinishResult,
@@ -35,7 +34,6 @@ export default function SessionHeader({
   needsAttention = false,
   onStopped,
   onResume,
-  onSessionAdopted,
   onChatChanged = null,
   onChatSwitchPending = null,
   streamLifecycle,
@@ -47,7 +45,6 @@ export default function SessionHeader({
   onWorkspaceMutated = null,
 }) {
   const [resuming, setResuming] = useState(false);
-  const [adoptModalOpen, setAdoptModalOpen] = useState(false);
   const pushApproval = usePushApproval(session);
   const taskPublish = useTaskPublish(session?.task_id || '');
 
@@ -453,18 +450,6 @@ export default function SessionHeader({
       <BusyIcon busy={stopping} idle="stop" />
     </button>
   );
-  const adoptModal = adoptModalOpen ? (
-    <AdoptSessionModal
-      taskId={session.task_id}
-      onClose={() => setAdoptModalOpen(false)}
-      onAdopted={(adopted) => {
-        setAdoptModalOpen(false);
-        if (typeof onSessionAdopted === 'function') {
-          onSessionAdopted(adopted);
-        }
-      }}
-    />
-  ) : null;
 
   return (
     <>
@@ -583,20 +568,9 @@ export default function SessionHeader({
           >
             <BusyIcon busy={syncing} idle="history" />
           </button>
-          <button
-            id="session-adopt-claude"
-            type="button"
-            className="session-action"
-            data-tooltip="Adopt an existing Claude Code session for this task — e.g. a chat you already started in the VS Code extension. Kato will --resume that session on the next agent spawn instead of starting fresh."
-            onClick={() => setAdoptModalOpen(true)}
-            aria-label="Adopt session"
-          >
-            <Icon name="link" />
-          </button>
           {stopOrResumeButton}
         </div>
       </header>
-      {adoptModal}
     </>
   );
 }
@@ -619,7 +593,6 @@ export function SessionHeaderPlaceholder() {
     { icon: 'check', label: 'Finish', primary: true },
     { icon: 'history', label: 'Sync now' },
     { icon: 'comment', label: 'Chats' },
-    { icon: 'link', label: 'Adopt session' },
     { icon: 'stop', label: 'Stop' },
   ];
   return (

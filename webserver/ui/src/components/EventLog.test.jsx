@@ -178,54 +178,37 @@ describe('EventLog — local entries', () => {
 
 describe('EventLog — server event rendering', () => {
 
-  test('SYSTEM init shows agent session id', () => {
-    render(<EventLog agentName="Claude" entries={[_server({
-      type: CLAUDE_EVENT.SYSTEM,
-      subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
-      [AGENT_SESSION_ID]: 'sess-abc-123',
-    })]} />);
-    expect(screen.getByText(/Claude session started.*sess-abc/)).toBeInTheDocument();
-  });
-
-  test('SYSTEM init with missing agent session id falls back to "(none yet)"', () => {
-    render(<EventLog agentName="Claude" entries={[_server({
-      type: CLAUDE_EVENT.SYSTEM,
-      subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
-    })]} />);
-    expect(screen.getByText(/none yet/)).toBeInTheDocument();
-  });
-
-  test('SYSTEM init backfills missing id from liveAgentSessionId prop', () => {
-    // Regression: the SYSTEM init event sometimes arrives before
-    // Claude has emitted its session id, so the bubble used to read
-    // "(none yet)" forever even after the session was up and
-    // answering. Passing the live id through ``liveAgentSessionId``
-    // swaps in the real short id so the chat matches the header.
-    render(<EventLog agentName="Claude" entries={[_server({
+  test('SYSTEM init renders NOTHING', () => {
+    // It used to be a "<agent> session started · <id>" bubble, and it stacked
+    // up: kato re-spawns and re-connects on every tab switch, and each one
+    // emits another init — a transcript collected a run of identical rows all
+    // carrying the same id, saying nothing new each time.
+    //
+    // The id is not lost: it now sits in the chat bar beside the chats
+    // control, per-backend and always visible, instead of buried at whatever
+    // scroll position the subprocess happened to restart at.
+    const { container } = render(
+      <EventLog agentName="Claude" entries={[_server({
         type: CLAUDE_EVENT.SYSTEM,
         subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
-      })]}
-      liveAgentSessionId="sess-backfill-xyz"
-    />);
-    expect(
-      screen.getByText(/Claude session started.*sess-bac/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/none yet/)).toBeNull();
+        [AGENT_SESSION_ID]: 'sess-abc-123',
+      })]} />,
+    );
+    expect(screen.queryByText(/session started/)).toBeNull();
+    expect(container.querySelector('#event-log').children).toHaveLength(0);
   });
 
-  test('SYSTEM init event id wins over liveAgentSessionId fallback', () => {
-    // When the event itself carries an id (the happy path), the
-    // fallback is irrelevant — the bubble shows the event's id.
-    render(<EventLog agentName="Claude" entries={[_server({
-        type: CLAUDE_EVENT.SYSTEM,
-        subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
-        [AGENT_SESSION_ID]: 'sess-from-event',
-      })]}
-      liveAgentSessionId="sess-fallback"
-    />);
-    expect(
-      screen.getByText(/Claude session started.*sess-fro/),
-    ).toBeInTheDocument();
+  test('a run of inits does not fill the transcript', () => {
+    // The operator's report: eight identical rows after a few tab switches.
+    const init = () => _server({
+      type: CLAUDE_EVENT.SYSTEM,
+      subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
+      [AGENT_SESSION_ID]: '62d576e6-3132-447e-8000-000000000000',
+    });
+    const { container } = render(
+      <EventLog agentName="Claude" entries={[init(), init(), init(), init()]} />,
+    );
+    expect(container.querySelector('#event-log').children).toHaveLength(0);
   });
 
   test('SYSTEM preflight renders the message', () => {
@@ -605,16 +588,19 @@ describe('EventLog — per-turn sticky grouping', () => {
 
   test('bubbles before the first prompt go in a preamble (no sticky header)', () => {
     const { container } = render(<EventLog agentName="Claude" entries={[
+      // Any bubble that lands BEFORE the first operator prompt. (This used
+      // to be the SYSTEM init bubble, which no longer renders — the subject
+      // here is the preamble grouping, not which event produced it.)
       _server({
         type: CLAUDE_EVENT.SYSTEM,
-        subtype: CLAUDE_SYSTEM_SUBTYPE.INIT,
-        [AGENT_SESSION_ID]: 'sess-1',
+        subtype: CLAUDE_SYSTEM_SUBTYPE.PREFLIGHT,
+        message: 'Cloning the workspace…',
       }),
       _local(BUBBLE_KIND.USER, 'the ask'),
     ]} />);
     const preamble = container.querySelector('.chat-turn--preamble');
     expect(preamble).toBeInTheDocument();
-    expect(preamble).toHaveTextContent('Claude session started · sess-1…');
+    expect(preamble).toHaveTextContent('Cloning the workspace…');
     expect(preamble.querySelector('.chat-sticky-prompt')).toBeNull();
     // The operator prompt still gets its own sticky turn.
     expect(
@@ -1090,5 +1076,111 @@ describe('EventLog — scroll-to-latest button', () => {
     expect(scrollToBottom).toHaveBeenCalled();
     // Clicking re-pins, so the button hides again.
     expect(screen.queryByRole('button', { name: 'Scroll to latest' })).toBeNull();
+  });
+});
+
+
+// Sending a message must bring it into view.
+//
+// Reading back through history unsticks the log — correctly, so the stream
+// cannot yank you away mid-sentence. But that left the operator's OWN next
+// message appended off-screen with nothing to suggest it had been sent.
+//
+// Handled through the SAME pin flag as a task switch rather than a second
+// scrolling path: intent outranks scroll position, and there is one place
+// that decides what "pinned" means.
+describe('EventLog — sending re-arms the sticky scroll', () => {
+  function scroller(container) {
+    return container.querySelector('#event-log');
+  }
+
+  // jsdom has no layout: scrollHeight is 0 and the scrollTop setter clamps
+  // every assignment back to 0, so a real write is invisible. Give the node a
+  // geometry and an OBSERVABLE scrollTop, then the component's own scrolling
+  // can be asserted rather than inferred.
+  function makeScrollable(node, { scrollHeight = 2000, clientHeight = 400 } = {}) {
+    let top = 0;
+    Object.defineProperty(node, 'scrollHeight', {
+      value: scrollHeight, configurable: true,
+    });
+    Object.defineProperty(node, 'clientHeight', {
+      value: clientHeight, configurable: true,
+    });
+    Object.defineProperty(node, 'scrollTop', {
+      configurable: true,
+      get: () => top,
+      set: (next) => { top = next; },
+    });
+    return node;
+  }
+
+  function scrollUp(node) {
+    makeScrollable(node);
+    node.scrollTop = 0;
+    fireEvent.scroll(node);
+  }
+
+  test('a new message re-pins the log even after scrolling up', () => {
+    // Asserted through the jump-to-latest affordance rather than scrollTop:
+    // jsdom has no layout, so it clamps scrollTop writes and the component's
+    // real scrolling is invisible. The button is the rendered projection of
+    // the SAME pin flag, which is the thing under test.
+    const { container, rerender } = render(
+      <EventLog
+        entries={[_local(BUBBLE_KIND.USER, 'first')]}
+        taskId="T1"
+        pinRequestId={0}
+      />,
+    );
+    scrollUp(scroller(container));
+    expect(
+      screen.getByRole('button', { name: /scroll to latest/i }),
+    ).toBeInTheDocument();
+
+    // The operator sends: the intent bump lands with the new entry.
+    rerender(
+      <EventLog
+        entries={[_local(BUBBLE_KIND.USER, 'first'), _local(BUBBLE_KIND.USER, 'second')]}
+        taskId="T1"
+        pinRequestId={1}
+      />,
+    );
+    expect(
+      screen.queryByRole('button', { name: /scroll to latest/i }),
+    ).toBeNull();
+  });
+
+  test('it does NOT re-pin while the operator is only reading', () => {
+    // The stream appending on its own must leave a scrolled-up reader alone —
+    // the behaviour the send path deliberately overrides, so it has to still
+    // hold when nobody sent anything.
+    const { container, rerender } = render(
+      <EventLog
+        entries={[_local(BUBBLE_KIND.USER, 'first')]}
+        taskId="T1"
+        pinRequestId={0}
+      />,
+    );
+    scrollUp(scroller(container));
+
+    rerender(
+      <EventLog
+        entries={[_local(BUBBLE_KIND.USER, 'first'), _local(BUBBLE_KIND.USER, 'agent reply')]}
+        taskId="T1"
+        pinRequestId={0}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: /scroll to latest/i }),
+    ).toBeInTheDocument();
+  });
+
+  test('a fresh mount does not double-scroll on the initial id', () => {
+    // pinRequestId starts at 0; treating that as a send would fire a second
+    // scroll on every mount.
+    const { container } = render(
+      <EventLog entries={[_local(BUBBLE_KIND.USER, 'first')]} taskId="T1" pinRequestId={0} />,
+    );
+    expect(scroller(container)).toBeInTheDocument();
   });
 });

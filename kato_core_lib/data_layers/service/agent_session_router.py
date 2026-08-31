@@ -140,6 +140,10 @@ class AgentSessionRouter(object):
         return starter(task_id, **kwargs)
 
     def adopt_session_id(self, *args, **kwargs):
+        # Not routed by backend, and deliberately so: adoption only pins an id
+        # onto the record, and records have a single owner. Which backend the
+        # id BELONGS to travels as a parameter instead, so one implementation
+        # serves every backend rather than each manager growing its own copy.
         return self._record_manager.adopt_session_id(*args, **kwargs)
 
     # ----- records (never routed) ----------------------------------------

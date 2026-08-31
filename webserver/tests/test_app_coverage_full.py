@@ -277,7 +277,7 @@ class GetSessionTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# /api/claude/sessions: adopted-by map (915-919)
+# /api/agent/sessions: adopted-by map (915-919)
 # --------------------------------------------------------------------------
 
 
@@ -299,7 +299,7 @@ class ListClaudeSessionsTests(unittest.TestCase):
                     'claude_core_lib.claude_core_lib.session.index.list_sessions',
                     return_value=[row],
                 ):
-            body = app.test_client().get('/api/claude/sessions').get_json()
+            body = app.test_client().get('/api/agent/sessions').get_json()
 
         self.assertEqual(len(body['sessions']), 1)
         entry = body['sessions'][0]
@@ -1242,7 +1242,7 @@ class ChangedFilesForRepoTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# /api/claude/sessions: blank session id skipped (918->916)
+# /api/agent/sessions: blank session id skipped (918->916)
 # --------------------------------------------------------------------------
 
 
@@ -1259,7 +1259,7 @@ class ClaudeSessionsBlankIdTests(unittest.TestCase):
                     'claude_core_lib.claude_core_lib.session.index.list_sessions',
                     return_value=[row],
                 ):
-            body = app.test_client().get('/api/claude/sessions').get_json()
+            body = app.test_client().get('/api/agent/sessions').get_json()
         # No record contributed a session id -> the row is unadopted.
         self.assertEqual(body['sessions'][0]['adopted_by_task_id'], '')
 

@@ -59,6 +59,14 @@ class WorkspaceRecord(object):
     * ``agent_session_id`` — opaque id of the agent conversation
       bound to this workspace (e.g. a Claude session uuid). Optional.
       Generic on purpose: this lib doesn't care which agent.
+    * ``agent_backend`` — which agent issued ``agent_session_id``.
+      Also generic: the value is whatever the host calls its backend, and
+      this lib never interprets it. It exists because the id alone is
+      ambiguous once a host can run more than one agent — an id only
+      resolves in the CLI that issued it, so a reader that assumed every
+      mirrored id was its own would resume one agent's conversation with
+      another agent's id and open a blank chat. Empty means "written
+      before this was tracked", which a reader should treat as its own.
     * ``cwd`` — absolute path the agent was last spawned at. Used by
       consumers that need to resume an agent session keyed by cwd.
     * ``resume_on_startup`` — whether a host process should rehydrate
@@ -73,6 +81,7 @@ class WorkspaceRecord(object):
     status: str = WORKSPACE_STATUS_PROVISIONING
     repository_ids: list[str] = field(default_factory=list)
     agent_session_id: str = ''
+    agent_backend: str = ''
     cwd: str = ''
     resume_on_startup: bool = True
     created_at_epoch: float = field(default_factory=time.time)

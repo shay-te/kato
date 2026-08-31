@@ -73,3 +73,36 @@ test('the composer capsule sits an even 8px inside the chat panel', () => {
   assertDeclaration(body, 'bottom', '8px');
   assertDeclaration(body, 'width', 'min\\(720px, 100% - 16px\\)');
 });
+
+
+// The composer must not change height when you start typing.
+//
+// An EMPTY composer is sized by MessageForm's SINGLE_LINE_TEXTAREA_HEIGHT;
+// the moment there is text the auto-size hook switches to scrollHeight, which
+// #message-input's min-height floors. One line of text measures 1.4em + 8px
+// (4px padding top and bottom), so while these two disagreed the box dropped
+// 8px on the first keystroke and grew back when the field was cleared —
+// shifting the toolbar row under the pointer on every message.
+test('the empty composer and the CSS floor are the SAME height', () => {
+  // Read the constant as TEXT rather than importing it: this file runs under
+  // ``node --test``, which cannot load .jsx.
+  const source = readFileSync(
+    new URL('./MessageForm.jsx', import.meta.url), 'utf8',
+  );
+  const declaredInJs = source.match(
+    /SINGLE_LINE_TEXTAREA_HEIGHT\s*=\s*'([^']+)'/,
+  );
+  assert.ok(declaredInJs, 'expected MessageForm to declare the empty height');
+
+  const body = ruleBody('#message-input');
+  const declaredInCss = body.match(/min-height\s*:\s*([^;]+);/);
+  assert.ok(declaredInCss, 'expected #message-input to declare a min-height');
+
+  const normalise = (value) => value.replace(/\s+/g, '');
+  assert.equal(
+    normalise(declaredInCss[1]),
+    normalise(declaredInJs[1]),
+    'min-height must equal SINGLE_LINE_TEXTAREA_HEIGHT, or the box resizes '
+    + 'on the first character typed',
+  );
+});

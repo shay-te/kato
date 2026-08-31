@@ -1,11 +1,23 @@
-# Adopting an existing Claude session into kato
+# Adopting an existing agent session into kato
 
-You started a Claude conversation somewhere else — VS Code Claude, the
-JetBrains plugin, another kato instance — and now you want kato to pick
-it up so the orchestrator can drive the rest of the task. The **Adopt
-session** button in the kato chat header does this: it binds an
-existing Claude session id to a kato task so the next agent spawn
-resumes that conversation instead of starting fresh.
+You started a conversation somewhere else — VS Code Claude, the
+JetBrains plugin, the Codex CLI, another kato instance — and now you
+want kato to pick it up so the orchestrator can drive the rest of the
+task. **Chats menu → "Adopt existing … session"** does this: it binds an
+existing session id to a kato task so the next agent spawn resumes that
+conversation instead of starting fresh.
+
+Adoption works for **both Claude and Codex**, and it is per-backend: the
+picker lists the sessions of whichever agent tab you open it from, and
+binds the chosen one to that backend's chat. A session id is only
+meaningful to the CLI that issued it, so the two never mix — adopting a
+Codex thread switches the task to its Codex chat and parks the Claude
+one, which stays in the chats menu.
+
+> The control used to be a button in the task header toolbar. It moved
+> into the chats menu when Codex support was added: the toolbar has no
+> agent tab in scope, so a single button there could only ever mean
+> Claude.
 
 This document explains exactly what adoption does, what it does *not*
 do, and the resulting failure modes you need to plan around. If you

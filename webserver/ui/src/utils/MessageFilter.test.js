@@ -156,3 +156,32 @@ test('hideInternalTaskNotifications drops string-content task notifications', fu
 
   assert.deepEqual(MessageFilter.hideInternalTaskNotifications(entries), []);
 });
+
+
+// Telemetry the CLI emits alongside the conversation, carrying no text.
+//
+// An unrecognised event type does not vanish — EventLog falls back to
+// printing the bare type name — so a missing entry here puts rows reading
+// literally "tool_progress" in the transcript. They look like a message that
+// failed to load; they are heartbeats that should never have been drawn.
+test('tool_progress is not rendered as a chat bubble', () => {
+  assert.equal(MessageFilter.isChatEventHidden('tool_progress'), true);
+});
+
+test('the CLI\'s other non-display telemetry is hidden too', () => {
+  // Listed beside tool_progress in the CLI's own non-display switch — they
+  // would read exactly the same way the first time one arrived.
+  for (const type of [
+    'stream_request_start', 'command_lifecycle', 'auth_status',
+    'sdk_status', 'compact_progress', 'stream_mode', 'tombstone',
+  ]) {
+    assert.equal(MessageFilter.isChatEventHidden(type), true, type);
+  }
+});
+
+test('real conversation events are still rendered', () => {
+  // The guard on over-hiding: assistant/user/result carry the transcript.
+  for (const type of ['assistant', 'user', 'result', 'system']) {
+    assert.equal(MessageFilter.isChatEventHidden(type), false, type);
+  }
+});

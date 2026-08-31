@@ -152,7 +152,15 @@ class BackendsEndpointTests(unittest.TestCase):
         for entry in body['backends']:
             self.assertEqual(
                 set(entry),
-                {'id', 'label', 'ready', 'error', 'wired', 'chat_available'},
+                {
+                    'id', 'label', 'ready', 'error', 'wired',
+                    'chat_available',
+                    # Whether this backend keeps conversations on THIS
+                    # machine, so the UI can hide the adopt control for one
+                    # that does not (OpenHands runs sessions server-side, so
+                    # its picker could only ever come back empty).
+                    'supports_session_adoption',
+                },
             )
 
     def test_an_unready_backend_is_listed_not_dropped(self) -> None:

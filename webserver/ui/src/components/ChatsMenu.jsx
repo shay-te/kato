@@ -5,6 +5,7 @@ import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
 import { chatMeta, chatTitle } from './ChatsMenuHelpers.js';
+import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon from './Icon.jsx';
 
 // Header dropdown for navigating a task's chats. "New chat" detaches the
@@ -19,6 +20,16 @@ export default function ChatsMenu({
   taskId,
   onChatChanged,
   onChatSwitchPending = null,
+  onSessionAdopted = null,
+  // Whether this backend keeps conversations on THIS machine. OpenHands runs
+  // its sessions server-side, so offering adoption there opens a picker that
+  // can only ever come back empty. Passed down rather than fetched here: the
+  // tab strip already has the backend list, and a second request for the
+  // same answer is exactly the duplication the API pass removed.
+  //
+  // Defaults TRUE — an unknown answer shows the control, because hiding a
+  // working feature is the worse error of the two.
+  supportsAdoption = true,
   turnInFlight = false,
 }) {
   const [open, setOpen] = useState(false);
@@ -28,6 +39,7 @@ export default function ChatsMenu({
   // is mid-turn, the first click arms this with the requested target and
   // shows a warning; only a second click on the same target proceeds.
   const [confirmTarget, setConfirmTarget] = useState(null);
+  const [adoptOpen, setAdoptOpen] = useState(false);
   // The chat being renamed, and the text so far. ``null`` = nobody is. The
   // list derives its label from the first user message otherwise, which is a
   // reasonable guess and a poor name.
@@ -285,14 +297,50 @@ export default function ChatsMenu({
         >
           New chat
         </button>
+        {/* Adoption belongs HERE rather than in the header toolbar it used to
+            sit in. It is a per-chat action on one backend — the toolbar had
+            no backend in scope, so the one button could only ever mean
+            Claude, and a Codex operator had no way to reach it at all. */}
+        {supportsAdoption ? (
+          <button
+            type="button"
+            className="chats-menu-adopt"
+            onClick={() => { setAdoptOpen(true); close(); }}
+            disabled={busy}
+          >
+            Adopt existing {backendLabel(agentBackend) || 'agent'} session…
+          </button>
+        ) : null}
         {confirmWarning}
         {listContent}
       </div>
     </>
   ) : null;
 
+  const adoptModal = adoptOpen ? (
+    <AdoptSessionModal
+      taskId={taskId}
+      agentBackend={agentBackend}
+      onClose={() => setAdoptOpen(false)}
+      onAdopted={(adopted) => {
+        setAdoptOpen(false);
+        // The adopted id becomes this tab's active chat, so the menu's
+        // list is stale the moment adoption succeeds.
+        //
+        // Pass the adopted row, do NOT call this bare: an argument-less
+        // call reads as "no session id", which makes the chat announce
+        // "🆕 new chat — your next message starts a fresh session" one line
+        // above the "📎 session attached" bubble. The operator reads the
+        // contradiction first, and it is the opposite of what just happened.
+        if (typeof onChatChanged === 'function') { onChatChanged(adopted); }
+        if (typeof onSessionAdopted === 'function') { onSessionAdopted(adopted); }
+      }}
+    />
+  ) : null;
+
   return (
     <span className="chats-menu-wrap">
+      {adoptModal}
       <button
         id="session-chats"
         type="button"

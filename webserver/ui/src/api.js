@@ -772,19 +772,30 @@ export function fetchDiff(taskId) {
   return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/diff`);
 }
 
-export function fetchClaudeSessions(query = '') {
-  const qs = query ? `?q=${encodeURIComponent(query)}` : '';
-  return fetchJson(`/api/claude/sessions${qs}`);
+// Sessions the operator could adopt, for the backend whose tab they are in.
+// Was `/api/claude/sessions` — a route that named one backend in its path and
+// so could only ever offer Claude's, leaving a Codex operator with no way to
+// hand over a conversation they had already started in the CLI.
+export function fetchAgentSessions(agentBackend = '', query = '') {
+  const params = new URLSearchParams();
+  if (agentBackend) { params.set('backend', agentBackend); }
+  if (query) { params.set('q', query); }
+  const qs = params.toString();
+  return fetchJson(`/api/agent/sessions${qs ? `?${qs}` : ''}`);
 }
 
-export function adoptAgentSession(taskId, agentSessionId) {
+// ``agentBackend`` says whose session this id is. It matters: an id is only
+// resolvable by the CLI that issued it, so adopting without it can pin a
+// Codex thread onto a record still pointing at Claude, which then resumes
+// into a blank conversation.
+export function adoptAgentSession(taskId, agentSessionId, agentBackend = '') {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   if (!agentSessionId) {
     return { ok: false, error: 'no agent session id' };
   }
   return postEnvelope(
     `/api/sessions/${encodeURIComponent(taskId)}/adopt-agent-session`,
-    { [AGENT_SESSION_ID]: agentSessionId },
+    { [AGENT_SESSION_ID]: agentSessionId, agent_backend: agentBackend },
   );
 }
 

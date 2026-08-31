@@ -39,6 +39,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
+from agent_core_lib.agent_core_lib.session.index_utils import (
+    MAX_PREVIEW_SCAN_BYTES,
+    PREVIEW_LENGTH,
+    cap_results,
+    clip_preview,
+    matches_query,
+    parse_jsonl_dict_line,
+)
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 CLAUDE_SESSIONS_ROOT_ENV_KEY = 'CLAUDE_SESSIONS_ROOT'
 # Cap on per-transcript bytes scanned for first/last user message
@@ -46,10 +54,10 @@ CLAUDE_SESSIONS_ROOT_ENV_KEY = 'CLAUDE_SESSIONS_ROOT'
 # file just to render a dropdown is wasteful. 256 KB is enough to
 # capture both the first user turn (always near the top) and a
 # meaningful recent message preview.
-_MAX_PREVIEW_SCAN_BYTES = 256 * 1024
+_MAX_PREVIEW_SCAN_BYTES = MAX_PREVIEW_SCAN_BYTES
 # Preview text length per message. Long enough to identify the
 # conversation, short enough to keep the dropdown tidy.
-_PREVIEW_LENGTH = 160
+_PREVIEW_LENGTH = PREVIEW_LENGTH
 
 
 @dataclass(frozen=True)
@@ -120,7 +128,7 @@ def list_sessions(
             continue
         candidates.append(metadata)
     candidates.sort(key=lambda m: m.last_modified_epoch, reverse=True)
-    return candidates[:max_results]
+    return cap_results(candidates, max_results)
 
 
 def _iter_transcript_paths(root: Path):
@@ -200,27 +208,6 @@ def _parse_metadata(path: Path) -> ClaudeSessionMetadata | None:
     )
 
 
-def parse_jsonl_dict_line(line: str) -> dict | None:
-    """Parse one JSONL line into a dict, or ``None``.
-
-    Single source of truth for the strip → ``json.loads`` →
-    ``isinstance dict`` sequence repeated across the session-store
-    readers (``history._coerce_event`` / ``history._peek_session_metadata``
-    and ``streaming._parse_stdout_line``). Returns ``None`` for a blank
-    line, invalid JSON, or a non-dict payload — never raises.
-    """
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        record = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(record, dict):
-        return None
-    return record
-
-
 def _parse_jsonl_line(line: str) -> dict | None:
     return parse_jsonl_dict_line(line)
 
@@ -252,10 +239,7 @@ def _user_message_preview(record: dict) -> str:
 
 
 def _clip_preview(text: str) -> str:
-    cleaned = ' '.join(text.split())
-    if len(cleaned) <= _PREVIEW_LENGTH:
-        return cleaned
-    return cleaned[: _PREVIEW_LENGTH - 1] + '…'
+    return clip_preview(text, _PREVIEW_LENGTH)
 
 
 # ----- session migration (adopt → the orchestrator workspace) -----
@@ -379,11 +363,9 @@ def migrate_session_to_workspace(
 
 
 def _matches_query(metadata: ClaudeSessionMetadata, needle: str) -> bool:
-    haystack = (
-        metadata.cwd.lower()
-        + '\n'
-        + metadata.first_user_message.lower()
-        + '\n'
-        + metadata.last_user_message.lower()
+    return matches_query(
+        needle,
+        metadata.cwd,
+        metadata.first_user_message,
+        metadata.last_user_message,
     )
-    return needle in haystack
