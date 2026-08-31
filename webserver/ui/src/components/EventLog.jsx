@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AgentNameProvider } from '../contexts/AgentNameContext.jsx';
 import Bubble from './Bubble.jsx';
 import Icon from './Icon.jsx';
@@ -17,7 +17,12 @@ import { commentStatusKey } from '../utils/commentStatus.js';
 import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
-import { isPinnedToBottom, scrollToBottom } from '../utils/scrollUtils.js';
+import {
+  anchoredScrollTop,
+  isNearTop,
+  isPinnedToBottom,
+  scrollToBottom,
+} from '../utils/scrollUtils.js';
 import { cx } from '../utils/cx.js';
 import { countNoun, withImageCountSuffix } from '../utils/pluralize.js';
 import { messageContentText } from '../utils/messageContent.js';
@@ -26,6 +31,8 @@ import {
   TOOL_DETAILS_COLLAPSE_THRESHOLD,
   TOOL_DETAILS_HARD_CAP,
   computeEventLogWindow,
+  EVENT_LOG_CHUNK_SIZE,
+  EVENT_LOG_WINDOW_SIZE,
   computeToolDetailsRender,
 } from './eventLogTruncation.js';
 
@@ -73,6 +80,22 @@ export default function EventLog({
   // re-renders on the threshold crossing, not on every scroll tick.
   const [atBottom, setAtBottom] = useState(true);
   const [showAll, setShowAll] = useState(false);
+  // How much history is rendered. Grows a chunk at a time as the operator
+  // reads upward — see ``revealOlder``. Reset per task so a fresh tab does
+  // not carry the previous one's expansion.
+  const [windowSize, setWindowSize] = useState(EVENT_LOG_WINDOW_SIZE);
+  // A reveal is in flight. Rendering a chunk is synchronous but not free, so
+  // this drives a progress bar and, just as importantly, stops the scroll
+  // listener from firing a second reveal for the same gesture.
+  const [revealing, setRevealing] = useState(false);
+  // Scroll geometry captured just BEFORE a reveal, so the layout effect
+  // below can put the operator back where they were reading.
+  const anchorRef = useRef(null);
+  // Ref mirrors of the two values ``revealOlder`` needs. The scroll listener
+  // is bound once (it must not be re-bound on every render), so it closes
+  // over the FIRST render's state — refs are how it sees current values.
+  const revealingRef = useRef(false);
+  const hiddenCountRef = useRef(0);
   // Dedupe is O(N) over the entire event list; without memoization
   // it re-runs every time the parent re-renders (tab switches,
   // workspace bumps, attention flips), even though ``entries`` is
@@ -87,8 +110,10 @@ export default function EventLog({
     [entries],
   );
   const window = useMemo(
-    () => computeEventLogWindow(visibleEntries, showAll, isPromptEntry),
-    [visibleEntries, showAll],
+    () => computeEventLogWindow(
+      visibleEntries, showAll, isPromptEntry, windowSize,
+    ),
+    [visibleEntries, showAll, windowSize],
   );
   // Only fetch live comment statuses when a comment-run prompt is
   // actually on screen — an ordinary transcript polls nothing. Drives
@@ -116,10 +141,64 @@ export default function EventLog({
       const pinned = isPinnedToBottom(node);
       pinnedRef.current = pinned;
       setAtBottom(pinned);
+      // Reading up into the history pulls the next chunk in automatically.
+      // This replaced a "Show N earlier events" button, which was a worse
+      // deal than it looked: it revealed the ENTIRE remaining history in one
+      // frame, and the operator usually just wanted a few more lines of
+      // context above what they were already reading.
+      if (isNearTop(node)) { revealOlder(); }
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
+    // ``revealOlder`` reads only refs and setState updaters, both stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Reveal one more chunk of history, anchored so the text under the
+  // operator's eyes does not move.
+  //
+  // The capture has to happen HERE, before React re-renders: once the taller
+  // list is committed the previous scrollHeight is gone and the delta cannot
+  // be recovered. ``revealingRef`` (not the state) guards re-entry, because a
+  // scroll handler fires many times per gesture and would otherwise queue a
+  // reveal per frame.
+  function revealOlder() {
+    if (revealingRef.current) { return; }
+    const node = containerRef.current;
+    if (!node || !hiddenCountRef.current) { return; }
+    revealingRef.current = true;
+    anchorRef.current = {
+      top: node.scrollTop,
+      height: node.scrollHeight,
+    };
+    setRevealing(true);
+    // Yield one frame so the progress bar actually paints before the (heavy)
+    // chunk render blocks the main thread. Without this the bar is mounted
+    // and unmounted inside a single frame and the operator sees nothing —
+    // just a stutter.
+    requestAnimationFrame(() => {
+      setWindowSize((size) => size + EVENT_LOG_CHUNK_SIZE);
+    });
+  }
+
+  // Put the operator back where they were reading, before the browser paints.
+  //
+  // ``useLayoutEffect`` rather than ``useEffect``: this runs after the DOM has
+  // grown but before paint, so the correction is invisible. In a passive
+  // effect the frame with the un-anchored position would be shown first,
+  // which is the flicker the old button had.
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) { return; }
+    const node = containerRef.current;
+    anchorRef.current = null;
+    revealingRef.current = false;
+    setRevealing(false);
+    if (!node) { return; }
+    node.scrollTop = anchoredScrollTop(
+      anchor.top, anchor.height, node.scrollHeight,
+    );
+  }, [window.visible.length]);
 
   function handleScrollToBottom() {
     pinnedRef.current = true;
@@ -140,6 +219,17 @@ export default function EventLog({
       scrollToBottom(containerRef.current);
     }
   }, [window.visible.length, banner]);
+
+  // The scroll listener is bound once and cannot see fresh state, so mirror
+  // what it needs into a ref on every render.
+  hiddenCountRef.current = window.hidden;
+
+  // A new task starts from the tail again — carrying the previous task's
+  // expansion would make an unrelated chat open thousands of bubbles deep.
+  useEffect(() => {
+    setWindowSize(EVENT_LOG_WINDOW_SIZE);
+    setShowAll(false);
+  }, [taskId]);
 
   // Switching tasks must ALWAYS land at the newest message. App
   // remounts SessionDetail (and thus EventLog) per task, so a fresh
@@ -277,14 +367,24 @@ export default function EventLog({
   // prompts never take the top when you scroll up.
   const turns = useMemo(() => groupIntoTurns(eventBubbles), [eventBubbles]);
   const hiddenCount = window.hidden;
-  const showOlderButton = hiddenCount > 0 ? (
-    <button
-      type="button"
-      className="event-log-show-older"
-      onClick={() => setShowAll(true)}
+  // No button. Scrolling to the top reveals the next chunk on its own, so
+  // this is a STATUS line, not a control: it says how much history is still
+  // above, and turns into a progress bar while a chunk renders.
+  const olderIndicator = hiddenCount > 0 ? (
+    <div
+      className={`event-log-older${revealing ? ' is-revealing' : ''}`}
+      role="status"
+      aria-live="polite"
     >
-      {`Show ${countNoun(hiddenCount, 'earlier event')}`}
-    </button>
+      {revealing
+        ? <span className="event-log-older-bar" aria-hidden="true" />
+        : null}
+      <span className="event-log-older-label">
+        {revealing
+          ? 'Loading earlier events…'
+          : countNoun(hiddenCount, 'earlier event') + ' above'}
+      </span>
+    </div>
   ) : null;
   return (
     // Names every assistant bubble below. A context, not a prop on each
@@ -293,7 +393,7 @@ export default function EventLog({
     <CommentStatusContext.Provider value={commentStatusMap}>
       <div id="event-log" ref={containerRef}>
         {bannerBubble}
-        {showOlderButton}
+        {olderIndicator}
         {turns.preamble.length > 0 && (
           <div className="chat-turn chat-turn--preamble">{turns.preamble}</div>
         )}

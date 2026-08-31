@@ -44,10 +44,25 @@ test('the maximized chat keeps the collapsed columns at zero width', () => {
   assert.match(bodies[0], /grid-template-columns:\s*0 0 minmax\(0, 1fr\)/);
 });
 
-test('it closes the gutter that held the chat off the left edge', () => {
+test('it closes the column gap that held the chat off-centre', () => {
   const body = ruleBodies('#layout.has-top-tabs.is-chat-maximized {')[0];
   assert.match(body, /column-gap:\s*0/);
-  assert.match(body, /padding-left:\s*0/);
+});
+
+test('the left inset matches the right one', () => {
+  // The shell's own horizontal padding is what makes the two sides equal, so
+  // the maximized rule must NOT override one side of it. An earlier attempt
+  // set ``padding-left: 0``, which pinned the chat flush to the window edge
+  // while the right kept its gutter.
+  const body = ruleBodies('#layout.has-top-tabs.is-chat-maximized {')[0];
+  assert.doesNotMatch(body, /padding-left\s*:/);
+  assert.doesNotMatch(body, /padding-inline-start\s*:/);
+  // ...and the padding it inherits is symmetric.
+  const shell = ruleBodies('#layout.has-top-tabs {')[0];
+  const padding = shell.match(/[^-]padding:\s*([^;]+);/);
+  assert.ok(padding, 'the shell no longer sets a padding to inherit');
+  const parts = padding[1].trim().split(/\s+/);
+  assert.equal(parts.length, 3, `expected "top x-axis bottom", got ${padding[1]}`);
 });
 
 test('the two collapsed panes paint no border', () => {

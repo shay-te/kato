@@ -106,3 +106,54 @@ test('computeEventLogWindow without a boundary predicate is the plain trailing w
   assert.equal(result.visible[0].i, 800);
   assert.equal(result.hidden, 800);
 });
+
+// ---------------------------------------------------------------------------
+// Chunked reveal. The window used to be all-or-nothing: a 200-entry tail, or
+// EVERY entry the moment the operator clicked "show earlier". On a long
+// session that rendered thousands of bubbles in one frame — the freeze that
+// made the scroll jump so violent. It grows a chunk at a time now.
+// ---------------------------------------------------------------------------
+
+test('computeEventLogWindow accepts a caller-supplied window size', () => {
+  const entries = Array.from({ length: 500 }, (_, i) => ({ id: i }));
+  const win = computeEventLogWindow(entries, false, null, 300);
+  assert.equal(win.visible.length, 300);
+  assert.equal(win.hidden, 200);
+});
+
+test('a grown window reveals more without reaching the end', () => {
+  const entries = Array.from({ length: 500 }, (_, i) => ({ id: i }));
+  const first = computeEventLogWindow(entries, false, null, 200);
+  const second = computeEventLogWindow(entries, false, null, 300);
+  assert.equal(first.hidden, 300);
+  assert.equal(second.hidden, 200);
+  // Still a window, not the whole history — that is the point of chunking.
+  assert.ok(second.visible.length < entries.length);
+});
+
+test('growing past the end simply shows everything', () => {
+  const entries = Array.from({ length: 500 }, (_, i) => ({ id: i }));
+  const win = computeEventLogWindow(entries, false, null, 900);
+  assert.equal(win.visible.length, 500);
+  assert.equal(win.hidden, 0);
+});
+
+test('the newest entries are the ones kept', () => {
+  // Revealing older history must extend BACKWARD; the tail is what the
+  // operator is reading.
+  const entries = Array.from({ length: 500 }, (_, i) => ({ id: i }));
+  const win = computeEventLogWindow(entries, false, null, 300);
+  assert.equal(win.visible[win.visible.length - 1].id, 499);
+  assert.equal(win.visible[0].id, 200);
+});
+
+test('an absent or nonsense window size falls back to the default', () => {
+  const entries = Array.from({ length: 500 }, (_, i) => ({ id: i }));
+  assert.equal(computeEventLogWindow(entries, false).visible.length, 200);
+  assert.equal(
+    computeEventLogWindow(entries, false, null, 0).visible.length, 200,
+  );
+  assert.equal(
+    computeEventLogWindow(entries, false, null, NaN).visible.length, 200,
+  );
+});

@@ -175,6 +175,29 @@ function rawFingerprint(raw) {
 // would freeze the transcript.
 function crossSourceIdentity(raw) {
   if (!raw || typeof raw !== 'object') { return ''; }
+  // Operator prompts are matched on TEXT, and deliberately BEFORE the uuid.
+  //
+  // A uuid looks like the stronger identity, and for everything else it is —
+  // but Claude assigns one per JSONL RECORD, not per logical message. The
+  // live SSE event and the transcript replay of the same prompt therefore
+  // carry DIFFERENT uuids, so keying on it gave one prompt two identities and
+  // it rendered twice. Assistant turns escaped this because they also carry
+  // an Anthropic ``message.id``, which IS stable across both sources; a user
+  // prompt has no such id, which is why only the prompt duplicated.
+  //
+  // Same trade-off already accepted for Codex below: two genuinely identical
+  // consecutive prompts ("continue", "continue") collapse into one. That is
+  // the cost of having no stable id, and it is far cheaper than a transcript
+  // that reprints the operator's own question after every reconnect.
+  //
+  // ``!raw.tool_use_id`` matters: a tool RESULT is also delivered as a
+  // ``user`` envelope, and it carries no operator text — so without this
+  // guard it got an empty identity here and lost the cross-source dedupe it
+  // already had on ``tool_use_id``, printing every tool result twice.
+  if (raw.type === CLAUDE_EVENT.USER && !raw.tool_use_id) {
+    const text = userMessageTextFor(raw);
+    return text ? `x:cu:${text}` : '';
+  }
   if (raw.uuid) { return `x:u:${raw.uuid}`; }
   const messageId = raw.message && raw.message.id;
   if (messageId) { return `x:m:${messageId}`; }
@@ -194,10 +217,9 @@ function crossSourceIdentity(raw) {
 // have no id at all, and the alternative is a transcript that doubles every
 // message the moment the operator sends one after a restart.
 function codexCrossSourceIdentity(raw) {
-  if (raw.type === CLAUDE_EVENT.USER) {
-    const text = userMessageTextFor(raw);
-    return text ? `x:cu:${text}` : '';
-  }
+  // NOTE: ``user`` is handled by ``crossSourceIdentity`` above, for BOTH
+  // backends — it has to run before the uuid check, and duplicating the
+  // branch here would leave two copies of the same rule to drift apart.
   if (raw.type === CODEX_EVENT.ITEM_COMPLETED) {
     const item = raw.item || {};
     if (item.type !== CODEX_ITEM.AGENT_MESSAGE) { return ''; }
@@ -210,6 +232,10 @@ function codexCrossSourceIdentity(raw) {
 // The text of a ``user`` envelope, for identity only.
 function userMessageTextFor(raw) {
   const content = (raw.message && raw.message.content) || [];
+  // A prompt arrives as a plain string on some paths and as content blocks on
+  // others. Returning '' for the string shape would leave exactly those
+  // prompts with no identity — and therefore still duplicating.
+  if (typeof content === 'string') { return content.trim(); }
   if (!Array.isArray(content)) { return ''; }
   return content
     .filter((block) => block && block.type === 'text' && block.text)

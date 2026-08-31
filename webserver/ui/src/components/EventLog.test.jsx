@@ -536,16 +536,24 @@ describe('EventLog — dedupe + show-older', () => {
     expect(prompts[0]).toHaveTextContent('identical text');
   });
 
-  test('"Show N earlier events" button appears when window truncates', () => {
+  test('a truncated window announces the history above it', () => {
     // EVENT_LOG_WINDOW_SIZE is 200; push 250 to force truncation.
+    //
+    // This used to assert a "Show N earlier events" BUTTON. Clicking it
+    // revealed the entire remaining history in one frame and lost the
+    // operator's scroll position, so it is now a passive status line and
+    // scrolling near the top reveals one chunk at a time (see
+    // EventLogRevealOlder.test.jsx).
     const many = Array.from({ length: 250 }, (_, i) => _server({
       type: CLAUDE_EVENT.ASSISTANT,
       uuid: `u${i}`,
       message: { content: [{ type: 'text', text: `msg ${i}` }] },
     }));
     render(<EventLog agentName="Claude" entries={many} />);
-    const showOlder = screen.queryByRole('button', { name: /show.*earlier event/i });
-    expect(showOlder).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show.*earlier event/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/earlier event/i);
   });
 });
 

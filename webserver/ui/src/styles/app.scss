@@ -541,17 +541,22 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * hidden`` does the hiding. */
 #layout.has-top-tabs.is-chat-maximized {
   grid-template-columns: 0 0 minmax(0, 1fr);
-  /* "Maximized" has to mean edge-to-edge, and zero-WIDTH is not the same as
-   * gone. Each collapsed column still painted its card's 1px left and right
-   * borders, and the grid still opened an 8px gutter on either side of it —
-   * so the maximized chat sat behind two hairlines and ~24px of dead space,
-   * pinned off the left edge of the window.
+  /* Zero-WIDTH is not the same as gone. Each collapsed column still painted
+   * its card's 1px left and right borders, and the grid still opened its
+   * column gap on either side of it — so the maximized chat sat behind two
+   * hairlines and ~24px of dead space, pushed off-centre to the right.
    *
-   * Collapsing the gutter here rather than unmounting the panes: the
-   * zero-width column is deliberate (see above) because it keeps Monaco
-   * alive with its scroll position, folds and find widget intact. */
+   * Only the GAP is collapsed, not the shell's own padding: that padding is
+   * what makes the left inset match the right one. Removing it (an earlier
+   * attempt at "truly full screen") pinned the chat flush to the window edge
+   * while the right side kept its gutter — square on one side, inset on the
+   * other. The chat is symmetric now, which is what "maximized" should look
+   * like.
+   *
+   * Collapsing the gap here rather than unmounting the panes: the zero-width
+   * column is deliberate (see above) because it keeps Monaco alive with its
+   * scroll position, folds and find widget intact. */
   column-gap: 0;
-  padding-left: 0;
 }
 
 /* The two collapsed panes — ``#right-pane`` is the file tree (it renders in
@@ -3040,22 +3045,52 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-color: $C-NEUTRAL-32;
 }
 
-.event-log-show-older {
+/* History marker at the top of the log. Was a "Show N earlier events"
+ * button; scrolling to the top now reveals the next chunk on its own, so
+ * this is a status line rather than a control — no pointer affordance,
+ * because there is nothing to click. */
+.event-log-older {
+  position: relative;
   display: block;
   margin: $SPACE-8 auto;
   padding: $SPACE-4 $SPACE-12;
+  overflow: hidden;
   font-size: $TEXT-11;
-  font-family: inherit;
   color: $C-NEUTRAL-64;
-  background: transparent;
-  border: 1px solid $C-NEUTRAL-16;
+  text-align: center;
   border-radius: $RADIUS-3;
-  cursor: pointer;
 }
 
-.event-log-show-older:hover {
-  color: $C-NEUTRAL-96;
-  border-color: $C-NEUTRAL-32;
+.event-log-older.is-revealing {
+  background: $C-NEUTRAL-09;
+}
+
+/* Indeterminate progress: rendering a chunk has no measurable percentage,
+ * and a sweep reads as "working" without implying one. */
+.event-log-older-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  /* The app's existing accent — no new base colour for one 2px bar. */
+  background: $C-CYAN-52;
+  border-radius: $RADIUS-3;
+  animation: event-log-older-sweep 900ms ease-in-out infinite;
+}
+
+@keyframes event-log-older-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+/* Operators who ask for less motion get the bar as a static tint: still a
+ * visible "working" state, no sweep. */
+@media (prefers-reduced-motion: reduce) {
+  .event-log-older-bar {
+    width: 100%;
+    animation: none;
+  }
 }
 
 .bubble-tool-details-overflow {

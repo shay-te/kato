@@ -23,6 +23,13 @@ export const TOOL_DETAILS_HARD_CAP = 1000;
 // state flip, not a refetch.
 export const EVENT_LOG_WINDOW_SIZE = 200;
 
+// How much more history one "reveal" adds. The log used to jump straight from
+// the 200-entry tail to EVERYTHING, which on a long session meant thousands of
+// bubbles rendering in one frame — the freeze that made the scroll jump so
+// obvious. A chunk keeps each reveal cheap enough to stay smooth, and the
+// operator usually only wanted a little more context anyway.
+export const EVENT_LOG_CHUNK_SIZE = 100;
+
 export function computeToolDetailsRender(lines, expanded) {
   if (!expanded && lines.length > TOOL_DETAILS_COLLAPSE_THRESHOLD) {
     return {
@@ -48,11 +55,16 @@ export function computeToolDetailsRender(lines, expanded) {
 // "show older" — and that's exactly the state a fresh page load lands in:
 // the in-memory stream cache is empty, so the transcript replays from
 // history straight into the windowed tail with no header on screen.
-export function computeEventLogWindow(entries, showAll, isTurnBoundary) {
-  if (showAll || entries.length <= EVENT_LOG_WINDOW_SIZE) {
+export function computeEventLogWindow(
+  entries, showAll, isTurnBoundary, windowSize = EVENT_LOG_WINDOW_SIZE,
+) {
+  const size = Number.isFinite(windowSize) && windowSize > 0
+    ? windowSize
+    : EVENT_LOG_WINDOW_SIZE;
+  if (showAll || entries.length <= size) {
     return { visible: entries, hidden: 0 };
   }
-  let start = entries.length - EVENT_LOG_WINDOW_SIZE;
+  let start = entries.length - size;
   if (typeof isTurnBoundary === 'function' && start > 0) {
     let boundary = start;
     while (boundary > 0 && !isTurnBoundary(entries[boundary])) {
