@@ -121,11 +121,38 @@ test('merge: marks every eligible session in one pass', function () {
   assert.equal(out.size, 3);
 });
 
-test('merge: ignores extra args (back-compat with a stale third argument)', function () {
+test('merge: a non-list third argument is ignored, not thrown on', function () {
+  // The third parameter USED to be unused. It now carries pending-permission
+  // task ids, but this feeds the tab strip — anything unexpected has to be a
+  // no-op rather than take the whole strip down.
   const out = mergePendingPermissionTaskIds(
     new Set(),
     [_session({ task_id: 'T1' })],
     () => 'allow',
   );
   assert.ok(out.has('T1'));
+});
+
+test('merge: pending-permission task ids light the badge', function () {
+  // The dialog only opens for the task on screen now, so this badge is how a
+  // BACKGROUND task says it is waiting for an answer.
+  const out = mergePendingPermissionTaskIds(new Set(), [], ['T9']);
+  assert.ok(out.has('T9'));
+});
+
+test('merge: the store is folded in ON TOP of the sessions poll', function () {
+  // Both describe the same server truth, but the store hears first — it has
+  // its own poll plus the live SSE push, while ``has_pending_permission``
+  // only refreshes on the slower sessions tick.
+  const out = mergePendingPermissionTaskIds(
+    new Set(['T1']),
+    [_session({ task_id: 'T2', has_pending_permission: true })],
+    ['T3'],
+  );
+  assert.deepEqual([...out].sort(), ['T1', 'T2', 'T3']);
+});
+
+test('merge: empty ids from the store are skipped', function () {
+  const out = mergePendingPermissionTaskIds(new Set(), [], ['', null, 'T4']);
+  assert.deepEqual([...out], ['T4']);
 });

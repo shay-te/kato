@@ -4,6 +4,8 @@ import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
 import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
+import { usePendingPermissions } from './hooks/usePendingPermissions.js';
+import { unpackPermissionEnvelope } from './utils/permissionEnvelope.js';
 import Header from './components/Header.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
@@ -486,13 +488,25 @@ export default function App() {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
+  const pendingPermissions = usePendingPermissions();
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
   const activeBannerBackend = useActiveBackend(
     activeTaskId, activeSession?.agent_backend || '',
   );
+  // Task ids with an ask waiting, straight from the permission store. The
+  // dialog now only opens for the task on screen, so this badge is how a
+  // background task says it needs an answer.
+  const pendingPermissionTaskIds = useMemo(
+    () => pendingPermissions.list.map(
+      (ask) => unpackPermissionEnvelope(ask).taskId,
+    ),
+    [pendingPermissions.list],
+  );
   const attentionTaskIds = useMemo(() => {
-    return mergePendingPermissionTaskIds(attention.taskIds, sessions);
-  }, [attention.taskIds, sessions]);
+    return mergePendingPermissionTaskIds(
+      attention.taskIds, sessions, pendingPermissionTaskIds,
+    );
+  }, [attention.taskIds, sessions, pendingPermissionTaskIds]);
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
@@ -871,7 +885,7 @@ export default function App() {
           shared permissionStore (authoritative poll + the focused task's
           live SSE). Surfaces the dialog no matter which task is in view and
           without a page refresh. */}
-      <GlobalPermissionContainer />
+      <GlobalPermissionContainer activeTaskId={activeTaskId} />
       {paletteOpen && (
         <TaskPalette
           sessions={sessions}

@@ -7,7 +7,10 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 
-// The SINGLE owner of the permission-approval modal, for EVERY task.
+// The SINGLE owner of the permission-approval modal.
+//
+// It still WATCHES every task — that part is deliberate and load-bearing —
+// but it only OPENS for the task the operator is currently on.
 //
 // It renders the oldest pending ask from the shared ``permissionStore``
 // (fed by the authoritative ``/api/permissions/pending`` poll AND the
@@ -23,8 +26,31 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 // flag on the submit call. When the resolved ask belongs to a task whose
 // chat is mounted, the audit bubble is routed back into that chat
 // through the store's audit-sink registry.
-export default function GlobalPermissionContainer() {
+//
+// WATCHING every task vs OPENING for one is the distinction that matters.
+// The store is global on purpose: it polls the server's own list, so an ask
+// surfaces even when the per-task SSE frame never arrived — that is what
+// fixed "I had to refresh the page to see the popup", and narrowing the
+// STORE would bring it straight back.
+//
+// The DIALOG is a different question. A modal is a demand for attention
+// right now, and one raised by a task the operator is not looking at
+// interrupts whatever they are actually doing — reported as "it blocks my
+// flow while I am working on another task". So a background task's ask stays
+// in the store and keeps its non-blocking signals (the tab badge via
+// ``mergePendingPermissionTaskIds``, the flashing title, the desktop
+// notification) and opens the moment the operator switches to that task.
+//
+// The agent is not forgotten either way: it stays blocked until answered,
+// which is exactly why the quiet signals have to keep firing for tasks that
+// are NOT on screen.
+export default function GlobalPermissionContainer({ activeTaskId = '' }) {
   const { list } = usePendingPermissions();
+  // Asks belonging to the task on screen. The dialog is drawn from THIS;
+  // everything below that reports on "waiting" still reads the full list.
+  const mine = list.filter(
+    (entry) => unpackPermissionEnvelope(entry).taskId === activeTaskId,
+  );
   // Hold the dialog back while the operator is mid-sentence somewhere.
   //
   // It used to appear over whatever they were writing WITHOUT moving
@@ -43,13 +69,16 @@ export default function GlobalPermissionContainer() {
   // (The store rebuilds its map from the server's list, so even the ORDER of
   // two already-pending asks can flip under a running dialog.)
   const shownRequestIdRef = useRef('');
+  //
+  // Scoped to ``mine``, so switching tasks releases a held dialog rather
+  // than dragging the previous task's ask along to the new one.
   const held = shownRequestIdRef.current
-    ? list.find((entry) => (
+    ? mine.find((entry) => (
       unpackPermissionEnvelope(entry).requestId === shownRequestIdRef.current
     )) || null
     : null;
   // Oldest ask first (store preserves insertion order) unless one is held.
-  const current = held || list[0] || null;
+  const current = held || mine[0] || null;
   // Flash the browser tab title while anything is waiting. The desktop
   // notification already fired, but notifications get missed — and an
   // agent sits blocked for exactly as long as nobody notices, so the cost
@@ -121,7 +150,7 @@ export default function GlobalPermissionContainer() {
       // Held-back asks are invisible until this one is answered, and an
       // agent stays blocked for as long as nobody knows it is waiting —
       // so the dialog says how many are queued behind it.
-      queuedCount={Math.max(0, list.length - 1)}
+      queuedCount={Math.max(0, mine.length - 1)}
     />
   );
 }
