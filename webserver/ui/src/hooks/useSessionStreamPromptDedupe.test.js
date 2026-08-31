@@ -171,3 +171,82 @@ test('two different tool results both survive', () => {
   });
   assert.equal(next.events.length, 2);
 });
+
+// ---------------------------------------------------------------------------
+// The reported case, which the cross-source fix above did NOT cover.
+//
+// The operator's own message is rendered immediately as a LOCAL echo so the
+// composer feels responsive. The server replays that same message later as a
+// ``user`` event — and on a reconnect it arrives inside a full history
+// replay, far after the cached echo, with a whole agent turn in between.
+//
+// The only thing matching them was a display filter with a FOUR-entry
+// lookback, so it caught the adjacent case and nothing else. That is why the
+// duplicate always appeared with content between the two copies.
+// ---------------------------------------------------------------------------
+
+function localEcho(text) {
+  return { source: 'local', kind: 'user', text };
+}
+
+function withLocalEcho(text) {
+  return reducer(emptyState(), { type: 'local_event', event: localEcho(text) });
+}
+
+test('a replayed prompt does not duplicate the operator\u2019s own echo', () => {
+  let state = withLocalEcho('can you check the price?');
+  // A whole agent turn happens in between — this is the distance the old
+  // 4-entry lookback could not span.
+  for (let i = 0; i < 12; i += 1) {
+    state = reducer(state, {
+      type: 'incoming_event',
+      event: { type: 'assistant', uuid: `a${i}`, message: { id: `m${i}`, content: [] } },
+      receivedAtEpoch: i,
+    });
+  }
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: prompt('jsonl-1', 'can you check the price?'),
+    receivedAtEpoch: 99,
+  });
+  const prompts = state.events.filter(
+    (e) => e.source === 'local' || e?.raw?.type === 'user',
+  );
+  assert.equal(prompts.length, 1);
+});
+
+test('the echo survives a HYDRATE and still suppresses the replay', () => {
+  // The reconnect path: the cached transcript is rehydrated, THEN the server
+  // replays its history. If hydrate does not restore the echo's identity,
+  // the replayed copy has nothing to match against.
+  const withEcho = withLocalEcho('can you check the price?');
+  let state = reducer(emptyState(), {
+    type: 'hydrate', value: { ...withEcho, eventKeys: new Set() },
+  });
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: prompt('jsonl-1', 'can you check the price?'),
+    receivedAtEpoch: 99,
+  });
+  assert.equal(state.events.length, 1);
+});
+
+test('the operator sending the same words twice renders twice', () => {
+  // The echo registers an identity but is never suppressed BY one: it is the
+  // operator's own action and must always appear.
+  let state = withLocalEcho('continue');
+  state = reducer(state, { type: 'local_event', event: localEcho('continue') });
+  assert.equal(state.events.length, 2);
+});
+
+test('a kato-injected prompt is still shown', () => {
+  // Server ``user`` events that do NOT match something the operator typed are
+  // real content — they explain why the agent suddenly started working.
+  let state = withLocalEcho('my own message');
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: prompt('jsonl-1', 'Review the following comment...'),
+    receivedAtEpoch: 5,
+  });
+  assert.equal(state.events.length, 2);
+});

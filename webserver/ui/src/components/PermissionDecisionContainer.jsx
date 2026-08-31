@@ -18,6 +18,7 @@ export default function PermissionDecisionContainer({
   taskCode = '',
   taskSummary = '',
   queuedCount = 0,
+  inline = false,
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
 
@@ -52,6 +53,7 @@ export default function PermissionDecisionContainer({
       taskCode={taskCode}
       taskSummary={taskSummary}
       queuedCount={queuedCount}
+      inline={inline}
     />
   );
 }

@@ -808,6 +808,12 @@ export default function SessionDetail({
             />
           }
         />
+        {/* The agent's permission ask lands HERE, between the transcript and
+            the composer, portaled in by GlobalPermissionContainer (which
+            stays the single owner of the submit/resolve path — see there).
+            It sits below the log so it reads as the newest thing said, and
+            above the composer so the answer is where the reply would be. */}
+        <div id="chat-permission-slot" />
         <QueuedMessageList
           items={queuedMessages}
           onSteer={steerQueuedMessage}

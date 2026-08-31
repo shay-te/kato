@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useOperatorIsTyping } from '../hooks/useOperatorIsTyping.js';
 import { useTitleAlert } from '../hooks/useTitleAlert.js';
 import PermissionDecisionContainer from './PermissionDecisionContainer.jsx';
@@ -6,6 +7,7 @@ import { postSession } from '../api.js';
 import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
+import { countNoun } from '../utils/pluralize.js';
 
 // The SINGLE owner of the permission-approval modal.
 //
@@ -44,7 +46,10 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 // The agent is not forgotten either way: it stays blocked until answered,
 // which is exactly why the quiet signals have to keep firing for tasks that
 // are NOT on screen.
-export default function GlobalPermissionContainer({ activeTaskId = '' }) {
+export default function GlobalPermissionContainer({
+  activeTaskId = '',
+  onSelectTask = null,
+}) {
   const { list } = usePendingPermissions();
   // Asks belonging to the task on screen. The dialog is drawn from THIS;
   // everything below that reports on "waiting" still reads the full list.
@@ -90,6 +95,10 @@ export default function GlobalPermissionContainer({ activeTaskId = '' }) {
       ? `(${list.length}) Approval needed — kato`
       : 'Approval needed — kato',
   );
+  // Re-resolves the slot when an ask appears: the chat pane can mount its
+  // slot at any time relative to this component, and the ask may arrive long
+  // after both have settled.
+  const hasAsk = !!current;
   const currentTaskId = current ? unpackPermissionEnvelope(current).taskId : '';
   const currentRequestId = current ? unpackPermissionEnvelope(current).requestId : '';
   // The typing gate only decides whether an ask may OPEN over what the
@@ -126,20 +135,62 @@ export default function GlobalPermissionContainer({ activeTaskId = '' }) {
     permissionStore.emitAudit(currentTaskId, bubble);
   }, [currentTaskId]);
 
-  if (!current) { return null; }
-  if (!open) {
-    return (
-      <div className="permission-pending-hint" role="status">
-        <span className="permission-pending-dot" aria-hidden="true" />
-        Waiting for your approval — finish typing and it will open.
-      </div>
-    );
+  // Every task with someone waiting, oldest first, one row each. This is the
+  // roster: it is how a task that is NOT on screen says it needs an answer,
+  // and it is deliberately not a dialog — nothing here interrupts, and
+  // picking a row is what takes the operator to the ask.
+  const waiting = [];
+  const seenTasks = new Set();
+  for (const entry of list) {
+    const { taskId, taskSummary } = unpackPermissionEnvelope(entry);
+    if (!taskId || seenTasks.has(taskId)) { continue; }
+    seenTasks.add(taskId);
+    waiting.push({ taskId, taskSummary });
   }
 
-  return (
+  const roster = waiting.length > 0 ? (
+    <div className="permission-roster" role="status" aria-live="polite">
+      <span className="permission-roster-label">
+        {countNoun(waiting.length, 'chat')} waiting for you
+      </span>
+      {waiting.map((row) => (
+        <button
+          key={row.taskId}
+          type="button"
+          className={`permission-roster-chip${
+            row.taskId === activeTaskId ? ' is-active' : ''}`}
+          onClick={() => onSelectTask && onSelectTask(row.taskId)}
+          title={row.taskSummary || row.taskId}
+        >
+          {row.taskId}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  // The ask itself, rendered INSIDE the task's own chat rather than over the
+  // whole app. Portaled into the slot SessionDetail renders between the
+  // transcript and the composer, so this component stays the single owner of
+  // the submit/resolve path instead of that logic being copied into the chat.
+  //
+  // The slot only exists while that task's chat is mounted, which is exactly
+  // the condition for showing the ask at all.
+  // Resolved in an effect, not during render: the slot belongs to the chat
+  // pane, which mounts AFTER this component, so a render-time lookup finds
+  // nothing on the first pass and the ask never appears. Re-run per task,
+  // because switching tasks unmounts the old slot and mounts a new one.
+  const [slot, setSlot] = useState(null);
+  useEffect(() => {
+    setSlot(
+      (typeof document !== 'undefined'
+        && document.getElementById('chat-permission-slot')) || null,
+    );
+  }, [activeTaskId, hasAsk]);
+
+  const card = current && open ? (
     <PermissionDecisionContainer
       // Remount only when the actual task+request changes — a fresh poll
-      // object for the SAME ask must not tear down a modal mid-decision.
+      // object for the SAME ask must not tear down a half-filled answer.
       key={`${currentTaskId}:${currentRequestId}`}
       pending={current}
       onDismiss={dismiss}
@@ -147,10 +198,26 @@ export default function GlobalPermissionContainer({ activeTaskId = '' }) {
       onAuditBubble={auditBubble}
       taskCode={currentTaskId}
       taskSummary={unpackPermissionEnvelope(current).taskSummary}
-      // Held-back asks are invisible until this one is answered, and an
-      // agent stays blocked for as long as nobody knows it is waiting —
-      // so the dialog says how many are queued behind it.
+      // Only this task's other asks. One on a DIFFERENT task is not queued
+      // behind this dialog — it waits on its own row in the roster above.
       queuedCount={Math.max(0, mine.length - 1)}
+      inline
     />
+  ) : null;
+
+  const typingHint = current && !open ? (
+    <div className="permission-pending-hint" role="status">
+      <span className="permission-pending-dot" aria-hidden="true" />
+      Waiting for your approval — finish typing and it will open.
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {roster}
+      {slot && (card || typingHint)
+        ? createPortal(<>{card}{typingHint}</>, slot)
+        : null}
+    </>
   );
 }

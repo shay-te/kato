@@ -885,7 +885,10 @@ export default function App() {
           shared permissionStore (authoritative poll + the focused task's
           live SSE). Surfaces the dialog no matter which task is in view and
           without a page refresh. */}
-      <GlobalPermissionContainer activeTaskId={activeTaskId} />
+      <GlobalPermissionContainer
+        activeTaskId={activeTaskId}
+        onSelectTask={selectTaskAndReveal}
+      />
       {paletteOpen && (
         <TaskPalette
           sessions={sessions}

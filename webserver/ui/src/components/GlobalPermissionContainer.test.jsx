@@ -31,8 +31,18 @@ beforeEach(() => {
   fetchPendingPermissions.mockReset();
   postSession.mockReset();
   postSession.mockResolvedValue({ ok: true });
+  // The ask renders INSIDE the chat now, portaled into the slot the chat
+  // pane provides. A test that does not mount that slot is describing a
+  // task whose chat is not on screen — which is a real state, but not the
+  // one most of these are about.
+  const slot = document.createElement('div');
+  slot.id = 'chat-permission-slot';
+  document.body.appendChild(slot);
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => {
+  vi.restoreAllMocks();
+  document.getElementById('chat-permission-slot')?.remove();
+});
 
 
 describe('GlobalPermissionContainer', () => {

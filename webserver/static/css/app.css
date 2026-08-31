@@ -10995,6 +10995,80 @@ body.kato-resizing {
    operator had not read AND sent the draft. It now waits for a pause —
    and says so, because a popup that is merely late is indistinguishable
    from one that never came. */
+/* The roster: which chats are waiting on the operator.
+ *
+ * Replaced a full-screen modal that opened for ANY task. A modal demands an
+ * answer before anything else can happen, which is wrong for work that
+ * belongs to a conversation the operator is not currently in — it interrupted
+ * whatever task they WERE working on. This states the same fact without
+ * taking the screen, and each chip is the way in.
+ *
+ * Pinned to the top because that is where it was asked for, and because an
+ * agent stays blocked until answered — this must not scroll out of sight. */
+.permission-roster {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: #f5f5f7;
+  background: #181818;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.permission-roster-label {
+  color: #a3a3a3;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.permission-roster-chip {
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #f5f5f7;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid #0a84ff;
+  /* House rule: anything named *-chip takes the global pill radius. */
+  border-radius: 999px;
+}
+
+.permission-roster-chip:hover {
+  background: rgba(10, 132, 255, 0.18);
+}
+
+/* The chat you are already in. Still listed — dropping it would make the
+ * count disagree with the rows — but not offered as somewhere to go. */
+.permission-roster-chip.is-active {
+  color: #a3a3a3;
+  border-color: #525252;
+}
+
+/* The ask rendered INSIDE the chat rather than over the app. Reuses the
+ * modal's own card so the content is identical; only the overlay is
+ * dropped. */
+.modal.is-inline {
+  position: static;
+  display: block;
+  padding: 0;
+  margin: 8px 0;
+  background: none;
+}
+
+.modal.is-inline .modal-card {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  /* Accented edge: this is the one block in the transcript that is waiting
+   * on the operator, and it has to be findable when scrolled past. */
+  border-color: #0a84ff;
+}
+
 .permission-pending-hint {
   position: fixed;
   bottom: 16px;

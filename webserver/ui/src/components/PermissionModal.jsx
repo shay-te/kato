@@ -13,6 +13,7 @@ import MarkdownContent from './MarkdownContent.jsx';
 
 export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '', queuedCount = 0,
+  inline = false,
 }) {
   const {
     taskId, taskSummary: envelopeSummary, agentBackend,
@@ -183,6 +184,7 @@ export default function PermissionModal({
         title={title}
         subtitle={queuedNote}
         subtitleId="permission-queued-note"
+        inline={inline}
       >
         <AskUserQuestionForm
           // Keyed by the ask so a NEW question always starts blank, and its
@@ -211,6 +213,7 @@ export default function PermissionModal({
       title={title}
       subtitle={queuedNote}
       subtitleId="permission-queued-note"
+      inline={inline}
     >
       {sandboxWarning}
       {actionGuardBanner}

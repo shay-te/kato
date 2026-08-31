@@ -244,13 +244,40 @@ function userMessageTextFor(raw) {
     .trim();
 }
 
+// The cross-source identity of an entry, INCLUDING the operator's own local
+// echo bubble.
+//
+// The echo is the message the operator just typed, rendered immediately so
+// the composer feels responsive. The server later replays that same message
+// as a ``user`` event — and on a reconnect it arrives inside a full history
+// replay, hundreds of entries after the cached echo.
+//
+// A bounded display filter (``MessageFilter.dedupeUserEchoes``, 4 entries)
+// only ever caught the adjacent case. Giving the echo the SAME text identity
+// every other copy gets makes the distance irrelevant, which is the actual
+// shape of the bug: the two copies sat far apart with a whole agent turn
+// between them.
+function sharedIdentityOf(entry) {
+  if (entry?.source === ENTRY_SOURCE.LOCAL) {
+    if (entry.kind !== 'user') { return ''; }
+    const text = String(entry.text || '').trim();
+    return text ? `x:cu:${text}` : '';
+  }
+  return crossSourceIdentity(entry?.raw);
+}
+
 function appendEntryIfNew(state, entry) {
   const key = entryDedupeKey(entry);
   if (state.eventKeys.has(key)) {
     return { state, appended: false };
   }
-  const shared = crossSourceIdentity(entry.raw);
-  if (shared && state.eventKeys.has(shared)) {
+  const shared = sharedIdentityOf(entry);
+  // A LOCAL echo is never suppressed by this — it is the operator's own
+  // action and has to appear the moment they send it. Sending the same words
+  // twice ("continue", "continue") must render twice. It still REGISTERS the
+  // identity, so the replayed copies of both are the ones that get dropped.
+  const isLocal = entry?.source === ENTRY_SOURCE.LOCAL;
+  if (!isLocal && shared && state.eventKeys.has(shared)) {
     return { state, appended: false };
   }
   // Mutate the existing Set in place. ``eventKeys`` is internal to
@@ -286,7 +313,13 @@ function keysFromEvents(events) {
   const keys = new Set();
   for (const entry of events || []) {
     keys.add(entryDedupeKey(entry));
-    const shared = crossSourceIdentity(entry.raw);
+    // ``sharedIdentityOf``, not ``crossSourceIdentity``: this rebuild runs on
+    // HYDRATE, which is precisely the reconnect path the duplicate appears
+    // on. The cached transcript still holds the operator's local echo, and
+    // the server is about to replay that same prompt — so if the echo's
+    // identity is not restored here, the replayed copy has nothing to match
+    // against and renders a second time.
+    const shared = sharedIdentityOf(entry);
     if (shared) { keys.add(shared); }
   }
   return keys;
