@@ -25,6 +25,7 @@ function emptyState() {
     events: [],
     eventKeys: new Set(),
     echoTexts: new Set(),
+    sharedCounts: new Map(),
     lifecycle: 'streaming',
     turnInFlight: false,
     pendingPermission: null,
@@ -222,7 +223,8 @@ test('the echo survives a HYDRATE and still suppresses the replay', () => {
   // the replayed copy has nothing to match against.
   const withEcho = withLocalEcho('can you check the price?');
   let state = reducer(emptyState(), {
-    type: 'hydrate', value: { ...withEcho, eventKeys: new Set() },
+    type: 'hydrate',
+    value: { ...withEcho, eventKeys: new Set(), sharedCounts: new Map() },
   });
   state = reducer(state, {
     type: 'incoming_history',
@@ -289,7 +291,12 @@ test('it holds across a HYDRATE, which is the reconnect path', () => {
   const withEcho = withLocalEcho('can you check the price?');
   let state = reducer(emptyState(), {
     type: 'hydrate',
-    value: { ...withEcho, eventKeys: new Set(), echoTexts: new Set() },
+    value: {
+      ...withEcho,
+      eventKeys: new Set(),
+      echoTexts: new Set(),
+      sharedCounts: new Map(),
+    },
   });
   state = reducer(state, {
     type: 'incoming_history',
@@ -319,4 +326,64 @@ test('a suffix match must start at a line break', () => {
     receivedAtEpoch: 9,
   });
   assert.equal(state.events.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// A genuinely REPEATED message must survive.
+//
+// The text identity is what stops a replay duplicating, but a bare text key
+// also says "this message has been seen" — which silently deletes the
+// operator's second identical message. Not hypothetical: kato itself sends
+// "continue" and "Please continue from where you left off." verbatim, and the
+// operator's own transcripts contain each of them seven times. After a reload
+// both copies arrive as history, so the local-echo bypass cannot save them,
+// and the second turn's output gets filed under the first turn's header.
+// ---------------------------------------------------------------------------
+
+function replayAll(events) {
+  let state = emptyState();
+  events.forEach((event, i) => {
+    state = reducer(state, {
+      type: 'incoming_history', event, receivedAtEpoch: i,
+    });
+  });
+  return state;
+}
+
+test('two identical prompts in a history-only replay both survive', () => {
+  const state = replayAll([
+    prompt('h1', 'continue'),
+    { type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [] } },
+    prompt('h2', 'continue'),
+    { type: 'assistant', uuid: 'a2', message: { id: 'm2', content: [] } },
+  ]);
+  assert.equal(userEvents(state).length, 2);
+});
+
+test('a replay of a repeated prompt still dedupes against the live copy', () => {
+  // Per-stream counting: history #0 matches live #0, history #1 matches
+  // live #1 — the same message, not the repeat.
+  let state = replayAll([prompt('h1', 'continue'), prompt('h2', 'continue')]);
+  state = reducer(state, {
+    type: 'incoming_event', event: prompt('live1', 'continue'), receivedAtEpoch: 8,
+  });
+  state = reducer(state, {
+    type: 'incoming_event', event: prompt('live2', 'continue'), receivedAtEpoch: 9,
+  });
+  assert.equal(userEvents(state).length, 2);
+});
+
+test('a THIRD live copy of a twice-sent prompt is a genuine third send', () => {
+  let state = replayAll([prompt('h1', 'continue'), prompt('h2', 'continue')]);
+  // Distinct epochs: the live-stream key is epoch-based, so reusing one
+  // would drop them as same-source duplicates before the text key is
+  // consulted at all.
+  ['l1', 'l2', 'l3'].forEach((uuid, i) => {
+    state = reducer(state, {
+      type: 'incoming_event',
+      event: prompt(uuid, 'continue'),
+      receivedAtEpoch: 20 + i,
+    });
+  });
+  assert.equal(userEvents(state).length, 3);
 });

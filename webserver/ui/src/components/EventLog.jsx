@@ -96,6 +96,7 @@ export default function EventLog({
   // over the FIRST render's state — refs are how it sees current values.
   const revealingRef = useRef(false);
   const hiddenCountRef = useRef(0);
+  const visibleCountRef = useRef(0);
   // Dedupe is O(N) over the entire event list; without memoization
   // it re-runs every time the parent re-renders (tab switches,
   // workspace bumps, attention flips), even though ``entries`` is
@@ -177,7 +178,22 @@ export default function EventLog({
     // and unmounted inside a single frame and the operator sees nothing —
     // just a stutter.
     requestAnimationFrame(() => {
-      setWindowSize((size) => size + EVENT_LOG_CHUNK_SIZE);
+      // Grow from what is CURRENTLY VISIBLE, not from the previous
+      // ``windowSize``.
+      //
+      // ``computeEventLogWindow`` snaps the start back to the turn boundary
+      // that opens the turn the cut lands in, so the window is routinely
+      // LARGER than ``windowSize`` asked for. Adding a fixed increment to
+      // ``windowSize`` then lands inside that same turn again and returns an
+      // identical window — no progress. And because the un-stick effect used
+      // to key on the visible COUNT, a window that did not change never
+      // cleared the flag: the log jammed on "Loading earlier events…" and
+      // every later scroll early-returned, with no button left to escape it
+      // (that button is what this replaced).
+      //
+      // Measuring from the visible count guarantees the next raw start is a
+      // full chunk lower, so the snap can only widen it further.
+      setWindowSize(visibleCountRef.current + EVENT_LOG_CHUNK_SIZE);
     });
   }
 
@@ -198,7 +214,10 @@ export default function EventLog({
     node.scrollTop = anchoredScrollTop(
       anchor.top, anchor.height, node.scrollHeight,
     );
-  }, [window.visible.length]);
+    // Keyed on ``windowSize`` TOO. The visible count alone is not enough: a
+    // reveal that lands inside an already-shown turn leaves the count
+    // untouched, and keying only on it left the flag set forever.
+  }, [window.visible.length, windowSize]);
 
   function handleScrollToBottom() {
     pinnedRef.current = true;
@@ -223,6 +242,7 @@ export default function EventLog({
   // The scroll listener is bound once and cannot see fresh state, so mirror
   // what it needs into a ref on every render.
   hiddenCountRef.current = window.hidden;
+  visibleCountRef.current = window.visible.length;
 
   // A new task starts from the tail again — carrying the previous task's
   // expansion would make an unrelated chat open thousands of bubbles deep.

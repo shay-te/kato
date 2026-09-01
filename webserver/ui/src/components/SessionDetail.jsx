@@ -779,6 +779,21 @@ export default function SessionDetail({
             reads as part of the chat and the transcript never bleeds
             through it (the earlier "floating dock" overlapped chat
             text that scrolled behind it). */}
+        {/* The agent's permission ask lands HERE, portaled in by
+            GlobalPermissionContainer (which stays the single owner of the
+            submit/resolve path — see there). It is anchored above the
+            composer, so its position does not depend on where it sits in
+            this list.
+
+            Rendered UNCONDITIONALLY, outside the ready/unready branch, the
+            same way Layout keeps ``#task-header-slot`` alive. Inside the
+            branch the node was destroyed and re-created whenever the
+            operator clicked an agent tab whose CLI is not installed — and
+            the container caches this node, so the portal went on writing
+            into a DETACHED element: the ask vanished while the subprocess
+            was still blocked waiting for the answer. An always-present slot
+            has no such state to get stale. */}
+        <div id="chat-permission-slot" />
         {backendUnready ? (
           <AgentBackendSetup
             backend={activeBackendEntry.id}
@@ -808,12 +823,6 @@ export default function SessionDetail({
             />
           }
         />
-        {/* The agent's permission ask lands HERE, between the transcript and
-            the composer, portaled in by GlobalPermissionContainer (which
-            stays the single owner of the submit/resolve path — see there).
-            It sits below the log so it reads as the newest thing said, and
-            above the composer so the answer is where the reply would be. */}
-        <div id="chat-permission-slot" />
         <QueuedMessageList
           items={queuedMessages}
           onSteer={steerQueuedMessage}

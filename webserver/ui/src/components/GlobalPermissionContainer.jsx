@@ -179,13 +179,26 @@ export default function GlobalPermissionContainer({
   // pane, which mounts AFTER this component, so a render-time lookup finds
   // nothing on the first pass and the ask never appears. Re-run per task,
   // because switching tasks unmounts the old slot and mounts a new one.
-  const [slot, setSlot] = useState(null);
+  const [cachedSlot, setCachedSlot] = useState(null);
   useEffect(() => {
-    setSlot(
+    setCachedSlot(
       (typeof document !== 'undefined'
         && document.getElementById('chat-permission-slot')) || null,
     );
   }, [activeTaskId, hasAsk]);
+  // Never portal into a DETACHED node.
+  //
+  // Caching the element is what makes the first render work, but a cached
+  // node outlives the DOM it came from: anything that unmounts and remounts
+  // the chat pane without changing the deps above leaves this pointing at an
+  // element no longer in the document, and the ask renders into nothing
+  // while the agent is still blocked waiting for the answer. The
+  // ``isConnected`` check plus a live re-read costs one DOM lookup and makes
+  // that state unreachable rather than merely unlikely.
+  const slot = cachedSlot && cachedSlot.isConnected
+    ? cachedSlot
+    : ((typeof document !== 'undefined'
+      && document.getElementById('chat-permission-slot')) || null);
 
   const card = current && open ? (
     <PermissionDecisionContainer

@@ -104,3 +104,62 @@ describe('EventLog — revealing older history', () => {
     expect(screen.queryByRole('status')).toBeNull();
   });
 });
+
+// The reveal must always make PROGRESS.
+//
+// ``computeEventLogWindow`` snaps the window start back to the turn boundary
+// that opens the turn the cut lands in, so the rendered window is routinely
+// larger than the size asked for. Adding a fixed increment to that size then
+// lands inside the same turn and returns an identical window — and because
+// the un-stick effect keyed on the visible COUNT, an unchanged window never
+// cleared the in-flight flag. The log jammed on "Loading earlier events…"
+// and every later scroll early-returned, with no button left to escape it.
+describe('EventLog — a reveal inside one long turn still progresses', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (fn) => { fn(); return 0; });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  // The fixture matters: the deadlock only appears when the turn STRADDLING
+  // the window cut is longer than one chunk. ``computeEventLogWindow`` snaps
+  // the start back to that turn's opening prompt, so the rendered window is
+  // already far larger than the size asked for — and a fixed increment lands
+  // inside the same turn and changes nothing. A transcript of plain
+  // assistant messages never snaps and would pass against the broken code.
+  function longTurnTranscript() {
+    const entries = transcript(EVENT_LOG_WINDOW_SIZE + 400);
+    // One prompt at the very start, one deep enough that the default window
+    // cuts inside its (300-entry) turn.
+    for (const at of [0, 200]) {
+      entries[at] = {
+        id: `p${at}`,
+        source: 'stream',
+        received_at_epoch: at + 1,
+        raw: {
+          type: 'user',
+          message: { content: [{ type: 'text', text: `ask ${at}` }] },
+        },
+      };
+    }
+    return entries;
+  }
+
+  test('repeated scrolls keep revealing rather than sticking', async () => {
+    const { container } = render(<EventLog entries={longTurnTranscript()} />);
+    const node = logNode(container);
+    // Bounded generously — the point is that each scroll STRICTLY reveals
+    // more until nothing is left. If the in-flight flag ever sticks, the
+    // very next iteration is a no-op and the count stops moving.
+    for (let i = 0; i < 10 && screen.queryByRole('status'); i += 1) {
+      const before = container.querySelectorAll('.bubble').length;
+      await act(async () => { scrollTo(node, 0); });
+      await waitFor(() => {
+        expect(container.querySelectorAll('.bubble').length)
+          .toBeGreaterThan(before);
+      });
+    }
+    // Everything is shown, and the status line is gone rather than stuck on
+    // "Loading earlier events…".
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+});

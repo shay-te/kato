@@ -55,6 +55,10 @@ function emptyTaskState() {
     // apart from ``eventKeys`` because these are matched by SUFFIX, not by
     // equality — see ``matchesAnEcho``.
     echoTexts: new Set(),
+    // How many times each text identity has been APPENDED. Makes the text
+    // key positional so a genuinely repeated message survives — see
+    // ``occurrenceKey``.
+    sharedCounts: new Map(),
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
     // The just-closed turn scheduled a long background wait (Monitor /
@@ -202,6 +206,9 @@ function crossSourceIdentity(raw) {
     const text = userMessageTextFor(raw);
     return text ? `x:cu:${text}` : '';
   }
+  // NOTE: this key is deliberately NOT positional. It is made positional by
+  // ``occurrenceKey`` at the call site, which is where the running count
+  // lives — see there for why a global text key deletes real messages.
   if (raw.uuid) { return `x:u:${raw.uuid}`; }
   const messageId = raw.message && raw.message.id;
   if (messageId) { return `x:m:${messageId}`; }
@@ -306,6 +313,51 @@ function matchesAnEcho(text, echoTexts) {
   return false;
 }
 
+// A text identity, made unique per OCCURRENCE.
+//
+// A bare text key says "this message has been seen", which silently deletes
+// the operator's SECOND identical message. That is not hypothetical: kato
+// itself sends "continue" and "Please continue from where you left off."
+// verbatim, and the operator's own transcripts contain each of them seven
+// times. On a reload both copies arrive as history — the local-echo bypass
+// cannot save them — so the second turn's output ends up filed under the
+// first turn's prompt header.
+//
+// Counting occurrences keeps the dedupe (a REPLAY of occurrence #2 still
+// matches occurrence #2) while letting a genuinely repeated message through.
+// Which of the three streams an entry arrived on. One logical message can
+// appear on all three: the operator's own echo, the live SSE event, and the
+// transcript replay.
+function streamOf(entry) {
+  if (entry?.source === ENTRY_SOURCE.LOCAL) { return 'local'; }
+  if (entry?.source === ENTRY_SOURCE.HISTORY) { return 'history'; }
+  return 'server';
+}
+
+function occurrenceBucket(shared, entry) {
+  return shared ? `${streamOf(entry)}|${shared}` : '';
+}
+
+function occurrenceKey(shared, entry, counts) {
+  if (!shared) { return ''; }
+  // Counted WITHIN the entry's own stream, then dropped from the key.
+  //
+  // Counting globally is wrong in the other direction: the replay increments
+  // the same counter the live copy then reads, so the two halves of ONE
+  // message land on different indices and both render — the very bug this
+  // key exists to prevent.
+  //
+  // Per stream, the Nth "continue" from history matches the Nth "continue"
+  // from the live stream (same message, deduped) while the operator's SECOND
+  // "continue" is index 1 and survives (different message, kept).
+  const bucket = occurrenceBucket(shared, entry);
+  // Tolerates a state built before this field existed (a cached snapshot
+  // from a previous build) — without it the append path throws and the
+  // transcript stops updating.
+  const seen = (counts && counts.get(bucket)) || 0;
+  return `${shared}#${seen}`;
+}
+
 function appendEntryIfNew(state, entry) {
   const key = entryDedupeKey(entry);
   if (state.eventKeys.has(key)) {
@@ -317,7 +369,19 @@ function appendEntryIfNew(state, entry) {
   // twice ("continue", "continue") must render twice. It still REGISTERS the
   // identity, so the replayed copies of both are the ones that get dropped.
   const isLocal = entry?.source === ENTRY_SOURCE.LOCAL;
-  if (!isLocal && shared && state.eventKeys.has(shared)) {
+  const positional = occurrenceKey(shared, entry, state.sharedCounts);
+  // Counted HERE, before the drop decision — every new record on this stream
+  // advances its stream's counter, whether or not it survives.
+  //
+  // Counting only appended entries breaks the scheme: a live copy suppressed
+  // by its history twin never advances, so the NEXT live copy is still
+  // "occurrence 0" and matches the same twin. Three sends of "continue"
+  // collapsed to one that way.
+  const bucket = occurrenceBucket(shared, entry);
+  if (bucket && state.sharedCounts) {
+    state.sharedCounts.set(bucket, (state.sharedCounts.get(bucket) || 0) + 1);
+  }
+  if (!isLocal && positional && state.eventKeys.has(positional)) {
     return { state, appended: false };
   }
   // A replayed copy of something the operator typed, carrying the server's
@@ -327,15 +391,8 @@ function appendEntryIfNew(state, entry) {
       && matchesAnEcho(userMessageTextFor(entry.raw), state.echoTexts)) {
     return { state, appended: false };
   }
-  // Mutate the existing Set in place. ``eventKeys`` is internal to
-  // the reducer and is never read by React's render path (only the
-  // ``events`` array is); React only checks the outer ``state``
-  // object's identity, which we DO replace below. Skipping the
-  // ``new Set(state.eventKeys)`` clone removes an O(N) copy from
-  // every appended event — significant on long-lived sessions
-  // where N reaches the low thousands.
   state.eventKeys.add(key);
-  if (shared) { state.eventKeys.add(shared); }
+  if (positional) { state.eventKeys.add(positional); }
   const echo = echoTextOf(entry);
   if (echo) { state.echoTexts.add(echo); }
   return {
@@ -367,8 +424,18 @@ function echoTextsFromEvents(events) {
   return texts;
 }
 
+function sharedCountsFromEvents(events) {
+  const counts = new Map();
+  for (const entry of events || []) {
+    const bucket = occurrenceBucket(sharedIdentityOf(entry), entry);
+    if (bucket) { counts.set(bucket, (counts.get(bucket) || 0) + 1); }
+  }
+  return counts;
+}
+
 function keysFromEvents(events) {
   const keys = new Set();
+  const counts = new Map();
   for (const entry of events || []) {
     keys.add(entryDedupeKey(entry));
     // ``sharedIdentityOf``, not ``crossSourceIdentity``: this rebuild runs on
@@ -378,7 +445,14 @@ function keysFromEvents(events) {
     // identity is not restored here, the replayed copy has nothing to match
     // against and renders a second time.
     const shared = sharedIdentityOf(entry);
-    if (shared) { keys.add(shared); }
+    if (shared) {
+      // Same per-stream scheme as the append path, or a rebuilt set would
+      // not match the keys the appends produced.
+      const bucket = occurrenceBucket(shared, entry);
+      const seen = counts.get(bucket) || 0;
+      keys.add(`${shared}#${seen}`);
+      counts.set(bucket, seen + 1);
+    }
   }
   return keys;
 }
@@ -396,6 +470,7 @@ export function reducer(state, action) {
       return {
         ...action.value,
         eventKeys: keysFromEvents(action.value.events),
+        sharedCounts: sharedCountsFromEvents(action.value.events),
         // Rebuilt for the same reason as ``eventKeys``: hydrate restores a
         // cached transcript and the server then replays its history over
         // it. Without the operator's echoes here, every one of their
