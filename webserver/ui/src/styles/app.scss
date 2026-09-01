@@ -11270,20 +11270,86 @@ body.kato-resizing {
  * modal's own card so the content is identical; only the overlay is
  * dropped. */
 .modal.is-inline {
-  position: static;
-  display: block;
+  /* Anchored ABOVE the floating composer, exactly like
+   * ``.queued-message-list`` — the app's existing answer to "sit above the
+   * capsule". ``#message-form`` is absolutely positioned over the chat, so
+   * a card left in normal flow competes with an element that is not in
+   * flow: whatever margin it reserves, the composer still paints over its
+   * bottom edge, and the Allow/Deny row ends up underneath the input.
+   *
+   * Same positioning context (the panel card) and the same centring and
+   * width as the composer and the queued list, so the three read as one
+   * stack rather than three things that happen to overlap.
+   *
+   * ``--composer-h`` and ``--queued-h`` are published by those components,
+   * so the offset tracks a composer that grows a second input line or a
+   * queue that gains rows. */
+  position: absolute;
+  left: 50%;
+  /* The composer sits 8px off the bottom, so clearing it needs its height
+   * plus that inset plus a real gap. 26px (what the queued list uses) left
+   * the capsule clipping the card's bottom edge — and the bottom edge is
+   * where the Deny / Allow buttons are, so a few pixels of overlap there
+   * costs more than anywhere else on the card. */
+  bottom: calc(
+    var(--composer-h, #{$SPACE-94}) + var(--queued-h, 0px) + #{$SPACE-40}
+  );
+  transform: translateX(-50%);
+  width: min(720px, 100% - 32px);
+  /* Under the composer (z-index 10) — the operator must always be able to
+   * reach the input, even with an ask open. */
+  z-index: 9;
+  display: flex;
   padding: 0;
-  margin: $SPACE-8 0;
+  margin: 0;
   background: none;
+  min-height: 0;
 }
 
 .modal.is-inline .modal-card {
+  display: flex;
+  flex-direction: column;
   width: auto;
   max-width: none;
+  min-height: 0;
   margin: 0;
+  /* The card is the scroller AND owns its own cap.
+   *
+   * Both live here on purpose: a cap on the wrapper only works if the wrapper
+   * can hand a definite height down, and an earlier attempt using ``50%``
+   * resolved against a parent with no definite height, so it silently did
+   * nothing — the card grew to full content height and its TOP (the task
+   * name, "wants permission", and the sandbox / action-guard warnings) ran
+   * off the pane. Losing the warnings is the worst half to lose: they are
+   * the reason to think twice before approving.
+   *
+   * ``vh`` is always definite, and putting it on the element that scrolls
+   * means the cap and the overflow cannot disagree. A long command, the
+   * guard banners and the raw envelope routinely outrun the space, so this
+   * has to scroll rather than clip. */
+  overflow-y: auto;
+  max-height: 60vh;
+  /* Momentum scrolling, and never let a stray horizontal overflow (a long
+   * one-line command) turn into a page-wide scrollbar. */
+  overscroll-behavior: contain;
   /* Accented edge: this is the one block in the transcript that is waiting
    * on the operator, and it has to be findable when scrolled past. */
   border-color: $C-CYAN-52;
+}
+
+/* The decision row is pinned to the bottom of the card.
+ *
+ * It is the entire point of the block, and it was the first thing to go
+ * out of reach: the content above it (an out-of-sandbox warning, an action
+ * guard banner, the command, description, timeout, raw envelope) is easily
+ * taller than the pane. Sticky rather than a fixed footer so a short ask
+ * still sits directly under its own content. */
+.modal.is-inline .modal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding: $SPACE-8 0 0;
+  background: $C-NEUTRAL-04;
 }
 
 .permission-pending-hint {

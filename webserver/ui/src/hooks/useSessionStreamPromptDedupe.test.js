@@ -24,6 +24,7 @@ function emptyState() {
   return {
     events: [],
     eventKeys: new Set(),
+    echoTexts: new Set(),
     lifecycle: 'streaming',
     turnInFlight: false,
     pendingPermission: null,
@@ -247,6 +248,75 @@ test('a kato-injected prompt is still shown', () => {
     type: 'incoming_history',
     event: prompt('jsonl-1', 'Review the following comment...'),
     receivedAtEpoch: 5,
+  });
+  assert.equal(state.events.length, 2);
+});
+
+// ---------------------------------------------------------------------------
+// THE ACTUAL REPORTED CASE.
+//
+// What the operator types is NOT what the agent receives. On a spawn the
+// server prepends a context preamble — the workspace-scope / STRICT BOUNDARY
+// block, the continuity block, the forbidden-repository guardrails — joined
+// to the message with a blank line ('\n\n'.join([...blocks, prompt]) in
+// agent_prompt_utils.prepend_chat_workspace_context).
+//
+// The transcript records that whole envelope, so the replayed `user` event is
+// preamble + message and NEVER equals the echo — which is why matching on
+// equality looked right and changed nothing. The message is always the TAIL.
+// ---------------------------------------------------------------------------
+
+const PREAMBLE = [
+  'WORKSPACE SCOPE — STRICT BOUNDARY (read this first): YOUR TASK FOLDER IS:',
+  '/Users/dev/UNA-2742. That folder is the ENTIRE ROOT of your workspace.',
+].join('\n');
+
+function envelope(uuid, message) {
+  return prompt(uuid, `${PREAMBLE}\n\n${message}`);
+}
+
+test('a prompt replayed WITH the server preamble does not duplicate', () => {
+  let state = withLocalEcho('can you check the price?');
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: envelope('jsonl-1', 'can you check the price?'),
+    receivedAtEpoch: 9,
+  });
+  assert.equal(state.events.length, 1);
+});
+
+test('it holds across a HYDRATE, which is the reconnect path', () => {
+  const withEcho = withLocalEcho('can you check the price?');
+  let state = reducer(emptyState(), {
+    type: 'hydrate',
+    value: { ...withEcho, eventKeys: new Set(), echoTexts: new Set() },
+  });
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: envelope('jsonl-1', 'can you check the price?'),
+    receivedAtEpoch: 9,
+  });
+  assert.equal(state.events.length, 1);
+});
+
+test('a genuinely different prompt behind the same preamble still shows', () => {
+  let state = withLocalEcho('my message');
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: envelope('jsonl-1', 'a DIFFERENT message'),
+    receivedAtEpoch: 9,
+  });
+  assert.equal(state.events.length, 2);
+});
+
+test('a suffix match must start at a line break', () => {
+  // Without the boundary check, an echo of "yes" would swallow any prompt
+  // that merely ends with the word "yes".
+  let state = withLocalEcho('yes');
+  state = reducer(state, {
+    type: 'incoming_history',
+    event: prompt('jsonl-1', 'the answer is yes'),
+    receivedAtEpoch: 9,
   });
   assert.equal(state.events.length, 2);
 });

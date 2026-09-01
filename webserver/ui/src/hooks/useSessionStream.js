@@ -51,6 +51,10 @@ function emptyTaskState() {
   return {
     events: [],
     eventKeys: new Set(),
+    // Exactly what the operator typed, for each message they sent. Kept
+    // apart from ``eventKeys`` because these are matched by SUFFIX, not by
+    // equality — see ``matchesAnEcho``.
+    echoTexts: new Set(),
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
     // The just-closed turn scheduled a long background wait (Monitor /
@@ -266,6 +270,42 @@ function sharedIdentityOf(entry) {
   return crossSourceIdentity(entry?.raw);
 }
 
+// The text the operator typed, if this entry is their own echo bubble.
+function echoTextOf(entry) {
+  if (entry?.source !== ENTRY_SOURCE.LOCAL) { return ''; }
+  if (entry.kind !== 'user') { return ''; }
+  return String(entry.text || '').trim();
+}
+
+// Is ``text`` a replay of something the operator typed?
+//
+// Equality is not enough, and assuming it was is why the first attempt at
+// this did nothing. What the operator types is NOT what the agent receives:
+// on a spawn the server prepends a context preamble — the workspace scope /
+// STRICT BOUNDARY block, the continuity block, the forbidden-repository
+// guardrails — joined to the message with a blank line
+// (``'\n\n'.join([...blocks, prompt])`` in agent_prompt_utils). The
+// transcript records that whole envelope, so the replayed \`user\` event is
+// the preamble PLUS the message, and never equals the echo.
+//
+// The message is always the TAIL, so a suffix match is the right test. The
+// boundary check keeps it honest: only a match that begins at a line break
+// counts, so "yes" cannot be swallowed by an unrelated prompt ending in the
+// word "yes".
+function matchesAnEcho(text, echoTexts) {
+  const body = String(text || '').trim();
+  if (!body || !echoTexts || echoTexts.size === 0) { return false; }
+  for (const echo of echoTexts) {
+    if (!echo) { continue; }
+    if (body === echo) { return true; }
+    if (body.length > echo.length && body.endsWith(echo)) {
+      const boundary = body[body.length - echo.length - 1];
+      if (boundary === '\n') { return true; }
+    }
+  }
+  return false;
+}
+
 function appendEntryIfNew(state, entry) {
   const key = entryDedupeKey(entry);
   if (state.eventKeys.has(key)) {
@@ -280,6 +320,13 @@ function appendEntryIfNew(state, entry) {
   if (!isLocal && shared && state.eventKeys.has(shared)) {
     return { state, appended: false };
   }
+  // A replayed copy of something the operator typed, carrying the server's
+  // prepended context preamble so it does not match by equality.
+  if (!isLocal && entry?.raw?.type === CLAUDE_EVENT.USER
+      && !entry.raw.tool_use_id
+      && matchesAnEcho(userMessageTextFor(entry.raw), state.echoTexts)) {
+    return { state, appended: false };
+  }
   // Mutate the existing Set in place. ``eventKeys`` is internal to
   // the reducer and is never read by React's render path (only the
   // ``events`` array is); React only checks the outer ``state``
@@ -289,6 +336,8 @@ function appendEntryIfNew(state, entry) {
   // where N reaches the low thousands.
   state.eventKeys.add(key);
   if (shared) { state.eventKeys.add(shared); }
+  const echo = echoTextOf(entry);
+  if (echo) { state.echoTexts.add(echo); }
   return {
     state: {
       ...state,
@@ -309,6 +358,15 @@ function appendEntryIfNew(state, entry) {
 // on switch-back. Recomputing the Set from the actual events makes the cache
 // self-correcting: missing turns get re-appended by the replay, present ones
 // stay deduped. O(N) once per remount — cheaper than cloning the Set per event.
+function echoTextsFromEvents(events) {
+  const texts = new Set();
+  for (const entry of events || []) {
+    const echo = echoTextOf(entry);
+    if (echo) { texts.add(echo); }
+  }
+  return texts;
+}
+
 function keysFromEvents(events) {
   const keys = new Set();
   for (const entry of events || []) {
@@ -338,6 +396,11 @@ export function reducer(state, action) {
       return {
         ...action.value,
         eventKeys: keysFromEvents(action.value.events),
+        // Rebuilt for the same reason as ``eventKeys``: hydrate restores a
+        // cached transcript and the server then replays its history over
+        // it. Without the operator's echoes here, every one of their
+        // messages comes back a second time.
+        echoTexts: echoTextsFromEvents(action.value.events),
       };
     case ACTION_INCOMING_EVENT: {
       const next = reduceIncomingEvent(state, action.event, action.receivedAtEpoch);
