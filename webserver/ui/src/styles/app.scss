@@ -1179,35 +1179,43 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   right: 0;
 }
 
-/* ───── pinned-tab sticky positioning ─────────────────────────────
+/* ───── pinned tabs ───────────────────────────────────────────────
  *
- * Pinned tabs sort to the LEFT of the strip (TabList does the
- * sort) and stay glued to the left edge while the rest of the
- * strip scrolls underneath. ``--sticky-left`` is published per-pin
- * by a layout effect in TabList that measures each preceding
- * pinned tab's offsetWidth + gap — so multiple pinned tabs stack
- * horizontally instead of collapsing on top of each other at
- * ``left: 0``. The opaque background hides scrolling content
- * sliding behind. */
+ * Sorted to the front of the strip by ``orderByPinned`` in TabList, and
+ * scrolling with everything else. The opaque panel keeps them legible
+ * against the strip's gradient. */
 .tabs-pane-top .tab.is-pinned {
-  position: sticky;
-  left: var(--sticky-left, 0);
-  z-index: 3;
-  /* Solid panel that mirrors the strip's gradient so scrolling
-   * tabs are obscured behind the pinned cluster instead of
-   * smearing through it. */
+  /* Pinned tabs are SORTED to the front and scroll with everything else.
+   *
+   * They used to be ``position: sticky`` against the left edge. That cannot
+   * hold once the pinned cluster is wider than the strip — there is nowhere
+   * left to pin them — so they stacked on top of one another and the
+   * rightmost painted over its neighbours. Ordering alone gives the same
+   * "my important tasks are first" without a class of bug that only appears
+   * once you have pinned a few. */
   background: linear-gradient(180deg, $C-NEUTRAL-05-A86 0%, $C-NEUTRAL-05-A86 100%);
   border-color: $C-NEUTRAL-100-A06;
 }
 
 .tabs-pane-top .tab.is-pinned.active {
   /* Active + pinned uses the SAME solid cyan fill + glow as a normal
-   * selected tab, so the selection cue is identical whether pinned or not.
-   * The cyan gradient is fully opaque, so scrolling tabs are still obscured
-   * behind the pinned cluster (the reason pinned tabs need a solid panel). */
+   * selected tab, so the selection cue is identical whether pinned or not. */
   background: linear-gradient(180deg, $C-CYAN-52 0%, $C-CYAN-47 100%);
   border-color: $C-CYAN-58;
   box-shadow: $SHADOW-20;
+}
+
+/* Drag-to-reorder feedback, matching the file-tab strip's. */
+.tabs-pane-top .tab.dragging {
+  opacity: 0.4;
+}
+
+/* The tab the drop will land on. Only ever rendered for a LEGAL target —
+ * TabList refuses a cross-group drop — so this doubles as the answer to
+ * "can I put it here?". */
+.tabs-pane-top .tab.drop-target {
+  outline: 2px solid $C-CYAN-52;
+  outline-offset: 1px;
 }
 
 .tabs-pane-top .tab.needs-attention {
@@ -11212,58 +11220,85 @@ body.kato-resizing {
    operator had not read AND sent the draft. It now waits for a pause —
    and says so, because a popup that is merely late is indistinguishable
    from one that never came. */
-/* The roster: which chats are waiting on the operator.
+/* "A chat needs you", in the header beside the logo.
  *
- * Replaced a full-screen modal that opened for ANY task. A modal demands an
- * answer before anything else can happen, which is wrong for work that
- * belongs to a conversation the operator is not currently in — it interrupted
- * whatever task they WERE working on. This states the same fact without
- * taking the screen, and each chip is the way in.
+ * It started as a full-screen modal that opened for ANY task — which meant
+ * work belonging to a conversation the operator was not in interrupted the
+ * one they WERE in. This states the same fact without taking the screen, and
+ * each chip is the way in.
  *
- * Pinned to the top because that is where it was asked for, and because an
- * agent stays blocked until answered — this must not scroll out of sight. */
+ * The header is the one strip that is always on screen, whatever pane is
+ * open and however far the chat is scrolled. An agent stays blocked until
+ * the ask is answered, so the cost of this being missed is measured in
+ * wall-clock time. */
+.header-attention-slot {
+  display: contents;
+}
+
 .permission-roster {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  display: flex;
-  flex-wrap: wrap;
-  gap: $SPACE-8;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: $SPACE-6;
   align-items: center;
-  padding: $SPACE-4 $SPACE-12;
+  margin-left: $SPACE-8;
   font-size: $TEXT-11;
-  color: $C-NEUTRAL-96;
-  background: $C-NEUTRAL-09;
-  border-bottom: 1px solid $C-NEUTRAL-16;
+  white-space: nowrap;
 }
 
 .permission-roster-label {
-  color: $C-NEUTRAL-64;
-  letter-spacing: 0.02em;
+  padding: $SPACE-2 $SPACE-8;
+  color: $C-NEUTRAL-04;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: $C-AMBER-77;
+  border-radius: $RADIUS-PILL;
+  /* Flashing, deliberately. A static badge in a busy header is exactly the
+   * kind of thing that gets read once and then stops being seen; movement is
+   * what survives peripheral vision while the operator works in a pane. */
+  animation: permission-roster-flash 1.4s ease-in-out infinite;
+}
+
+@keyframes permission-roster-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Operators who ask for less motion get a steady badge — still the loudest
+ * colour in the header, just not moving. */
+@media (prefers-reduced-motion: reduce) {
+  .permission-roster-label {
+    animation: none;
+  }
 }
 
 .permission-roster-chip {
-  padding: $SPACE-4 $SPACE-8;
+  padding: $SPACE-2 $SPACE-8;
   font-family: inherit;
   font-size: $TEXT-11;
   color: $C-NEUTRAL-96;
   cursor: pointer;
   background: transparent;
-  border: 1px solid $C-CYAN-52;
+  border: 1px solid $C-AMBER-77;
   /* House rule: anything named *-chip takes the global pill radius. */
   border-radius: $RADIUS-PILL;
 }
 
 .permission-roster-chip:hover {
-  background: $C-CYAN-52-A18;
+  color: $C-NEUTRAL-04;
+  background: $C-AMBER-77;
 }
 
 /* The chat you are already in. Still listed — dropping it would make the
  * count disagree with the rows — but not offered as somewhere to go. */
 .permission-roster-chip.is-active {
   color: $C-NEUTRAL-64;
+  cursor: default;
   border-color: $C-NEUTRAL-32;
+}
+
+.permission-roster-chip.is-active:hover {
+  color: $C-NEUTRAL-64;
+  background: transparent;
 }
 
 /* The ask rendered INSIDE the chat rather than over the app. Reuses the
@@ -11291,8 +11326,13 @@ body.kato-resizing {
    * the capsule clipping the card's bottom edge — and the bottom edge is
    * where the Deny / Allow buttons are, so a few pixels of overlap there
    * costs more than anywhere else on the card. */
+  /* The fallback errs HIGH on purpose. --composer-h is measured from the
+   * real element, so it is normally exact; but if it is ever missing, too
+   * much clearance costs a little empty space, while too little puts the
+   * Deny / Allow buttons under the input — the one thing that must never
+   * happen. */
   bottom: calc(
-    var(--composer-h, #{$SPACE-94}) + var(--queued-h, 0px) + #{$SPACE-40}
+    var(--composer-h, 140px) + var(--queued-h, 0px) + #{$SPACE-40}
   );
   transform: translateX(-50%);
   width: min(720px, 100% - 32px);

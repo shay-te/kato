@@ -149,7 +149,7 @@ export default function GlobalPermissionContainer({
   }
 
   const roster = waiting.length > 0 ? (
-    <div className="permission-roster" role="status" aria-live="polite">
+    <span className="permission-roster" role="status" aria-live="polite">
       <span className="permission-roster-label">
         {countNoun(waiting.length, 'chat')} waiting for you
       </span>
@@ -159,14 +159,29 @@ export default function GlobalPermissionContainer({
           type="button"
           className={`permission-roster-chip${
             row.taskId === activeTaskId ? ' is-active' : ''}`}
+          // Opens the task, rather than only naming it. Being told which
+          // chat is blocked and then having to go find it among the tabs is
+          // most of the work; this is the whole point of the control.
           onClick={() => onSelectTask && onSelectTask(row.taskId)}
-          title={row.taskSummary || row.taskId}
+          title={
+            row.taskId === activeTaskId
+              ? `${row.taskSummary || row.taskId} — you are here`
+              : `Open ${row.taskId}${row.taskSummary ? ` — ${row.taskSummary}` : ''}`
+          }
         >
           {row.taskId}
         </button>
       ))}
-    </div>
+    </span>
   ) : null;
+
+  // Lives in the header, beside the logo — the one strip that is on screen
+  // whatever else the operator is doing. An agent stays blocked until it is
+  // answered, so the notice has to be somewhere that is never scrolled past
+  // or covered by a pane.
+  const headerSlot = typeof document !== 'undefined'
+    ? document.getElementById('header-attention-slot')
+    : null;
 
   // The ask itself, rendered INSIDE the task's own chat rather than over the
   // whole app. Portaled into the slot SessionDetail renders between the
@@ -227,7 +242,7 @@ export default function GlobalPermissionContainer({
 
   return (
     <>
-      {roster}
+      {headerSlot && roster ? createPortal(roster, headerSlot) : roster}
       {slot && (card || typingHint)
         ? createPortal(<>{card}{typingHint}</>, slot)
         : null}

@@ -616,3 +616,59 @@ describe('PermissionModal — names the requesting agent', () => {
     expect(banner.textContent).not.toContain('CLAUDE');
   });
 });
+
+// Enter on a FOCUSED BUTTON must do what the button says.
+//
+// The dialog's Enter/Escape shortcuts are bound on ``window`` in the CAPTURE
+// phase, so they ran before the focused element got a look in. Tabbing to
+// "Deny" and pressing Enter therefore APPROVED the request, and
+// ``preventDefault`` suppressed the click the button would have synthesised
+// so the deny never happened at all. Space was unaffected (it activates on
+// keyup), so the same gesture gave opposite outcomes depending on the key —
+// on the one dialog where that is least acceptable.
+describe('PermissionModal — keyboard activation of the buttons', () => {
+  function renderAsk(onDecide) {
+    return render(
+      <PermissionModal
+        raw={_raw()}
+        onDecide={onDecide}
+        taskCode="T-1"
+        taskSummary=""
+      />,
+    );
+  }
+
+  test('Enter on the focused Deny button DENIES', () => {
+    const onDecide = vi.fn();
+    renderAsk(onDecide);
+    const deny = screen.getByRole('button', { name: /deny/i });
+    deny.focus();
+    fireEvent.keyDown(deny, { key: 'Enter' });
+    fireEvent.click(deny);          // the activation the browser synthesises
+    expect(onDecide).toHaveBeenCalled();
+    expect(onDecide.mock.calls.every(([d]) => d.allow === false)).toBe(true);
+  });
+
+  test('Enter with nothing focused still approves', () => {
+    // The shortcut must survive the fix — it is the fast path for the
+    // common case.
+    const onDecide = vi.fn();
+    const { container } = renderAsk(onDecide);
+    fireEvent.keyDown(container, { key: 'Enter' });
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ allow: true }),
+    );
+  });
+
+  test('Escape still denies from a focused button', () => {
+    // Escape is not a button activation key, so nothing competes for it.
+    const onDecide = vi.fn();
+    renderAsk(onDecide);
+    const allow = screen.getByRole('button', { name: /allow once/i });
+    allow.focus();
+    fireEvent.keyDown(allow, { key: 'Escape' });
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({ allow: false }),
+    );
+  });
+});

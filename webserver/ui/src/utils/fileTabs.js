@@ -170,25 +170,3 @@ export function togglePin(tabs, key) {
     ? [...pinned, target, ...unpinned]
     : [...pinned, target, ...unpinned];
 }
-
-// Move the tab at ``fromKey`` so it lands at ``toKey``'s position — the
-// drag-and-drop reorder.
-//
-// The pinned/unpinned split is enforced, not merely re-applied afterwards:
-// a drop that would put an unpinned tab among the pins (or vice versa) is
-// REFUSED rather than silently corrected. Silently snapping the tab
-// somewhere else reads as a broken drag; refusing leaves it where it was,
-// which reads as "that isn't allowed" — and the operator can pin it first
-// if that's what they meant.
-export function moveTab(tabs, fromKey, toKey) {
-  const list = Array.isArray(tabs) ? tabs : [];
-  if (!fromKey || !toKey || fromKey === toKey) { return list; }
-  const from = list.findIndex((tab) => tab.key === fromKey);
-  const to = list.findIndex((tab) => tab.key === toKey);
-  if (from < 0 || to < 0) { return list; }
-  if (!!list[from].pinned !== !!list[to].pinned) { return list; }
-  const next = [...list];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
-  return next;
-}

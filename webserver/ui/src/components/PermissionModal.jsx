@@ -78,6 +78,18 @@ export default function PermissionModal({
         tag === 'INPUT' || tag === 'TEXTAREA' || !!(target && target.isContentEditable)
       );
       if (inTextField) { return; }
+      // A FOCUSED BUTTON activates itself on Enter, and this listener is on
+      // ``window`` in the CAPTURE phase — so it ran first, approved, and
+      // ``preventDefault`` then suppressed the click the button would have
+      // synthesised. Tabbing to "Deny" and pressing Enter APPROVED the
+      // request: the exact opposite of what the operator pressed, on the one
+      // dialog where that is least acceptable. (Space was unaffected, since
+      // it activates on keyup — so the same keyboard gesture gave opposite
+      // outcomes depending on which key you used.)
+      //
+      // Escape is deliberately still handled here: it is not a button
+      // activation key, so nothing else is competing for it.
+      if (event.key === 'Enter' && tag === 'BUTTON') { return; }
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopImmediatePropagation();

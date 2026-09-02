@@ -3,6 +3,7 @@ import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
+import { moveTab } from './utils/tabOrder.js';
 import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
 import { usePendingPermissions } from './hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from './utils/permissionEnvelope.js';
@@ -57,7 +58,7 @@ import { agentStatusStore } from './stores/agentStatusStore.js';
 import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
-  closeTab, findTab, moveTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
+  closeTab, findTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
 } from './utils/fileTabs.js';
 import { markdownViewFor } from './utils/markdownView.js';
 

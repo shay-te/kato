@@ -242,7 +242,25 @@ function FileTab({
     event.preventDefault();
     onClose(tab.key);
   }
+  // Where the press that could become a drag started. Same guard as the task
+  // strip: every control here (close, the view toggles) is a plain child of a
+  // draggable <li>, and the drag model picks the nearest ancestor with
+  // ``draggable=true`` — a button is not a barrier, and ``draggable={false}``
+  // on the child is not one either. Unguarded, pressing × and drifting a few
+  // pixels reorders the tab instead of closing it, and the drag suppresses
+  // the click so the × does nothing.
+  const pressedControlRef = useRef(false);
+
+  function handleMouseDownCapture(event) {
+    pressedControlRef.current = !!event?.target?.closest?.('button, input');
+  }
+
   function handleDragStart(event) {
+    if (pressedControlRef.current) {
+      // ``preventDefault`` on ``dragstart`` is the spec's own "no drag".
+      event.preventDefault();
+      return;
+    }
     // The key travels in the dataTransfer payload so a drop knows what
     // moved even though React state updates are async.
     event.dataTransfer.effectAllowed = 'move';
@@ -288,6 +306,7 @@ function FileTab({
       )}
       title={title}
       draggable
+      onMouseDownCapture={handleMouseDownCapture}
       onClick={handleSelect}
       onContextMenu={onContextMenu}
       onAuxClick={handleAuxClick}

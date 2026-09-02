@@ -233,7 +233,7 @@ describe('TabList — pinned tab ordering', () => {
     expect(readPinnedIds(window.localStorage)).toEqual([]);
   });
 
-  test('pinned tab gets is-pinned class so CSS sticky positioning kicks in', () => {
+  test('pinned tab gets is-pinned class so it sorts to the front of the strip', () => {
     window.localStorage.setItem(
       PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-2']),
     );
@@ -341,88 +341,69 @@ describe('TabList — pinned tab ordering', () => {
   });
 });
 
-describe('TabList — pinned cluster stacking', () => {
-
-  const TAB_WIDTH = 100;   // fractional-safe stand-in for a measured pill
-  const GAP = 6;           // #tab-list > .tab + .tab { margin-left: 6px }
-
-  let restoreRect;
+describe('TabList — pinned tabs scroll like every other tab', () => {
+  // They used to be ``position: sticky`` against the left edge, with a layout
+  // effect measuring each one and publishing a ``--sticky-left`` offset so
+  // the cluster stacked horizontally instead of collapsing at left:0.
+  //
+  // That premise fails as soon as the pinned cluster is wider than the strip:
+  // there is nowhere left to hold them, so they piled up and painted over one
+  // another — reported as "the tasks got below eachother, they dont scroll
+  // like normal tabs". Two rounds of fixes went into the measuring (z-index
+  // order, fractional widths) and neither could address it.
+  //
+  // Pinned tabs are now ORDERED first and scroll normally. These tests pin
+  // the absence of the mechanism, so it cannot creep back.
 
   beforeEach(() => {
     window.localStorage.removeItem(PINNED_TABS_STORAGE_KEY);
-    // jsdom reports a zero-size rect for everything, so the layout effect
-    // has nothing to accumulate. Give every ``.tab`` a real width.
-    const original = HTMLElement.prototype.getBoundingClientRect;
-    HTMLElement.prototype.getBoundingClientRect = function rect() {
-      if (this.classList && this.classList.contains('tab')) {
-        return {
-          width: TAB_WIDTH, height: 30, top: 0, left: 0,
-          right: TAB_WIDTH, bottom: 30, x: 0, y: 0, toJSON: () => ({}),
-        };
-      }
-      return original.call(this);
-    };
-    restoreRect = () => { HTMLElement.prototype.getBoundingClientRect = original; };
   });
 
-  afterEach(() => { restoreRect(); });
-
-  function renderPinned(ids) {
-    window.localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(ids));
+  function renderPinned(pinnedIds) {
+    window.localStorage.setItem(
+      PINNED_TABS_STORAGE_KEY, JSON.stringify(pinnedIds),
+    );
     return render(
       <TabList
-        sessions={[_session('A-1'), _session('A-2'), _session('A-3'), _session('A-4')]}
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-1"
         onSelect={() => {}}
       />,
     );
   }
 
-  test('each pinned tab is offset past the full width of the ones before it', () => {
+  test('no per-tab sticky offset is written any more', () => {
     const { container } = renderPinned(['A-1', 'A-2', 'A-3']);
-
     const pinned = container.querySelectorAll('li.tab.is-pinned');
     expect(pinned).toHaveLength(3);
-    // Anything less than width+gap per step leaves the cluster overlapping.
-    expect(pinned[0].style.getPropertyValue('--sticky-left')).toBe('0px');
-    expect(pinned[1].style.getPropertyValue('--sticky-left'))
-      .toBe(`${TAB_WIDTH + GAP}px`);
-    expect(pinned[2].style.getPropertyValue('--sticky-left'))
-      .toBe(`${(TAB_WIDTH + GAP) * 2}px`);
+    for (const el of pinned) {
+      expect(el.style.getPropertyValue('--sticky-left')).toBe('');
+    }
   });
 
-  test('a pinned tab never paints over the pinned tabs to its left', () => {
-    // The bug: every pinned tab shared one CSS z-index, so at equal z the
-    // LAST one in DOM order won and slid on top of its left-hand neighbours.
-    const { container } = renderPinned(['A-1', 'A-2', 'A-3']);
-
-    const z = Array.from(container.querySelectorAll('li.tab.is-pinned'))
-      .map((el) => Number(el.style.zIndex));
-
-    expect(z[0]).toBeGreaterThan(z[1]);
-    expect(z[1]).toBeGreaterThan(z[2]);
+  test('no per-tab z-index is written any more', () => {
+    // The stacking order only mattered while tabs could overlap.
+    const { container } = renderPinned(['A-1', 'A-2']);
+    for (const el of container.querySelectorAll('li.tab')) {
+      expect(el.style.zIndex).toBe('');
+    }
   });
 
-  test('pinned tabs outrank the unpinned tabs scrolling underneath', () => {
-    const { container } = renderPinned(['A-1']);
-
-    const tabs = container.querySelectorAll('li.tab');
-    expect(Number(tabs[0].style.zIndex)).toBeGreaterThan(3);
-    expect(tabs[1].style.zIndex).toBe('');
+  test('pinned tabs still come first, which is what pinning is for', () => {
+    const { container } = renderPinned(['A-3']);
+    const tabs = [...container.querySelectorAll('li.tab')];
+    expect(tabs[0].dataset.taskId).toBe('A-3');
+    expect(tabs[0].classList.contains('is-pinned')).toBe(true);
   });
 
-  test('offsets are recomputed when the pinned set changes', () => {
+  test('pinning another task re-sorts without touching layout offsets', () => {
     const { container } = renderPinned(['A-2']);
-    expect(container.querySelector('li.tab.is-pinned').style
-      .getPropertyValue('--sticky-left')).toBe('0px');
-
-    // Pin A-1 as well — it sorts ahead of A-2, which must shift right.
-    const unpinnedPin = container.querySelectorAll('.tab-pin-btn')[1];
-    fireEvent.click(unpinnedPin);
-
+    fireEvent.click(container.querySelectorAll('.tab-pin-btn')[1]);
     const pinned = container.querySelectorAll('li.tab.is-pinned');
     expect(pinned).toHaveLength(2);
-    expect(pinned[1].style.getPropertyValue('--sticky-left'))
-      .toBe(`${TAB_WIDTH + GAP}px`);
+    for (const el of pinned) {
+      expect(el.style.getPropertyValue('--sticky-left')).toBe('');
+    }
   });
 });
 
@@ -523,5 +504,193 @@ describe('TabList — scroll the selected tab into view', () => {
         revealRequestId={2}
       />,
     )).not.toThrow();
+  });
+});
+
+describe('TabList — drag to reorder task tabs', () => {
+  // Same interaction the file-tab strip inside a task already had, and the
+  // same rule: pinned tabs are a block at the front, a tab may only be
+  // dropped among its own group, and a cross-group drop is REFUSED rather
+  // than silently relocated.
+
+  beforeEach(() => {
+    window.localStorage.removeItem(PINNED_TABS_STORAGE_KEY);
+    window.localStorage.removeItem('kato.tabs.order');
+  });
+
+  function renderStrip(pinnedIds = []) {
+    if (pinnedIds.length) {
+      window.localStorage.setItem(
+        PINNED_TABS_STORAGE_KEY, JSON.stringify(pinnedIds),
+      );
+    }
+    return render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-1"
+        onSelect={() => {}}
+      />,
+    );
+  }
+
+  function ids(container) {
+    return [...container.querySelectorAll('li.tab')]
+      .map((el) => el.dataset.taskId);
+  }
+
+  function dragOnto(container, fromId, toId) {
+    const tabs = [...container.querySelectorAll('li.tab')];
+    const from = tabs.find((el) => el.dataset.taskId === fromId);
+    const to = tabs.find((el) => el.dataset.taskId === toId);
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData() {} };
+    fireEvent.dragStart(from, { dataTransfer });
+    fireEvent.dragOver(to, { dataTransfer });
+    fireEvent.drop(to, { dataTransfer });
+  }
+
+  test('a tab is draggable', () => {
+    const { container } = renderStrip();
+    expect(container.querySelector('li.tab').draggable).toBe(true);
+  });
+
+  // Every control on the pill is a plain child of a draggable <li>, and the
+  // drag model picks the nearest ancestor with draggable=true — a button is
+  // not a barrier, and draggable={false} on the child is NOT one either (the
+  // walk looks only for true). Unguarded, pressing × and drifting a few
+  // pixels reorders the tab instead of forgetting it, and the drag suppresses
+  // the click so the × does nothing at all.
+  //
+  // Asserted via defaultPrevented: cancelling dragstart is the spec's own
+  // "no drag" signal, and it is the only thing that actually stops it. An
+  // earlier version of this test asserted ``handle.draggable === false``,
+  // which a <span> with no attribute reports anyway — it passed with the
+  // guard deleted.
+  for (const [name, selector] of [
+    ['the resize handle', '.tab-resize-handle'],
+    ['a control button', 'button'],
+  ]) {
+    test(`a drag starting on ${name} is cancelled`, () => {
+      const { container } = renderStrip();
+      const tab = container.querySelector('li.tab');
+      const control = tab.querySelector(selector);
+      expect(control).toBeTruthy();
+      fireEvent.mouseDown(control);
+      const started = fireEvent.dragStart(tab, {
+        dataTransfer: { effectAllowed: '', setData() {} },
+      });
+      // fireEvent returns false when a handler called preventDefault.
+      expect(started).toBe(false);
+    });
+  }
+
+  test('a drag starting on the pill itself is NOT cancelled', () => {
+    // The guard must not break the feature it protects.
+    const { container } = renderStrip();
+    const tab = container.querySelector('li.tab');
+    fireEvent.mouseDown(tab);
+    const started = fireEvent.dragStart(tab, {
+      dataTransfer: { effectAllowed: '', setData() {} },
+    });
+    expect(started).toBe(true);
+  });
+
+  test('dragover over a legal target is cancelled, or no drop ever fires', () => {
+    // ``drop`` only fires after a CANCELLED ``dragover``. Without the
+    // preventDefault the whole feature is dead in every browser while every
+    // jsdom test still passes, because jsdom dispatches ``drop`` regardless.
+    const { container } = renderStrip();
+    const tabs = [...container.querySelectorAll('li.tab')];
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData() {} };
+    fireEvent.dragStart(tabs[0], { dataTransfer });
+    const allowed = fireEvent.dragOver(tabs[1], { dataTransfer });
+    expect(allowed).toBe(false);
+    expect(dataTransfer.dropEffect).toBe('move');
+  });
+
+  test('dragover over an ILLEGAL target is not cancelled', () => {
+    // The cursor has to say "no" over a cross-group target rather than let
+    // the operator finish a drag that will be refused.
+    const { container } = renderStrip(['A-1']);
+    const tabs = [...container.querySelectorAll('li.tab')];
+    const pinned = tabs.find((el) => el.dataset.taskId === 'A-1');
+    const unpinned = tabs.find((el) => el.dataset.taskId === 'A-3');
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData() {} };
+    fireEvent.dragStart(pinned, { dataTransfer });
+    const allowed = fireEvent.dragOver(unpinned, { dataTransfer });
+    expect(allowed).toBe(true);          // nothing called preventDefault
+    expect(dataTransfer.dropEffect).toBe('');
+  });
+
+  test('the dragged tab and its drop target are marked', () => {
+    const { container } = renderStrip();
+    const tabs = [...container.querySelectorAll('li.tab')];
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData() {} };
+    fireEvent.dragStart(tabs[0], { dataTransfer });
+    fireEvent.dragOver(tabs[1], { dataTransfer });
+    expect(tabs[0].classList.contains('dragging')).toBe(true);
+    expect(tabs[1].classList.contains('drop-target')).toBe(true);
+  });
+
+  test('dropping an unpinned tab onto another reorders them', () => {
+    const { container } = renderStrip();
+    expect(ids(container)).toEqual(['A-1', 'A-2', 'A-3']);
+    dragOnto(container, 'A-1', 'A-3');
+    expect(ids(container)).toEqual(['A-2', 'A-3', 'A-1']);
+  });
+
+  test('the new order survives a remount', () => {
+    // It has to be persisted, or the next sessions poll puts it straight back.
+    const { container, unmount } = renderStrip();
+    dragOnto(container, 'A-1', 'A-3');
+    unmount();
+    const second = render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-1"
+        onSelect={() => {}}
+      />,
+    );
+    expect(ids(second.container)).toEqual(['A-2', 'A-3', 'A-1']);
+  });
+
+  test('pinned tabs reorder among themselves and stay pinned', () => {
+    const { container } = renderStrip(['A-1', 'A-2']);
+    expect(ids(container)).toEqual(['A-1', 'A-2', 'A-3']);
+    dragOnto(container, 'A-1', 'A-2');
+    expect(ids(container)).toEqual(['A-2', 'A-1', 'A-3']);
+    // Both are still pinned, and still ahead of the unpinned tab.
+    const tabs = [...container.querySelectorAll('li.tab')];
+    expect(tabs[0].classList.contains('is-pinned')).toBe(true);
+    expect(tabs[1].classList.contains('is-pinned')).toBe(true);
+    expect(tabs[2].classList.contains('is-pinned')).toBe(false);
+  });
+
+  test('an unpinned tab can never take a pinned tab\u2019s place', () => {
+    const { container } = renderStrip(['A-1']);
+    dragOnto(container, 'A-3', 'A-1');
+    // Refused: nothing moved, and A-1 is still first.
+    expect(ids(container)).toEqual(['A-1', 'A-2', 'A-3']);
+  });
+
+  test('a pinned tab cannot be dropped among the unpinned ones', () => {
+    const { container } = renderStrip(['A-1']);
+    dragOnto(container, 'A-1', 'A-3');
+    expect(ids(container)).toEqual(['A-1', 'A-2', 'A-3']);
+  });
+
+  test('a task that appears later lands after the hand-placed ones', () => {
+    const { container, unmount } = renderStrip();
+    dragOnto(container, 'A-1', 'A-3');
+    unmount();
+    const second = render(
+      <TabList
+        sessions={[
+          _session('A-1'), _session('A-2'), _session('A-3'), _session('A-9'),
+        ]}
+        activeTaskId="A-1"
+        onSelect={() => {}}
+      />,
+    );
+    expect(ids(second.container)).toEqual(['A-2', 'A-3', 'A-1', 'A-9']);
   });
 });

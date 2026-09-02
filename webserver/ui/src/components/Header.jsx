@@ -60,6 +60,12 @@ export default function Header({
       <img src="/logo.png" alt="Kato" id="kato-logo" />
       <h1>Kato</h1>
       <span className="subtitle">Planning UI</span>
+      {/* Where "a task needs you" lands, filled by GlobalPermissionContainer.
+          A slot rather than props: that component already owns the pending
+          list (its own poll plus the live SSE push), and threading the same
+          data down here would be a second copy to keep in step. Always
+          rendered so the portal target is stable. */}
+      <span id="header-attention-slot" className="header-attention-slot" />
       {statusClickable ? (
         <button
           type="button"

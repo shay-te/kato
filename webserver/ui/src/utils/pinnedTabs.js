@@ -1,16 +1,17 @@
 // Per-operator pinned-task persistence.
 //
-// Pinned tabs render at the LEFT of the strip and stay visible while
-// the rest of the strip scrolls (CSS ``position: sticky``). The
-// operator pins from a small button inside the tab pill; toggle is
+// Pinned tabs sort to the LEFT of the strip and scroll with everything else.
+// (They used to be held there with ``position: sticky``; that could not work
+// once the pinned cluster was wider than the strip, so the tabs piled up on
+// each other. Ordering alone gives the same result with no way to overlap.)
+// The operator pins from a small button inside the tab pill; toggle is
 // purely client-side because it's a UI preference, not state the
 // backend needs to know about (mirrors the composer-draft pattern).
 //
 // Ordering: pinned tabs render in the order they were pinned — the
-// first task pinned sits leftmost. Repinning a task moves it to the
-// end of the pinned list (so it lands rightmost of the pinned group)
-// rather than silently no-op'ing the click — easier to understand
-// than "click was ignored".
+// first task pinned sits leftmost. Clicking the pin on an ALREADY-pinned
+// task unpins it; the ordering within the pinned group is changed by
+// dragging, not by re-clicking.
 //
 // Pure functions only (no React, no DOM beyond the injectable
 // ``storage`` arg). Tests pass a Map-backed fake so the logic
@@ -20,6 +21,14 @@ import { readStorageString, writeStorageItem } from './storage.js';
 import { parseJsonOr } from './json.js';
 
 export const PINNED_TABS_STORAGE_KEY = 'kato.tabs.pinned';
+
+// The operator's manual left-to-right order for UNPINNED task tabs.
+//
+// Separate from the pinned list because the two are stored differently by
+// nature: pin order IS the pinned array, while unpinned tabs otherwise just
+// follow whatever order the server returned. Dragging one has to record that
+// somewhere, or the next poll would put it straight back.
+export const TAB_ORDER_STORAGE_KEY = 'kato.tabs.order';
 
 // Read the pinned-task-id list from storage. Defensive against:
 // missing storage, missing key, malformed JSON, non-array payload,
@@ -83,14 +92,44 @@ export function togglePinned(taskId, ids) {
   return current;
 }
 
+export function readTabOrder(storage) {
+  const raw = readStorageString(TAB_ORDER_STORAGE_KEY, null, storage);
+  if (!raw) { return []; }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  } catch (_err) {
+    return [];
+  }
+}
+
+export function writeTabOrder(ids, storage) {
+  const sanitized = (Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+  writeStorageItem(TAB_ORDER_STORAGE_KEY, JSON.stringify(sanitized), storage);
+  return sanitized;
+}
+
 // Order ``sessions`` so pinned tasks come first (in pinned order)
 // and everything else preserves its original order. Pinned ids that
 // don't match any session are silently ignored (stale pin from a
 // deleted task).
-export function orderByPinned(sessions, pinnedIds) {
+//
+// ``manualOrder`` is the operator's own left-to-right arrangement of the
+// UNPINNED tabs. Tasks it does not mention keep their server order and sort
+// after the ones it does — so a task that appears while the operator has a
+// custom arrangement lands at the end rather than shuffling everything they
+// placed by hand.
+export function orderByPinned(sessions, pinnedIds, manualOrder) {
   if (!Array.isArray(sessions) || sessions.length === 0) { return []; }
   if (!Array.isArray(pinnedIds) || pinnedIds.length === 0) {
-    return [...sessions];
+    // Still apply the manual arrangement: nothing being pinned is the COMMON
+    // case, and returning early here meant a drag-reorder was computed,
+    // persisted, and then silently discarded on the very next render.
+    return applyManualOrder([...sessions], manualOrder);
   }
   const byId = new Map();
   for (const session of sessions) {
@@ -109,5 +148,25 @@ export function orderByPinned(sessions, pinnedIds) {
   const rest = sessions.filter(
     (s) => !pinnedSet.has(String(s?.task_id || '').trim()),
   );
-  return [...pinned, ...rest];
+  return [...pinned, ...applyManualOrder(rest, manualOrder)];
+}
+
+function applyManualOrder(sessions, manualOrder) {
+  if (!Array.isArray(manualOrder) || manualOrder.length === 0) {
+    return sessions;
+  }
+  const rank = new Map();
+  manualOrder.forEach((id, index) => {
+    if (!rank.has(id)) { rank.set(id, index); }
+  });
+  // A stable sort with unranked tasks pushed to the end. Not a filter+concat:
+  // that would drop any task the manual list does not mention, and the list
+  // goes stale the moment a task is added.
+  return [...sessions].sort((a, b) => {
+    const left = rank.has(String(a?.task_id || '').trim())
+      ? rank.get(String(a.task_id).trim()) : Number.MAX_SAFE_INTEGER;
+    const right = rank.has(String(b?.task_id || '').trim())
+      ? rank.get(String(b.task_id).trim()) : Number.MAX_SAFE_INTEGER;
+    return left - right;
+  });
 }

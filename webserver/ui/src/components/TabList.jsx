@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { canDropOn, moveTab } from '../utils/tabOrder.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import {
   orderByPinned,
   readPinnedIds,
+  readTabOrder,
+  writeTabOrder,
   togglePinned,
   writePinnedIds,
 } from '../utils/pinnedTabs.js';
@@ -14,11 +17,6 @@ import {
   tabNameFor,
   writeTabNames,
 } from '../utils/taskTabNames.js';
-
-// Gap between segments in the strip — matches the CSS ``gap: 6px``
-// rule on #tab-list. Kept in sync here so the sticky-left offsets
-// for pinned tabs include the inter-tab spacing.
-const TAB_GAP_PX = 6;
 
 /**
  * iOS-style segmented controller at the top of the app.
@@ -50,7 +48,6 @@ export default function TabList({
   scanPending,
 }) {
   const scrollRef = useRef(null);
-  const listRef = useRef(null);
   const [scrollState, setScrollState] = useState({
     canScrollLeft: false,
     canScrollRight: false,
@@ -61,6 +58,13 @@ export default function TabList({
   const [pinnedIds, setPinnedIds] = useState(() => readPinnedIds());
   // Operator's local tab renames — same shape and lifecycle as pins.
   const [tabNames, setTabNames] = useState(() => readTabNames());
+  // The operator's own left-to-right arrangement of the UNPINNED tabs.
+  // Pinned order needs no separate store — it IS ``pinnedIds``.
+  const [tabOrder, setTabOrder] = useState(() => readTabOrder());
+  // Drag-to-reorder state, exactly as the file-tab strip keeps it: the tab
+  // being dragged and the one it is over, together in one object so a single
+  // setState can never leave a stale highlight behind after a drop.
+  const [drag, setDrag] = useState({ id: '', over: '' });
 
   function handleRename(taskId, label) {
     setTabNames((prev) => {
@@ -75,14 +79,71 @@ export default function TabList({
       writePinnedIds(next);
       return next;
     });
+    // Follow the tab to its new home.
+    //
+    // Pinning MOVES the pill to the pinned block at the front, and the strip
+    // scrolls horizontally — so on a right-scrolled strip the tab the
+    // operator just clicked disappears leftward. Sticky positioning used to
+    // hide this (a pinned tab was clamped into the scrollport by definition);
+    // removing it made the jump visible, so the scroll has to be explicit
+    // now. The pin click deliberately never reaches ``onSelect``, so nothing
+    // else brings it back.
+    if (typeof document === 'undefined') { return; }
+    // After the re-render that re-sorts the strip, or we would scroll to
+    // where the tab used to be.
+    const follow = () => {
+      const node = document.querySelector(
+        `#tabs-pane [data-task-id="${CSS.escape(taskId)}"]`,
+      );
+      // jsdom (and a couple of older embedded browsers) have no
+      // ``scrollIntoView``; not scrolling is cosmetic, so never throw.
+      if (node && typeof node.scrollIntoView === 'function') {
+        node.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(follow);
+    } else {
+      follow();
+    }
   }, []);
   // ``orderByPinned`` is a pure sort; memoise on the inputs so we
   // don't reshuffle the list on unrelated re-renders.
   const orderedSessions = useMemo(
-    () => orderByPinned(sessions, pinnedIds),
-    [sessions, pinnedIds],
+    () => orderByPinned(sessions, pinnedIds, tabOrder),
+    [sessions, pinnedIds, tabOrder],
   );
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
+
+  // Drop ``fromId`` at ``toId``'s position.
+  //
+  // ``moveTab`` — the same primitive the file-tab strip uses — decides what
+  // is legal, so both strips obey one rule: a tab may only be dropped among
+  // its own group, and a cross-group drop is REFUSED rather than silently
+  // relocated. A pinned tab dragged among the pins therefore stays pinned,
+  // and an unpinned one can never take a pinned tab's place.
+  //
+  // Which list gets written depends on which group moved: pin order IS
+  // ``pinnedIds``, while the unpinned arrangement needs its own record or
+  // the next sessions poll would undo it.
+  const handleReorder = useCallback((fromId, toId) => {
+    const ordered = orderByPinned(sessions, pinnedIds, tabOrder);
+    const next = moveTab(ordered, fromId, toId, {
+      keyOf: (session) => session.task_id,
+      pinnedOf: (session) => pinnedSet.has(session.task_id),
+    });
+    if (next === ordered) { return; }   // refused — leave everything alone
+    const ids = next.map((session) => session.task_id);
+    if (pinnedSet.has(fromId)) {
+      const nextPinned = ids.filter((id) => pinnedSet.has(id));
+      setPinnedIds(nextPinned);
+      writePinnedIds(nextPinned);
+      return;
+    }
+    const nextOrder = ids.filter((id) => !pinnedSet.has(id));
+    setTabOrder(nextOrder);
+    writeTabOrder(nextOrder);
+  }, [sessions, pinnedIds, pinnedSet, tabOrder]);
 
   // Recompute "can I scroll?" any time the scroller's size or
   // content changes — that drives whether the chevron nav buttons
@@ -218,6 +279,10 @@ export default function TabList({
     };
   }
 
+  const draggedSession = drag.id
+    ? orderedSessions.find((s) => s.task_id === drag.id) || null
+    : null;
+
   const tabs = orderedSessions.map((session) => {
     const isActive = session.task_id === activeTaskId;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
@@ -235,51 +300,43 @@ export default function TabList({
         onTogglePin={handleTogglePin}
         displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
         onRename={handleRename}
+        dragging={drag.id === session.task_id}
+        dropTarget={drag.over === session.task_id && drag.id !== session.task_id}
+        canDrop={canDropOn(
+          draggedSession, session,
+          (s) => pinnedSet.has(s.task_id),
+        )}
+        onDragStart={(id) => setDrag({ id, over: '' })}
+        onDragEnd={() => setDrag({ id: '', over: '' })}
+        onDragOver={(id) => setDrag((prev) => (
+          prev.over === id ? prev : { ...prev, over: id }
+        ))}
+        onDragLeave={() => setDrag((prev) => (
+          prev.over ? { ...prev, over: '' } : prev
+        ))}
+        onDrop={(id) => {
+          if (drag.id && drag.id !== id) { handleReorder(drag.id, id); }
+          setDrag({ id: '', over: '' });
+        }}
       />
     );
   });
 
-  // Compute and publish each pinned tab's sticky-left offset so the
-  // pinned group stacks horizontally as the rest of the strip
-  // scrolls underneath. Without this, every pinned ``.is-pinned``
-  // tab would stick to ``left: 0`` and overlap the others — only
-  // the last would be visible. We measure widths on every layout
-  // (sessions added/removed, pinned set changes, viewport resize)
-  // and write ``--sticky-left`` per-tab.
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) { return undefined; }
-    const apply = () => {
-      const pinned = list.querySelectorAll(':scope > .tab.is-pinned');
-      let offset = 0;
-      pinned.forEach((el, index) => {
-        el.style.setProperty('--sticky-left', `${offset}px`);
-        // Earlier pinned tabs must paint ABOVE later ones. All pinned tabs
-        // share one ``z-index`` in CSS, so equal-z DOM order decided the
-        // winner and the RIGHTMOST pinned tab painted over its neighbours —
-        // any overlap (a resize mid-scroll, a sub-pixel seam) showed up as a
-        // pinned tab sliding on top of the pinned tabs to its left.
-        // Descending z-index makes the leftmost win, which is the only
-        // stacking that reads correctly for a left-anchored sticky cluster.
-        el.style.setProperty('z-index', String(pinned.length - index + 3));
-        // ``getBoundingClientRect().width`` is fractional; ``offsetWidth``
-        // rounds to an integer, so accumulating it drifted by up to half a
-        // pixel PER PINNED TAB and the cluster crept into overlap the more
-        // tabs were pinned.
-        offset += el.getBoundingClientRect().width + TAB_GAP_PX;
-      });
-    };
-    apply();
-    if (typeof ResizeObserver === 'undefined') { return undefined; }
-    // Re-measure when any pinned tab's own size changes (font load,
-    // changes-indicator showing/hiding, etc.) so offsets stay
-    // correct without manual ticks.
-    const observer = new ResizeObserver(apply);
-    list.querySelectorAll(':scope > .tab.is-pinned').forEach(
-      (el) => observer.observe(el),
-    );
-    return () => observer.disconnect();
-  }, [orderedSessions, pinnedSet]);
+  // NOTE: pinned tabs used to be ``position: sticky``, held against the left
+  // edge while the rest of the strip scrolled underneath, with a layout
+  // effect here measuring each one and publishing a ``--sticky-left`` offset
+  // (plus a ResizeObserver to keep those offsets fresh).
+  //
+  // It could not work once the pinned cluster grew wider than the strip:
+  // there is simply nowhere left to hold them, so they piled up and painted
+  // over each other. Two separate fixes went into the measuring — descending
+  // z-index, fractional widths — and neither touched that, because the
+  // problem was the premise rather than the arithmetic.
+  //
+  // Pinned tabs now just SORT to the front (``orderByPinned`` above) and
+  // scroll like every other tab. The whole mechanism is gone rather than
+  // repaired: no offsets to publish, no observer, and no way for two tabs to
+  // occupy the same space.
 
   // Bring the ACTIVE task's tab into view — but ONLY when the reveal id
   // changed. Deliberately NOT keyed on activeTaskId or on sessions: those
@@ -376,7 +433,7 @@ export default function TabList({
         <Icon name="chevron-left" />
       </button>
       <div className="tabs-scroller" ref={wheelRef}>
-        <ul id="tab-list" ref={listRef}>
+        <ul id="tab-list">
           {tabs}
         </ul>
       </div>

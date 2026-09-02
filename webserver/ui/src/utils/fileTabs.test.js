@@ -8,7 +8,6 @@ import test from 'node:test';
 import {
   closeTab,
   findTab,
-  moveTab,
   patchTab,
   sortPinnedFirst,
   tabKeyFor,
@@ -266,28 +265,3 @@ test('togglePin on an unknown key is a no-op', function () {
   assert.equal(togglePin(tabs, 'nope'), tabs);
 });
 
-test('moveTab reorders within the unpinned group', function () {
-  const out = moveTab([_t('a'), _t('b'), _t('c')], 'a', 'c');
-  assert.deepEqual(out.map((tab) => tab.key), ['b', 'c', 'a']);
-});
-
-test('moveTab reorders within the pinned group', function () {
-  const out = moveTab([_t('a', true), _t('b', true), _t('c')], 'b', 'a');
-  assert.deepEqual(out.map((tab) => tab.key), ['b', 'a', 'c']);
-});
-
-test('moveTab REFUSES a cross-group drop instead of silently relocating', function () {
-  // Snapping the tab somewhere the operator did not drop it reads as a
-  // broken drag; leaving it put reads as "that is not allowed".
-  const tabs = [_t('p', true), _t('a'), _t('b')];
-  assert.equal(moveTab(tabs, 'a', 'p'), tabs);
-  assert.equal(moveTab(tabs, 'p', 'b'), tabs);
-});
-
-test('moveTab is a no-op for unknown keys or a self-drop', function () {
-  const tabs = [_t('a'), _t('b')];
-  assert.equal(moveTab(tabs, 'a', 'a'), tabs);
-  assert.equal(moveTab(tabs, 'nope', 'b'), tabs);
-  assert.equal(moveTab(tabs, 'a', 'nope'), tabs);
-  assert.equal(moveTab(tabs, '', 'b'), tabs);
-});

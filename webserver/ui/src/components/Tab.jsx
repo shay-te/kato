@@ -76,6 +76,11 @@ const RENAME_BOX_INSET_PX = 2;
 export default function Tab({
   session, active, needsAttention, liveStatus = null, pinned = false,
   onSelect, onForget, onTogglePin, displayName = '', onRename,
+  // Drag-to-reorder, driven entirely by TabList (which owns the order and
+  // the pinned set). Defaults keep the tab inert for any caller that does
+  // not wire it — the strip is the only one that does.
+  dragging = false, dropTarget = false, canDrop = false,
+  onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
@@ -263,14 +268,81 @@ export default function Tab({
     // between "no reserve, grow to fit" and "reserve room for the trailing
     // controls inside a fixed width" — see app.scss.
     hasCustomWidth && 'has-custom-width',
+    dragging && 'dragging',
+    dropTarget && 'drop-target',
   );
 
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
+
+  // Where the press that could become a drag started.
+  //
+  // Every control on the pill (pin, rename, ×, the resize grip) is a plain
+  // child of a draggable <li>, and the HTML drag model picks the nearest
+  // ancestor with ``draggable=true`` — a button is not a barrier, and
+  // ``draggable={false}`` on the child is NOT one either: the ancestor walk
+  // looks only for ``true``, there is no stop-on-false. React's
+  // ``stopPropagation`` does not help either; it stops the synthetic event,
+  // not the browser's native drag.
+  //
+  // So the press is recorded, and the drag is CANCELLED at dragstart. Left
+  // unguarded, pressing × and drifting a few pixels starts a reorder instead
+  // of forgetting the task — and because a drag suppresses the click, the ×
+  // does nothing at all.
+  const pressedControlRef = useRef(false);
+
+  function handleMouseDownCapture(event) {
+    pressedControlRef.current = !!event?.target?.closest?.(CONTROL_SELECTOR);
+  }
+
+  function handleDragStart(event) {
+    if (pressedControlRef.current) {
+      // Cancelling here is what actually stops it — ``preventDefault`` on
+      // ``dragstart`` is the spec's own "no drag" signal.
+      event.preventDefault();
+      return;
+    }
+    // The hover card cannot dismiss itself mid-drag: mouse events are
+    // suppressed for the duration of a drag, so ``onMouseLeave`` never
+    // fires. Worse, the mousedown that begins the drag re-arms the open
+    // timer, so any drag lasting longer than the hover delay pops the card.
+    closeTooltip();
+    // The id travels in the dataTransfer payload as well as in state: a drop
+    // has to know what moved, and React state updates are async.
+    event.dataTransfer.effectAllowed = 'move';
+    try {
+      event.dataTransfer.setData('text/plain', session.task_id);
+    } catch (_err) { /* some browsers restrict setData; state still carries it */ }
+    if (onDragStart) { onDragStart(session.task_id); }
+  }
+  function handleDragOver(event) {
+    // Only a same-group drop is legal — pinned tabs are a block at the front
+    // — so the cursor must say "no" over an illegal target rather than let
+    // the operator finish a drag that will be refused.
+    if (!canDrop) { return; }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (onDragOver) { onDragOver(session.task_id); }
+  }
+  function handleDrop(event) {
+    if (!canDrop) { return; }
+    event.preventDefault();
+    if (onDrop) { onDrop(session.task_id); }
+  }
 
   return (
     <>
       <li
         ref={liRef}
+        // Not draggable WHILE RENAMING: the rename box is a text input, and
+        // a draggable ancestor swallows the click-and-drag that selects text
+        // inside it.
+        draggable={!renaming}
+        onMouseDownCapture={handleMouseDownCapture}
+        onDragStart={handleDragStart}
+        onDragEnd={onDragEnd}
+        onDragOver={handleDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={handleDrop}
         className={className}
         // Lets the strip find THIS pill in the DOM to scroll it into
         // view when the operator selects the task from somewhere else
@@ -403,6 +475,12 @@ export default function Tab({
           aria-orientation="vertical"
           aria-label={`Resize the ${session.task_id} tab`}
           title="Drag to resize this tab"
+          // NOTE: no ``draggable={false}`` here. It reads like the fix and
+          // is inert — the drag model's ancestor walk looks only for
+          // ``draggable=true``, so a false on the child stops nothing.
+          // What actually keeps this a resize rather than a reorder is the
+          // mousedown-capture guard on the <li> (see ``pressedControlRef``),
+          // plus ``useResizable``'s own ``preventDefault`` on the press.
           onClick={(e) => e.stopPropagation()}
           // MOUSE down, not pointer down: useResizable ends the drag on a
           // document ``mouseup``, and its ``preventDefault()`` on a
