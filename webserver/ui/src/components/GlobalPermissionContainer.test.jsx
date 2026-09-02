@@ -16,6 +16,12 @@ vi.mock('../api.js', () => ({
 import { fetchPendingPermissions, postSession } from '../api.js';
 import { permissionStore } from '../stores/permissionStore.js';
 import GlobalPermissionContainer from './GlobalPermissionContainer.jsx';
+import {
+  APPROVAL_MODE_GLOBAL,
+  APPROVAL_MODE_IN_CHAT,
+  writeApprovalMode,
+  _resetApprovalModePref,
+} from '../utils/approvalModePref.js';
 
 function _ask(taskId, requestId = 'r1', tool = 'Bash') {
   return {
@@ -232,5 +238,74 @@ describe('GlobalPermissionContainer — the tab title says something is waiting'
     render(<GlobalPermissionContainer />);
     await waitFor(() => expect(fetchPendingPermissions).toHaveBeenCalled());
     expect(document.title).toBe('Kato — Planning UI');
+  });
+});
+
+// The operator chooses WHERE an ask appears — see utils/approvalModePref.js.
+//
+// Both modes watch every task; only the drawing differs. In-chat keeps a
+// background task from covering the one you are working on; global restores
+// kato's original interrupting dialog for operators who would rather be
+// pulled away than have an agent sit blocked unnoticed.
+describe('GlobalPermissionContainer — the approval-mode setting', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.removeItem?.('kato.approvalMode.v1');
+    _resetApprovalModePref();
+  });
+  afterEach(() => {
+    globalThis.localStorage?.removeItem?.('kato.approvalMode.v1');
+    _resetApprovalModePref();
+  });
+
+  test('in GLOBAL mode another task\u2019s ask opens over everything', () => {
+    writeApprovalMode(APPROVAL_MODE_GLOBAL);
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-9')] });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    return screen.findByRole('heading').then((heading) => {
+      expect(heading).toHaveTextContent(/POJ-9.*wants permission/);
+    });
+  });
+
+  test('in GLOBAL mode it is a real modal, not a card in the chat', async () => {
+    writeApprovalMode(APPROVAL_MODE_GLOBAL);
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-9')] });
+    const { container } = render(
+      <GlobalPermissionContainer activeTaskId="POJ-9" />,
+    );
+    await screen.findByRole('heading');
+    // The overlay carries aria-modal; the inline card deliberately does not.
+    expect(container.querySelector('.modal.is-inline')).toBeNull();
+    expect(document.querySelector('[aria-modal="true"]')).toBeTruthy();
+  });
+
+  test('in IN-CHAT mode another task\u2019s ask does NOT open', async () => {
+    writeApprovalMode(APPROVAL_MODE_IN_CHAT);
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-9')] });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    await waitFor(() => expect(fetchPendingPermissions).toHaveBeenCalled());
+    expect(screen.queryByRole('heading')).toBeNull();
+  });
+
+  test('in IN-CHAT mode the ask is an inline card, not a modal', async () => {
+    writeApprovalMode(APPROVAL_MODE_IN_CHAT);
+    fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-9')] });
+    render(<GlobalPermissionContainer activeTaskId="POJ-9" />);
+    await screen.findByRole('heading');
+    expect(document.querySelector('.modal.is-inline')).toBeTruthy();
+    expect(document.querySelector('[aria-modal="true"]')).toBeNull();
+  });
+
+  test('the roster still lists waiting chats in BOTH modes', async () => {
+    // It is the only signal in in-chat mode, and still useful in global mode
+    // when several tasks are queued behind the open dialog.
+    for (const mode of [APPROVAL_MODE_IN_CHAT, APPROVAL_MODE_GLOBAL]) {
+      writeApprovalMode(mode);
+      fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-9')] });
+      const view = render(<GlobalPermissionContainer activeTaskId="POJ-1" />);
+      await waitFor(() => {
+        expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
+      });
+      view.unmount();
+    }
   });
 });

@@ -8,6 +8,11 @@ import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { countNoun } from '../utils/pluralize.js';
+import {
+  APPROVAL_MODE_GLOBAL,
+  readApprovalMode,
+  subscribeApprovalMode,
+} from '../utils/approvalModePref.js';
 
 // The SINGLE owner of the permission-approval modal.
 //
@@ -51,9 +56,19 @@ export default function GlobalPermissionContainer({
   onSelectTask = null,
 }) {
   const { list } = usePendingPermissions();
+  // Where the ask is drawn. A setting, because neither answer is right for
+  // everyone: an interrupting dialog costs you your place in another task,
+  // and a quiet in-chat card costs a blocked agent some of your attention.
+  // See utils/approvalModePref.js.
+  const [approvalMode, setApprovalMode] = useState(() => readApprovalMode());
+  useEffect(() => subscribeApprovalMode(setApprovalMode), []);
+  const globalMode = approvalMode === APPROVAL_MODE_GLOBAL;
   // Asks belonging to the task on screen. The dialog is drawn from THIS;
   // everything below that reports on "waiting" still reads the full list.
-  const mine = list.filter(
+  // In global mode EVERY task's ask is eligible, wherever the operator is —
+  // that is the whole difference between the two modes. The store itself
+  // watches every task either way, so nothing is missed in either.
+  const mine = globalMode ? list : list.filter(
     (entry) => unpackPermissionEnvelope(entry).taskId === activeTaskId,
   );
   // Hold the dialog back while the operator is mid-sentence somewhere.
@@ -229,7 +244,8 @@ export default function GlobalPermissionContainer({
       // Only this task's other asks. One on a DIFFERENT task is not queued
       // behind this dialog — it waits on its own row in the roster above.
       queuedCount={Math.max(0, mine.length - 1)}
-      inline
+      // Global mode is a real modal: an overlay, not a card in a transcript.
+      inline={!globalMode}
     />
   ) : null;
 
@@ -243,9 +259,16 @@ export default function GlobalPermissionContainer({
   return (
     <>
       {headerSlot && roster ? createPortal(roster, headerSlot) : roster}
-      {slot && (card || typingHint)
-        ? createPortal(<>{card}{typingHint}</>, slot)
-        : null}
+      {/* The overlay is rendered HERE, not portaled into a chat: in global
+          mode it deliberately belongs to the whole app rather than to one
+          task's pane — and it must still appear when the asking task's chat
+          is not mounted at all, which is exactly the case the mode exists
+          for. */}
+      {globalMode
+        ? <>{card}{typingHint}</>
+        : (slot && (card || typingHint)
+          ? createPortal(<>{card}{typingHint}</>, slot)
+          : null)}
     </>
   );
 }

@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
+  APPROVAL_MODE_GLOBAL,
+  APPROVAL_MODE_IN_CHAT,
+  readApprovalMode,
+  subscribeApprovalMode,
+  writeApprovalMode,
+} from '../utils/approvalModePref.js';
+import {
   readSteerWhileWorking,
   writeSteerWhileWorking,
   subscribeSteerWhileWorking,
@@ -21,6 +28,8 @@ const WORKFLOW_CAPABLE_BACKEND = 'claude';
 export default function ChatSettingsPanel() {
   const [steer, setSteer] = useState(() => readSteerWhileWorking());
   useEffect(() => subscribeSteerWhileWorking(setSteer), []);
+  const [approvalMode, setApprovalMode] = useState(() => readApprovalMode());
+  useEffect(() => subscribeApprovalMode(setApprovalMode), []);
 
   const [ultracodeByDefault, setUltracodeByDefault] = useState(
     () => readUltracodeByDefault(),
@@ -96,6 +105,55 @@ export default function ChatSettingsPanel() {
             <span className="chat-settings-option-hint">
               Claude receives the message right away while it works. No queue,
               no waiting for the turn to end.
+            </span>
+          </span>
+        </label>
+      </fieldset>
+
+      <fieldset className="chat-settings-fieldset">
+        <legend className="chat-settings-legend">
+          When the agent asks for approval
+        </legend>
+
+        <label
+          className="chat-settings-option"
+          title="The request appears inside the chat of the task that raised it. Another task's request never covers what you are working on — its tab lights up and it appears in the header, and the request is waiting when you switch to it."
+        >
+          <input
+            type="radio"
+            name="approval-mode"
+            checked={approvalMode === APPROVAL_MODE_IN_CHAT}
+            onChange={() => writeApprovalMode(APPROVAL_MODE_IN_CHAT)}
+          />
+          <span className="chat-settings-option-text">
+            <span className="chat-settings-option-label">
+              In the chat that asked
+            </span>
+            <span className="chat-settings-option-hint">
+              Shown between the transcript and the composer, for the task you
+              are on. Other tasks light their tab and appear in the
+              “waiting for you” list at the top instead of interrupting.
+            </span>
+          </span>
+        </label>
+
+        <label
+          className="chat-settings-option"
+          title="A dialog over the whole app for ANY task, wherever you are. It interrupts on purpose: an agent stays blocked until you answer."
+        >
+          <input
+            type="radio"
+            name="approval-mode"
+            checked={approvalMode === APPROVAL_MODE_GLOBAL}
+            onChange={() => writeApprovalMode(APPROVAL_MODE_GLOBAL)}
+          />
+          <span className="chat-settings-option-text">
+            <span className="chat-settings-option-label">
+              A window over everything
+            </span>
+            <span className="chat-settings-option-hint">
+              Any task’s request opens a dialog wherever you are. It
+              interrupts — which is the point: nothing waits unnoticed.
             </span>
           </span>
         </label>
