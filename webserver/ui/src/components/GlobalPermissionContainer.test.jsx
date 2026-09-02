@@ -309,3 +309,74 @@ describe('GlobalPermissionContainer — the approval-mode setting', () => {
     }
   });
 });
+
+// The header roster has to fit a bar that already carries the logo, the
+// title and the scan status. The first version put an uppercase
+// "WAITING FOR YOU" banner beside one pill per task; the flex row shrank the
+// group, its nowrap children overflowed into each other, and the banner sat
+// on top of the task id and clipped it.
+describe('GlobalPermissionContainer — the header roster stays compact', () => {
+  // Distinct request ids: the store keys asks by request id, so reusing the
+  // default collapses several tasks into one.
+  function askFor(taskId) {
+    return _ask(taskId, `req-${taskId}`);
+  }
+
+  test('it shows a pill per waiting task, with no banner text', async () => {
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [askFor('POJ-1'), askFor('POJ-2')],
+    });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    expect(await screen.findByRole('button', { name: /POJ-1/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /POJ-2/ })).toBeTruthy();
+    // The count belongs to assistive tech, not to a banner taking header room.
+    expect(screen.queryByText(/waiting for you/i)).toBeNull();
+    expect(screen.getByRole('status'))
+      .toHaveAttribute('aria-label', expect.stringMatching(/2 chats waiting/i));
+  });
+
+  test('beyond two, the rest collapse into a count', async () => {
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [askFor('POJ-1'), askFor('POJ-2'), askFor('POJ-3'), askFor('POJ-4')],
+    });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    await screen.findByRole('button', { name: /POJ-1/ });
+    expect(screen.queryByRole('button', { name: /POJ-3/ })).toBeNull();
+    expect(screen.getByText('+2')).toBeTruthy();
+  });
+
+  test('the overflow names the tasks it could not show', async () => {
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [askFor('POJ-1'), askFor('POJ-2'), askFor('POJ-3')],
+    });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    await screen.findByRole('button', { name: /POJ-1/ });
+    expect(screen.getByText('+1')).toHaveAttribute('title', 'POJ-3');
+  });
+
+  test('clicking a pill opens that task', async () => {
+    const onSelectTask = vi.fn();
+    fetchPendingPermissions.mockResolvedValue({ pending: [askFor('POJ-9')] });
+    render(
+      <GlobalPermissionContainer
+        activeTaskId="POJ-OTHER"
+        onSelectTask={onSelectTask}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /POJ-9/ }));
+    expect(onSelectTask).toHaveBeenCalledWith('POJ-9');
+  });
+
+  test('one ask per task, however many requests it has raised', async () => {
+    // The roster lists CHATS, not requests — a task asking three times is
+    // still one place to go.
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [_ask('POJ-1', 'r1'), _ask('POJ-1', 'r2'), _ask('POJ-1', 'r3')],
+    });
+    render(<GlobalPermissionContainer activeTaskId="POJ-OTHER" />);
+    await screen.findByRole('button', { name: /POJ-1/ });
+    expect(screen.queryByText(/^\+/)).toBeNull();
+    expect(screen.getByRole('status'))
+      .toHaveAttribute('aria-label', expect.stringMatching(/1 chat waiting/i));
+  });
+});

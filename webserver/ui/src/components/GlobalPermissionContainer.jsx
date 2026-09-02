@@ -51,6 +51,11 @@ import {
 // The agent is not forgotten either way: it stays blocked until answered,
 // which is exactly why the quiet signals have to keep firing for tasks that
 // are NOT on screen.
+// How many waiting tasks get their own pill before the rest collapse into a
+// count. Two fits the header at a laptop width without crowding the scan
+// status beside it; the overflow keeps its ids in a tooltip.
+const ROSTER_VISIBLE_CHIPS = 2;
+
 export default function GlobalPermissionContainer({
   activeTaskId = '',
   onSelectTask = null,
@@ -164,29 +169,48 @@ export default function GlobalPermissionContainer({
   }
 
   const roster = waiting.length > 0 ? (
-    <span className="permission-roster" role="status" aria-live="polite">
-      <span className="permission-roster-label">
-        {countNoun(waiting.length, 'chat')} waiting for you
-      </span>
-      {waiting.map((row) => (
+    <span
+      className="permission-roster"
+      role="status"
+      aria-live="polite"
+      // The visible pills are task ids, which say nothing on their own to a
+      // screen reader. The count and the point of the thing live here.
+      aria-label={`${countNoun(waiting.length, 'chat')} waiting for you`}
+    >
+      {/* At most two, then a count. This sits in the app header beside the
+          logo and the scan status — a row that is already busy and cannot
+          grow. An uppercase "WAITING FOR YOU" banner plus one pill per task
+          overran it and the pills collided with the status text. */}
+      {waiting.slice(0, ROSTER_VISIBLE_CHIPS).map((row) => (
         <button
           key={row.taskId}
           type="button"
           className={`permission-roster-chip${
             row.taskId === activeTaskId ? ' is-active' : ''}`}
-          // Opens the task, rather than only naming it. Being told which
-          // chat is blocked and then having to go find it among the tabs is
-          // most of the work; this is the whole point of the control.
+          // Opens the task, rather than only naming it. Being told which chat
+          // is blocked and then having to find it among the tabs is most of
+          // the work; this is the point of the control.
           onClick={() => onSelectTask && onSelectTask(row.taskId)}
           title={
             row.taskId === activeTaskId
-              ? `${row.taskSummary || row.taskId} — you are here`
-              : `Open ${row.taskId}${row.taskSummary ? ` — ${row.taskSummary}` : ''}`
+              ? `${row.taskSummary || row.taskId} is waiting for you — you are here`
+              : `${row.taskId} is waiting for you. Click to open it.${
+                row.taskSummary ? ` — ${row.taskSummary}` : ''}`
           }
         >
+          <span className="permission-roster-dot" aria-hidden="true" />
           {row.taskId}
         </button>
       ))}
+      {waiting.length > ROSTER_VISIBLE_CHIPS ? (
+        <span
+          className="permission-roster-more"
+          title={waiting.slice(ROSTER_VISIBLE_CHIPS)
+            .map((row) => row.taskId).join(', ')}
+        >
+          {`+${waiting.length - ROSTER_VISIBLE_CHIPS}`}
+        </span>
+      ) : null}
     </span>
   ) : null;
 

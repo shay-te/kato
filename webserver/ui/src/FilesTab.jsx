@@ -543,21 +543,39 @@ export default function FilesTab({
 
   const filterRow = (
     <div className="files-tab-filter">
-      <span className="files-tab-filter-icon" aria-hidden="true">
-        <Icon name="search" />
-      </span>
-      <input
-        ref={filterInputRef}
-        type="search"
-        className="files-tab-filter-input"
-        placeholder="Search files… (Cmd+P)"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); } }}
-        aria-label="Search files in this task's workspace"
-        spellCheck={false}
-        autoComplete="off"
-      />
+      {/* The field is its OWN box, not a bare input beside the repo select.
+          The leading icon and the clear button are positioned absolutely, and
+          they have to anchor to the INPUT — once the row is allowed to wrap
+          (see app.scss), anchoring them to the row would leave them floating
+          over whichever line the browser happened to lay out first. */}
+      <div className="files-tab-filter-field">
+        <span className="files-tab-filter-icon" aria-hidden="true">
+          <Icon name="search" />
+        </span>
+        <input
+          ref={filterInputRef}
+          type="search"
+          className="files-tab-filter-input"
+          placeholder="Search files… (Cmd+P)"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setQuery(''); } }}
+          aria-label="Search files in this task's workspace"
+          spellCheck={false}
+          autoComplete="off"
+        />
+        {query && (
+          <button
+            type="button"
+            className="files-tab-filter-clear"
+            onClick={() => setQuery('')}
+            aria-label="Clear search"
+            title="Clear (Esc)"
+          >
+            ×
+          </button>
+        )}
+      </div>
       {trees.length > 1 && (
         <select
           className="files-tab-filter-scope"
@@ -572,17 +590,6 @@ export default function FilesTab({
             return <option key={id} value={id}>{id}</option>;
           })}
         </select>
-      )}
-      {query && (
-        <button
-          type="button"
-          className="files-tab-filter-clear"
-          onClick={() => setQuery('')}
-          aria-label="Clear search"
-          title="Clear (Esc)"
-        >
-          ×
-        </button>
       )}
     </div>
   );

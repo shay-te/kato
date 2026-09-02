@@ -5448,10 +5448,35 @@ body.kato-resizing {
 
 /* ───── iOS-style search pill — files tab filter ────────────────── */
 .files-tab-filter {
-  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
+  gap: 6px;
+  /* The repo dropdown drops to its own line when the pane is too narrow to
+   * hold it beside the field.
+   *
+   * Before, the two shared one line unconditionally and the search box was
+   * whatever was left over — which, in a narrow files pane with the repo
+   * picker present, was a capsule barely wide enough to see what you were
+   * typing. Wrapping costs one row of height only when it is actually
+   * needed, and a search you can read is worth more than the row. */
+  flex-wrap: wrap;
+}
+
+/* The field itself: input + its absolutely-positioned icon and clear button.
+ *
+ * A box of its own so those two anchor to the INPUT rather than to the row —
+ * with the row now able to wrap, anchoring to it would leave them floating
+ * over whichever line came first, and the icon vertically centred across
+ * BOTH lines. */
+.files-tab-filter-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* Never squeezed below a usable width — it takes the whole row instead.
+   * 200px is roughly where the placeholder stops being readable. */
+  flex: 1 1 200px;
+  min-width: 0;
 }
 
 /* Spotlight-style leading glass icon. Sits inside the pill, dims
@@ -5468,7 +5493,7 @@ body.kato-resizing {
   transition: color 140ms ease;
 }
 
-.files-tab-filter:focus-within .files-tab-filter-icon {
+.files-tab-filter-field:focus-within .files-tab-filter-icon {
   color: rgba(10, 132, 255, 0.95);
 }
 
@@ -5507,6 +5532,8 @@ body.kato-resizing {
 /* Repo scope picker, beside the search box. Only rendered on a multi-repo
  * task — a single-repo task has nothing to scope to. */
 .files-tab-filter-scope {
+  /* Never squeezed: with the row able to wrap, the dropdown drops to its own
+   * line rather than shrinking to something unreadable. */
   flex-shrink: 0;
   max-width: 120px;
   padding: 2px 4px;
@@ -11005,62 +11032,45 @@ body.kato-resizing {
    from one that never came. */
 /* "A chat needs you", in the header beside the logo.
  *
- * It started as a full-screen modal that opened for ANY task — which meant
- * work belonging to a conversation the operator was not in interrupted the
- * one they WERE in. This states the same fact without taking the screen, and
- * each chip is the way in.
+ * It started as a full-screen modal that opened for ANY task — work belonging
+ * to a conversation the operator was not in interrupted the one they WERE in.
+ * This states the same fact without taking the screen, and each pill is the
+ * way in. (An operator who prefers the interruption can switch back: Settings
+ * → Chat → "When the agent asks for approval".)
  *
- * The header is the one strip that is always on screen, whatever pane is
- * open and however far the chat is scrolled. An agent stays blocked until
- * the ask is answered, so the cost of this being missed is measured in
- * wall-clock time. */
+ * The header is the one strip always on screen whatever pane is open, which
+ * is why it lives here — an agent stays blocked until the ask is answered, so
+ * the cost of this being missed is wall-clock time.
+ *
+ * Compact on purpose. The first version put an uppercase "WAITING FOR YOU"
+ * banner beside one pill per task; in a header that already carries the logo,
+ * the title and the scan status there was no room, the group was shrunk by
+ * the flex row, and its nowrap children overflowed into each other — the
+ * label sat on top of the task id and clipped it. */
 .header-attention-slot {
   display: contents;
 }
 
 .permission-roster {
   display: inline-flex;
-  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
-  margin-left: 8px;
+  /* Never shrunk. Shrinking a nowrap row does not reflow it, it just makes
+   * the children overlap — which is exactly what went wrong. */
+  flex-shrink: 0;
   font-size: 11px;
-  white-space: nowrap;
 }
 
-.permission-roster-label {
-  padding: 2px 8px;
-  color: #0a0a0a;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  background: #fde68a;
-  border-radius: 999px;
-  /* Flashing, deliberately. A static badge in a busy header is exactly the
-   * kind of thing that gets read once and then stops being seen; movement is
-   * what survives peripheral vision while the operator works in a pane. */
-  animation: permission-roster-flash 1.4s ease-in-out infinite;
-}
-
-@keyframes permission-roster-flash {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
-}
-/* Operators who ask for less motion get a steady badge — still the loudest
- * colour in the header, just not moving. */
-@media (prefers-reduced-motion: reduce) {
-  .permission-roster-label {
-    animation: none;
-  }
-}
 .permission-roster-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
   padding: 2px 8px;
   font-family: inherit;
   font-size: 11px;
-  color: #f5f5f7;
+  color: #fef3c7;
+  white-space: nowrap;
   cursor: pointer;
   background: transparent;
   border: 1px solid #fde68a;
@@ -11073,8 +11083,36 @@ body.kato-resizing {
   background: #fde68a;
 }
 
+/* The movement lives on a 6px dot rather than a filled banner.
+ *
+ * A static badge in a busy header gets read once and then stops being seen,
+ * so something has to move; but a whole flashing block beside the logo is
+ * the kind of thing an operator learns to resent. */
+.permission-roster-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fde68a;
+  animation: permission-roster-flash 1.4s ease-in-out infinite;
+}
+
+@keyframes permission-roster-flash {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+/* Operators who ask for less motion get a steady dot — still the only warm
+ * colour in the header, just not moving. */
+@media (prefers-reduced-motion: reduce) {
+  .permission-roster-dot {
+    animation: none;
+  }
+}
 /* The chat you are already in. Still listed — dropping it would make the
- * count disagree with the rows — but not offered as somewhere to go. */
+ * count disagree with the pills — but not offered as somewhere to go. */
 .permission-roster-chip.is-active {
   color: #a3a3a3;
   cursor: default;
@@ -11084,6 +11122,21 @@ body.kato-resizing {
 .permission-roster-chip.is-active:hover {
   color: #a3a3a3;
   background: transparent;
+}
+
+.permission-roster-chip.is-active .permission-roster-dot {
+  background: #525252;
+}
+
+/* Overflow beyond the visible pills. Not a button: it names tasks it cannot
+ * all open, so it carries their ids in a tooltip instead of pretending to be
+ * one destination. */
+.permission-roster-more {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  color: #fef3c7;
+  white-space: nowrap;
+  cursor: default;
 }
 
 /* The ask rendered INSIDE the chat rather than over the app. Reuses the
