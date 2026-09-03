@@ -11,6 +11,8 @@ inverted, and the tool deleted the real conversation along with its
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -168,6 +170,36 @@ class RepairRunTests(unittest.TestCase):
         before = path.read_text(encoding='utf-8')
         self._run()
         self.assertEqual(path.read_text(encoding='utf-8'), before)
+
+    def _run_capturing(self, *extra, owner='claude'):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self._run(*extra, owner=owner)
+        return buffer.getvalue()
+
+    def test_a_dry_run_REPORTS_what_it_found(self) -> None:
+        # The counter only advanced on the --apply path, so a dry run
+        # printed "no crossed session ids found." immediately below a list
+        # of crossed session ids. Against the operator's real records that
+        # summary said "nothing to do" three times over, which is exactly
+        # the line that stops anyone re-running with --apply.
+        self._write(_after_switch_back())
+        output = self._run_capturing()
+        self.assertNotIn('no crossed session ids found', output)
+        self.assertIn('1 record(s) would be repaired', output)
+        self.assertIn('--apply', output)
+
+    def test_a_dry_run_over_clean_records_still_says_nothing_found(self) -> None:
+        # The other half: the reassuring message has to stay reachable, or
+        # the fix above just inverts the lie.
+        self._write({'agent_backend': 'claude', 'agent_session_id': CLAUDE_ID})
+        output = self._run_capturing()
+        self.assertIn('no crossed session ids found', output)
+
+    def test_apply_reports_what_it_actually_wrote(self) -> None:
+        self._write(_after_switch_back())
+        output = self._run_capturing('--apply')
+        self.assertIn('repaired 1 record(s)', output)
 
     def test_apply_backs_the_file_up_first(self) -> None:
         path = self._write(_after_switch_back())

@@ -161,7 +161,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f'no session records at {root}')
         return 0
 
-    repaired = 0
+    # Counted separately on purpose. Folding them into one counter meant it
+    # only ever incremented on the --apply path, so a DRY RUN printed "no
+    # crossed session ids found." directly under a list of crossed session
+    # ids — the one message guaranteed to stop someone re-running with
+    # --apply.
+    detected = 0  # records that have a repairable crossing
+    applied = 0  # records actually rewritten on disk
     skipped = 0
     for path in sorted(root.glob('*.json')):
         try:
@@ -190,23 +196,26 @@ def main(argv: list[str] | None = None) -> int:
             strip_id_from(record, session_id, duplicates)
             changed = True
 
-        if not changed or not options.apply:
+        if not changed:
+            continue
+        detected += 1
+        if not options.apply:
             continue
         shutil.copy2(path, path.with_suffix(path.suffix + '.bak'))
         path.write_text(
             json.dumps(record, indent=2) + '\n', encoding='utf-8',
         )
-        repaired += 1
+        applied += 1
         print(f'    repaired (backup at {path.name}.bak)')
 
-    if not repaired and not skipped:
+    if not detected and not skipped:
         print('no crossed session ids found.')
     elif not options.apply:
-        print(f'\n{repaired} record(s) would be repaired'
+        print(f'\n{detected} record(s) would be repaired'
               f'{f", {skipped} skipped as ambiguous" if skipped else ""}. '
               'Re-run with --apply to fix.')
     else:
-        print(f'\nrepaired {repaired} record(s)'
+        print(f'\nrepaired {applied} record(s)'
               f'{f", skipped {skipped} as ambiguous" if skipped else ""}.')
     return 0
 
