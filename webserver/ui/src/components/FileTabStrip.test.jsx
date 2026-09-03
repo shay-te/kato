@@ -240,12 +240,20 @@ describe('FileTabStrip — diff/file view toggle', () => {
     const controls = [...container.querySelectorAll('.file-tab > *')]
       .map((el) => `${el.tagName.toLowerCase()}.${el.getAttribute('class') || ''}`);
 
+    // ``svg.`` with nothing after it: the leading glyph is a bare inline
+    // SVG carrying no class of its own. (It used to read
+    // ``svg.svg-inline--fa fa-file`` — those were Font Awesome's classes,
+    // and the icons are hand-drawn inline paths now.) Which glyph it is is
+    // asserted separately, via data-icon.
     expect(controls).toEqual([
-      'svg.svg-inline--fa fa-file',
+      'svg.',
       'span.file-tab-label',
       'button.file-tab-view-toggle tooltip-start',
       'button.file-tab-close-btn',
     ]);
+    expect(
+      container.querySelector('.file-tab > svg').getAttribute('data-icon'),
+    ).toBe('file');
   });
 
   test('the leading status icon is no longer a button', () => {

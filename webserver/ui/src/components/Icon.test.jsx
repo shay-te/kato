@@ -14,15 +14,15 @@ describe('Icon', () => {
     const { container } = render(<Icon name="bell" />);
     const svg = container.querySelector('svg');
     expect(svg).toBeInTheDocument();
-    // FontAwesome encodes the icon id in the data-icon attribute.
+    // The component publishes the icon's own name as data-icon.
     expect(svg.getAttribute('data-icon')).toBe('bell');
   });
 
-  test('renders an SVG for refresh (mapped to arrows-rotate)', () => {
+  test('renders an SVG for refresh', () => {
     const { container } = render(<Icon name="refresh" />);
     const svg = container.querySelector('svg');
     expect(svg).toBeInTheDocument();
-    expect(svg.getAttribute('data-icon')).toBe('arrows-rotate');
+    expect(svg.getAttribute('data-icon')).toBe('refresh');
   });
 
   test('xmark name renders the xmark icon', () => {
@@ -30,16 +30,16 @@ describe('Icon', () => {
     expect(container.querySelector('svg').getAttribute('data-icon')).toBe('xmark');
   });
 
-  test('external-link maps to the open-in-new-tab glyph', () => {
+  test('external-link renders under its own name', () => {
     const { container } = render(<Icon name="external-link" />);
     expect(container.querySelector('svg').getAttribute('data-icon'))
-      .toBe('arrow-up-right-from-square');
+      .toBe('external-link');
   });
 
-  test('diff maps to the code-compare glyph', () => {
+  test('diff renders under its own name', () => {
     const { container } = render(<Icon name="diff" />);
     expect(container.querySelector('svg').getAttribute('data-icon'))
-      .toBe('code-compare');
+      .toBe('diff');
   });
 
   test('unknown name renders null (no garbage glyph)', () => {
@@ -48,14 +48,14 @@ describe('Icon', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  test('passes className and spin props through to FontAwesome', () => {
+  test('passes className through, and spin as a class', () => {
     const { container } = render(<Icon name="spinner" className="my-spin" spin={true} />);
     const svg = container.querySelector('svg');
     expect(svg).toBeInTheDocument();
     // FontAwesome merges classes — our custom one is one of them.
     expect(svg.getAttribute('class')).toContain('my-spin');
     // Spin animation class is added by FontAwesome when spin={true}.
-    expect(svg.getAttribute('class')).toContain('fa-spin');
+    expect(svg.getAttribute('class')).toContain('kato-icon-spin');
   });
 
   test('missing name (undefined) renders null safely', () => {

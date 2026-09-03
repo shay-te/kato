@@ -1148,3 +1148,99 @@ describe('SessionDetail — Remote Control toggle', () => {
     expect(state()).toMatchObject({ supported: true });
   });
 });
+
+// kato's own prompts must not be attributed to the operator.
+//
+// Resume sends "Please continue from where you left off." so the agent has a
+// turn to react to, and the working indicator's nudge sends "continue". Both
+// were echoed as USER bubbles, so the chat read "YOU ASKED — Please continue
+// from where you left off" directly under a question the operator had
+// actually asked. Reported as "i never requested continue where we left off.
+// i asked is all done".
+//
+// Beyond looking wrong, it makes the transcript a bad record of what they
+// said — and the transcript is what both they and the agent read back.
+describe('SessionDetail — prompts kato composes itself', () => {
+  function _stream(overrides = {}) {
+    return {
+      events: [],
+      lifecycle: SESSION_LIFECYCLE.IDLE,
+      turnInFlight: false,
+      pendingPermission: null,
+      lastEventAt: 0,
+      appendLocalEvent: vi.fn(),
+      markTurnBusy: vi.fn(),
+      reconnect: vi.fn(),
+      resetChat: vi.fn(),
+      dismissPermission: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function appended(stream, matcher) {
+    return stream.appendLocalEvent.mock.calls
+      .map(([event]) => event)
+      .find((event) => matcher.test(String(event.text || '')));
+  }
+
+  test('the resume nudge is a system notice, not the operator speaking', async () => {
+    postChatMessage.mockClear();
+    const stream = _stream();
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-resume' }));
+
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalled());
+    const nudge = appended(stream, /continue from where you left off/i);
+    expect(nudge).toBeTruthy();
+    expect(nudge.kind).toBe(BUBBLE_KIND.SYSTEM);
+    expect(nudge.kind).not.toBe(BUBBLE_KIND.USER);
+  });
+
+  test('it still carries what was SENT, so the replay is suppressed', async () => {
+    // Drawn as a system notice, but the server will replay it as a user
+    // event. Without ``echoText`` the replay renders as the operator's own
+    // message — reintroducing the bug from the other direction.
+    postChatMessage.mockClear();
+    const stream = _stream();
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-resume' }));
+
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalled());
+    const nudge = appended(stream, /continue from where you left off/i);
+    expect(nudge.echoText).toBe('Please continue from where you left off.');
+  });
+
+  test('it is still SENT unchanged — the agent needs a turn', async () => {
+    postChatMessage.mockClear();
+    useSessionStream.mockReturnValue(_stream());
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-resume' }));
+
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledWith(
+        'T1', 'Please continue from where you left off.', [], 'claude',
+      );
+    });
+  });
+
+  test('the operator\u2019s own message is still theirs', async () => {
+    // The guard must not swallow real messages.
+    postChatMessage.mockClear();
+    const stream = _stream();
+    useSessionStream.mockReturnValue(stream);
+    render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalled());
+    const mine = stream.appendLocalEvent.mock.calls
+      .map(([event]) => event)
+      .find((event) => event.kind === BUBBLE_KIND.USER);
+    expect(mine).toBeTruthy();
+  });
+});

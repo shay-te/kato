@@ -583,6 +583,109 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         except Exception:
             return ''
 
+    def recover_clone_onto_task_branch(self, repository, branch_name: str) -> str:
+        """Move a clone that never got branch-prepped onto its task branch.
+
+        The classic mid-task repo: added after the task started, so nothing
+        ever put its clone on the task branch. The agent then works on
+        ``master``, and every push reports "nothing to push" — accurate, and
+        a dead end. The operator's changes are sitting right there, and the
+        only thing standing between them and a pull request is a checkout.
+
+        Attempted ONLY when it is provably safe: the clone must have no
+        commits of its own on the wrong branch. Uncommitted work is fine and
+        is the normal case — the checkout below carries a dirty tree across
+        with it, so the changes arrive on the task branch intact.
+
+        The uncommitted tree is the WHOLE POINT of this method: a clone that
+        was never branch-prepped has the agent's entire output sitting in it
+        unstaged. The first version of this routed through
+        ``_prepare_task_branch`` on the reasoning that it is "the" way to get
+        onto a task branch. It is not — it is the START-OF-TASK path, and on
+        a dirty tree it wipes to ``origin/<destination>`` without a stash.
+        That shipped and destroyed 41 files of real work. Recovery must use
+        ``_checkout_task_branch_preserving_worktree`` and nothing else.
+
+        A clone that DOES have commits on the wrong branch is left alone and
+        reported. Those commits would stay behind on that branch, and moving
+        them is a rebase-or-cherry-pick decision with a real chance of losing
+        work — not something to do silently on the operator's behalf while
+        they are looking at a button that says "push".
+
+        Returns '' on success, or a reason describing why it was not done.
+        """
+        normalized_branch = normalized_text(branch_name)
+        if not normalized_branch:
+            return 'no task branch name'
+        state = self._resolve_branch_state(repository, normalized_branch)
+        if state is None:
+            return 'workspace clone is missing or its branch is unreadable'
+        local_path, current_branch = state
+        if current_branch == normalized_branch:
+            return ''
+        try:
+            destination_branch = self.destination_branch(repository)
+            reference = self._comparison_reference(local_path, destination_branch)
+        except Exception:
+            return 'could not resolve the destination branch to compare against'
+        try:
+            # Same helper the push pre-check uses, so "has its own commits"
+            # means the same thing in both places.
+            own_commits = self._ahead_count(local_path, reference, current_branch)
+        except Exception:
+            return 'could not read the clone\'s commit history'
+        if own_commits:
+            return (
+                f'clone is on {current_branch!r} and has {own_commits} '
+                f'commit(s) of its own there. Moving them to '
+                f'{normalized_branch!r} is a rebase or cherry-pick, which '
+                f'kato will not do for you — do it in the clone, then push.'
+            )
+        try:
+            self._checkout_task_branch_preserving_worktree(
+                repository,
+                local_path,
+                normalized_branch,
+            )
+        except Exception as exc:
+            return f'could not move the clone onto {normalized_branch!r}: {exc}'
+        return ''
+
+    def _checkout_task_branch_preserving_worktree(
+        self,
+        repository,
+        local_path: str,
+        branch_name: str,
+    ) -> None:
+        """Move onto ``branch_name`` carrying any uncommitted work with it.
+
+        Deliberately NOT ``_prepare_task_branch``. That is the start-of-task
+        cleanup path: when the tree is dirty it calls
+        ``_make_git_ready_for_work``, which runs ``checkout -f`` →
+        ``reset --hard origin/<destination>`` → ``clean -fd`` and keeps NO
+        stash of what it removed. Against a fresh clone that is correct and
+        intended. Against a clone holding the agent's uncommitted output it
+        deletes precisely the work the recovery exists to rescue.
+
+        No ``-f``, no ``reset``, no ``clean`` here. A plain checkout carries
+        modified files onto the new branch, and in the rare case where it
+        could not, git REFUSES instead of overwriting — that refusal becomes
+        the caller's reason string. The failure mode is "nothing happened",
+        never "your changes are gone".
+        """
+        existing = self._git_stdout(
+            local_path,
+            ['branch', '--list', branch_name],
+            f'failed to list local branches at {local_path}',
+            repository,
+        )
+        self._run_git(
+            local_path,
+            ['checkout', branch_name] if existing else ['checkout', '-b', branch_name],
+            f'failed to move repository at {local_path} onto {branch_name}',
+            repository,
+        )
+
     def push_skip_reason(self, repository, branch_name: str) -> str:
         """Why ``Push`` would do nothing here — ``''`` when it would push.
 

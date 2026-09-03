@@ -502,6 +502,32 @@ class TaskPublishService(object):
                 )
                 skip_reason = 'push pre-check failed — see the kato log'
             if skip_reason:
+                # A clone that was never branch-prepped is RECOVERABLE, not a
+                # dead end: the work is sitting in its working tree and the
+                # only thing between it and a pull request is a checkout.
+                # Try that once, then re-ask — the recovery refuses unless it
+                # is provably safe, so a clone with its own commits still
+                # falls through to the skip below with its reason intact.
+                recovery_error = self._repository_service.recover_clone_onto_task_branch(
+                    repository, branch_name,
+                )
+                if not recovery_error:
+                    self.logger.info(
+                        'on-demand push for task %s: moved %s onto %s and '
+                        'retrying — it had never been branch-prepped',
+                        normalized, repository.id, branch_name,
+                    )
+                    try:
+                        skip_reason = self._repository_service.push_skip_reason(
+                            repository, branch_name,
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            'post-recovery push pre-check failed for task %s '
+                            'repository %s', normalized, repository.id,
+                        )
+                        skip_reason = 'push pre-check failed — see the kato log'
+            if skip_reason:
                 # The REAL reason, not a blanket "nothing to push": a
                 # clone still sitting on master (the classic mid-task
                 # repo) read exactly like one that was already in sync.

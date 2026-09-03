@@ -438,11 +438,22 @@ export default function SessionDetail({
   // collapses the local + server pair. Image attachments surface via
   // ``imageCount`` so the renderer can suffix "(N attached)" without
   // polluting the dedupe key.
-  async function deliverMessage(text, images = []) {
+  //
+  // ``fromKato`` marks a prompt kato composed itself rather than one the
+  // operator typed. It is still delivered as a user turn — the agent needs a
+  // turn to react to — but it must not be DRAWN as "YOU ASKED". Reported
+  // exactly that way: "i never requested continue where we left off, i asked
+  // is all done". Putting words in the operator's mouth also makes the
+  // transcript a bad record of what they actually said.
+  async function deliverMessage(text, images = [], { fromKato = false } = {}) {
     stream.appendLocalEvent({
       source: ENTRY_SOURCE.LOCAL,
-      kind: BUBBLE_KIND.USER,
-      text,
+      kind: fromKato ? BUBBLE_KIND.SYSTEM : BUBBLE_KIND.USER,
+      text: fromKato ? `↻ ${text}` : text,
+      // What was actually SENT, whatever the bubble looks like — the replay
+      // of this prompt is matched against it (see echoTextOf), or it would
+      // come back rendered as the operator's own message.
+      echoText: text,
       imageCount: images.length,
     });
     stream.markTurnBusy(true);
@@ -587,14 +598,21 @@ export default function SessionDetail({
     );
   }
 
-  // Resume: respawn the Claude subprocess and tell it to keep going.
-  // We send a real message ("Please continue…") rather than a no-op so
-  // Claude has something to react to — the spawn path requires a user
+  // Resume: respawn the subprocess and tell it to keep going.
+  // We send a real message ("Please continue…") rather than a no-op so the
+  // agent has something to react to — the spawn path requires a user
   // turn to anchor the resumed conversation. Delivered directly, NOT
   // via the queue: resume must always actually send (a session being
   // resumed is idle, and a queued resume would never flush).
+  //
+  // ``fromKato`` because these are not the operator's words. It used to
+  // render as "YOU ASKED — Please continue from where you left off", which
+  // is both wrong on its face and leaves a transcript that misreports what
+  // they said.
   async function onResume() {
-    await deliverMessage('Please continue from where you left off.');
+    await deliverMessage(
+      'Please continue from where you left off.', [], { fromKato: true },
+    );
   }
 
   // Drop a system bubble into the chat so the operator has a visual
@@ -819,7 +837,9 @@ export default function SessionDetail({
               active={stream.turnInFlight || hasPendingPermission}
               waitingForApproval={hasPendingPermission}
               lastEventAt={stream.lastEventAt}
-              onContinue={() => deliverMessage('continue')}
+              // Also kato's word, not the operator's — the working
+              // indicator's nudge button, not something they typed.
+              onContinue={() => deliverMessage('continue', [], { fromKato: true })}
             />
           }
         />

@@ -217,9 +217,13 @@ header .subtitle {
  * orchestrator-feed pill) is exempted via ``:not()`` — it keeps
  * its long pill shape so the status text fits inline. */
 header button:not(.header-status) {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   background: transparent;
   color: $C-NEUTRAL-64;
-  border: 1px solid $C-NEUTRAL-16;
+  border: 1px solid transparent;
   border-radius: $RADIUS-CIRCLE;
   width: $ICON-BOX-LG;
   height: $ICON-BOX-LG;
@@ -237,7 +241,7 @@ header button:not(.header-status) {
 header button:not(.header-status):hover {
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-16;
-  background: $C-NEUTRAL-16;
+  background: $C-NEUTRAL-100-A10;
 }
 
 header button:not(.header-status):disabled {
@@ -1263,13 +1267,17 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * disabled-style (operator still sees the affordance so they
  * learn the strip can scroll). */
 .tabs-nav-button {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   flex-shrink: 0;
   width: 30px;
   height: 30px;
   border-radius: $RADIUS-CIRCLE;
   padding: 0;
-  border: 1px solid $C-NEUTRAL-100-A06;
-  background: $C-NEUTRAL-100-A06;
+  border: 1px solid transparent;
+  background: transparent;
   color: $C-NEUTRAL-96;
   cursor: pointer;
   display: inline-flex;
@@ -1310,9 +1318,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   width: $ICON-BOX-LG;
   height: $ICON-BOX-LG;
   border-radius: $RADIUS-CIRCLE;
-  border: 1px solid $C-NEUTRAL-100-A10;
-  background: $C-NEUTRAL-100-A06;
-  color: $C-NEUTRAL-96;
+  /* VS Code style: the glyph alone, with the circle appearing on hover.
+   *
+   * These carried a filled background and a 1px border at rest, so a row of
+   * them read as a row of BUTTONS competing with the content beside them —
+   * and each one paid for its chrome in width. Bare glyphs give the strip
+   * back that room, which is the point: more actions fit, and the ones
+   * present are quieter until you reach for them.
+   *
+   * The border stays as ``transparent`` rather than being removed: it still
+   * occupies its 1px, so nothing shifts by a pixel when hover paints it. */
+  background: transparent;
+  border: 1px solid transparent;
+  color: $C-NEUTRAL-96-A65;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1320,11 +1338,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-size: $ICON-GLYPH-LG;
   line-height: 1;
   padding: 0;
-  transition: background 120ms ease, transform 90ms ease;
+  transition: background 120ms ease, color 120ms ease, transform 90ms ease;
 }
 
 .tabs-action:hover:not(:disabled) {
-  background: $C-NEUTRAL-100-A06;
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
 }
 
 .tabs-action:active:not(:disabled) {
@@ -1332,7 +1351,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .tabs-action:disabled {
-  background: $C-NEUTRAL-100-A06;
+  /* No fill: at rest these are already bare, so a filled disabled state
+   * would read as the ENABLED one did before. Dim the glyph instead. */
+  background: transparent;
   color: $C-NEUTRAL-96-A28;
   cursor: not-allowed;
 }
@@ -2138,9 +2159,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   height: $ICON-BOX-LG;
   padding: 0;
   border-radius: $RADIUS-CIRCLE;
-  border: 1px solid $C-NEUTRAL-100-A10;
-  background: $C-NEUTRAL-100-A06;
-  color: $C-NEUTRAL-96;
+  /* VS Code style: the glyph alone, with the circle appearing on hover.
+   *
+   * These carried a filled background and a 1px border at rest, so a row of
+   * them read as a row of BUTTONS competing with the content beside them —
+   * and each one paid for its chrome in width. Bare glyphs give the strip
+   * back that room, which is the point: more actions fit, and the ones
+   * present are quieter until you reach for them.
+   *
+   * The border stays as ``transparent`` rather than being removed: it still
+   * occupies its 1px, so nothing shifts by a pixel when hover paints it. */
+  background: transparent;
+  border: 1px solid transparent;
+  color: $C-NEUTRAL-96-A65;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -2151,8 +2182,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .session-action:hover {
-  background: $C-NEUTRAL-100-A06;
-  border-color: $C-NEUTRAL-100-A06;
+  background: $C-NEUTRAL-100-A10;
+  border-color: transparent;
+  color: $C-NEUTRAL-96;
 }
 
 .session-action:active {
@@ -2160,9 +2192,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .session-action:disabled {
-  background: $C-NEUTRAL-100-A06;
+  background: transparent;
   color: $C-NEUTRAL-96-A28;
-  border-color: $C-NEUTRAL-100-A06;
+  border-color: transparent;
   cursor: not-allowed;
   box-shadow: none;
 }
@@ -3331,13 +3363,17 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * below the header. Live match-count chip + close button live
  * inline so the operator never leaves the keyboard. */
 .chat-search-toggle {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   flex-shrink: 0;
   width: $ICON-BOX-LG;
   height: $ICON-BOX-LG;
   padding: 0;
   border-radius: $RADIUS-CIRCLE;
-  border: 1px solid $C-NEUTRAL-100-A10;
-  background: $C-NEUTRAL-100-A06;
+  border: 1px solid transparent;
+  background: transparent;
   color: $C-NEUTRAL-96;
   cursor: pointer;
   display: inline-flex;
@@ -3349,7 +3385,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chat-search-toggle:hover:not(:disabled) {
-  background: $C-NEUTRAL-100-A06;
+  background: $C-NEUTRAL-100-A10;
   border-color: $C-NEUTRAL-100-A06;
 }
 
@@ -3434,12 +3470,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .chat-search-nav,
 .chat-search-close {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   border-radius: $RADIUS-CIRCLE;
-  border: 1px solid $C-NEUTRAL-100-A10;
-  background: $C-NEUTRAL-100-A06;
+  border: 1px solid transparent;
+  background: transparent;
   color: $C-NEUTRAL-96;
   cursor: pointer;
   display: inline-flex;
@@ -3453,7 +3493,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .chat-search-nav:hover:not(:disabled),
 .chat-search-close:hover {
-  background: $C-NEUTRAL-100-A06;
+  background: $C-NEUTRAL-100-A10;
 }
 
 .chat-search-nav:active:not(:disabled),
@@ -5613,8 +5653,16 @@ body.kato-resizing {
   color: $C-NEUTRAL-96;
   border: 1px solid $C-NEUTRAL-100-A06;
   border-radius: $RADIUS-PILL;
-  /* Room for the leading icon (left) + the clear button (right). */
-  padding: $SPACE-7 $SPACE-30 $SPACE-7 $SPACE-32;
+  /* One height for every control on this row — the search field, the repo
+   * picker and the round buttons. They were set three different ways (padding
+   * here, a smaller padding on the picker, a fixed box on the buttons) and
+   * came out three different heights, which is what made the row look
+   * unfinished. $ICON-BOX-LG is the buttons' own size, so it is the one that
+   * cannot be changed without redrawing them. */
+  height: $ICON-BOX-LG;
+  /* Vertical centring is the height's job now; the horizontal padding still
+   * reserves room for the leading icon (left) and the clear button (right). */
+  padding: 0 $SPACE-30 0 $SPACE-32;
   font: inherit;
   font-size: $TEXT-12;
   outline: none;
@@ -5643,7 +5691,9 @@ body.kato-resizing {
    * line rather than shrinking to something unreadable. */
   flex-shrink: 0;
   max-width: 120px;
-  padding: 2px $SPACE-4;
+  /* Same height as the search field and the round buttons beside it. */
+  height: $ICON-BOX-LG;
+  padding: 0 $SPACE-4;
   border: 1px solid $C-NEUTRAL-25-A45;
   border-radius: $RADIUS-4;
   background: none;
@@ -5690,9 +5740,19 @@ body.kato-resizing {
 
 .files-tab-icon-btn,
 .changes-tab-icon-btn {
-  background: $C-NEUTRAL-100-A06;
-  border: 1px solid $C-NEUTRAL-100-A06;
-  color: $C-NEUTRAL-96-A85;
+  /* VS Code style: the glyph alone, with the circle appearing on hover.
+   *
+   * These carried a filled background and a 1px border at rest, so a row of
+   * them read as a row of BUTTONS competing with the content beside them —
+   * and each one paid for its chrome in width. Bare glyphs give the strip
+   * back that room, which is the point: more actions fit, and the ones
+   * present are quieter until you reach for them.
+   *
+   * The border stays as ``transparent`` rather than being removed: it still
+   * occupies its 1px, so nothing shifts by a pixel when hover paints it. */
+  background: transparent;
+  border: 1px solid transparent;
+  color: $C-NEUTRAL-96-A65;
   width: $ICON-BOX-LG;
   height: $ICON-BOX-LG;
   border-radius: $RADIUS-CIRCLE;
@@ -5708,8 +5768,8 @@ body.kato-resizing {
 
 .files-tab-icon-btn:hover,
 .changes-tab-icon-btn:hover {
-  background: $C-NEUTRAL-100-A06;
-  border-color: $C-NEUTRAL-100-A06;
+  background: $C-NEUTRAL-100-A10;
+  border-color: transparent;
   color: $C-NEUTRAL-96;
 }
 
@@ -8032,14 +8092,18 @@ body.kato-resizing {
 }
 
 .orchestrator-feed-close {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
   border-radius: $RADIUS-CIRCLE;
-  border: 1px solid $C-NEUTRAL-100-A10;
-  background: $C-NEUTRAL-100-A06;
+  border: 1px solid transparent;
+  background: transparent;
   color: $C-NEUTRAL-64;
   cursor: pointer;
   flex-shrink: 0;
@@ -9074,8 +9138,12 @@ body.kato-resizing {
 }
 
 .settings-drawer-close {
+  /* Bare glyph, circle on hover — same treatment as .session-action and the
+   * files/changes toolbar buttons. Kept in step with them deliberately: a
+   * strip where some icons carry chrome and others do not reads as a
+   * mistake, not as a distinction. */
   background: transparent;
-  border: 1px solid $C-NEUTRAL-16;
+  border: 1px solid transparent;
   color: $C-NEUTRAL-64;
   width: 28px;
   height: 28px;
@@ -9091,7 +9159,7 @@ body.kato-resizing {
 .settings-drawer-close:hover {
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-32;
-  background: $C-NEUTRAL-16;
+  background: $C-NEUTRAL-100-A10;
 }
 
 /* "Find a setting" search — a box under the header; results drop down over
@@ -11476,4 +11544,19 @@ body.kato-resizing {
 @keyframes permission-pending-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* Spinning an inline SVG icon. FontAwesome used to own this via its own
+ * spin prop; the icons are hand-drawn paths now, so the rotation is
+ * ours. Honours reduced-motion like every other animation here. */
+.kato-icon-spin {
+  animation: kato-icon-spin 900ms linear infinite;
+}
+
+@keyframes kato-icon-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kato-icon-spin { animation: none; }
 }

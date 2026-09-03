@@ -53,3 +53,37 @@ test('the field is the positioning context for its icon and clear button', () =>
 test('the repo picker wraps rather than shrinking to nothing', () => {
   assert.match(ruleBody('.files-tab-filter-scope {'), /flex-shrink:\s*0/);
 });
+
+// ---------------------------------------------------------------------------
+// One height for the whole row.
+//
+// The search field, the repo picker and the round buttons were each sized a
+// different way — vertical padding on the field, smaller padding on the
+// picker, a fixed box on the buttons — and came out three different heights,
+// which is what made the row look unfinished.
+//
+// $ICON-BOX-LG (28px) is the buttons' own size, so it is the one that cannot
+// change without redrawing them; the other two are pinned to it.
+// ---------------------------------------------------------------------------
+
+test('the search field is the shared control height', () => {
+  assert.match(ruleBody('.files-tab-filter-input {'), /height:\s*28px/);
+});
+
+test('the repo picker is the shared control height', () => {
+  assert.match(ruleBody('.files-tab-filter-scope {'), /height:\s*28px/);
+});
+
+test('the round buttons still define that height', () => {
+  const body = ruleBody('.files-tab-icon-btn,');
+  assert.match(body, /height:\s*28px/);
+  assert.match(body, /width:\s*28px/);
+});
+
+test('the field centres by height, not by vertical padding', () => {
+  // Padding-based centring is what made it taller than its neighbours; the
+  // horizontal padding must survive, since it reserves room for the leading
+  // icon and the clear button.
+  const body = ruleBody('.files-tab-filter-input {');
+  assert.match(body, /padding:\s*0 \d+px 0 \d+px/);
+});

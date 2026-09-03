@@ -313,6 +313,27 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
         'intend to delete in the same turn. Those paths are outside your '
         'boundary and writing to them interrupts the operator for an '
         'approval you did not need to ask for.\n\n'
+        # Named explicitly, and named as an OVERRIDE, because the general
+        # "your notes go in helper_scripts" above loses to a more specific
+        # instruction: a CLI with a built-in memory feature tells the agent
+        # its memory lives at a fixed per-user path, and that beats generic
+        # guidance every time. Observed in real sessions — the agent wrote
+        # memory into the global agent directory and every write tripped the
+        # out-of-folder approval, interrupting the operator for something
+        # they never needed to see.
+        'YOUR MEMORY DIRECTORY IS: '
+        f'{primary}{os.sep}memory{os.sep}\n\n'
+        'This OVERRIDES any memory or notes directory your CLI told you to '
+        'use. If you were given a path under a per-user agent directory '
+        '(anything under the home directory, a global sessions or projects '
+        'folder, a config directory), that path is OUTSIDE this task folder '
+        'and therefore out of scope for this task: do not read it and do '
+        'not write to it. Use the directory above instead — create it if it '
+        'does not exist (``mkdir -p``).\n\n'
+        'Memory is PER TASK, and that is deliberate: it is the notes for '
+        'THIS ticket, they live and die with this task\'s workspace, and '
+        'they must never leak into another task or into the operator\'s '
+        'home directory.\n\n'
         'This boundary is about the PROJECT\'S FILES, not about the '
         'machine. Running the tools that are installed on it is normal and '
         'expected: interpreters and compilers wherever they live, package '

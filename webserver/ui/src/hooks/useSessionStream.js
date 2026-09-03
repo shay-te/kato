@@ -280,6 +280,14 @@ function sharedIdentityOf(entry) {
 // The text the operator typed, if this entry is their own echo bubble.
 function echoTextOf(entry) {
   if (entry?.source !== ENTRY_SOURCE.LOCAL) { return ''; }
+  // ``echoText`` when present, because what was SENT to the agent and how the
+  // bubble is DRAWN are two different things. kato sends prompts of its own —
+  // the resume nudge, for one — and those are drawn as system notices rather
+  // than as the operator's words. They still have to suppress the server's
+  // replay of themselves, or the replay comes back attributed to the
+  // operator, which is the very thing drawing them as system fixed.
+  const sent = String(entry.echoText || '').trim();
+  if (sent) { return sent; }
   if (entry.kind !== 'user') { return ''; }
   return String(entry.text || '').trim();
 }
