@@ -155,6 +155,12 @@ header h1 {
   display: inline-flex;
   align-items: center;
   height: 28px;
+  /* Flex children default to shrink:1, and an inline-flex box that has been
+   * shrunk below its text does not reflow — the text simply spills past its
+   * own edge and runs into whatever sits next to it. With a task chip in the
+   * attention slot that neighbour is "UNA-1234", so the two ran together
+   * into one unreadable string. */
+  flex-shrink: 0;
 }
 
 header .subtitle {
@@ -165,8 +171,17 @@ header .subtitle {
   display: inline-flex;
   align-items: center;
   height: 28px;
+  flex-shrink: 0;
 }
 
+/* "Planning UI" is decoration; the task waiting for an answer is not.
+ * Below this width there is no room for both, so the label goes rather than
+ * the chip — dropping it buys back its full width plus a 12px gap. */
+@media (max-width: 900px) {
+  header .subtitle {
+    display: none;
+  }
+}
 /* Round icon buttons matching the rest of the system (files-tab
  * toolbar, session-header actions). Fixed 32px disc, centred icon,
  * subtle hover. The ``.header-status`` button (the click-to-open
@@ -11156,7 +11171,11 @@ body.kato-resizing {
   /* Never shrunk. Shrinking a nowrap row does not reflow it, it just makes
    * the children overlap — which is exactly what went wrong. */
   flex-shrink: 0;
-  font-size: 11px;
+  /* 12px, not 11px. This sits beside 26px title text, so 11px read as noise
+   * rather than as a control — and a task id is exactly the kind of string
+   * (letters, a dash, four digits) that has to be read character by
+   * character. It is still the smallest type in the bar. */
+  font-size: 12px;
 }
 
 .permission-roster-chip {
@@ -11166,7 +11185,7 @@ body.kato-resizing {
   flex-shrink: 0;
   padding: 2px 8px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   color: #fef3c7;
   white-space: nowrap;
   cursor: pointer;

@@ -150,6 +150,54 @@ class HalfFinishedCloneTests(unittest.TestCase):
         self.assertTrue((self.clone / 'service.py').is_file())
 
 
+class FreshCloneMustHaveAWorkingTreeTests(unittest.TestCase):
+    """A clone exiting 0 is not proof of a usable checkout.
+
+    ``--reference-if-able ... --dissociate`` does real work after the objects
+    arrive; interrupted there, a FRESH clone lands in the same ``.git``-only
+    state the reuse path had to learn about. The agent then opens a repo with
+    no source in it: "he will just delete the entire code from some repos".
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.origin = self.root / 'origin'
+        self.origin.mkdir()
+        _git(self.origin, 'init', '-q')
+        _git(self.origin, 'config', 'user.email', 't@example.com')
+        _git(self.origin, 'config', 'user.name', 'test')
+        (self.origin / 'service.py').write_text('x = 1\n', encoding='utf-8')
+        _git(self.origin, 'add', '-A')
+        _git(self.origin, 'commit', '-qm', 'first')
+
+    def test_a_fresh_clone_is_verified_to_have_files(self) -> None:
+        clone = self.root / 'event-core-lib'
+        service = _Service()
+        repository = SimpleNamespace(
+            id='event-core-lib', local_path=str(clone), remote_url=str(self.origin),
+        )
+        # Emulate a clone that produced .git but no checkout, then let
+        # ensure_clone's post-clone verification run.
+        real_run_git = service._run_git
+
+        def clone_then_strip(local_path, args, message, repo=None):
+            result = real_run_git(local_path, args, message, repo)
+            if args and args[0] == 'clone' and clone.is_dir():
+                for entry in clone.iterdir():
+                    if entry.name != '.git':
+                        entry.unlink()
+            return result
+
+        service._run_git = clone_then_strip
+        service.ensure_clone(repository, clone)
+        self.assertTrue(
+            (clone / 'service.py').is_file(),
+            'a fresh clone was left without a working tree',
+        )
+
+
 class CloneFailureReachesTheUiTests(unittest.TestCase):
     """A clone failure has to reach the operator, not just the log file.
 

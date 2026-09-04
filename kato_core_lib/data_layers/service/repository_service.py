@@ -136,6 +136,14 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             f'failed to clone {repository.id} from {remote_url} into {target}',
             repository,
         )
+        # A clone that exits 0 is still not proof of a usable checkout. The
+        # reuse path below already had to learn this; a FRESH clone can land
+        # the same way — ``--reference-if-able ... --dissociate`` does real
+        # work after the objects arrive, and an interruption there leaves the
+        # same ``.git``-only folder. Verified here too so the agent is never
+        # handed an empty repository on the very first pickup: "he will just
+        # delete the entire code from some repos".
+        self._restore_unchecked_out_clone(repository, target)
 
     def _restore_unchecked_out_clone(self, repository, target: Path) -> None:
         """Check out a clone that has ``.git`` but no working files.
@@ -1450,6 +1458,35 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         )
         return repository
 
+    def _stash_before_forced_restore(self, repository) -> None:
+        """Park the working tree so a forced restore can be undone.
+
+        ``git stash push -u`` keeps untracked files too — ``clean -fd`` is
+        part of what follows, so leaving them out would preserve half the
+        work and delete the rest.
+
+        The stash is left ON the stash list deliberately. Nothing pops it:
+        the task has just failed, and silently reapplying its half-finished
+        output to a branch the operator is about to look at would be its own
+        kind of damage. It sits in ``git stash list`` with the task branch in
+        its message, and ``git stash apply`` brings it back.
+
+        Raises if the stash fails, which aborts the restore before anything
+        destructive runs. A repo left on the task branch with its work intact
+        is a far better outcome than a tidy branch and no work.
+        """
+        self._run_git(
+            repository.local_path,
+            [
+                'stash', 'push', '--include-untracked', '-m',
+                f'kato: work in progress before forced restore of '
+                f'{repository.id}',
+            ],
+            f'failed to stash work in progress for {repository.id} before '
+            f'restoring it; refusing to discard the changes',
+            repository,
+        )
+
     def _restore_task_repository(self, repository, force: bool = False) -> None:
         local_path = text_from_attr(repository, 'local_path')
         if local_path and not (Path(local_path) / '.git').is_dir():
@@ -1483,6 +1520,18 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             )
         try:
             if dirty_worktree and force:
+                # Stash FIRST. What follows is checkout -f → reset --hard →
+                # clean -fd with no safety net of its own, and on this path
+                # the dirty tree is the agent's entire output for the task.
+                # A failed task therefore used to end with every repo the
+                # agent had touched back on the destination branch and empty
+                # — "all the repos will sit on master and he will just delete
+                # the entire code from some repos". ("Some" because a repo
+                # the agent never modified is clean and returns early above.)
+                #
+                # Refuses to continue if the stash does not take: a restore
+                # that cannot be undone is not worth a tidy branch state.
+                self._stash_before_forced_restore(repository)
                 self._make_git_ready_for_work(
                     repository.local_path,
                     destination_branch,

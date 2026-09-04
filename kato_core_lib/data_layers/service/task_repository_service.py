@@ -17,6 +17,7 @@ when the host replaces them at runtime — see
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 from kato_core_lib.helpers.deadline import run_with_deadline
@@ -259,8 +260,22 @@ class TaskRepositoryService(object):
             return self._sync_failed(
                 normalized, 'no workspace exists for this task yet',
             )
-        task_obj = task if task is not None else self._lookup_task_for_sync(normalized)
+        lookup_failures: list[str] = []
+        task_obj = task if task is not None else self._lookup_task_for_sync(
+            normalized, lookup_failures,
+        )
         if task_obj is None:
+            if lookup_failures:
+                # The tracker errored rather than answering "no such task".
+                # Saying "check that you are still the assignee" here is a
+                # misdiagnosis: nothing about the ticket is known.
+                return self._sync_failed(
+                    normalized,
+                    f'could not reach the ticket platform, so kato cannot tell '
+                    f'whether {normalized} still exists — this is a connection '
+                    f'or credentials problem, not a problem with the ticket. '
+                    f'Failed queries: {"; ".join(lookup_failures)}',
+                )
             return self._sync_failed(
                 normalized,
                 f'could not find {normalized} on the ticket platform — '
@@ -315,6 +330,7 @@ class TaskRepositoryService(object):
         )
         branch_prep_failures = self._put_new_clones_on_the_task_branch(
             normalized, task_obj, provisioned, missing_repos,
+            already_failed=failed_repositories,
         )
         all_failures = failed_repositories + branch_prep_failures
         if all_failures:
@@ -394,6 +410,7 @@ class TaskRepositoryService(object):
 
     def _put_new_clones_on_the_task_branch(
         self, task_id: str, task_obj, provisioned: list, missing_repos: list,
+        already_failed: list | None = None,
     ) -> list[dict[str, str]]:
         """Check the freshly-cloned repos out on the task branch.
 
@@ -411,7 +428,45 @@ class TaskRepositoryService(object):
             if str(getattr(r, 'id', '') or '').lower() in added_set
         ]
         if not newly_provisioned:
-            return []
+            if not added_set:
+                return []
+            # Repos WERE meant to be added, but none of them came back from
+            # provisioning — so nothing is branch-prepped and every one of
+            # them stays on the remote's default branch. That is the exact
+            # state the operator reported ("keeps it on master"), and
+            # returning [] here made it look like a success: the sync toast
+            # said the repos were added, push/PR then skipped them all
+            # because the task branch never existed.
+            # A repo whose CLONE already failed is reported by the clone
+            # step. Reporting it again here as "stayed on the default
+            # branch" is a second error for one cause, which reads as two
+            # separate problems in the toast and the log.
+            reported = {
+                str(entry.get('repository_id') or '').lower()
+                for entry in (already_failed or [])
+            }
+            unreported = [
+                r for r in missing_repos
+                if str(getattr(r, 'id', '') or '').lower() not in reported
+            ]
+            if not unreported:
+                return []
+            self.logger.error(
+                'no provisioned clones came back for newly-added repositories '
+                'on task %s (%s); they would stay on the default branch',
+                task_id,
+                ', '.join(sorted(
+                    str(getattr(r, 'id', '') or '') for r in unreported
+                )),
+            )
+            return [{
+                'repository_id': str(getattr(r, 'id', '') or ''),
+                'error': (
+                    'the workspace clone was not available for branch '
+                    'preparation, so this repo would stay on the default '
+                    'branch and never produce a pull request'
+                ),
+            } for r in unreported]
         repository_branches = {
             repo.id: self._repository_service.build_branch_name(task_obj, repo)
             for repo in newly_provisioned
@@ -681,7 +736,7 @@ class TaskRepositoryService(object):
                 return True
         return False
 
-    def _lookup_task_for_sync(self, task_id: str):
+    def _lookup_task_for_sync(self, task_id: str, failures: list | None = None):
         """Return the live Task for ``task_id`` (or ``None``).
 
         ``resolve_task_repositories`` needs the real Task — the
@@ -690,5 +745,26 @@ class TaskRepositoryService(object):
         scan the full lifecycle (assigned + review + done) so the
         sync icon works whenever a workspace exists, even after the
         ticket has moved past the autonomous queue states.
+
+        ``failures`` collects the queues that ERRORED rather than simply
+        not containing the task. The lookup returns ``None`` for both, and
+        the two need opposite messages: one is "this ticket is not yours
+        any more", the other is "kato cannot talk to the tracker at all".
+        Reporting the second as the first is what sends an operator to
+        re-check ticket assignees during a platform outage.
         """
-        return find_assigned_or_review_task(self._task_service, task_id)
+        def record(queue_name: str) -> None:
+            # Called from inside the helper's ``except`` block, so the
+            # active exception is still available for the log line.
+            self.logger.exception(
+                'task lookup queue %s failed for %s', queue_name, task_id,
+            )
+            if failures is not None:
+                reason = sys.exc_info()[1]
+                failures.append(
+                    f'{queue_name}: {reason}' if reason else queue_name,
+                )
+
+        return find_assigned_or_review_task(
+            self._task_service, task_id, on_error=record,
+        )

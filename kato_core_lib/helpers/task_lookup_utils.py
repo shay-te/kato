@@ -46,12 +46,25 @@ def find_task_by_id(
     return None
 
 
-def find_assigned_or_review_task(task_service: object, task_id: str):
+def find_assigned_or_review_task(
+    task_service: object,
+    task_id: str,
+    *,
+    on_error: Optional[Callable[[str], None]] = None,
+):
     """Find ``task_id`` in the assigned queue, the review queue, or the all-list.
 
     Walks all three because the operator can act on a task that has left the
     active queue (already done / merged) — ``list_all_assigned_tasks`` is what
     covers that case.
+
+    ``on_error`` matters more than it looks. Every queue error is swallowed
+    here, so a task that could not be looked up and a task that does not exist
+    are the SAME return value: ``None``. Callers that turn ``None`` into an
+    operator-facing message must pass this, or a ticket platform that is
+    simply down gets reported as "check that you are still the assignee" —
+    sending the operator to look at their ticket permissions while the real
+    fault is an expired token or a rate limit.
     """
     return find_task_by_id(
         task_service,
@@ -61,4 +74,5 @@ def find_assigned_or_review_task(task_service: object, task_id: str):
             'get_assigned_tasks',
             'get_review_tasks',
         ),
+        on_error=on_error,
     )

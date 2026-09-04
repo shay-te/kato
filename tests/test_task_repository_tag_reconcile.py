@@ -88,7 +88,12 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         with patch.object(self.service.repositories, '_lookup_task_for_sync',
                           return_value=task) as lookup:
             self.service.repositories.reconcile_task_repositories(self.task_id)
-        lookup.assert_called_once_with(self.task_id)
+        # Asserted on the task id rather than the full arg list: the lookup
+        # also takes an optional collector for queues that ERRORED (so a
+        # tracker outage is not reported as "you are not the assignee"), and
+        # that is not what this test is about.
+        lookup.assert_called_once()
+        self.assertEqual(lookup.call_args.args[0], self.task_id)
 
     def test_unchanged_tags_leave_the_metadata_alone(self) -> None:
         self.service._repository_service.resolve_task_repositories.return_value = [
