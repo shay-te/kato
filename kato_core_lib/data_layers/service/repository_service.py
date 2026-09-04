@@ -1474,18 +1474,32 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         Raises if the stash fails, which aborts the restore before anything
         destructive runs. A repo left on the task branch with its work intact
         is a far better outcome than a tidy branch and no work.
+
+        The stale-index-lock retry is why this is not a bare ``_run_git``.
+        That helper recovers from a stale lock only when git names it —
+        ``_is_git_index_lock_error`` wants both "index.lock" and "file
+        exists" in the output — and ``git stash`` under a stale lock says
+        only ``error: could not write index``. Without the retry, a lock
+        left behind by a killed git process (the case
+        ``test_restore_task_repositories_recovers_from_stale_git_index_lock``
+        exists for) would turn a fully recoverable restore into a hard
+        abort, and fail-closed would have made kato LESS able to finish.
         """
-        self._run_git(
-            repository.local_path,
-            [
-                'stash', 'push', '--include-untracked', '-m',
-                f'kato: work in progress before forced restore of '
-                f'{repository.id}',
-            ],
+        args = [
+            'stash', 'push', '--include-untracked', '-m',
+            f'kato: work in progress before forced restore of {repository.id}',
+        ]
+        message = (
             f'failed to stash work in progress for {repository.id} before '
-            f'restoring it; refusing to discard the changes',
-            repository,
+            f'restoring it; refusing to discard the changes'
         )
+        try:
+            self._run_git(repository.local_path, args, message, repository)
+            return
+        except Exception:
+            if not self._clear_stale_git_index_lock(repository.local_path):
+                raise
+        self._run_git(repository.local_path, args, message, repository)
 
     def _restore_task_repository(self, repository, force: bool = False) -> None:
         local_path = text_from_attr(repository, 'local_path')

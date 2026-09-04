@@ -272,6 +272,72 @@ class TaskPickupEndToEndTests(unittest.TestCase):
         )
 
 
+class AdversarialPickupTests(TaskPickupEndToEndTests):
+    """Pickup under the conditions that actually differ on the operator's box.
+
+    The happy path was already proven. These are the states that route
+    pickup into ``_make_git_ready_for_work`` — the checkout -f / reset
+    --hard / clean -fd path — or into a branch base that is not what the
+    caller assumed.
+    """
+
+    def test_a_clone_that_reports_DIRTY_immediately_keeps_its_code(self) -> None:
+        # The Windows case: with core.autocrlf misconfigured a freshly
+        # cloned repo reports every file as modified, so branch prep takes
+        # the dirty branch on the very first pickup.
+        with self.env:
+            provisioned = provision_task_workspace_clones(
+                self.workspace,
+                self.service,
+                SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                [self.repository],
+            )
+            clone = Path(provisioned[0].local_path)
+            # Make it dirty before branch prep runs, as autocrlf would.
+            (clone / 'form_service.py').write_text('PAGES = 1\r\n', encoding='utf-8')
+            self.service.prepare_task_branches(
+                provisioned, {r.id: TASK_BRANCH for r in provisioned},
+            )
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        self.assertTrue(
+            (clone / 'form_service.py').is_file(),
+            'a dirty-on-arrival clone lost its code during branch prep',
+        )
+        self.assertTrue((clone / 'README.md').is_file())
+
+    def test_a_task_branch_that_already_exists_on_the_remote_is_reused(self) -> None:
+        # Second pickup of the same ticket, or a branch pushed earlier.
+        _git(self.remote, 'branch', TASK_BRANCH)
+        with self.env:
+            provisioned = self._pick_up_task()
+        clone = Path(provisioned[0].local_path)
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        self.assertTrue((clone / 'form_service.py').is_file())
+
+    def test_picking_the_same_task_up_TWICE_is_stable(self) -> None:
+        # The scan loop re-runs pickup; the second pass must not undo the
+        # first or empty the clone it already prepared.
+        with self.env:
+            self._pick_up_task()
+            provisioned = self._pick_up_task()
+        clone = Path(provisioned[0].local_path)
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        self.assertTrue((clone / 'form_service.py').is_file())
+        self.assertNotIn(TASK_BRANCH, _branches(self.source))
+
+    def test_agent_work_survives_a_SECOND_pickup_pass(self) -> None:
+        # The scan tick must not wipe work the agent already did.
+        with self.env:
+            provisioned = self._pick_up_task()
+            clone = Path(provisioned[0].local_path)
+            (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+            self._pick_up_task()
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+            'a second pickup pass destroyed the agent work in progress',
+        )
+
+
 class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
     """A task FAILING must not erase what the agent wrote.
 
@@ -337,6 +403,26 @@ class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
         self.assertEqual(
             (clone / 'form_service.py').read_text(encoding='utf-8'), 'PAGES = 99\n',
             'work was destroyed even though it could not be stashed',
+        )
+
+    def test_a_stale_index_lock_does_not_abort_the_restore(self) -> None:
+        # Fail-closed must not become fail-often. `git stash` under a stale
+        # lock reports only "could not write index", which the shared
+        # stale-lock recovery does not recognise, so the first version of
+        # this stash turned a recoverable restore into a hard abort.
+        with self.env:
+            provisioned, clone = self._worked_on_task()
+            (clone / '.git' / 'index.lock').write_text('stale\n', encoding='utf-8')
+            self.service.restore_task_repositories(provisioned, force=True)
+        self.assertEqual(_current_branch(clone), 'master')
+        self.assertFalse((clone / '.git' / 'index.lock').exists())
+        stashes = subprocess.run(
+            ['git', 'stash', 'list'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout
+        self.assertIn(
+            'form-core-lib', stashes,
+            'the work was discarded rather than parked on the retry path',
         )
 
     def test_a_CLEAN_repo_is_still_restored_normally(self) -> None:

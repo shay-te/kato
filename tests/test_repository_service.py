@@ -247,16 +247,27 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='feature/proj-1/client\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:
             restored_repositories = service.restore_task_repositories([repository], force=True)
 
         self.assertEqual(restored_repositories, [repository])
+        # The stash comes FIRST and is not optional. What follows it is
+        # `checkout -f` + `clean -fd`, which on this path is deleting the
+        # agent's entire output for a failed task — "all the repos will sit
+        # on master and he will just delete the entire code from some
+        # repos". `--include-untracked` because `clean -fd` removes new
+        # files too, so a plain stash would preserve half the work.
         self.assertEqual(
             [call.args[0] for call in mock_run.call_args_list],
             [
                 build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
                 build_safe_git_command('.', ['status', '--porcelain']),
+                build_safe_git_command('.', [
+                    'stash', 'push', '--include-untracked', '-m',
+                    'kato: work in progress before forced restore of client',
+                ]),
                 build_safe_git_command('.', ['checkout', '-f', 'master']),
                 build_safe_git_command('.', ['clean', '-fd']),
             ],
