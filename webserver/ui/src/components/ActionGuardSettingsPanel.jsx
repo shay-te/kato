@@ -3,6 +3,7 @@ import { fetchActionGuardAudit } from '../api.js';
 import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
 import PanelMessage from './settings/PanelMessage.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
+import SettingsSectionHead from './settings/SettingsSectionHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
 
 // Dedicated "Action Guard" tab — per-category posture (Block / Ask / Allow)
@@ -85,6 +86,8 @@ export default function ActionGuardSettingsPanel() {
         />
       </label>
 
+      <SettingsSectionHead title="Risk categories" />
+
       <table className="settings-drawer-approvals-table">
         <thead>
           <tr><th>Risk category</th><th>Posture</th></tr>
@@ -134,13 +137,13 @@ export default function ActionGuardSettingsPanel() {
       )}
 
       <div className="settings-action-guard-audit">
-        <SettingsPanelHead title="Activity log">
-          <p>
+        <SettingsSectionHead title="Activity log">
+          <p className="settings-drawer-field-hint">
             A read-only history of every action the agent attempted and how the
             guard ruled — newest first. Saved to{' '}
             <code>~/.kato/action-guard-audit.log</code>.
           </p>
-        </SettingsPanelHead>
+        </SettingsSectionHead>
         <button type="button" className="secondary" onClick={loadAudit}>
           Refresh
         </button>

@@ -9324,11 +9324,10 @@ body.kato-resizing {
   gap: $SPACE-10;
 }
 
-.chat-settings-legend {
-  padding: 0;
-  margin: 0 0 $SPACE-6 0;
-  font-size: $TEXT-12;
-  color: $C-NEUTRAL-64;
+/* Air between sections. Without it the previous section's last card butts
+ * straight into the next heading, so three sections read as one long list. */
+.chat-settings-fieldset + .chat-settings-fieldset {
+  margin-top: $SPACE-20;
 }
 
 .chat-settings-option {
@@ -9815,11 +9814,43 @@ body.kato-resizing {
   padding-top: $SPACE-14;
 }
 
+/* ONE look for every subsection heading in Settings.
+ *
+ * These three arrived separately and drifted: the field-group title was
+ * bold at the panel's text colour, while the Chat panel's <legend> was
+ * normal weight at the muted HINT colour — which made it read as body copy
+ * sitting above the options rather than as a heading over them ("the title
+ * for each section looks like plain text"). Sharing the declaration is what
+ * keeps them from drifting again; only the bottom margin differs, and only
+ * because of what each one sits above. */
+.settings-section-title,
+.chat-settings-legend,
 .settings-drawer-field-group-title {
-  margin: 0 0 $SPACE-4 0;
+  padding: 0;
   color: $C-NEUTRAL-96;
   font-size: $TEXT-12;
   font-weight: 600;
+}
+
+/* A bare field follows immediately; a tight gap keeps them associated. */
+.settings-drawer-field-group-title {
+  margin: 0 0 $SPACE-4 0;
+}
+
+/* These sit above bordered cards or rows, which carry their own visual
+ * weight — at $SPACE-4 the heading touched the first card's border. */
+.settings-section-title,
+.chat-settings-legend {
+  margin: 0 0 $SPACE-10 0;
+}
+
+/* Separates one titled subsection from the group before it. */
+.settings-drawer-section-head {
+  margin-top: $SPACE-20;
+
+  &:first-child {
+    margin-top: 0;
+  }
 }
 
 .settings-drawer-field-group-help {

@@ -25,8 +25,12 @@ export default function PermissionSoundSettings() {
         className="notification-settings-row notification-settings-master"
         title="Play a light chime when a task needs your approval."
       >
+        {/* Names the TOGGLE, not the group — in the settings panel the group
+          * is titled "Approval sound" above it, and repeating that here read
+          * as a heading printed twice. The tooltip carries the full sentence
+          * for the header popover, which has no heading. */}
         <span className="notification-settings-master-label">
-          Approval sound
+          Play a chime
           <span className="notification-settings-master-state">
             {prefs.enabled ? 'on' : 'off'}
           </span>

@@ -58,9 +58,9 @@ export default function ChatSettingsPanel() {
       <div className="settings-drawer-panel-head">
         <h3>Chat</h3>
         <p>
-          When you send a message while Claude is still working on the previous
-          one, kato can hold it in a queue you control (“steer”) or deliver it
-          right away.
+          How the chat behaves while an agent is working: when your messages
+          reach it, where its approval requests appear, and whether new tasks
+          start in workflow mode. Stored per browser.
         </p>
       </div>
 

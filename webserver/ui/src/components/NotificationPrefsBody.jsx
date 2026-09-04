@@ -1,5 +1,6 @@
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 import PermissionSoundSettings from './PermissionSoundSettings.jsx';
+import SettingsSectionHead from './settings/SettingsSectionHead.jsx';
 
 // The shared body of the notification preferences UI — used both by the
 // SettingsDrawer "Notifications" tab (variant="panel") and the header
@@ -102,13 +103,14 @@ export default function NotificationPrefsBody({
       {unsupportedHint}
       {permissionHint}
       <div className="notification-settings-divider" />
-      {variant === 'panel' && (
-        <div className="notifications-settings-kinds-head">
-          Choose which task events should ping you:
-        </div>
-      )}
+      {variant === 'panel' && <SettingsSectionHead title="Which events ping you" />}
       {kindRows}
       <div className="notification-settings-divider" />
+      {/* The sound group is its own concern — it works even with browser
+        * notifications off — so in the panel it gets a heading of its own
+        * rather than trailing the event list as an unlabelled third block.
+        * The popover stays compact and unheaded. */}
+      {variant === 'panel' && <SettingsSectionHead title="Approval sound" />}
       <PermissionSoundSettings />
     </>
   );
