@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
+from kato_core_lib.helpers.explain_mode_utils import resolve_explain_spawn
 from kato_webserver.app import create_app
 
 
@@ -180,6 +181,105 @@ UNKNOWN_USAGE = {
     # every path returns — zeros here, same as the rest.
     'used_tokens': 0, 'limit_tokens': 0, 'model': '', 'baseline_tokens': 0,
 }
+
+
+# What an Explain spawn really disables — taken from the resolver the
+# route consults, so this cannot drift from production behaviour.
+READ_ONLY_DISALLOWED_TOOLS = resolve_explain_spawn('explain')['disallowed_tools']
+
+
+class _LiveManager(_Manager):
+    """A manager holding one live session, recording terminations."""
+
+    def __init__(self, *, permission_mode='', disallowed_tools=''):
+        self.session = SimpleNamespace(
+            is_alive=True,
+            permission_mode=permission_mode,
+            disallowed_tools=disallowed_tools,
+        )
+        self.terminated = []
+
+    def get_session(self, task_id):  # noqa: ARG002
+        return self.session
+
+    def terminate_session(self, task_id, remove_record=True):
+        self.terminated.append((task_id, remove_record))
+        self.session = None
+
+
+class RestrictionChangeStopsTheSessionTests(unittest.TestCase):
+    """Changing a TOOL restriction must restart the subprocess — both ways.
+
+    Plan and Explain are not permission prompts. They are baked into the
+    spawn as a read-only tool set, so ``Edit`` is ABSENT from that
+    subprocess rather than gated in it. The route used to return early
+    unless the operator was TIGHTENING, so leaving one of those modes
+    changed the stored override and nothing else: the operator picked "Edit
+    automatically", the live agent kept reporting that the tool did not
+    exist, and no part of the UI connected the two.
+
+    Reported as "claude has write permission, he is in the edit
+    automatically mode, but always fails to edit" — with the agent itself
+    saying "the tool isn't present in this session at all... you'll need a
+    fresh session".
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        store = Path(self._tmp.name) / 'plan_mode.json'
+        patcher = patch.dict(os.environ, {'KATO_PLAN_MODE_PATH': str(store)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _post(self, manager, mode):
+        client = create_app(session_manager=manager).test_client()
+        return client.post('/api/sessions/T1/agent-mode', json={'mode': mode})
+
+    def test_leaving_EXPLAIN_stops_the_read_only_subprocess(self) -> None:
+        # THE REGRESSION. Explain spawned without Edit; loosening cannot
+        # reach that subprocess, so it has to be replaced.
+        manager = _LiveManager(disallowed_tools=READ_ONLY_DISALLOWED_TOOLS)
+        body = self._post(manager, 'bypassPermissions').get_json()
+        self.assertTrue(body['session_stopped'])
+        self.assertEqual(len(manager.terminated), 1)
+
+    def test_leaving_PLAN_stops_the_subprocess(self) -> None:
+        manager = _LiveManager(permission_mode='plan')
+        body = self._post(manager, 'bypassPermissions').get_json()
+        self.assertTrue(body['session_stopped'])
+        self.assertEqual(len(manager.terminated), 1)
+
+    def test_the_chat_history_survives_the_restart(self) -> None:
+        # remove_record=False, or the mode change silently discards the
+        # conversation and its resume id.
+        manager = _LiveManager(disallowed_tools=READ_ONLY_DISALLOWED_TOOLS)
+        self._post(manager, 'acceptEdits')
+        self.assertEqual(manager.terminated, [('T1', False)])
+
+    def test_entering_a_restriction_still_stops_it(self) -> None:
+        # The original behaviour this function was written for.
+        manager = _LiveManager()
+        self.assertTrue(self._post(manager, 'plan').get_json()['session_stopped'])
+
+    def test_a_plain_permission_change_does_NOT_stop_a_working_agent(self) -> None:
+        # acceptEdits and bypassPermissions carry the SAME tools, so the
+        # running subprocess can already do what was asked. Killing it would
+        # throw away an in-flight turn for nothing.
+        manager = _LiveManager()
+        body = self._post(manager, 'bypassPermissions').get_json()
+        self.assertFalse(body['session_stopped'])
+        self.assertEqual(manager.terminated, [])
+
+    def test_reselecting_the_SAME_restriction_is_a_no_op(self) -> None:
+        manager = _LiveManager(disallowed_tools=READ_ONLY_DISALLOWED_TOOLS)
+        self.assertFalse(self._post(manager, 'explain').get_json()['session_stopped'])
+        self.assertEqual(manager.terminated, [])
+
+    def test_no_live_session_is_not_an_error(self) -> None:
+        manager = _LiveManager()
+        manager.session = None
+        self.assertFalse(self._post(manager, 'plan').get_json()['session_stopped'])
 
 
 class _Recorded(_Manager):

@@ -97,14 +97,26 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def ensure_clone(self, repository, target_path) -> None:
         """Clone the repo's remote into ``target_path`` if it isn't already.
 
-        Idempotent: if ``target_path/.git`` exists we trust it and skip
-        the clone (the rest of the pipeline will fetch / reset / check out
-        the task branch). Used by per-task workspace mode — each ticket
-        gets its own clone-set so parallel tasks don't share branch state.
+        Idempotent: if ``target_path/.git`` exists the objects are already
+        there, so the clone is skipped (the rest of the pipeline will fetch /
+        reset / check out the task branch). Used by per-task workspace mode —
+        each ticket gets its own clone-set so parallel tasks don't share
+        branch state.
+
+        ``.git`` existing is NOT proof the clone finished. ``git clone``
+        creates the git directory first and checks the working tree out
+        afterwards, so an interruption between the two — a killed process, a
+        network drop, a full disk — leaves a folder holding nothing but
+        ``.git``. This used to return on that state unconditionally, and
+        because the check only ever asked "does .git exist", every later run
+        agreed the repo was "already on disk, reusing". The clone stayed
+        empty permanently and the agent reported it: "event-core-lib cloned
+        but is empty — only a .git directory, no checked-out files".
         """
         self._validate_git_executable()
         target = Path(str(target_path))
         if (target / '.git').is_dir():
+            self._restore_unchecked_out_clone(repository, target)
             return
         target.parent.mkdir(parents=True, exist_ok=True)
         remote_url = normalized_text(text_from_attr(repository, 'remote_url'))
@@ -122,6 +134,63 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             ['clone', *self._clone_speedup_args(repository, target), remote_url,
              target.name],
             f'failed to clone {repository.id} from {remote_url} into {target}',
+            repository,
+        )
+
+    def _restore_unchecked_out_clone(self, repository, target: Path) -> None:
+        """Check out a clone that has ``.git`` but no working files.
+
+        The repair is a checkout, not a re-clone: the objects are already on
+        disk, so materialising the tree costs nothing and keeps whatever the
+        interrupted clone did manage to fetch.
+
+        ``-f`` is safe here ONLY because of the emptiness test above it. The
+        working tree is verified to contain nothing at all besides ``.git``
+        before this runs, so there is provably no uncommitted work for the
+        force to discard. Do not lift that guard: this same flag, reached
+        without that proof, is what destroyed 41 files of an operator's work
+        through ``_make_git_ready_for_work``.
+
+        A repo that is legitimately empty (freshly created, no commits) hits
+        this same branch and must NOT turn into a task failure, so an unborn
+        HEAD returns quietly.
+
+        A failed repair does raise. Past that point the clone is known to have
+        commits and no files, which makes it unusable — handing that folder to
+        the agent is what produced "cloned but is empty, only a .git
+        directory". Raising routes it into
+        ``provision_task_workspace_clones``'s existing handler, which marks
+        the workspace errored and emits the mission-log line the UI turns into
+        a notification. No new plumbing: the same path any clone failure takes.
+        """
+        try:
+            if any(entry.name != '.git' for entry in target.iterdir()):
+                return  # Files are present — the clone completed.
+        except OSError:
+            return
+        try:
+            head = self._git_stdout(
+                str(target),
+                ['rev-parse', '--verify', 'HEAD'],
+                f'failed to read HEAD for {repository.id} at {target}',
+                repository,
+            )
+        except Exception:
+            # Unborn HEAD: either a genuinely empty repository, or a clone
+            # that died before fetching anything. Neither is repairable by a
+            # checkout, and re-cloning here would be guesswork.
+            return
+        if not normalized_text(head):
+            return
+        self.logger.warning(
+            'workspace clone for %s at %s has no checked-out files; '
+            'restoring the working tree from HEAD', repository.id, target,
+        )
+        self._run_git(
+            str(target),
+            ['checkout', '-f', 'HEAD'],
+            f'failed to restore the working tree for {repository.id} at {target} '
+            f'(the clone has commits but no checked-out files)',
             repository,
         )
 
@@ -182,8 +251,58 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 raise ValueError(
                     f'missing task branch name for repository {repository.id}'
                 )
+            self._refuse_branching_the_source_tree(repository, branch_name)
             self._prepare_task_branch(repository, branch_name)
         return repositories
+
+    def _refuse_branching_the_source_tree(self, repository, branch_name: str) -> None:
+        """Refuse to create a task branch in the operator's SOURCE checkout.
+
+        In workspace mode every task gets its own clone under the workspaces
+        root, and branch prep is supposed to run against that clone. The
+        repository objects carrying workspace paths are shallow copies —
+        ``provision_task_workspace_clones`` returns the INVENTORY originals
+        untouched whenever the workspace service is missing, so a single
+        unwired dependency turns branch prep loose on the operator's live
+        source tree instead. The symptom is not a crash: branches quietly
+        appear in the folders the operator actually works in, while the task
+        clone the agent is editing sits on master and never gets a PR.
+
+        That source tree is a RUNNING system — the same reason
+        ``update_source_to_task_branch`` refuses to stash. Checking out a
+        branch under it can move files out from under a dev server, and it
+        is never something the autonomous flow should do on its own.
+
+        Fail-closed and BEFORE any git runs: with both roots configured and
+        pointing at different trees, a path under the source root is a wiring
+        bug by definition, and refusing costs one failed task while
+        proceeding edits repositories kato does not own.
+        """
+        local_path = normalized_text(text_from_attr(repository, 'local_path'))
+        source_root = normalized_text(os.environ.get('REPOSITORY_ROOT_PATH', ''))
+        workspaces_root = normalized_text(os.environ.get('KATO_WORKSPACES_ROOT', ''))
+        # Both roots must be configured and distinct. Legacy single-clone
+        # installs deliberately run branch prep against the only checkout
+        # they have, and must keep working.
+        if not local_path or not source_root or not workspaces_root:
+            return
+        try:
+            source = Path(source_root).expanduser().resolve()
+            workspaces = Path(workspaces_root).expanduser().resolve()
+            candidate = Path(local_path).expanduser().resolve()
+        except Exception:
+            return
+        if source == workspaces:
+            return
+        if not candidate.is_relative_to(source) or candidate.is_relative_to(workspaces):
+            return
+        raise RuntimeError(
+            f'refusing to create branch {branch_name!r} in {candidate} — that is '
+            f'inside the source tree ({source}), not this task\'s workspace clone '
+            f'under {workspaces}. kato never branches the folders you work in. '
+            f'The workspace clone was not wired into branch preparation; check '
+            f'that KATO_WORKSPACES_ROOT is set and the task workspace exists.'
+        )
 
     def get_repository(self, repository_id: str):
         # ``_repositories`` is lazy-initialized via ``_ensure_repositories``

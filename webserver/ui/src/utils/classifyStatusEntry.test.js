@@ -237,3 +237,52 @@ test('classifyStatusEntry: a partial source-update line does NOT match', functio
     null,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Repository clone failure → ERROR notification.
+//
+// A clone failure used to reach the operator through the preflight log only,
+// which is replayed into a single task's session stream — so it was visible
+// only to someone already looking at the chat that had just failed to get any
+// files. The symptom was an empty Files pane with nothing anywhere saying why.
+// ---------------------------------------------------------------------------
+
+test('classifyStatusEntry: repository clone failure → ERROR kind', function () {
+  const out = classifyStatusEntry({
+    message: 'Mission UNA-3025: repository clone failed: fatal: could not read from remote repository',
+  });
+  assert.ok(out, 'clone failure was not classified at all');
+  assert.strictEqual(out.kind, NOTIFICATION_KIND.ERROR);
+  assert.strictEqual(out.taskId, 'UNA-3025');
+  assert.match(out.title, /clone failed/i);
+});
+
+test('classifyStatusEntry: the clone-failure body carries the git reason', function () {
+  // "Repository clone failed" alone is not actionable — auth, network and
+  // disk-full all look identical without the reason.
+  const out = classifyStatusEntry({
+    message: 'Mission UNA-3025: repository clone failed: Permission denied (publickey)',
+  });
+  assert.match(out.body, /Permission denied \(publickey\)/);
+  assert.match(out.body, /UNA-3025/);
+});
+
+test('classifyStatusEntry: a very long git error is trimmed for the body', function () {
+  // Notification bodies are a toast, not a log pane; the full text stays in
+  // the status feed and the preflight log.
+  const out = classifyStatusEntry({
+    message: `Mission UNA-3025: repository clone failed: ${'x'.repeat(400)}`,
+  });
+  assert.ok(out.body.length < 200, `body was not trimmed: ${out.body.length}`);
+  assert.match(out.body, /…$/);
+});
+
+test('classifyStatusEntry: clone-failure rule is anchored, not substring', function () {
+  // A log line that merely quotes the phrase must not fire a notification.
+  assert.strictEqual(
+    classifyStatusEntry({
+      message: 'debug: previous entry was "Mission X: repository clone failed: boom"',
+    }),
+    null,
+  );
+});

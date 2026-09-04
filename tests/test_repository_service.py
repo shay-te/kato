@@ -2288,10 +2288,35 @@ class EnsureCloneTests(unittest.TestCase):
         svc._run_git = Mock()
         return svc
 
-    def test_short_circuits_when_target_already_a_git_clone(self) -> None:
+    def test_does_not_re_clone_when_target_is_already_a_git_clone(self) -> None:
+        # The short-circuit is about not RE-CLONING. It is no longer "run no
+        # git at all": a folder holding only ``.git`` is also what an
+        # interrupted clone leaves behind, so ensure_clone now probes HEAD to
+        # tell a finished clone from a half-finished one (see
+        # ``_restore_unchecked_out_clone``). Probing is read-only; cloning
+        # over an existing checkout would not be.
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / 'existing'
             (target / '.git').mkdir(parents=True)
+            svc = self._service()
+            svc._git_stdout = Mock(return_value='')
+            repository = types.SimpleNamespace(
+                id='client', remote_url='git@github.com:org/client.git',
+            )
+            svc.ensure_clone(repository, target)
+            issued = [call.args[1] for call in svc._run_git.call_args_list]
+            self.assertFalse(
+                [args for args in issued if args and args[0] == 'clone'],
+                f'ensure_clone re-cloned over an existing checkout: {issued}',
+            )
+
+    def test_a_populated_clone_is_not_probed_at_all(self) -> None:
+        # The common case: files are present, so the repair branch exits on
+        # the cheap directory listing without shelling out to git.
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / 'existing'
+            (target / '.git').mkdir(parents=True)
+            (target / 'main.py').write_text('x = 1\n', encoding='utf-8')
             svc = self._service()
             repository = types.SimpleNamespace(
                 id='client', remote_url='git@github.com:org/client.git',

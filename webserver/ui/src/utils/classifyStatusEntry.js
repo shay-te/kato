@@ -108,6 +108,31 @@ const PATTERNS = [
     },
   },
   {
+    // A repository clone failed during workspace provisioning. Emitted by
+    // provision_task_workspace_clones before it re-raises.
+    //
+    // This needs to be a NOTIFICATION and not just a preflight-log line: the
+    // preflight log is replayed into a single task's stream, so it only ever
+    // reaches someone already looking at that chat — and a clone failure is
+    // precisely the case where that chat has no files to look at. Silent
+    // degradation here read as "kato is buggy": an empty Files pane with
+    // nothing anywhere saying a clone had failed.
+    //
+    // Groups: task, reason. The reason is a git error and can be long, so
+    // it is trimmed for the notification body — the full text stays in the
+    // status feed and the preflight log.
+    re: /^Mission (\S+): repository clone failed: (.+)/,
+    build: (m) => {
+      const reason = m[2].length > 120 ? `${m[2].slice(0, 117)}…` : m[2];
+      return {
+        title: 'Repository clone failed',
+        body: `${m[1]}: ${reason}`,
+        taskId: m[1],
+        kind: NOTIFICATION_KIND.ERROR,
+      };
+    },
+  },
+  {
     // "Update source" (push + shift local clones to the task branch) finished.
     // Emitted by AgentService.update_source_for_task. Groups: task,
     // updated-count, skipped-count, failed-count.

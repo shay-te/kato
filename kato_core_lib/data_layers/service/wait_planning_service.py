@@ -283,13 +283,40 @@ class WaitPlanningService(object):
         )
 
     def _provision_workspace(self, task: Task, repositories: list) -> list:
-        # Distinct fallback: if cloning fails we'd rather keep going with
-        # the inventory clones than open the chat with no repos at all.
+        """Clone the task's repos into its workspace. NEVER falls back to the
+        operator's own checkouts.
+
+        This used to pass ``fallback=repositories`` — the INVENTORY objects,
+        whose ``local_path`` is the operator's source tree. Any failure inside
+        cloning (a transient git error, a file lock, a full disk) was caught
+        by ``_safe_call`` and those source repos were handed straight on to
+        ``_check_out_branches``, which created the task branch inside the
+        folders the operator works in every day, and to ``cwd``, which pointed
+        the agent at them. The task's own clone meanwhile sat on master and
+        never produced a PR — "this kato release creates branches inside the
+        dev repo... and keeps the task repos on master that claude works on".
+
+        ``task_preflight_service._provision_workspace_clones`` was hardened
+        against exactly this and says why: "hard-fail is the only safe default
+        for a workspace-mode install". Wait-planning shares the helper but was
+        left with the old fallback, so the autonomous flow was safe and the
+        chat flow was not.
+
+        Degrading to NO repos is the correct failure: the chat tab still
+        opens (the caller turns an empty list into an empty cwd), the operator
+        sees an empty Files pane and can investigate. An empty pane is a
+        visible problem; a branch in the wrong repository is a silent one.
+
+        With no workspace manager wired the helper is a documented no-op for
+        legacy single-clone installs — there the inventory clone IS the only
+        checkout, so it stays the correct answer.
+        """
+        workspace_mode = self._workspace_manager is not None
         return self._safe_call(
             task,
             'provision workspace clones for wait-planning task %s; '
-            'falling back to inventory clones',
-            fallback=repositories,
+            'refusing to fall back to the source checkouts',
+            fallback=[] if workspace_mode else repositories,
             action=lambda: provision_task_workspace_clones(
                 self._workspace_manager,
                 self._repository_service,

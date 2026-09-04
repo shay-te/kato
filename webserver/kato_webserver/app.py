@@ -1321,7 +1321,7 @@ def _register_http_routes(app: Flask) -> None:
     # routes wrote the SAME override map and the same ``plan_mode.json`` record
     # as ``/agent-mode``, but through a boolean — so ``{"plan_mode": false}``
     # wrote '' over whatever was there, including a ``bypassPermissions`` lock,
-    # and then called ``_stop_live_session_on_tightening`` on the way out. A
+    # and then called ``_stop_live_session_on_restriction_change`` on the way out. A
     # dead endpoint that can clear a safety lock and kill a live session is
     # worse than one that merely wastes a request.
     #
@@ -1360,7 +1360,7 @@ def _register_http_routes(app: Flask) -> None:
         # the operator just made in the live session.
         from kato_core_lib.helpers.plan_mode_store import set_task_mode
         set_task_mode(task_id, mode)
-        stopped = _stop_live_session_on_tightening(app, task_id, mode)
+        stopped = _stop_live_session_on_restriction_change(app, task_id, mode)
         return jsonify({'mode': mode, 'session_stopped': stopped})
 
     @app.get('/api/sessions/<task_id>/remote-control')
@@ -5184,8 +5184,10 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     return not bool(getattr(session, 'is_working', False))
 
 
-def _stop_live_session_on_tightening(app: Flask, task_id: str, requested: str) -> bool:
-    """Kill the live subprocess when the operator TIGHTENS the mode.
+def _stop_live_session_on_restriction_change(
+    app: Flask, task_id: str, requested: str,
+) -> bool:
+    """Kill the live subprocess when the operator changes a TOOL restriction.
 
     Selecting Plan or Explain is a safety decision, and it used to do
     nothing until the operator happened to send another message: the
@@ -5194,15 +5196,25 @@ def _stop_live_session_on_tightening(app: Flask, task_id: str, requested: str) -
     the "I kept it on Plan but it is still editing" report — the lock was
     real, it just applied later than anyone would assume.
 
-    Only TIGHTENING stops a session. Loosening (Plan → Edit automatically)
-    deliberately does not: interrupting a working agent to give it MORE
-    permission has no safety value and would throw away an in-flight turn.
-    The next message respawns via ``--resume``, so no context is lost.
+    LEAVING one of those modes has to stop the session too, and for a
+    sharper reason. Plan and Explain are not permission prompts: they are
+    baked into the spawn as a read-only TOOL SET, so ``Edit`` is not merely
+    gated in that subprocess, it is absent from it. Loosening therefore
+    cannot take effect on the live session at all — the operator picks
+    "Edit automatically", the agent still reports that the tool does not
+    exist, and nothing connects the two. This function used to return early
+    unless the operator was tightening, which left exactly that dead end:
+    "claude has write permission, he is in the edit automatically mode, but
+    always fails to edit".
+
+    A plain permission-mode change (acceptEdits ↔ bypassPermissions) still
+    does NOT stop anything: both sides carry the same tools, so the running
+    subprocess is already capable of what was asked and interrupting it
+    would throw away an in-flight turn for nothing. That case falls out of
+    the comparison below — neither side is a restriction, so they match.
 
     Returns whether a session was actually stopped, for the response body.
     """
-    if not _requested_restriction(requested):
-        return False
     manager = app.config.get('SESSION_MANAGER')
     if manager is None:
         return False

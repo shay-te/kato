@@ -122,6 +122,17 @@ def provision_task_workspace_clones(
     except Exception as exc:
         workspace_service.append_preflight_log(task_id, f'✗ clone failed: {exc}')
         workspace_service.update_status(task_id, WORKSPACE_STATUS_ERRORED)
+        # Onto the STATUS FEED, not just the preflight log. The preflight log
+        # is replayed into a session's own stream, so it is only ever seen by
+        # someone already looking at that task's chat — and a failure here
+        # means there may be no usable chat to look at. The mission-log shape
+        # is what ``classifyStatusEntry`` reads to raise a notification, so
+        # this is the line that actually reaches the operator wherever they
+        # are. Without it a clone failure degraded in silence: the Files pane
+        # was simply empty, with nothing saying why.
+        log_mission_step(
+            _logger, task_id, 'repository clone failed: %s', exc,
+        )
         raise
 
     workspace_service.append_preflight_log(
