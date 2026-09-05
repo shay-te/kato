@@ -690,6 +690,10 @@ class RepositoryServiceTests(unittest.TestCase):
             side_effect=[
                 Mock(returncode=0, stdout='feature/proj-1/backend\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
+                # The dirty tree is STASHED before the wipe now. This path
+                # runs against the operator's own checkout, and reset --hard
+                # + clean -fd there was discarding their work silently.
+                Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],

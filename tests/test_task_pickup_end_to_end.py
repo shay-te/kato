@@ -339,6 +339,46 @@ class AdversarialPickupTests(TaskPickupEndToEndTests):
         self.assertTrue((clone / 'form_service.py').is_file())
         self.assertNotIn(TASK_BRANCH, _branches(self.source))
 
+    def test_a_STRANDED_clone_with_work_does_not_lose_it_on_pickup(self) -> None:
+        # The second route into the wipe. The idempotence guard only covers
+        # a clone ALREADY on its task branch; one stranded on the default
+        # branch — a prep that failed, a run that died — that then collected
+        # the agent's output still went through checkout -f / reset --hard /
+        # clean -fd. Same symptom, different path in.
+        clone = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        _git(clone.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        self.assertEqual(_current_branch(clone), 'master')
+        (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+        (clone / 'new_file.py').write_text('brand new\n', encoding='utf-8')
+
+        stranded = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service.prepare_task_branches(
+                [stranded], {'form-core-lib': TASK_BRANCH},
+            )
+
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        stashes = subprocess.run(
+            ['git', 'stash', 'list'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout
+        self.assertIn(
+            'form-core-lib', stashes,
+            'a stranded clone was wiped with no way back to the work',
+        )
+        _git(clone, 'stash', 'apply', 'stash@{0}')
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+        )
+        self.assertTrue(
+            (clone / 'new_file.py').is_file(),
+            'untracked files the agent created were not preserved',
+        )
+
     def test_a_reused_branch_still_clears_stale_BUILD_OUTPUT(self) -> None:
         # The other side of the idempotence guard. Returning early must not
         # cost the existing cleanup: generated artifacts left over from a

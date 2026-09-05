@@ -1877,6 +1877,20 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     ) -> None:
         current_branch = self._current_branch(local_path)
         if self._working_tree_status(local_path):
+            # The THIRD route into the wipe, and the one with the most to
+            # lose: this runs only for clones that are NOT per-task
+            # workspaces, i.e. the operator's own checkout, after a publish.
+            # ``update_source_to_task_branch`` refuses to stash for exactly
+            # this folder because it is a RUNNING system — yet this path
+            # went straight to reset --hard + clean -fd on it.
+            #
+            # Parked, not refused: restoring the source folder to its
+            # destination branch is the documented behaviour here and other
+            # callers depend on it. Only the silent discarding goes away.
+            self._stash_before_forced_restore(
+                repository if repository is not None
+                else SimpleNamespace(id=Path(local_path).name, local_path=local_path),
+            )
             current_branch = self._make_git_ready_for_work(
                 local_path,
                 destination_branch,
@@ -1938,6 +1952,23 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 )
             return
         if self._working_tree_status(local_path):
+            # Park the tree before the wipe.
+            #
+            # ``_make_git_ready_for_work`` is checkout -f → reset --hard →
+            # clean -fd with no safety net, and it is right for the case it
+            # was written for: a clone being made ready to START work. But a
+            # clone that is dirty and NOT on its task branch is just as often
+            # one that got stranded on the default branch — a prep that
+            # failed, a run that died — and then went on to collect the
+            # agent's output. Wiping it there is the "he will just delete the
+            # entire code from some repos" report, reached by a second route
+            # than the already-fixed one.
+            #
+            # We cannot tell the two apart from git state alone, so the tree
+            # is stashed (untracked included, because clean -fd takes those
+            # too) and the wipe proceeds. Nothing is lost either way, and a
+            # genuinely disposable tree costs one unused stash entry.
+            self._stash_before_forced_restore(repository)
             current_branch = self._make_git_ready_for_work(
                 local_path,
                 destination_branch,
