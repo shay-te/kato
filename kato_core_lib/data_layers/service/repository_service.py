@@ -1889,6 +1889,41 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         repository=None,
     ) -> None:
         current_branch = self._current_branch(local_path)
+        # Already prepared — do nothing at all.
+        #
+        # Preparing a branch is not a once-per-task event: the scan loop
+        # re-runs pickup every tick, and the sync / push paths prepare again
+        # before they publish. From the second pass onward the clone is
+        # already on the task branch AND dirty, because that dirty tree is
+        # the agent's work in progress. Falling through from here ran
+        # ``_make_git_ready_for_work`` — checkout -f, reset --hard
+        # origin/<destination>, clean -fd — and threw that work away; and
+        # ``_ensure_clean_worktree`` below would then have refused the task
+        # for having uncommitted changes anyway.
+        #
+        # That is the reported failure: "he will clone all the repos but
+        # will not create the branch by the task name in them, all the repos
+        # will sit on master and he will just delete the entire code from
+        # some repos". "Some" because a repo the agent had not touched is
+        # clean, so it never entered the wipe.
+        #
+        # Nothing below can improve on "the branch is already checked out",
+        # and every other path here is destructive by design, so returning
+        # is both the correct and the only safe answer.
+        if current_branch and current_branch == normalized_text(branch_name):
+            # Stale BUILD OUTPUT is still worth clearing on a reused branch,
+            # and this helper is the one that can tell it apart from real
+            # work: it acts only when the status contains nothing BUT
+            # generated artifacts and validation reports, and returns
+            # without touching anything the moment a source edit is mixed
+            # in. So an untracked ``build/`` goes, and the agent's
+            # half-finished change never does.
+            status_output = self._working_tree_status(local_path)
+            if status_output:
+                self._discard_only_generated_artifacts(
+                    local_path, status_output, current_branch,
+                )
+            return
         if self._working_tree_status(local_path):
             current_branch = self._make_git_ready_for_work(
                 local_path,

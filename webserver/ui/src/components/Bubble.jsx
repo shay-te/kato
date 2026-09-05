@@ -13,12 +13,16 @@ const KIND_LABELS = {
 // ``agentName`` names the assistant. Defaulted rather than required so the
 // non-chat surfaces that render bubbles keep working; every chat bubble is
 // given the real name by EventLog.
-export default function Bubble({ kind, children, agentName = '' }) {
+// ``tone`` is an optional modifier class for bubbles that share a KIND but
+// record opposite outcomes — an approval and a denial are both `system`, and
+// rendered identically they were indistinguishable at a glance in a long
+// feed ("he shows the same color if I approve or deny").
+export default function Bubble({ kind, children, agentName = '', tone = '' }) {
   const contextName = useAgentName();
   const label = kind === BUBBLE_KIND.ASSISTANT
     ? (agentName || contextName)
     : (KIND_LABELS[kind] || kind);
-  const className = `bubble ${kind}`;
+  const className = tone ? `bubble ${kind} ${tone}` : `bubble ${kind}`;
   return (
     <div className={className}>
       <span className="bubble-dot" aria-hidden="true" />

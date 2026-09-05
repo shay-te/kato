@@ -30,7 +30,9 @@ function isEditableTarget(el) {
   return !!el.isContentEditable;
 }
 
-export function useTaskTabShortcuts({ sessions, activeTaskId, onSelect }) {
+export function useTaskTabShortcuts({
+  sessions, activeTaskId, onSelect, visibleOrder,
+}) {
   useEffect(() => {
     function onKeyDown(event) {
       if (event.key !== 'Tab') { return; }
@@ -41,7 +43,15 @@ export function useTaskTabShortcuts({ sessions, activeTaskId, onSelect }) {
       }
       if (modalOrDrawerOpen()) { return; }
 
-      const ids = (sessions || []).map((s) => s.task_id);
+      // The strip's VISIBLE order when the tab strip has reported one.
+      // ``sessions`` is the raw, unsorted list: cycling by it walked the
+      // pre-drag order while the strip showed the operator's arrangement,
+      // so Tab jumped somewhere other than the tab sitting next to the
+      // current one. Falls back to ``sessions`` before the strip has
+      // mounted or reported.
+      const ids = (visibleOrder && visibleOrder.length)
+        ? visibleOrder
+        : (sessions || []).map((s) => s.task_id);
       if (ids.length === 0) { return; }
 
       // We're taking over Tab — stop the browser from also moving
@@ -64,5 +74,5 @@ export function useTaskTabShortcuts({ sessions, activeTaskId, onSelect }) {
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [sessions, activeTaskId, onSelect]);
+  }, [sessions, visibleOrder, activeTaskId, onSelect]);
 }

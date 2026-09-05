@@ -325,6 +325,34 @@ class AdversarialPickupTests(TaskPickupEndToEndTests):
         self.assertTrue((clone / 'form_service.py').is_file())
         self.assertNotIn(TASK_BRANCH, _branches(self.source))
 
+    def test_a_reused_branch_still_clears_stale_BUILD_OUTPUT(self) -> None:
+        # The other side of the idempotence guard. Returning early must not
+        # cost the existing cleanup: generated artifacts left over from a
+        # previous run should still go when that is ALL that is dirty.
+        with self.env:
+            provisioned = self._pick_up_task()
+            clone = Path(provisioned[0].local_path)
+            build = clone / 'build'
+            build.mkdir()
+            (build / 'main.js').write_text('compiled\n', encoding='utf-8')
+            self._pick_up_task()
+        self.assertFalse(build.exists(), 'stale build output survived a re-pickup')
+
+    def test_build_output_is_NOT_cleared_when_real_work_sits_beside_it(self) -> None:
+        # The distinction that makes the cleanup safe: the moment a source
+        # edit is mixed in, nothing is discarded at all.
+        with self.env:
+            provisioned = self._pick_up_task()
+            clone = Path(provisioned[0].local_path)
+            build = clone / 'build'
+            build.mkdir()
+            (build / 'main.js').write_text('compiled\n', encoding='utf-8')
+            (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+            self._pick_up_task()
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+        )
+
     def test_agent_work_survives_a_SECOND_pickup_pass(self) -> None:
         # The scan tick must not wipe work the agent already did.
         with self.env:

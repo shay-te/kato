@@ -42,6 +42,11 @@ export default function PermissionDecisionContainer({
     const memorySuffix = remember && toolName ? ` (remembered for ${toolName})` : '';
     onAuditBubble({
       kind: 'system',
+      // Approve and deny are opposite outcomes recorded in the same kind of
+      // bubble, so without a tone they were the same colour and the ✓ / ✗
+      // glyph was the only difference — easy to misread when scrolling back
+      // through a long run to check what was actually allowed.
+      tone: allow ? 'is-approved' : 'is-denied',
       text: `${verb} permission ${requestId}${memorySuffix}`,
     });
   }

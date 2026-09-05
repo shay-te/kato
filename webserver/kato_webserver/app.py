@@ -71,6 +71,9 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     same_session_id,
 )
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
+from agent_core_lib.agent_core_lib.helpers.read_only_tools import (
+    READ_ONLY_DISALLOWED_TOOLS,
+)
 from kato_core_lib.helpers.explain_mode_utils import (
     EXPLAIN_MODE,
     is_explain_mode,
@@ -889,6 +892,46 @@ def _override_key(app: Flask, task_id: str) -> str:
     return f'{task_id}::{backend}' if backend else str(task_id)
 
 
+# ---------------------------------------------------------------------------
+# The task-mode (plan / explain) store is keyed by the BARE task id.
+#
+# NOT ``_override_key``. That helper appends the active backend because model
+# and effort genuinely are backend-specific — ``opus`` means nothing to Codex.
+# A permission mode is the opposite: it is a SAFETY LOCK, and "don't let the
+# agent edit" has to hold whichever CLI happens to be running.
+#
+# Using the backend-suffixed key here also split one map into two shapes,
+# because two readers were already using the bare id: the boot loader
+# (``read_task_modes()``, which persists bare ids) and the chat route that
+# actually spawns the agent. The result was a lock the UI could see and the
+# spawn could not — ``/agent-mode`` wrote ``UNA-3025::claude`` while the
+# spawn read ``UNA-3025``, got '', and started an ordinary editing session.
+# The operator saw "Plan" in the composer and watched the agent change code.
+# The same split silently dropped the lock across a restart, since the
+# persisted file only ever held bare ids.
+# ---------------------------------------------------------------------------
+
+def _task_mode_of(app: Flask, task_id: str) -> str:
+    """The task's persisted agent mode ('' when none)."""
+    return str(
+        (app.config.get('TASK_PLAN_MODE_OVERRIDES') or {}).get(str(task_id), '')
+        or ''
+    )
+
+
+def _set_task_mode_of(app: Flask, task_id: str, mode: str = '') -> bool:
+    """Write (or clear) the task's agent mode; False when not wired."""
+    store = app.config.get('TASK_PLAN_MODE_OVERRIDES')
+    if store is None:
+        return False
+    key = str(task_id)
+    if mode:
+        store[key] = mode
+    else:
+        store.pop(key, None)
+    return True
+
+
 def _get_task_override(app: Flask, key: str, task_id: str) -> str:
     """Read a per-task override (model / effort) from its config store.
 
@@ -1335,7 +1378,7 @@ def _register_http_routes(app: Flask) -> None:
         what the composer shows as "Edit automatically".
         """
         return jsonify({
-            'mode': _get_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id),
+            'mode': _task_mode_of(app, task_id),
         })
 
     @app.post('/api/sessions/<task_id>/agent-mode')
@@ -1354,7 +1397,7 @@ def _register_http_routes(app: Flask) -> None:
                 'error': f'unknown mode {mode!r}',
                 'allowed': sorted(AGENT_PERMISSION_MODES),
             }), 400
-        if not _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, mode):
+        if not _set_task_mode_of(app, task_id, mode):
             return jsonify({'error': 'not available'}), 503
         # Best-effort persistence — a write failure must not fail the choice
         # the operator just made in the live session.
@@ -3571,7 +3614,7 @@ def _register_http_routes(app: Flask) -> None:
         # forgotten task doesn't reappear plan-locked after a restart.
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode
         set_plan_mode(task_id, False)
-        _set_task_override(app, 'TASK_PLAN_MODE_OVERRIDES', task_id, '')
+        _set_task_mode_of(app, task_id, '')
         # Same for Remote Control: a forgotten task must not come back
         # bridged to the Claude app the next time it is adopted.
         _store_remote_control(app, task_id, False)
@@ -4635,6 +4678,25 @@ _HIGH_RISK_ACTION_GUARD_CATEGORIES = frozenset({
 # permanently. Kept as a set so the next such tool has an obvious home.
 _NEVER_AUTO_RESOLVED_TOOLS = frozenset({'ExitPlanMode'})
 
+# The mutating tools, derived from the read-only split Explain already uses
+# rather than re-listed here — a second copy would drift, and the copy that
+# drifted would be the one deciding whether plan mode holds.
+_MUTATING_TOOLS = frozenset(
+    name.strip() for name in READ_ONLY_DISALLOWED_TOOLS.split(',') if name.strip()
+)
+
+
+def _task_is_plan_locked(app: Flask, task_id: str) -> bool:
+    """Whether the operator has this task locked to Plan."""
+    try:
+        return _task_mode_of(app, task_id) == PLAN_PERMISSION_MODE
+    except Exception:
+        # Fail CLOSED is wrong here and fail-open is wrong too, so prefer the
+        # answer that cannot silently weaken the lock: an unreadable override
+        # map is treated as "not locked" only because every caller of this
+        # already re-checks the real mode at spawn. It never grants a write.
+        return False
+
 
 def _maybe_auto_resolve_pending(
     app: Flask, session, task_id: str, request_id: str, outside_sandbox: bool,
@@ -4672,6 +4734,22 @@ def _maybe_auto_resolve_pending(
     # that can be permanently disarmed by one click on an unrelated task is
     # not a lock.
     if tool_name in _NEVER_AUTO_RESOLVED_TOOLS:
+        return False
+    # Plan mode must not be edited around.
+    #
+    # Plan mode passes only ``--permission-mode plan`` — it denies no tools
+    # — so the permission prompt IS the enforcement. A remembered decision
+    # for a non-Bash tool is stored under the bare tool name, which makes it
+    # global across tasks and durable across restarts: one earlier "Allow
+    # always" on ``Edit`` therefore auto-approved edits inside a plan-locked
+    # session, with no prompt and nothing on screen to explain it. Reported
+    # as "he is starting to change in plan mode", and again as "remember
+    # that claude/codex/agent will not start writing code in plan mode".
+    #
+    # Read-only tools still auto-resolve: planning needs to read widely, and
+    # making the operator approve every Grep is how a safety prompt becomes
+    # something people click through without looking.
+    if tool_name in _MUTATING_TOOLS and _task_is_plan_locked(app, task_id):
         return False
     verdict = _classify_action_for(session, tool_name, tool_input)
     if (

@@ -46,6 +46,7 @@ export default function TabList({
   onOpenTaskPalette,
   onScanNow,
   scanPending,
+  onVisibleOrderChange,
 }) {
   const scrollRef = useRef(null);
   const [scrollState, setScrollState] = useState({
@@ -113,6 +114,25 @@ export default function TabList({
     () => orderByPinned(sessions, pinnedIds, tabOrder),
     [sessions, pinnedIds, tabOrder],
   );
+
+  // The strip's VISIBLE order, reported upward.
+  //
+  // Tab / Shift+Tab cycles tasks from App, which only had the raw
+  // ``sessions`` array — so after a drag the keyboard still walked the
+  // ORIGINAL order while the eye followed the new one: "I dragged a task
+  // from last to be second, but when clicking Tab he is moving to the tab
+  // in the old order".
+  //
+  // Reported rather than recomputed in App: the pinned ids and the drag
+  // order are THIS component's state, and a second copy of the sort would
+  // be a second thing to keep in step. Keyed on the joined ids so the
+  // effect fires only when the order genuinely changes.
+  const visibleOrderKey = orderedSessions.map((s) => s.task_id).join('\n');
+  useEffect(() => {
+    if (typeof onVisibleOrderChange === 'function') {
+      onVisibleOrderChange(visibleOrderKey ? visibleOrderKey.split('\n') : []);
+    }
+  }, [visibleOrderKey, onVisibleOrderChange]);
   const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
   // Drop ``fromId`` at ``toId``'s position.

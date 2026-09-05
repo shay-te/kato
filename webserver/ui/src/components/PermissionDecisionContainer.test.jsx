@@ -205,4 +205,47 @@ describe('PermissionDecisionContainer — out-of-sandbox / high-risk still surfa
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
+
+
+  async function captureAuditBubble(allow) {
+    const onAuditBubble = vi.fn();
+    const { unmount } = render(
+      <PermissionDecisionContainer
+        pending={_pending()}
+        onDismiss={vi.fn()}
+        onSubmit={vi.fn().mockResolvedValue(true)}
+        onAuditBubble={onAuditBubble}
+      />,
+    );
+    screen.getByRole(
+      'button', { name: allow ? /allow once/i : /^deny$/i },
+    ).click();
+    await waitFor(() => expect(onAuditBubble).toHaveBeenCalled());
+    const entry = onAuditBubble.mock.calls[0][0];
+    unmount();
+    return entry;
+  }
+  // -------------------------------------------------------------------
+  // Approve and deny must not look the same.
+  //
+  // Both outcomes are recorded as `system` bubbles, so they rendered in
+  // the same neutral colour and the ✓ / ✗ glyph was the only difference —
+  // "he shows the same color if I approve or deny". A tone modifier gives
+  // the two decisions distinct dots.
+  // -------------------------------------------------------------------
+
+  test('an approval and a denial carry DIFFERENT tones', async () => {
+    const approved = await captureAuditBubble(true);
+    const denied = await captureAuditBubble(false);
+    expect(approved.tone).toBeTruthy();
+    expect(denied.tone).toBeTruthy();
+    expect(approved.tone).not.toBe(denied.tone);
+  });
+
+  test('the tone names the outcome rather than a colour', async () => {
+    // Colour belongs in the stylesheet; the entry records WHAT happened so
+    // the two can be restyled without touching this file.
+    expect((await captureAuditBubble(true)).tone).toBe('is-approved');
+    expect((await captureAuditBubble(false)).tone).toBe('is-denied');
+  });
 });

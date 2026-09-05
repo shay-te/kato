@@ -224,7 +224,14 @@ export default function App() {
   // Tab / Shift+Tab step through the task strip at the top (guards
   // against text fields + open dialogs so normal focus tabbing still
   // works there).
-  useTaskTabShortcuts({ sessions, activeTaskId, onSelect: setActiveTaskId });
+  // The tab strip's own left-to-right arrangement (pins + drag order),
+  // reported up by TabList so Tab / Shift+Tab cycles what the operator can
+  // actually see rather than the raw session list.
+  const [visibleTabOrder, setVisibleTabOrder] = useState([]);
+  useTaskTabShortcuts({
+    sessions, activeTaskId, onSelect: setActiveTaskId,
+    visibleOrder: visibleTabOrder,
+  });
 
   // Ctrl/Cmd+P — "go to task". Tab/Shift+Tab only helps when the task is
   // a step or two away; with a full strip (most of it scrolled out of
@@ -794,6 +801,7 @@ export default function App() {
           onOpenTaskPalette={openTaskPalette}
           onScanNow={handleScanNow}
           scanPending={scanPending}
+          onVisibleOrderChange={setVisibleTabOrder}
         />
       }
       // New 3-column layout, left → right:

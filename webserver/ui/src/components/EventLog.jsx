@@ -526,7 +526,7 @@ function bubblesFor(
       return [<StickyPrompt key={key} text={display} epoch={entry.receivedAtEpoch} />];
     }
     return [
-      <Bubble key={key} kind={entry.kind || BUBBLE_KIND.SYSTEM}>
+      <Bubble key={key} kind={entry.kind || BUBBLE_KIND.SYSTEM} tone={entry.tone}>
         {display}
       </Bubble>,
     ];

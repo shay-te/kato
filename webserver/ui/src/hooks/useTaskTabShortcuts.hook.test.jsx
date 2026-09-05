@@ -173,4 +173,61 @@ describe('useTaskTabShortcuts', () => {
     press('Tab');
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------
+  // Tab must follow the STRIP's order, not the raw session list.
+  //
+  // The tab strip sorts pinned tabs to the front and applies the
+  // operator's drag arrangement to the rest; App only had the unsorted
+  // ``sessions``. So after a drag the eye followed one order and Tab
+  // walked another: "I dragged a task from last to be second, but when
+  // clicking the tab button on the keyboard he is moving to the tab in
+  // the old order".
+  // -------------------------------------------------------------------
+
+  test('Tab follows the visible order after a drag, not the session order', () => {
+    const onSelect = vi.fn();
+    // Strip shows C second (dragged from last); sessions still say A,B,C.
+    mount({
+      sessions: SESSIONS,
+      visibleOrder: ['A', 'C', 'B'],
+      activeTaskId: 'A',
+      onSelect,
+    });
+    press('Tab');
+    expect(onSelect).toHaveBeenCalledWith('C');
+  });
+
+  test('Shift+Tab also follows the visible order', () => {
+    const onSelect = vi.fn();
+    mount({
+      sessions: SESSIONS,
+      visibleOrder: ['A', 'C', 'B'],
+      activeTaskId: 'B',
+      onSelect,
+    });
+    press('Tab', { shift: true });
+    expect(onSelect).toHaveBeenCalledWith('C');
+  });
+
+  test('the visible order wraps at its own ends', () => {
+    const onSelect = vi.fn();
+    mount({
+      sessions: SESSIONS,
+      visibleOrder: ['A', 'C', 'B'],
+      activeTaskId: 'B',
+      onSelect,
+    });
+    press('Tab');
+    expect(onSelect).toHaveBeenCalledWith('A');
+  });
+
+  test('falls back to the session order before the strip has reported', () => {
+    const onSelect = vi.fn();
+    mount({
+      sessions: SESSIONS, visibleOrder: [], activeTaskId: 'A', onSelect,
+    });
+    press('Tab');
+    expect(onSelect).toHaveBeenCalledWith('B');
+  });
 });

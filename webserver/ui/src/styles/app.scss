@@ -2606,6 +2606,28 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: $C-NEUTRAL-96;
 }
 
+/* Approve vs deny.
+ *
+ * Both are recorded as `system` bubbles, so they rendered in the same
+ * neutral colour and the ✓ / ✗ glyph was the only thing separating them —
+ * easy to misread when scrolling back through a long run to check what was
+ * actually allowed.
+ *
+ * Denied is AMBER, not red: the operator chose it, so it is a decision, not
+ * an error, and red here would sit beside genuine failures and dilute them.
+ * Both reuse dot colours already in the palette. */
+.bubble.system.is-approved .bubble-dot {
+  background: $C-GREEN-52;
+}
+
+.bubble.system.is-denied .bubble-dot {
+  background: $C-AMBER-77;
+}
+
+.bubble.system.is-denied .bubble-label {
+  color: $C-AMBER-89;
+}
+
 .bubble.user .bubble-dot {
   background: $C-NEUTRAL-64;
 }
