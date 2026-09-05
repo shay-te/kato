@@ -361,6 +361,10 @@ class SyncTaskRepositoriesTests(unittest.TestCase):
         repo.resolve_task_repositories.return_value = [
             SimpleNamespace(id='r1'),
         ]
+        # The real method returns '' when the clone is already on its
+        # task branch. A bare MagicMock returns a truthy Mock, which sync
+        # correctly reads as "this repo is stranded on the default branch".
+        repo.recover_clone_onto_task_branch.return_value = ''
         service = AgentService(**_kwargs(
             workspace_manager=workspace, repository_service=repo,
         ))
@@ -741,6 +745,10 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
             SimpleNamespace(id='existing'),
             SimpleNamespace(id='added'),
         ]
+        # The real method returns '' when the clone is already on its task
+        # branch. A bare MagicMock returns a truthy Mock, which sync would
+        # correctly read as "this repo is stranded on the default branch".
+        repo.recover_clone_onto_task_branch.return_value = ''
         session = _FakeLiveSession(
             cwd='/x/workspaces/T1/existing',
             dirs=(),  # session was spawned with no extra dirs

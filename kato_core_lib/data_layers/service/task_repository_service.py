@@ -317,12 +317,21 @@ class TaskRepositoryService(object):
             ) if missing_repos else '',
         )
         if not missing_repos:
+            # Nothing to CLONE is not the same as nothing to do. A repo
+            # already in the workspace can still be sitting on the remote's
+            # default branch — its prep failed once, or a run died before it
+            # ran — and returning here left it there permanently: sync said
+            # "already present", push and PR skipped it because the task
+            # branch did not exist, and clicking Sync again changed nothing.
+            stranded = self._recover_stranded_clones(
+                normalized, task_obj, task_repos, [],
+            )
             return {
-                'synced': True,
+                'synced': not stranded,
                 'task_id': normalized,
                 'added_repositories': [],
                 'already_present': already_present,
-                'failed_repositories': [],
+                'failed_repositories': stranded,
                 'requires_session_restart': False,
             }
         added, failed_repositories, provisioned = self._clone_missing_repositories(
@@ -331,6 +340,9 @@ class TaskRepositoryService(object):
         branch_prep_failures = self._put_new_clones_on_the_task_branch(
             normalized, task_obj, provisioned, missing_repos,
             already_failed=failed_repositories,
+        )
+        branch_prep_failures += self._recover_stranded_clones(
+            normalized, task_obj, provisioned, missing_repos,
         )
         all_failures = failed_repositories + branch_prep_failures
         if all_failures:
@@ -407,6 +419,87 @@ class TaskRepositoryService(object):
             ], []
         added = [str(getattr(r, 'id', '') or '') for r in missing_repos]
         return added, [], provisioned
+
+
+    def _as_workspace_clone(self, task_id: str, repository):
+        """``repository`` with ``local_path`` pointing at its workspace clone.
+
+        The callers of this reach here holding INVENTORY objects on at least
+        one path — the early "nothing to clone" return has no provisioned
+        list to work from — and an inventory object's ``local_path`` is the
+        OPERATOR'S OWN CHECKOUT. Recovering "onto the task branch" against
+        that creates the task branch inside the folders they work in, which
+        is the very failure this module keeps having to fix.
+
+        Returns ``None`` when the clone path cannot be resolved, so the
+        caller skips the repo rather than falling back to the source tree.
+        """
+        manager = self._workspace_manager
+        if manager is None:
+            return None
+        try:
+            clone_path = manager.repository_path(
+                task_id, str(getattr(repository, 'id', '') or ''),
+            )
+        except Exception:
+            return None
+        if not clone_path:
+            return None
+        import copy as _copy
+        rewritten = _copy.copy(repository)
+        rewritten.local_path = str(clone_path)
+        return rewritten
+
+    def _recover_stranded_clones(
+        self, task_id: str, task_obj, provisioned: list, missing_repos: list,
+    ) -> list[dict[str, str]]:
+        """Move ALREADY-PRESENT clones onto the task branch when they are not.
+
+        Sync only branch-preps the repos it just added. A repo already listed
+        in the workspace is reported as ``already_present`` and skipped — so
+        one that got registered but never made it onto the task branch (its
+        prep failed, or it was cloned by a run that died) stays on the
+        remote's default branch permanently. Clicking Sync again changes
+        nothing, and push / PR keep skipping it because the task branch does
+        not exist. That is "it adds the repos and does the same thing, keeps
+        it on master".
+
+        Uses ``recover_clone_onto_task_branch``, NOT ``prepare_task_branches``:
+        a stranded clone may well hold the agent's uncommitted work, and the
+        prep path would wipe it to the destination branch. The recovery is a
+        plain checkout that carries the working tree across, and refuses
+        outright when the clone has its own commits on the wrong branch.
+        """
+        added_set = {str(getattr(r, 'id', '') or '').lower() for r in missing_repos}
+        stranded = [
+            self._as_workspace_clone(task_id, r)
+            for r in provisioned
+            if str(getattr(r, 'id', '') or '').lower() not in added_set
+        ]
+        stranded = [r for r in stranded if r is not None]
+        failures: list[dict[str, str]] = []
+        for repository in stranded:
+            try:
+                branch_name = self._repository_service.build_branch_name(
+                    task_obj, repository,
+                )
+                reason = self._repository_service.recover_clone_onto_task_branch(
+                    repository, branch_name,
+                )
+            except Exception as exc:
+                reason = str(exc)
+            if not reason:
+                continue
+            self.logger.error(
+                'repository %s on task %s is not on its task branch and could '
+                'not be moved onto it: %s',
+                getattr(repository, 'id', '<unknown>'), task_id, reason,
+            )
+            failures.append({
+                'repository_id': str(getattr(repository, 'id', '') or ''),
+                'error': f'not on the task branch: {reason}',
+            })
+        return failures
 
     def _put_new_clones_on_the_task_branch(
         self, task_id: str, task_obj, provisioned: list, missing_repos: list,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+from types import SimpleNamespace
 from pathlib import Path
 
 from bitbucket_core_lib.bitbucket_core_lib.helpers.git_auth import git_http_auth_header
@@ -750,6 +751,18 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         local_path, current_branch = state
         if current_branch == normalized_branch:
             return ''
+        # Same refusal ``prepare_task_branches`` makes, repeated here because
+        # this method creates a branch WITHOUT going through it — a caller
+        # holding an inventory object would otherwise branch the operator's
+        # own checkout, which is exactly what happened the first time this
+        # recovery was wired into the sync path.
+        try:
+            self._refuse_branching_the_source_tree(
+                SimpleNamespace(id=repository.id, local_path=local_path),
+                normalized_branch,
+            )
+        except RuntimeError as exc:
+            return str(exc)
         try:
             destination_branch = self.destination_branch(repository)
             reference = self._comparison_reference(local_path, destination_branch)

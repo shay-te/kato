@@ -65,18 +65,22 @@ def _current_branch(repo: Path) -> str:
 
 
 class _Service(RepositoryService):
-    """The real service; only the logger and config lookups are stubbed."""
+    """The REAL service, really constructed.
 
-    def __init__(self, destination='master'):
-        self._destination = destination
+    Only the logger is replaced, and only to keep test output quiet — every
+    git call, the inventory, and the branch machinery are the production
+    ones. The destination branch is not stubbed either: the real
+    ``destination_branch`` reads it off the repository, so the fixtures set
+    it there like the inventory would.
+    """
+
+    def __init__(self):
+        super().__init__([], 3)
         self.logger = SimpleNamespace(
             info=lambda *a, **k: None, warning=lambda *a, **k: None,
             exception=lambda *a, **k: None, error=lambda *a, **k: None,
             debug=lambda *a, **k: None,
         )
-
-    def destination_branch(self, repository):  # noqa: ARG002
-        return self._destination
 
 
 class _Workspace:
@@ -97,6 +101,14 @@ class _Workspace:
 
     def update_status(self, task_id, status):
         self.status.append(status)
+
+    # The sync path asks the workspace which repos it already holds.
+    def get(self, task_id):
+        task_dir = self.root / str(task_id)
+        if not task_dir.is_dir():
+            return None
+        ids = sorted(d.name for d in task_dir.iterdir() if (d / '.git').is_dir())
+        return SimpleNamespace(repository_ids=ids)
 
 
 class TaskPickupEndToEndTests(unittest.TestCase):
@@ -132,6 +144,7 @@ class TaskPickupEndToEndTests(unittest.TestCase):
             id='form-core-lib',
             local_path=str(self.source),
             remote_url=str(self.remote),
+            destination_branch='master',
         )
         self.env = mock.patch.dict(os.environ, {
             'REPOSITORY_ROOT_PATH': str(self.source_root),
@@ -248,6 +261,7 @@ class TaskPickupEndToEndTests(unittest.TestCase):
                 id='event-core-lib',
                 local_path=str(self.source_root / 'event-core-lib'),
                 remote_url=str(second_remote),
+                destination_branch='master',
             )
             provisioned = provision_task_workspace_clones(
                 self.workspace,
@@ -460,6 +474,123 @@ class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
             provisioned = self._pick_up_task()
             self.service.restore_task_repositories(provisioned, force=True)
         self.assertEqual(_current_branch(Path(provisioned[0].local_path)), 'master')
+
+
+class StrandedCloneIsRecoveredBySyncTests(TaskPickupEndToEndTests):
+    """A repo already in the workspace but sitting on the default branch.
+
+    Sync only branch-prepped the repos it had just added, and returned early
+    when nothing was missing. So a repo that got registered but never made
+    it onto the task branch — its prep failed once, or a run died — stayed
+    on master permanently: sync reported "already present", push and PR kept
+    skipping it because the task branch did not exist, and clicking Sync
+    again changed nothing. Reported as "it adds the repos and does the same
+    thing, keeps it on master".
+
+    Real git, real RepositoryService, real TaskRepositoryService.
+    """
+
+    def _task_service(self):
+        """A real object, not a double: the task as the tracker returns it."""
+        task = SimpleNamespace(id=TASK_BRANCH, tags=[], description='', summary='s')
+        return SimpleNamespace(
+            list_all_assigned_tasks=lambda: [task],
+            get_assigned_tasks=lambda: [],
+            get_review_tasks=lambda: [],
+        )
+
+    def _sync_service(self):
+        from kato_core_lib.data_layers.service.task_repository_service import (
+            TaskRepositoryService,
+        )
+        self.service._repositories = [self.repository]
+        return TaskRepositoryService(
+            repository_service=self.service,
+            task_service=self._task_service(),
+            workspace_manager=self.workspace,
+            logger=self.service.logger,
+        )
+
+    def _strand_the_clone(self):
+        """Clone into the workspace but leave it on master, as a failed
+        prep would."""
+        clone = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        _git(clone.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        self.assertEqual(_current_branch(clone), 'master')
+        return clone
+
+    def test_sync_moves_a_stranded_clone_ONTO_the_task_branch(self) -> None:
+        clone = self._strand_the_clone()
+        with self.env:
+            self._sync_service().sync_task_repositories(TASK_BRANCH)
+        self.assertEqual(
+            _current_branch(clone), TASK_BRANCH,
+            'a repo already in the workspace was left on master',
+        )
+
+    def test_the_recovery_keeps_the_code_and_any_work_in_progress(self) -> None:
+        # The stranded clone may hold the agent's uncommitted work, so the
+        # move must be a plain checkout, never a reset to the destination.
+        clone = self._strand_the_clone()
+        (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+        with self.env:
+            self._sync_service().sync_task_repositories(TASK_BRANCH)
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+        )
+
+    def test_the_operator_source_checkout_is_still_untouched(self) -> None:
+        self._strand_the_clone()
+        with self.env:
+            self._sync_service().sync_task_repositories(TASK_BRANCH)
+        self.assertNotIn(TASK_BRANCH, _branches(self.source))
+        self.assertEqual(_current_branch(self.source), 'master')
+
+    def test_the_recovery_itself_REFUSES_a_source_tree_path(self) -> None:
+        # Defence in depth, tested directly because nothing reaches it once
+        # the caller resolves workspace paths correctly. It matters anyway:
+        # this method creates a branch WITHOUT going through
+        # prepare_task_branches, so it does not inherit that guard — and a
+        # caller holding an inventory object is exactly how the operator's
+        # own checkout got branched the first time this was wired up.
+        before = _branches(self.source)
+        with self.env:
+            reason = self.service.recover_clone_onto_task_branch(
+                self.repository, TASK_BRANCH,   # local_path = the SOURCE tree
+            )
+        self.assertTrue(reason, 'the recovery accepted a source-tree path')
+        self.assertIn('source tree', reason)
+        self.assertEqual(
+            _branches(self.source), before,
+            'the recovery branched the operator source checkout',
+        )
+        self.assertEqual(_current_branch(self.source), 'master')
+
+    def test_a_clone_ALREADY_on_the_task_branch_is_reported_clean(self) -> None:
+        # The normal case must stay quiet — no failures, no churn.
+        with self.env:
+            self._pick_up_task()
+            result = self._sync_service().sync_task_repositories(TASK_BRANCH)
+        self.assertEqual(result['failed_repositories'], [])
+
+    def test_a_clone_with_its_OWN_commits_is_refused_and_reported(self) -> None:
+        # Moving those commits is a rebase or cherry-pick; kato refuses and
+        # says so rather than doing it silently behind a Sync button.
+        clone = self._strand_the_clone()
+        (clone / 'form_service.py').write_text('LOCAL COMMIT\n', encoding='utf-8')
+        _git(clone, 'config', 'user.email', 't@example.com')
+        _git(clone, 'config', 'user.name', 'test')
+        _git(clone, 'commit', '-aqm', 'own work on master')
+        with self.env:
+            result = self._sync_service().sync_task_repositories(TASK_BRANCH)
+        self.assertFalse(result['synced'])
+        self.assertEqual(len(result['failed_repositories']), 1)
+        self.assertIn(
+            'not on the task branch', result['failed_repositories'][0]['error'],
+        )
+        self.assertEqual(_current_branch(clone), 'master')
 
 
 if __name__ == '__main__':

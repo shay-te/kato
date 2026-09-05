@@ -59,6 +59,10 @@ class RepositoryScanLoggingTests(unittest.TestCase):
             _repo('client'),
         ]
         self.repository_service.build_branch_name.return_value = 'kato/PROJ-1'
+        # Real contract: '' when the clone is already on its task branch. A
+        # bare Mock returns a truthy Mock, which sync correctly reads as
+        # "this repo is stranded on the default branch".
+        self.repository_service.recover_clone_onto_task_branch.return_value = ''
         self.task_service = Mock()
         self.service = TaskRepositoryService(
             repository_service=self.repository_service,
