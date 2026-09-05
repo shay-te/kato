@@ -76,6 +76,9 @@ class _Service(RepositoryService):
 
     def __init__(self):
         super().__init__([], 3)
+        # Resolving pull-request API credentials needs a live provider and
+        # is unrelated to every git behaviour these tests cover.
+        self._prepare_repository_access = lambda repository: repository
         self.logger = SimpleNamespace(
             info=lambda *a, **k: None, warning=lambda *a, **k: None,
             exception=lambda *a, **k: None, error=lambda *a, **k: None,
@@ -89,12 +92,26 @@ class _Workspace:
     def __init__(self, root: Path):
         self.root = root
         self.status: list[str] = []
+        self.records: dict[str, list[str]] = {}
 
     def repository_path(self, task_id, repository_id):
         return self.root / str(task_id) / str(repository_id)
 
     def create(self, **kwargs):
-        (self.root / str(kwargs.get('task_id'))).mkdir(parents=True, exist_ok=True)
+        task_dir = self.root / str(kwargs.get('task_id'))
+        task_dir.mkdir(parents=True, exist_ok=True)
+        # Mirrors WorkspaceService.create: a non-empty list REPLACES the
+        # stored ids. Reproduced faithfully so the union guard is actually
+        # exercised rather than papered over by a forgiving double.
+        ids = [str(r) for r in (kwargs.get('repository_ids') or []) if r]
+        self.records[str(kwargs.get('task_id'))] = ids or self.records.get(
+            str(kwargs.get('task_id')), [],
+        )
+        # The real WorkspaceService drops this sidecar beside the clones, and
+        # ``_is_per_task_workspace_clone`` keys off it. Without it the harness
+        # would look like a legacy shared checkout and the per-task guards
+        # would silently never fire under test.
+        (task_dir / '.kato-meta.json').write_text('{}', encoding='utf-8')
 
     def append_preflight_log(self, task_id, message):
         return None
@@ -107,8 +124,12 @@ class _Workspace:
         task_dir = self.root / str(task_id)
         if not task_dir.is_dir():
             return None
-        ids = sorted(d.name for d in task_dir.iterdir() if (d / '.git').is_dir())
-        return SimpleNamespace(repository_ids=ids)
+        stored = self.records.get(str(task_id))
+        if stored is None:
+            stored = sorted(
+                d.name for d in task_dir.iterdir() if (d / '.git').is_dir()
+            )
+        return SimpleNamespace(repository_ids=list(stored))
 
 
 class TaskPickupEndToEndTests(unittest.TestCase):
@@ -419,6 +440,42 @@ class AdversarialPickupTests(TaskPickupEndToEndTests):
         )
         self.assertTrue((out / 'notes.md').is_file())
 
+    def test_repo_prep_does_NOT_knock_a_workspace_clone_back_to_master(self) -> None:
+        # Preflight ran _prepare_workspace_for_task at step 5, which puts a
+        # clone back on the DESTINATION branch, while the task branch was
+        # only created at step 8. Any early return in between — a task
+        # description too thin to act on, one repo raising after earlier
+        # ones were processed — left the whole workspace on master with no
+        # task branch: "he will clone all the repos but will not create the
+        # branch by the task name in them, all the repos will sit on
+        # master."
+        with self.env:
+            provisioned = self._pick_up_task()
+        clone = Path(provisioned[0].local_path)
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+
+        # Step 5 in isolation, exactly as preflight calls it.
+        with self.env:
+            self.service._prepare_task_repository(provisioned[0])
+
+        self.assertEqual(
+            _current_branch(clone), TASK_BRANCH,
+            'repository prep knocked the workspace clone back to master',
+        )
+        self.assertTrue((clone / 'form_service.py').is_file())
+
+    def test_agent_work_survives_repo_prep_on_a_later_tick(self) -> None:
+        # The same step, on a clone the agent has since worked in.
+        with self.env:
+            provisioned = self._pick_up_task()
+            clone = Path(provisioned[0].local_path)
+            (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+            self.service._prepare_task_repository(provisioned[0])
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+        )
+
     def test_a_reused_branch_still_clears_stale_BUILD_OUTPUT(self) -> None:
         # The other side of the idempotence guard. Returning early must not
         # cost the existing cleanup: generated artifacts left over from a
@@ -554,6 +611,85 @@ class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
             provisioned = self._pick_up_task()
             self.service.restore_task_repositories(provisioned, force=True)
         self.assertEqual(_current_branch(Path(provisioned[0].local_path)), 'master')
+
+
+class WorkspaceMetadataNeverShrinksTests(TaskPickupEndToEndTests):
+    """Provisioning must never make a workspace forget a repo.
+
+    ``WorkspaceService.create`` overwrites ``repository_ids`` whenever the
+    list it is handed is non-empty. Any provisioning whose resolution returns
+    a SUBSET of what is already on disk therefore erased the rest: adding one
+    repo through the Files tab took a workspace from ``['alpha','beta']`` to
+    ``['gamma']``. The clones stayed on disk, on their task branch, holding
+    the agent's work — but kato had forgotten them, so push and pull-request
+    silently skipped them, and re-syncing never repaired it.
+    """
+
+    def _second_repo(self):
+        remote = self.root / 'remote' / 'event-core-lib'
+        remote.mkdir(parents=True)
+        _git(remote, 'init', '-q', '-b', 'master')
+        _git(remote, 'config', 'user.email', 't@example.com')
+        _git(remote, 'config', 'user.name', 'test')
+        (remote / 'events.py').write_text('E = 2\n', encoding='utf-8')
+        _git(remote, 'add', '-A')
+        _git(remote, 'commit', '-qm', 'initial')
+        return SimpleNamespace(
+            id='event-core-lib', local_path=str(self.source_root / 'event-core-lib'),
+            remote_url=str(remote), destination_branch='master',
+        )
+
+    def test_provisioning_a_SUBSET_keeps_the_repos_already_there(self) -> None:
+        # THE REGRESSION, in its simplest form.
+        with self.env:
+            provision_task_workspace_clones(
+                self.workspace, self.service,
+                SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                [self.repository, self._second_repo()],
+            )
+            before = set(self.workspace.get(TASK_BRANCH).repository_ids)
+            self.assertEqual(before, {'form-core-lib', 'event-core-lib'})
+
+            # A later provisioning that resolves to only ONE of them.
+            provision_task_workspace_clones(
+                self.workspace, self.service,
+                SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                [self.repository],
+            )
+            after = set(self.workspace.get(TASK_BRANCH).repository_ids)
+
+        self.assertEqual(
+            after, before,
+            f'the workspace forgot {before - after} — push and PR will skip them',
+        )
+
+    def test_a_newly_added_repo_is_still_recorded(self) -> None:
+        # The union must ADD, not just refuse to remove.
+        with self.env:
+            provision_task_workspace_clones(
+                self.workspace, self.service,
+                SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                [self.repository],
+            )
+            provision_task_workspace_clones(
+                self.workspace, self.service,
+                SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                [self.repository, self._second_repo()],
+            )
+            ids = set(self.workspace.get(TASK_BRANCH).repository_ids)
+        self.assertEqual(ids, {'form-core-lib', 'event-core-lib'})
+
+    def test_no_duplicates_accumulate_across_ticks(self) -> None:
+        # The scan loop re-provisions every tick; the union must be stable.
+        with self.env:
+            for _ in range(3):
+                provision_task_workspace_clones(
+                    self.workspace, self.service,
+                    SimpleNamespace(id=TASK_BRANCH, summary='s', description='d'),
+                    [self.repository],
+                )
+            ids = self.workspace.get(TASK_BRANCH).repository_ids
+        self.assertEqual(ids, ['form-core-lib'])
 
 
 class StrandedCloneIsRecoveredBySyncTests(TaskPickupEndToEndTests):

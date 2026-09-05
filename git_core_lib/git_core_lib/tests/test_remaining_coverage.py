@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from git_core_lib.git_core_lib.client.git_client import GitClientMixin
@@ -458,10 +459,20 @@ class HappyPathTests(unittest.TestCase):
         with patch.object(client, '_git_stdout', return_value='main'):
             self.assertEqual(client._current_branch('/x'), 'main')
 
-    def test_working_tree_status_returns_stripped_output(self) -> None:
-        # Line 202.
+    def test_working_tree_status_keeps_the_leading_status_column(self) -> None:
+        # Renamed: it was called "..._returns_stripped_output" while
+        # asserting the leading space SURVIVES, which is the opposite.
+        #
+        # In porcelain format columns 1-2 are the index and worktree status,
+        # so the leading space of an unstaged-only change is DATA. Reading
+        # through _git_stdout stripped it and shifted the first line one
+        # column left, truncating that path by a character — enough for the
+        # artifact classifier to read "xbuild/f" as "build/f" and treat it
+        # as disposable build output. Now reads _run_git directly and trims
+        # only trailing newlines.
         client = _ConcreteGitClient()
-        with patch.object(client, '_git_stdout', return_value=' M file.py'):
+        result = SimpleNamespace(returncode=0, stdout=' M file.py\n', stderr='')
+        with patch.object(client, '_run_git', return_value=result):
             self.assertEqual(
                 client._working_tree_status('/x'), ' M file.py',
             )

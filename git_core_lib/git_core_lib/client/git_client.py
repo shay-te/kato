@@ -485,11 +485,26 @@ class GitClientMixin:
         )
 
     def _working_tree_status(self, local_path: str) -> str:
-        return self._git_stdout(
+        """Raw ``git status --porcelain``, LEADING WHITESPACE INTACT.
+
+        Deliberately not ``_git_stdout``: that strips both ends, and in
+        porcelain format the first two columns are the index and worktree
+        status, so a leading space is DATA. An unstaged-only change is
+        ``" M path"``, and stripping it shifts the whole line left by one —
+        every consumer slicing ``line[3:]`` to get the path then loses the
+        path's first character on the first line only.
+
+        Not cosmetic. The generated-artifact classifier matches on the path's
+        top-level directory name, so ``" M xbuild/f"`` became ``"build/f"``
+        and a file under ``xbuild/`` was classified as disposable build
+        output. Trailing newlines are still trimmed — those are not data.
+        """
+        result = self._run_git(
             local_path,
             ['status', '--porcelain'],
             f'failed to inspect working tree for repository at {local_path}',
         )
+        return result.stdout.rstrip('\n')
 
     # ----- index lock recovery -----
 

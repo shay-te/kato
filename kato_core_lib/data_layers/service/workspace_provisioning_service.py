@@ -65,6 +65,33 @@ def provision_task_workspace_clones(
     repository_ids = [
         getattr(r, 'id', '') for r in repositories if getattr(r, 'id', '')
     ]
+    # UNION with what the workspace already holds — never a replacement.
+    #
+    # ``WorkspaceService.create`` overwrites ``repository_ids`` whenever the
+    # list it is handed is non-empty, which is right for a fresh workspace
+    # and wrong for every later call. Any provisioning whose resolution
+    # returns a SUBSET of what is already on disk therefore erased the rest:
+    # adding one repo through the Files tab took a workspace from
+    # ``['alpha', 'beta']`` to ``['gamma']``. The clones stayed on disk, on
+    # their task branch, holding the agent's work — but kato had forgotten
+    # them, so push and pull-request silently skipped them and re-syncing
+    # never repaired it.
+    #
+    # Kato's own rule is that a workspace NEVER loses a repo ("Never removes
+    # repos from the workspace" — sync_task_repositories), so the union is
+    # what that promise actually requires. Order is preserved, existing
+    # entries first, so the metadata stays stable across ticks.
+    existing_ids: list[str] = []
+    try:
+        existing = workspace_service.get(str(task.id))
+        existing_ids = [str(rid) for rid in (existing.repository_ids or [])] if existing else []
+    except Exception:
+        existing_ids = []
+    seen = set()
+    repository_ids = [
+        rid for rid in [*existing_ids, *repository_ids]
+        if rid and not (rid in seen or seen.add(rid))
+    ]
     workspace_service.create(
         task_id=str(task.id),
         task_summary=str(getattr(task, 'summary', '') or ''),

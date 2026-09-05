@@ -1484,6 +1484,25 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def _prepare_task_repository(self, repository):
         self._prepare_repository_access(repository)
         setattr(repository, 'destination_branch', self.destination_branch(repository))
+        # A per-task workspace clone is NOT put back on the destination
+        # branch here.
+        #
+        # ``_prepare_workspace_for_task`` exists for the shared checkout of a
+        # legacy single-clone install: return it to master, ready for the
+        # next task. Against a per-task clone it is actively wrong, and it
+        # ran as preflight STEP 5 while the task branch was only created at
+        # STEP 8. Anything returning in between — a task whose description is
+        # too thin to act on, one repo raising while the earlier ones had
+        # already been processed — left the entire workspace sitting on
+        # master with no task branch anywhere. That is the report exactly:
+        # "he will clone all the repos but will not create the branch by the
+        # task name in them, all the repos will sit on master."
+        #
+        # ``_publish_branch_updates`` already refuses this for the same
+        # reason (per-task clones "must STAY on the task branch across
+        # publish operations"); preflight simply never got the same guard.
+        if _is_per_task_workspace_clone(repository):
+            return repository
         self._prepare_workspace_for_task(
             repository.local_path,
             repository.destination_branch,
