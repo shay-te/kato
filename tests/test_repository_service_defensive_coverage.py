@@ -640,8 +640,14 @@ class DiscardOnlyGeneratedArtifactsTests(unittest.TestCase):
                 '/x', ' M build.log\n', 'feat/x',
             )
         self.assertTrue(result)
-        # Both ``checkout -f`` and ``clean -fd`` were called.
-        self.assertEqual(service._run_git.call_count, 2)
+        # Three now: the tree is STASHED before ``checkout -f`` and
+        # ``clean -fd``. This path used to delete files with nothing to
+        # recover from, and its "only generated artifacts" classification is
+        # a bare top-level-name match — a repo whose deliverable lives in
+        # out/ or target/ lost it permanently.
+        self.assertEqual(service._run_git.call_count, 3)
+        issued = [call.args[1][0] for call in service._run_git.call_args_list]
+        self.assertEqual(issued, ['stash', 'checkout', 'clean'])
 
 
 class MakeGitReadyTests(unittest.TestCase):

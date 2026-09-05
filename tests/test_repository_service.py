@@ -247,6 +247,10 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='feature/proj-1/client\n', stderr=''),
                 Mock(returncode=0, stdout=' M app.py\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                # origin/master does not exist here, so the local-commit
+                # check returns without comparing.
+                Mock(returncode=1, stdout='', stderr='unknown revision'),
+                Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:
@@ -268,8 +272,16 @@ class RepositoryServiceTests(unittest.TestCase):
                     'stash', 'push', '--include-untracked', '-m',
                     'kato: work in progress before forced restore of client',
                 ]),
+                # Local COMMITS are checked before the reset, not after it.
+                # The stash parks the working tree only — a commit is not
+                # stashed — and the old ordering ran this check after
+                # `reset --hard` had already discarded them, so on a dirty
+                # tree it could never fire.
+                build_safe_git_command('.', ['rev-parse', '--verify', 'origin/master']),
                 build_safe_git_command('.', ['checkout', '-f', 'master']),
                 build_safe_git_command('.', ['clean', '-fd']),
+                # _make_git_ready_for_work re-reads HEAD to return it.
+                build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
             ],
         )
 

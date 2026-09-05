@@ -379,6 +379,46 @@ class AdversarialPickupTests(TaskPickupEndToEndTests):
             'untracked files the agent created were not preserved',
         )
 
+    def test_an_agent_deliverable_under_out_is_RECOVERABLE(self) -> None:
+        # The artifact-discard path classified by bare top-level name
+        # ({build, dist, out, coverage, target}) and then ran checkout -f +
+        # clean -fd with NO stash. A repo whose deliverable genuinely lives
+        # under one of those names — a static site in out/, a Maven module
+        # in target/ — lost the agent's entire output with nothing to
+        # recover from: no stash, no commit, no reflog entry.
+        with self.env:
+            provisioned = self._pick_up_task()
+        clone = Path(provisioned[0].local_path)
+        out = clone / 'out'
+        out.mkdir()
+        (out / 'index.html').write_text('<h1>the deliverable</h1>\n', encoding='utf-8')
+        (out / 'notes.md').write_text('agent notes\n', encoding='utf-8')
+
+        with self.env:
+            self.service._discard_only_generated_artifacts(
+                str(clone),
+                self.service._working_tree_status(str(clone)),
+                TASK_BRANCH,
+            )
+
+        # The tree is still cleaned — that behaviour is intentional.
+        self.assertFalse(out.exists())
+        # ...but it is no longer gone for good.
+        stashes = subprocess.run(
+            ['git', 'stash', 'list'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout
+        self.assertTrue(
+            stashes.strip(),
+            'generated artifacts were deleted with no way back',
+        )
+        _git(clone, 'stash', 'apply', 'stash@{0}')
+        self.assertEqual(
+            (out / 'index.html').read_text(encoding='utf-8'),
+            '<h1>the deliverable</h1>\n',
+        )
+        self.assertTrue((out / 'notes.md').is_file())
+
     def test_a_reused_branch_still_clears_stale_BUILD_OUTPUT(self) -> None:
         # The other side of the idempotence guard. Returning early must not
         # cost the existing cleanup: generated artifacts left over from a
@@ -587,6 +627,61 @@ class StrandedCloneIsRecoveredBySyncTests(TaskPickupEndToEndTests):
             self._sync_service().sync_task_repositories(TASK_BRANCH)
         self.assertNotIn(TASK_BRANCH, _branches(self.source))
         self.assertEqual(_current_branch(self.source), 'master')
+
+    def test_the_WIPE_PRIMITIVE_refuses_the_source_tree(self) -> None:
+        # The guard was on the wrong function. `_refuse_branching_the_source_tree`
+        # was wired into the two paths that merely CREATE A BRANCH, while
+        # `_make_git_ready_for_work` — checkout -f, reset --hard, clean -fd —
+        # had no source-tree gate at all. So kato refused to create a branch
+        # in the operator's checkout and then wiped that same folder.
+        (self.source / 'form_service.py').write_text(
+            'OPERATOR EDIT\n', encoding='utf-8',
+        )
+        (self.source / 'scratch.txt').write_text('notes\n', encoding='utf-8')
+        with self.env, self.assertRaises(RuntimeError) as caught:
+            self.service._make_git_ready_for_work(
+                str(self.source), 'master', self.repository,
+            )
+        self.assertIn('source tree', str(caught.exception))
+        self.assertEqual(
+            (self.source / 'form_service.py').read_text(encoding='utf-8'),
+            'OPERATOR EDIT\n',
+            'the operator edit was destroyed',
+        )
+        self.assertTrue(
+            (self.source / 'scratch.txt').is_file(),
+            'an untracked operator file was deleted',
+        )
+
+    def test_local_COMMITS_are_checked_before_the_reset_not_after(self) -> None:
+        # The "you have N local commits, refusing to start a new task" guard
+        # ran AFTER reset --hard, so on a dirty tree it could never fire —
+        # the commits were already gone. And the stash parks the working
+        # tree only: a commit is not stashed, so that loss was unrecoverable
+        # outside the reflog.
+        clone = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        _git(clone.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        _git(clone, 'config', 'user.email', 't@example.com')
+        _git(clone, 'config', 'user.name', 'test')
+        (clone / 'form_service.py').write_text('COMMITTED WORK\n', encoding='utf-8')
+        _git(clone, 'commit', '-aqm', 'local commit not on origin')
+        head = subprocess.run(
+            ['git', 'rev-parse', 'HEAD'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout.strip()
+        # ...and a dirty tree on top, which is what used to mask the guard.
+        (clone / 'form_service.py').write_text('AND UNCOMMITTED\n', encoding='utf-8')
+
+        with self.env, self.assertRaises(RuntimeError) as caught:
+            self.service._make_git_ready_for_work(str(clone), 'master', None)
+        self.assertIn('local commit', str(caught.exception))
+        self.assertEqual(
+            subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(clone),
+                           capture_output=True, text=True).stdout.strip(),
+            head,
+            'the local commit was discarded before the guard could refuse',
+        )
 
     def test_the_recovery_itself_REFUSES_a_source_tree_path(self) -> None:
         # Defence in depth, tested directly because nothing reaches it once

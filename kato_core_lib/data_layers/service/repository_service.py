@@ -288,30 +288,50 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         proceeding edits repositories kato does not own.
         """
         local_path = normalized_text(text_from_attr(repository, 'local_path'))
+        source = self._source_tree_containing(local_path)
+        if source is None:
+            return
+        raise RuntimeError(
+            f'refusing to create branch {branch_name!r} in {local_path} — that '
+            f'is inside the source tree ({source}), not this task\'s workspace '
+            f'clone under {os.environ.get("KATO_WORKSPACES_ROOT", "")}. kato '
+            f'never branches the folders you work in. The workspace clone was '
+            f'not wired into branch preparation; check that '
+            f'KATO_WORKSPACES_ROOT is set and the task workspace exists.'
+        )
+
+    @staticmethod
+    def _source_tree_containing(local_path: str):
+        """The operator's source root when ``local_path`` sits inside it.
+
+        ``None`` when it does not, when either root is unconfigured, or when
+        the two roots name the same tree — a legacy single-clone install,
+        where the operator's checkout IS the working copy and everything
+        below is legitimate.
+
+        Extracted so the branch guard and the WIPE guard cannot disagree.
+        They did, and in the worst possible direction: the branch guard was
+        wired up while ``_make_git_ready_for_work`` was left open, so kato
+        refused to CREATE A BRANCH in the operator's checkout and then ran
+        ``checkout -f`` + ``reset --hard`` + ``clean -fd`` over the very same
+        path. The cheap operation was guarded and the destructive one was
+        not.
+        """
+        path = normalized_text(local_path)
         source_root = normalized_text(os.environ.get('REPOSITORY_ROOT_PATH', ''))
         workspaces_root = normalized_text(os.environ.get('KATO_WORKSPACES_ROOT', ''))
-        # Both roots must be configured and distinct. Legacy single-clone
-        # installs deliberately run branch prep against the only checkout
-        # they have, and must keep working.
-        if not local_path or not source_root or not workspaces_root:
-            return
+        # Both roots must be configured and distinct — see the docstring.
+        if not path or not source_root or not workspaces_root:
+            return None
         try:
             source = Path(source_root).expanduser().resolve()
             workspaces = Path(workspaces_root).expanduser().resolve()
-            candidate = Path(local_path).expanduser().resolve()
+            candidate = Path(path).expanduser().resolve()
         except Exception:
-            return
-        if source == workspaces:
-            return
-        if not candidate.is_relative_to(source) or candidate.is_relative_to(workspaces):
-            return
-        raise RuntimeError(
-            f'refusing to create branch {branch_name!r} in {candidate} — that is '
-            f'inside the source tree ({source}), not this task\'s workspace clone '
-            f'under {workspaces}. kato never branches the folders you work in. '
-            f'The workspace clone was not wired into branch preparation; check '
-            f'that KATO_WORKSPACES_ROOT is set and the task workspace exists.'
-        )
+            return None
+        if source == workspaces or candidate.is_relative_to(workspaces):
+            return None
+        return source if candidate.is_relative_to(source) else None
 
     def get_repository(self, repository_id: str):
         # ``_repositories`` is lazy-initialized via ``_ensure_repositories``
@@ -2037,6 +2057,28 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             current_branch,
             status_output.strip(),
         )
+        # Park them first. This was the ONE remaining path that destroyed
+        # files with nothing to recover from — no stash, no commit, no
+        # reflog entry.
+        #
+        # It looks safe because it only fires when the status contains
+        # nothing but "generated artifacts", but that classification is a
+        # bare top-level-name match against {build, dist, out, coverage,
+        # target}. A repo whose deliverable or source genuinely lives under
+        # one of those names — a static site in ``out/``, a Maven module in
+        # ``target/`` — has the agent's entire output silently deleted on
+        # the next tick. And ``clean -fd`` takes every untracked file, not
+        # only the ones that were classified.
+        #
+        # Stashing keeps the cheap-cleanup behaviour (the tree still comes
+        # out clean) while making a misclassification recoverable instead of
+        # terminal. A genuinely disposable build directory costs one unused
+        # stash entry.
+        self._stash_before_forced_restore(
+            SimpleNamespace(
+                id=Path(local_path).name or 'repository', local_path=local_path,
+            ),
+        )
         self._run_git(
             local_path,
             ['checkout', '-f', current_branch],
@@ -2058,6 +2100,33 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         destination_branch: str,
         repository=None,
     ) -> str:
+        # GUARDS FIRST. Everything below this point is destructive:
+        # ``checkout -f`` → ``reset --hard origin/<dest>`` → ``clean -fd``.
+        #
+        # (1) Never against the operator's own checkout. This is the method
+        #     that actually destroys things, and it had no source-tree gate —
+        #     only the branch-creating paths did. An operator watched their
+        #     working file revert, an untracked file vanish and a local commit
+        #     disappear from ``git log`` while kato was, in the same run,
+        #     politely refusing to create a branch in that folder.
+        #
+        # (2) Never silently drop local COMMITS. The "you have N local
+        #     commits, refusing to start a new task" check used to run AFTER
+        #     this call, so on a dirty tree it could never fire — the reset
+        #     had already discarded them. And the stash below parks the
+        #     working tree only: a commit is not stashed, so that loss was
+        #     unrecoverable outside the reflog. Checked here, before the
+        #     reset, which is the only place it can do its job.
+        source = self._source_tree_containing(local_path)
+        if source is not None:
+            raise RuntimeError(
+                f'refusing to reset {local_path} — that is inside the source '
+                f'tree ({source}), not a per-task workspace clone. kato never '
+                f'discards work in the folders you work in.'
+            )
+        self._validate_destination_branch_tracking_state(
+            local_path, destination_branch,
+        )
         include_remote_sync = self._uses_remote_destination_sync(repository)
         self.logger.info(
             'making git ready before starting work at %s: %s',
