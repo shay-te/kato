@@ -1554,6 +1554,28 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         self._run_git(repository.local_path, args, message, repository)
 
     def _restore_task_repository(self, repository, force: bool = False) -> None:
+        # A per-task workspace clone is never "restored" to the destination
+        # branch. It belongs to one task and must STAY on that task's branch
+        # — the same rule ``_publish_branch_updates`` and
+        # ``_restore_workspace_after_publication`` already apply. This was
+        # the one restore site of the four that did not, and it is the one
+        # every task FAILURE goes through
+        # (``task_failure_handler`` → ``restore_task_repositories(force=True)``
+        # over ``prepared_task.repositories``, which are the workspace
+        # clones).
+        #
+        # The result was the operator's report exactly: a task that fails for
+        # any reason ends with every repo back on master, and the ones the
+        # agent had worked in emptied. It never healed either — each 180s
+        # tick re-ran the failure and added another stash, leaving the
+        # clones on master forever.
+        #
+        # Note this also covers CLEAN clones. The early return below needs
+        # ``current_branch == destination_branch``, which a clone on its task
+        # branch never satisfies, so an untouched repo was moved to master
+        # too — dragged there by a sibling repo's failure.
+        if _is_per_task_workspace_clone(repository):
+            return
         local_path = text_from_attr(repository, 'local_path')
         if local_path and not (Path(local_path) / '.git').is_dir():
             self.logger.info(

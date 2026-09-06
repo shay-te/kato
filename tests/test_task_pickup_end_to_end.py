@@ -517,24 +517,53 @@ class AdversarialPickupTests(TaskPickupEndToEndTests):
         )
 
 
-class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
-    """A task FAILING must not erase what the agent wrote.
+class ForcedRestoreParksWorkFirstTests(TaskPickupEndToEndTests):
+    """A forced restore that DOES wipe must park the work first.
 
-    ``handle_task_failure`` calls ``restore_task_repositories(force=True)``,
-    which on a dirty tree ran ``checkout -f`` → ``reset --hard`` →
-    ``clean -fd`` with no safety net. Every repo the agent had actually
-    modified ended up back on the destination branch and empty — which is
-    the reported symptom exactly, including why it was only SOME repos: a
-    repo the agent never touched is clean and returns early.
+    Per-task workspace clones are now skipped entirely — see
+    ``FailedTaskDoesNotTouchTheWorkspaceTests``. This class covers the case
+    that still reaches the wipe: a LEGACY shared clone, the arrangement the
+    restore was written for. There the reset is intended, and the stash is
+    what keeps it from being destructive.
+
+    The clone lives outside BOTH roots on purpose: inside the workspaces
+    root it would be skipped as a per-task clone, and inside the source root
+    the wipe guard would refuse it outright. Neither is the case under test.
     """
 
     def _worked_on_task(self):
-        """Pick the task up, then write what the agent would have written."""
-        provisioned = self._pick_up_task()
-        clone = Path(provisioned[0].local_path)
+        """A legacy clone with the agent's work in it."""
+        legacy = self.root / 'legacy'
+        legacy.mkdir(exist_ok=True)
+        _git(legacy, 'clone', '-q', str(self.remote), 'form-core-lib')
+        clone = legacy / 'form-core-lib'
+        _git(clone, 'checkout', '-q', '-b', TASK_BRANCH)
         (clone / 'form_service.py').write_text('PAGES = 99\n', encoding='utf-8')
         (clone / 'brand_new.py').write_text('added by agent\n', encoding='utf-8')
-        return provisioned, clone
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        return [repository], clone
+
+    def test_a_CLEAN_legacy_clone_is_still_restored_normally(self) -> None:
+        # The feature still works where it belongs: a shared checkout with
+        # nothing to preserve is simply put back on the destination branch.
+        # (Moved here from the workspace-clone tests, where asserting this
+        # encoded the bug — an untouched per-task clone was being dragged to
+        # master by a sibling repo's failure.)
+        legacy = self.root / 'legacy'
+        legacy.mkdir(exist_ok=True)
+        _git(legacy, 'clone', '-q', str(self.remote), 'form-core-lib')
+        clone = legacy / 'form-core-lib'
+        _git(clone, 'checkout', '-q', '-b', TASK_BRANCH)
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service.restore_task_repositories([repository], force=True)
+        self.assertEqual(_current_branch(clone), 'master')
 
     def test_a_forced_restore_does_not_LOSE_the_agents_work(self) -> None:
         with self.env:
@@ -604,13 +633,65 @@ class FailedTaskMustNotDestroyAgentWorkTests(TaskPickupEndToEndTests):
             'the work was discarded rather than parked on the retry path',
         )
 
-    def test_a_CLEAN_repo_is_still_restored_normally(self) -> None:
-        # The feature still works: nothing to preserve, so the branch is
-        # simply put back.
+
+class FailedTaskDoesNotTouchTheWorkspaceTests(TaskPickupEndToEndTests):
+    """A task failure must leave the per-task workspace clone alone."""
+
+    def _worked_on_task(self):
+        provisioned = self._pick_up_task()
+        clone = Path(provisioned[0].local_path)
+        (clone / 'form_service.py').write_text('PAGES = 99\n', encoding='utf-8')
+        (clone / 'brand_new.py').write_text('added by agent\n', encoding='utf-8')
+        return provisioned, clone
+
+    def test_a_TASK_FAILURE_leaves_the_workspace_clone_alone(self) -> None:
+        # THE REPORT, via the path the validation found. Every task failure
+        # runs restore_task_repositories(force=True) over the prepared
+        # repositories — which ARE the per-task workspace clones. Three of
+        # the four restore sites already refuse to touch those; this was the
+        # fourth, and the one every failure goes through. A task that failed
+        # for any reason ended with its repos back on master and the ones
+        # the agent had worked in emptied.
+        with self.env:
+            provisioned = self._worked_on_task()[0]
+        clone = Path(provisioned[0].local_path)
+        with self.env:
+            self.service.restore_task_repositories(provisioned, force=True)
+        self.assertEqual(
+            _current_branch(clone), TASK_BRANCH,
+            'a task failure knocked the workspace clone back to master',
+        )
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'PAGES = 99\n',
+        )
+        self.assertTrue((clone / 'brand_new.py').is_file())
+
+    def test_a_CLEAN_workspace_clone_is_not_dragged_to_master_either(self) -> None:
+        # The early return needs current_branch == destination_branch, which
+        # a clone on its task branch never satisfies — so an untouched repo
+        # was moved to master too, dragged there by a sibling's failure.
         with self.env:
             provisioned = self._pick_up_task()
+            clone = Path(provisioned[0].local_path)
+            self.assertEqual(_current_branch(clone), TASK_BRANCH)
             self.service.restore_task_repositories(provisioned, force=True)
-        self.assertEqual(_current_branch(Path(provisioned[0].local_path)), 'master')
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+
+    def test_repeated_failures_do_not_pile_up_stashes(self) -> None:
+        # No self-healing before: every 180s tick re-wiped the tree into
+        # another stash and left the clone on master forever.
+        with self.env:
+            provisioned = self._worked_on_task()[0]
+            for _ in range(3):
+                self.service.restore_task_repositories(provisioned, force=True)
+        clone = Path(provisioned[0].local_path)
+        stashes = subprocess.run(
+            ['git', 'stash', 'list'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(stashes, '', f'restores piled up stashes: {stashes}')
+        self.assertEqual(_current_branch(clone), TASK_BRANCH)
+
 
 
 class WorkspaceMetadataNeverShrinksTests(TaskPickupEndToEndTests):
