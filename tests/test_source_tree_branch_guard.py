@@ -100,11 +100,22 @@ class SourceTreeBranchGuardTests(unittest.TestCase):
         self.assertEqual(self.service.prepared, [str(target)])
 
     def test_a_legacy_single_clone_install_still_works(self) -> None:
-        # No workspaces root configured: the only checkout there is IS the
-        # one to branch. Refusing would break every legacy install.
+        # A legacy install has NO per-task clones, so no workspaces root on
+        # disk — and its own checkout is the thing to branch. Refusing would
+        # break it outright.
+        #
+        # Pointed at a path that does not exist rather than left EMPTY: an
+        # empty variable no longer means "legacy". The documented default is
+        # "Empty = ~/.kato/workspaces", so reading the raw variable made the
+        # guard inert on every ordinary install — the protection was believed
+        # to be on and was not. The guard now resolves that default and keys
+        # on whether the root EXISTS, which is what actually separates the
+        # two installs.
+        missing_root = str(self.source.parent / 'no-such-workspaces-root')
         with mock.patch.dict(
             os.environ,
-            {'REPOSITORY_ROOT_PATH': str(self.source), 'KATO_WORKSPACES_ROOT': ''},
+            {'REPOSITORY_ROOT_PATH': str(self.source),
+             'KATO_WORKSPACES_ROOT': missing_root},
         ):
             self._prepare(self.source / 'form-core-lib')
         self.assertEqual(len(self.service.prepared), 1)

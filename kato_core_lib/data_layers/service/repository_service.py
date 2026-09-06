@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 from types import SimpleNamespace
 from pathlib import Path
@@ -118,7 +119,12 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         target = Path(str(target_path))
         if (target / '.git').is_dir():
             self._restore_unchecked_out_clone(repository, target)
-            return
+            if (target / '.git').is_dir():
+                return
+            # The clone was removed as unrepairable (an interrupted clone
+            # holding no objects). Fall through and fetch it again in THIS
+            # call — returning here would leave the folder missing until
+            # some later tick, and the repos behind it unbranched again.
         target.parent.mkdir(parents=True, exist_ok=True)
         remote_url = normalized_text(text_from_attr(repository, 'remote_url'))
         if not remote_url:
@@ -185,11 +191,29 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 repository,
             )
         except Exception:
-            # Unborn HEAD: either a genuinely empty repository, or a clone
-            # that died before fetching anything. Neither is repairable by a
-            # checkout, and re-cloning here would be guesswork.
-            return
+            head = ''
         if not normalized_text(head):
+            # Unborn HEAD with an empty working tree. Two cases look the
+            # same on disk, and they are told apart by whether the clone has
+            # any objects at all: a genuinely empty repository has a HEAD
+            # ref and no commits, while an INTERRUPTED clone has neither —
+            # ``git clone`` creates the directory before it fetches, so a
+            # process killed in between leaves ``.git`` with zero objects
+            # and no refs.
+            #
+            # Returning here left that second case unrepairable forever:
+            # ``ensure_clone`` sees ``.git`` and skips, every later tick
+            # agrees, and the agent is handed an empty folder while the
+            # repos behind it never get branched. Re-cloning is not
+            # guesswork when the clone provably holds nothing — there is
+            # nothing to lose by fetching it again.
+            if self._clone_is_empty_of_objects(target):
+                self.logger.warning(
+                    'workspace clone for %s at %s holds no git objects — an '
+                    'interrupted clone; removing it so it can be cloned again',
+                    repository.id, target,
+                )
+                shutil.rmtree(target, ignore_errors=True)
             return
         self.logger.warning(
             'workspace clone for %s at %s has no checked-out files; '
@@ -202,6 +226,37 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             f'(the clone has commits but no checked-out files)',
             repository,
         )
+
+    @staticmethod
+    def _clone_is_empty_of_objects(target: Path) -> bool:
+        """True when the clone has no git objects AND no refs.
+
+        The signature of an interrupted clone, and deliberately narrow: a
+        real repository — even one with no commits yet — has refs or objects
+        on disk. Anything unreadable answers False, so a permissions problem
+        never becomes a deletion.
+        """
+        try:
+            objects = target / '.git' / 'objects'
+            if not objects.is_dir():
+                return False
+            for entry in objects.iterdir():
+                # ``info`` and ``pack`` exist in every fresh clone; anything
+                # else under objects/ means real content arrived.
+                if entry.name not in ('info', 'pack'):
+                    return False
+                if entry.is_dir() and any(entry.iterdir()):
+                    if entry.name == 'pack':
+                        return False
+            refs = target / '.git' / 'refs'
+            if refs.is_dir():
+                for _root, _dirs, files in os.walk(refs):
+                    if files:
+                        return False
+            packed = target / '.git' / 'packed-refs'
+            return not packed.is_file()
+        except OSError:
+            return False
 
     def _clone_speedup_args(self, repository, target: Path) -> list[str]:
         """Reuse the operator's existing checkout as a local object source.
@@ -254,14 +309,46 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         repository_branches: dict[str, str],
     ) -> list[object]:
         self._validate_git_executable()
+        # PER-REPO ISOLATION. One repo's fault must not cost the others their
+        # task branch.
+        #
+        # This was a bare loop, so the FIRST repo that raised ended the whole
+        # pass and every repo after it in the list was simply never prepped —
+        # left on the remote's default branch, silently, with push and PR
+        # then skipping them because the task branch did not exist. One
+        # corrupt clone (an interrupted ``git clone`` leaves ``.git`` with no
+        # objects) took out every repo behind it, and the same abort came
+        # from any per-repo fault: a clone whose local default branch is
+        # ahead of origin, an untracked nested git repo ``clean -fd`` cannot
+        # remove, an unreachable remote.
+        #
+        # Every repo is now attempted, and the failures are raised TOGETHER
+        # at the end so the caller still fails loudly — the operator gets the
+        # full list of what went wrong instead of only the first thing.
+        failures: list[str] = []
         for repository in repositories:
             branch_name = normalized_text(repository_branches.get(repository.id, ''))
             if not branch_name:
                 raise ValueError(
                     f'missing task branch name for repository {repository.id}'
                 )
-            self._refuse_branching_the_source_tree(repository, branch_name)
-            self._prepare_task_branch(repository, branch_name)
+            try:
+                self._refuse_branching_the_source_tree(repository, branch_name)
+                self._prepare_task_branch(repository, branch_name)
+            except Exception as exc:
+                self.logger.exception(
+                    'failed to prepare task branch %s for repository %s; '
+                    'continuing with the other repositories',
+                    branch_name, repository.id,
+                )
+                failures.append(f'{repository.id}: {exc}')
+        if failures:
+            raise RuntimeError(
+                'failed to prepare task branches for '
+                f'{len(failures)} of {len(repositories)} repositor'
+                f'{"y" if len(failures) == 1 else "ies"} — the rest were '
+                f'prepared: {"; ".join(failures)}'
+            )
         return repositories
 
     def _refuse_branching_the_source_tree(self, repository, branch_name: str) -> None:
@@ -319,9 +406,41 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         """
         path = normalized_text(local_path)
         source_root = normalized_text(os.environ.get('REPOSITORY_ROOT_PATH', ''))
-        workspaces_root = normalized_text(os.environ.get('KATO_WORKSPACES_ROOT', ''))
-        # Both roots must be configured and distinct — see the docstring.
-        if not path or not source_root or not workspaces_root:
+        # The workspaces root FALLS BACK to kato's own default, exactly as
+        # WorkspaceManager.from_config does.
+        #
+        # Reading the env var alone made both guards inert on a normal
+        # install: KATO_WORKSPACES_ROOT is documented as "Empty =
+        # ~/.kato/workspaces" and the default is applied INTERNALLY, never
+        # written back to the environment. So an operator who never set it
+        # had no source-tree protection at all, while the tests — which set
+        # both vars explicitly — passed. A guard that only works when a
+        # variable happens to be set is worse than none, because everyone
+        # believes it is on.
+        workspaces_root = normalized_text(
+            os.environ.get('KATO_WORKSPACES_ROOT', ''),
+        ) or str(Path.home() / '.kato' / 'workspaces')
+        # A source root is still REQUIRED: without it there is no "operator's
+        # tree" to name.
+        if not path or not source_root:
+            return None
+        # And the workspaces root must EXIST. That is what separates the two
+        # installs the same env can describe:
+        #
+        #   * workspace mode — kato clones per task, so the root is on disk
+        #     by the time branch prep runs (provisioning created it). A path
+        #     under the source root here is a wiring bug, and guarding it is
+        #     the whole point.
+        #   * legacy single-clone — no per-task clones, so no root on disk,
+        #     and the operator's checkout IS the thing to branch. Guarding it
+        #     would break the install outright.
+        #
+        # Without this the default fallback above turned every legacy install
+        # into a hard failure; with it, both are right.
+        try:
+            if not Path(workspaces_root).expanduser().is_dir():
+                return None
+        except OSError:
             return None
         try:
             source = Path(source_root).expanduser().resolve()

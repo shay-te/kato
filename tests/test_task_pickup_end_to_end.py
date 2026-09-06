@@ -945,5 +945,171 @@ class StrandedCloneIsRecoveredBySyncTests(TaskPickupEndToEndTests):
         self.assertEqual(_current_branch(clone), 'master')
 
 
+class OneBadRepoMustNotStopTheRestTests(TaskPickupEndToEndTests):
+    """A per-repo fault must cost that repo only.
+
+    ``prepare_task_branches`` was a bare loop: the first repo that raised
+    ended the pass, and every repo AFTER it was never prepped — left on the
+    remote's default branch, silently, with push and PR then skipping them
+    because the task branch did not exist. One interrupted clone took out
+    every repo behind it in the list.
+    """
+
+    def _clone_into_workspace(self, name, remote):
+        target = self.workspaces / TASK_BRANCH / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _git(target.parent, 'clone', '-q', str(remote), name)
+        return SimpleNamespace(
+            id=name, local_path=str(target),
+            remote_url=str(remote), destination_branch='master',
+        )
+
+    def _broken_clone(self, name):
+        """An interrupted clone: .git present, no objects, no refs."""
+        target = self.workspaces / TASK_BRANCH / name
+        (target / '.git' / 'objects' / 'pack').mkdir(parents=True)
+        (target / '.git' / 'refs').mkdir(parents=True)
+        return SimpleNamespace(
+            id=name, local_path=str(target),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+
+    def test_a_broken_repo_does_not_strand_the_ones_after_it(self) -> None:
+        # THE REGRESSION. 'good' comes AFTER the broken one in the list.
+        broken = self._broken_clone('broken-core-lib')
+        good = self._clone_into_workspace('form-core-lib', self.remote)
+        with self.env, self.assertRaises(RuntimeError) as caught:
+            self.service.prepare_task_branches(
+                [broken, good],
+                {'broken-core-lib': TASK_BRANCH, 'form-core-lib': TASK_BRANCH},
+            )
+        self.assertEqual(
+            _current_branch(Path(good.local_path)), TASK_BRANCH,
+            'a healthy repo was stranded on master by an unrelated failure',
+        )
+        # And it still fails loudly, naming what went wrong.
+        self.assertIn('broken-core-lib', str(caught.exception))
+
+    def test_the_error_names_EVERY_failure_not_just_the_first(self) -> None:
+        first = self._broken_clone('broken-a')
+        second = self._broken_clone('broken-b')
+        with self.env, self.assertRaises(RuntimeError) as caught:
+            self.service.prepare_task_branches(
+                [first, second],
+                {'broken-a': TASK_BRANCH, 'broken-b': TASK_BRANCH},
+            )
+        message = str(caught.exception)
+        self.assertIn('broken-a', message)
+        self.assertIn('broken-b', message)
+
+    def test_all_healthy_repos_still_succeed_silently(self) -> None:
+        a = self._clone_into_workspace('form-core-lib', self.remote)
+        with self.env:
+            self.service.prepare_task_branches(
+                [a], {'form-core-lib': TASK_BRANCH},
+            )
+        self.assertEqual(_current_branch(Path(a.local_path)), TASK_BRANCH)
+
+
+class InterruptedCloneIsRecloneableTests(TaskPickupEndToEndTests):
+    """A clone with no objects must not be trusted forever."""
+
+    def _interrupted(self):
+        target = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        (target / '.git' / 'objects' / 'pack').mkdir(parents=True)
+        (target / '.git' / 'refs').mkdir(parents=True)
+        return target
+
+    def test_an_interrupted_clone_is_removed_so_it_can_be_recloned(self) -> None:
+        target = self._interrupted()
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(target),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service.ensure_clone(repository, target)
+        self.assertTrue(
+            (target / 'form_service.py').is_file(),
+            'the interrupted clone was reused instead of re-cloned',
+        )
+
+    def test_a_HEALTHY_clone_is_never_removed(self) -> None:
+        target = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _git(target.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        (target / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(target),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service.ensure_clone(repository, target)
+        self.assertEqual(
+            (target / 'form_service.py').read_text(encoding='utf-8'),
+            'AGENT WORK\n',
+            'a healthy clone was destroyed',
+        )
+
+    def test_a_repo_with_commits_but_no_checkout_is_restored_not_removed(self) -> None:
+        # The other empty-tree case: objects ARE present, so restore the
+        # working tree rather than throwing the clone away.
+        target = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _git(target.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        for entry in target.iterdir():
+            if entry.name != '.git':
+                entry.unlink()
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(target),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service.ensure_clone(repository, target)
+        self.assertTrue((target / 'form_service.py').is_file())
+
+
+class GuardsHoldOnADefaultInstallTests(TaskPickupEndToEndTests):
+    """The source-tree guards must not depend on an optional env var.
+
+    ``KATO_WORKSPACES_ROOT`` is documented as "Empty = ~/.kato/workspaces"
+    and the default is applied internally, never written back to the
+    environment. Reading the raw variable made BOTH guards return "not in
+    the source tree" for every path on a normal install — the protection was
+    believed to be on and was not. The tests missed it by setting both vars.
+    """
+
+    def test_the_guard_fires_with_only_the_source_root_configured(self) -> None:
+        with mock.patch.dict(os.environ, {
+            'REPOSITORY_ROOT_PATH': str(self.source_root),
+            'KATO_WORKSPACES_ROOT': '',
+        }):
+            self.assertIsNotNone(
+                self.service._source_tree_containing(str(self.source)),
+                'the source tree was unguarded on a default install',
+            )
+
+    def test_branch_prep_still_REFUSES_the_source_tree_by_default(self) -> None:
+        before = _branches(self.source)
+        with mock.patch.dict(os.environ, {
+            'REPOSITORY_ROOT_PATH': str(self.source_root),
+            'KATO_WORKSPACES_ROOT': '',
+        }), self.assertRaises(RuntimeError):
+            self.service.prepare_task_branches(
+                [self.repository], {'form-core-lib': TASK_BRANCH},
+            )
+        self.assertEqual(_branches(self.source), before)
+
+    def test_the_default_workspaces_root_is_not_treated_as_source(self) -> None:
+        # A clone under the DEFAULT workspaces root must stay allowed.
+        default_clone = Path.home() / '.kato' / 'workspaces' / 'T1' / 'repo'
+        with mock.patch.dict(os.environ, {
+            'REPOSITORY_ROOT_PATH': str(Path.home()),
+            'KATO_WORKSPACES_ROOT': '',
+        }):
+            self.assertIsNone(
+                self.service._source_tree_containing(str(default_clone)),
+            )
+
+
 if __name__ == '__main__':
     unittest.main()
