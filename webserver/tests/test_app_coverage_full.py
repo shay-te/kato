@@ -663,6 +663,8 @@ class StatusStreamTests(unittest.TestCase):
             except (StopIteration, RuntimeError):
                 pass
 
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn(': open', joined)
         self.assertIn('"sequence": 1', joined)
@@ -706,7 +708,9 @@ class ReplayPreflightLogTests(unittest.TestCase):
         )
         frames = list(_replay_preflight_log(workspace, 'T-1'))
         self.assertEqual(len(frames), 2)
-        joined = ''.join(frames)
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
+        joined = ''.join(f for _e, f in frames)
         self.assertIn('preflight', joined)
         self.assertIn('cloning 1/2: client', joined)
 
@@ -741,6 +745,8 @@ class FollowLiveSessionHeartbeatTests(unittest.TestCase):
             frames = list(_follow_live_session(session))
 
         sleep.assert_called()  # the poll-interval sleep ran at least once
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn(': ping', joined)
         self.assertIn('session_closed', joined)
@@ -1434,6 +1440,8 @@ class StatusStreamEmptyBacklogTests(unittest.TestCase):
                     break
         except RuntimeError:
             pass
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn('synthetic-open', joined)
         self.assertIn('Live feed connected', joined)
@@ -1490,6 +1498,8 @@ class EventsRouteTests(unittest.TestCase):
         }
         with patch.object(app_module, '_resolve_agent_session_id', return_value=''):
             frames = list(_event_stream_generator(manager, None, 'T-1', service))
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn('session_event', joined)
         self.assertIn('session_closed', joined)
@@ -1503,6 +1513,8 @@ class EventsRouteTests(unittest.TestCase):
         manager.get_session.return_value = live
         with patch.object(app_module, '_resolve_agent_session_id', return_value=''):
             frames = list(_event_stream_generator(manager, None, 'T-1', None))
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn('session_event', joined)
         self.assertIn('session_closed', joined)
@@ -1554,7 +1566,7 @@ class ReplayHistoryFromDiskTests(unittest.TestCase):
         ):
             frames = list(_replay_history_from_disk('sid'))
         self.assertEqual(len(frames), 2)
-        self.assertIn('session_history_event', ''.join(frames))
+        self.assertIn('session_history_event', ''.join(f for _e, f in frames))
 
     def test_import_error_yields_nothing(self):
         # 2817-2818: the lazy ``from ...history import load_history_events``
@@ -1591,6 +1603,8 @@ class FollowLiveTailDrainTests(unittest.TestCase):
         frames = list(_follow_live_session(
             session, agent_service=service, task_id='T-1',
         ))
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertIn('session_event', joined)  # drained tail event
         self.assertIn('session_closed', joined)
@@ -1850,6 +1864,8 @@ class FollowLiveNoHeartbeatTests(unittest.TestCase):
                 patch.object(app_module.time, 'sleep') as sleep:
             frames = list(_follow_live_session(session))
         sleep.assert_called_once()
+        # Replay yields (epoch, frame) — every source carries its time so
+        # the streams can be merged oldest-first instead of concatenated.
         joined = ''.join(frames)
         self.assertNotIn(': ping', joined)
         self.assertIn('session_closed', joined)

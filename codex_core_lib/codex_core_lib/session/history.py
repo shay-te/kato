@@ -124,16 +124,26 @@ def _event_from_line(line: str) -> dict | None:
     ).strip()
     if not text:
         return None
+    # The rollout line's own time, under the SAME key the other transport's
+    # transcript uses. A replayed turn without one cannot be placed in time,
+    # so a consumer merging several sources has to either invent an ordering
+    # or special-case this backend; carrying it forward costs one field and
+    # removes that choice. Omitted when the line has none.
+    timestamp = record.get('timestamp')
     if role == 'user':
         # The persistent-process transport's ``user`` shape — the chat
         # already renders it, so a replayed prompt needs no new branch.
-        return {
+        event = {
             'type': 'user',
             'message': {'content': [{'type': 'text', 'text': text}]},
         }
-    return {
-        'type': 'item.completed',
-        'item': {'type': 'agent_message', 'text': text},
-    }
+    else:
+        event = {
+            'type': 'item.completed',
+            'item': {'type': 'agent_message', 'text': text},
+        }
+    if timestamp:
+        event['timestamp'] = timestamp
+    return event
 
 

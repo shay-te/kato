@@ -98,6 +98,81 @@ def recall_tool_decision(tool_name: str, command_signature: str) -> bool | None:
     return decision == 'allow'
 
 
+def _with_legacy_allows_expanded(decisions: dict) -> dict:
+    """Read a whole-chain ALLOW as an allow for each program in it.
+
+    Decisions written before the per-program key look like
+    ``Bash awk grep sed`` — one entry for a whole pipeline. Ignoring them
+    would silently reset an operator who had already approved hundreds of
+    commands, so they are read as what they meant: the operator approved
+    running each of those programs.
+
+    ALLOW only. A denied combination does NOT mean each program is denied —
+    the operator may have been refusing the ``rm`` in ``mvn && rm -rf``, and
+    expanding that would deny ``mvn`` too. Legacy denies keep their exact
+    key, so they simply stop matching once commands are keyed per program.
+
+    Read-side only: nothing is rewritten on disk, so an operator can drop the
+    file and start clean, and a downgrade still finds its own keys intact.
+    """
+    expanded = dict(decisions)
+    for key, verdict in decisions.items():
+        if verdict != 'allow':
+            continue
+        tool, _, signature = key.partition(' ')
+        programs = signature.split()
+        if len(programs) < 2:
+            continue
+        for program in programs:
+            expanded.setdefault(_key(tool, program), 'allow')
+    return expanded
+
+
+def recall_command_decision(tool_name: str, programs) -> bool | None:
+    """The remembered decision for a command, judged PER PROGRAM.
+
+    * any program explicitly denied  -> ``False`` (deny wins)
+    * every program explicitly allowed -> ``True``
+    * anything else                  -> ``None`` (ask)
+
+    The safety property the old whole-chain key was protecting still holds:
+    ``mvn && rm -rf`` does not ride through a remembered ``mvn``, because
+    ``rm`` is unknown and one unknown makes the whole command ask. What goes
+    away is the combinatorial explosion — a new ORDERING or a new mix of
+    programs the operator has already approved individually is no longer a
+    brand-new decision.
+
+    ``programs`` empty means a tool-level decision (non command-keyed tool),
+    which is the plain single-key lookup.
+    """
+    names = [str(p or '') for p in (programs or []) if str(p or '')]
+    if not names:
+        return recall_tool_decision(tool_name, '')
+    decisions = _with_legacy_allows_expanded(read_tool_decisions())
+    verdicts = [decisions.get(_key(tool_name, name)) for name in names]
+    if any(v == 'deny' for v in verdicts):
+        return False
+    if all(v == 'allow' for v in verdicts):
+        return True
+    return None
+
+
+def remember_command_decision(tool_name: str, programs, allow: bool) -> None:
+    """Persist one entry PER PROGRAM, so the memory converges.
+
+    A deny is recorded against every program in the chain as well: the
+    operator refused this command, and until they say otherwise each part of
+    it is refused too. That is the conservative reading, and a later explicit
+    allow on one program overwrites its own entry without touching the rest.
+    """
+    names = [str(p or '') for p in (programs or []) if str(p or '')]
+    if not names:
+        remember_tool_decision(tool_name, '', allow)
+        return
+    for name in names:
+        remember_tool_decision(tool_name, name, allow)
+
+
 def remember_tool_decision(tool_name: str, command_signature: str, allow: bool) -> None:
     """Persist an "Allow always" / "Deny always" choice. Best-effort --
     a write failure is swallowed (mirrors ``plan_mode_store``'s

@@ -74,7 +74,14 @@ class CodexChatReplaysAfterRestartTests(unittest.TestCase):
     def _frames(self):
         env = dict(os.environ, CODEX_HOME=str(self.home))
         with patch.dict(os.environ, env, clear=False):
-            return list(app_module._replay_history(self.record, THREAD_ID))
+            # Replay yields ``(epoch, frame)``: every source carries its
+            # own time so the transcript, the preflight log and kato's
+            # own events can be merged oldest-first instead of
+            # concatenated. The assertions below are about the frames.
+            return [
+                frame for _epoch, frame
+                in app_module._replay_history(self.record, THREAD_ID)
+            ]
 
     def test_the_prompt_comes_back(self) -> None:
         blob = ''.join(self._frames())

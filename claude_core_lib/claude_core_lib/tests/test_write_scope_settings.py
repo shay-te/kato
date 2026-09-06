@@ -13,6 +13,7 @@ import unittest
 
 from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
     in_workspace_write_allow_rules,
+    agent_state_dir_write_deny_rules,
     out_of_workspace_write_ask_rules,
     out_of_workspace_write_settings,
     out_of_workspace_write_settings_json,
@@ -59,16 +60,22 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
         self.assertEqual(settings['permissions']['allow'], [])
         self.assertEqual(settings['permissions']['ask'], list(_WRITE_TOOLS))
 
-    def test_settings_shape_is_permissions_allow_ask(self) -> None:
+    def test_settings_shape_is_permissions_allow_ask_deny(self) -> None:
+        # ``deny`` joined allow/ask because the ask rules cannot reach the
+        # CLI's own state directory: it auto-accepts writes there, so the
+        # agent's memory kept landing in the global agent folder and the
+        # operator only learned about it from an after-the-fact warning.
         settings = out_of_workspace_write_settings(_CWD)
         self.assertEqual(list(settings.keys()), ['permissions'])
         self.assertEqual(
-            sorted(settings['permissions'].keys()), ['allow', 'ask'])
+            sorted(settings['permissions'].keys()), ['allow', 'ask', 'deny'])
         self.assertEqual(
             settings['permissions']['allow'],
             in_workspace_write_allow_rules(_CWD))
         self.assertEqual(
             settings['permissions']['ask'], out_of_workspace_write_ask_rules())
+        self.assertEqual(
+            settings['permissions']['deny'], agent_state_dir_write_deny_rules())
 
     def test_json_is_valid_and_compact(self) -> None:
         raw = out_of_workspace_write_settings_json(_CWD)

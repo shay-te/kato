@@ -43,6 +43,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import heapq
 import json
 import logging
 import os
@@ -4321,16 +4322,19 @@ def _remember_decision_for_pending(session, request_id: str, allow: bool) -> Non
     a distinct clarification, never a repeat of a previously-approved
     action (mirrors the removed client-side carve-out).
     """
-    from kato_core_lib.helpers.tool_decision_store import remember_tool_decision
+    from kato_core_lib.helpers.tool_decision_store import remember_command_decision
     from kato_core_lib.helpers.tool_decision_utils import (
-        decision_command_for,
+        decision_programs_for,
         is_answerable_question,
     )
     tool_name, tool_input = _pending_tool(session, request_id)
     if not tool_name or is_answerable_question(tool_input):
         return
-    remember_tool_decision(
-        tool_name, decision_command_for(tool_name, tool_input), allow,
+    # One entry PER PROGRAM. The whole-chain key made every new mix of
+    # already-approved programs a fresh decision, so the store grew
+    # combinatorially and never converged.
+    remember_command_decision(
+        tool_name, decision_programs_for(tool_name, tool_input), allow,
     )
 
 
@@ -4715,9 +4719,9 @@ def _maybe_auto_resolve_pending(
     """
     if not request_id:
         return False
-    from kato_core_lib.helpers.tool_decision_store import recall_tool_decision
+    from kato_core_lib.helpers.tool_decision_store import recall_command_decision
     from kato_core_lib.helpers.tool_decision_utils import (
-        decision_command_for,
+        decision_programs_for,
         is_answerable_question,
     )
     tool_name, tool_input = _pending_tool(session, request_id)
@@ -4757,8 +4761,8 @@ def _maybe_auto_resolve_pending(
         and _action_guard_enum_value(verdict.category) in _HIGH_RISK_ACTION_GUARD_CATEGORIES
     ):
         return False
-    remembered = recall_tool_decision(
-        tool_name, decision_command_for(tool_name, tool_input),
+    remembered = recall_command_decision(
+        tool_name, decision_programs_for(tool_name, tool_input),
     )
     if remembered is None:
         return False
@@ -5630,24 +5634,45 @@ def _event_stream_generator(
         if _drain_queued_task_comment(agent_service, task_id):
             session = manager.get_session(task_id) if manager is not None else None
             if session is not None:
-                replayed_count = yield from _replay_session_backlog(
-                    session, agent_service=agent_service, task_id=task_id, app=app,
-                )
+                backlog = session.recent_events()
+                for _epoch, frame in _replay_session_backlog(
+                    session, backlog, agent_service=agent_service,
+                    task_id=task_id, app=app,
+                ):
+                    yield frame
                 yield from _follow_live_session(
-                    session, start_index=replayed_count,
+                    session, start_index=len(backlog),
                     agent_service=agent_service, task_id=task_id, app=app,
                 )
                 return
         idle_payload = _record_to_dict(record) if record is not None else {}
         yield _sse_message(SSE_EVENT_SESSION_IDLE, idle_payload)
         return
-    yield from _replay_preflight_log(workspace_manager, task_id)
-    yield from _replay_history(record, agent_session_id)
-    replayed_count = yield from _replay_session_backlog(
-        session, agent_service=agent_service, task_id=task_id, app=app,
-    )
+    # ONE ordered stream, not three concatenated ones.
+    #
+    # These used to be emitted back to back: the whole conversation, and
+    # only then every kato-side event. So an Action Guard block or an
+    # out-of-folder warning — recorded when it happened, in the middle of a
+    # turn — replayed at the very BOTTOM of the chat, under the operator's
+    # newest message, looking like it had just fired. "Why are you showing
+    # me old messages at the bottom? Show them in their place."
+    #
+    # Each source is already oldest-first, so merging them needs no sort and
+    # no per-type handling: these events are ordinary events, and they are
+    # placed by the same timestamp as everything else.
+    backlog = session.recent_events()
+    for _epoch, frame in heapq.merge(
+        _replay_preflight_log(workspace_manager, task_id),
+        _replay_history(record, agent_session_id),
+        _replay_session_backlog(
+            session, backlog, agent_service=agent_service,
+            task_id=task_id, app=app,
+        ),
+        key=lambda pair: pair[0],
+    ):
+        yield frame
     yield from _follow_live_session(
-        session, start_index=replayed_count,
+        session, start_index=len(backlog),
         agent_service=agent_service, task_id=task_id, app=app,
     )
 
@@ -5678,19 +5703,18 @@ def _replay_preflight_log(workspace_manager, task_id: str):
     for epoch, message in entries:
         # ``subtype: 'preflight'`` is what the SSE-history reducer in
         # ``useSessionStream.js`` keys on to render these as system
-        # bubbles. We use ``received_at_epoch=0`` so the dedupe path
-        # treats them as archival history (same shape as the
-        # ``_replay_history_from_disk`` events). If a future tail
-        # mode wants to stream these live, swap to a real epoch.
+        # bubbles. The epoch is the line's REAL time: replay is merged
+        # oldest-first across all sources, and dedupe keys on a content
+        # fingerprint rather than the epoch, so there is nothing left for
+        # a placeholder ``0`` to buy.
         raw = {
             'type': 'system',
             'subtype': 'preflight',
             'message': message,
-            'logged_at_epoch': epoch,
         }
-        yield _sse_message(
+        yield epoch, _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,
-            {'event': {'received_at_epoch': 0, 'raw': raw}},
+            {'event': {'received_at_epoch': epoch, 'raw': raw}},
         )
 
 
@@ -5745,9 +5769,10 @@ def _replay_codex_history_from_disk(record):
     except Exception:
         return
     for raw in events:
-        yield _sse_message(
+        epoch = _epoch_from_iso(raw.get('timestamp'))
+        yield epoch, _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,
-            {'event': {'received_at_epoch': 0, 'raw': raw}},
+            {'event': {'received_at_epoch': epoch, 'raw': raw}},
         )
 
 
@@ -5770,12 +5795,10 @@ def _replay_history_from_disk(agent_session_id: str):
     # dedupe key for history (a content fingerprint is — see keyForEntry),
     # so this is display-only.
     for raw in events:
-        yield _sse_message(
+        epoch = _epoch_from_iso(raw.get('timestamp'))
+        yield epoch, _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,
-            {'event': {
-                'received_at_epoch': _epoch_from_iso(raw.get('timestamp')),
-                'raw': raw,
-            }},
+            {'event': {'received_at_epoch': epoch, 'raw': raw}},
         )
 
 
@@ -5880,7 +5903,7 @@ def _control_request_already_answered(raw, pending_ids) -> bool:
     return request_id not in pending_ids
 
 
-def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
+def _replay_session_backlog(session, backlog=None, agent_service=None, task_id='', app=None):
     """Catch a freshly-connecting browser up on everything seen so far.
 
     UI catch-up ONLY — it must NOT drive comment completion. Replaying
@@ -5901,7 +5924,10 @@ def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
     permissions again every time I switch to the task" report. A still-pending
     ask IS replayed so a genuinely-unanswered permission still surfaces.
     """
-    backlog = session.recent_events()
+    # The caller passes the snapshot it also measures for the live tail's
+    # start index; on its own the function takes its own.
+    if backlog is None:
+        backlog = session.recent_events()
     pending_ids = _pending_control_request_ids(session)
     for event in backlog:
         payload = event.to_dict()
@@ -5910,8 +5936,8 @@ def _replay_session_backlog(session, agent_service=None, task_id='', app=None):
             continue
         if _maybe_auto_resolve_live_event(app, session, task_id, event):
             continue
-        yield _session_event_frame(event, session)
-    return len(backlog)
+        yield float(getattr(event, 'received_at_epoch', 0.0) or 0.0), \
+            _session_event_frame(event, session)
 
 
 def _follow_live_session(

@@ -346,6 +346,46 @@ def command_signature_of(command: str) -> str:
     return joined or re.sub(r'\s+', ' ', raw).strip()
 
 
+def command_programs_of(command: str) -> list[str]:
+    """The distinct programs a command runs, in order.
+
+    The per-decision unit. ``command_signature_of`` joins these into ONE key,
+    which made every new COMBINATION of already-approved programs a brand-new
+    decision: ``awk grep`` and ``awk grep sed`` are unrelated keys, so the
+    store grew combinatorially and never converged — an operator with 840
+    remembered decisions was still being asked on almost every turn, which is
+    how a safety prompt turns into something people click through.
+
+    Remembering per program is also what the UI has always promised: "Bash
+    entries are per program (e.g. mvn, docker) — allowing one program never
+    allows another."
+    """
+    raw = str(command or '')
+    if not raw.strip():
+        return []
+    meaningful: list[str] = []
+    noise: list[str] = []
+    for segment in _split_top_level_shell_segments(raw):
+        prog = _program_of_segment(segment)
+        if not prog:
+            continue
+        is_noise = prog in _NOISE_PROGRAMS or prog in _OUTPUT_SHAPING_PROGRAMS
+        bucket = noise if is_noise else meaningful
+        if prog not in bucket:
+            bucket.append(prog)
+    # Same fallback as the signature: a non-empty command must never yield an
+    # empty set of programs, or the decision collapses to a tool-WIDE grant.
+    return meaningful or noise or [re.sub(r'\s+', ' ', raw).strip()]
+
+
+def decision_programs_for(tool_name: str, tool_input: dict) -> list[str]:
+    """The programs to remember/recall for a request; ``[]`` for
+    tool-level (non command-keyed) tools."""
+    if not is_command_keyed_tool(tool_name):
+        return []
+    return command_programs_of(command_of(tool_input))
+
+
 def decision_command_for(tool_name: str, tool_input: dict) -> str:
     """The (tool, command-signature) pair to remember/recall for a
     request: the program signature for command-keyed tools, else ''

@@ -1381,7 +1381,11 @@ class ReplayHelpersUnitTests(unittest.TestCase):
                     (2.0, 'cloning 2/2: backend'),
                 ]
 
-        frames = list(_replay_preflight_log(_Ws(), 'T1'))
+        # (epoch, frame) pairs — replay is merged oldest-first across
+        # sources, so each one carries its own time.
+        pairs = list(_replay_preflight_log(_Ws(), 'T1'))
+        self.assertEqual([epoch for epoch, _f in pairs], [1.0, 2.0])
+        frames = [frame for _e, frame in pairs]
         self.assertEqual(len(frames), 2)
         for frame in frames:
             self.assertIn('preflight', frame)
@@ -1422,7 +1426,10 @@ class ReplayHelpersUnitTests(unittest.TestCase):
             {'type': 'result', 'text': 'done'},
         ]
         try:
-            frames = list(_replay_history_from_disk('some-id'))
+            frames = [
+                frame for _epoch, frame
+                in _replay_history_from_disk('some-id')
+            ]
         finally:
             history_mod.load_history_events = original
         self.assertEqual(len(frames), 2)
@@ -1448,7 +1455,9 @@ class ReplayHelpersUnitTests(unittest.TestCase):
                     _Event('result', {'result': 'ok', 'is_error': False}),
                 ]
 
-        frames = list(_replay_session_backlog(_Session()))
+        frames = [
+            frame for _epoch, frame in _replay_session_backlog(_Session())
+        ]
         self.assertEqual(len(frames), 2)
         for frame in frames:
             self.assertIn('session_event', frame)

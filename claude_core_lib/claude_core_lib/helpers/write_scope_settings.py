@@ -99,6 +99,29 @@ def read_dedupe_hook_settings() -> dict:
     }]}}
 
 
+def agent_state_dir_write_deny_rules() -> list[str]:
+    """Deny-rules for the CLI's OWN state directory (``~/.claude``).
+
+    The ask-rules below cannot cover this. The CLI treats its own state
+    directory as a scratch path and auto-accepts writes there, so the ask
+    never fires — the operator sees "wrote OUTSIDE the task folder ... no
+    approval was requested" AFTER the fact, which is a report, not a
+    control.
+
+    That is where the CLI's built-in memory feature puts its notes, so an
+    agent told "your memory directory is <task>/memory/" still wrote to
+    ``~/.claude/projects/<encoded-cwd>/memory/``: the CLI's own instruction
+    names a fixed per-user path and beats prompt guidance. Guidance has now
+    failed twice; a deny rule is the only thing that actually holds.
+
+    Denies WRITES only. Reads are untouched — the agent may still consult
+    whatever the CLI put there — and the CLI itself keeps writing its
+    transcripts, because that is not a tool call.
+    """
+    home = os.path.expanduser('~')
+    return [f'{tool}({home}/.claude/**)' for tool in _WRITE_TOOLS]
+
+
 def out_of_workspace_write_settings(
     cwd: str = '',
     additional_dirs: tuple[str, ...] | list[str] = (),
@@ -116,6 +139,10 @@ def out_of_workspace_write_settings(
     settings = {'permissions': {
         'allow': in_workspace_write_allow_rules(cwd, additional_dirs),
         'ask': out_of_workspace_write_ask_rules(),
+        # Deny beats allow and ask: the CLI auto-accepts writes to its own
+        # state directory, so nothing softer than a denial keeps the agent's
+        # memory out of the global agent folder and inside the task.
+        'deny': agent_state_dir_write_deny_rules(),
     }}
     if dedupe_reads:
         settings.update(read_dedupe_hook_settings())

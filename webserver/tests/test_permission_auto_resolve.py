@@ -283,7 +283,7 @@ class SseBacklogAutoResolveTests(_BaseCase):
         )
         app = self._app(session)
 
-        frames = list(_replay_session_backlog(session, app=app))
+        frames = [f for _e, f in _replay_session_backlog(session, app=app)]
 
         self.assertEqual(frames, [])
         self.assertEqual(len(session.permission_calls), 1)
@@ -296,7 +296,7 @@ class SseBacklogAutoResolveTests(_BaseCase):
         )
         app = self._app(session)
 
-        frames = list(_replay_session_backlog(session, app=app))
+        frames = [f for _e, f in _replay_session_backlog(session, app=app)]
 
         self.assertEqual(len(frames), 1)
         self.assertIn('"type": "control_request"', frames[0])
@@ -312,7 +312,7 @@ class SseBacklogAutoResolveTests(_BaseCase):
             tool_name='Bash', tool_input={'command': 'mvn verify'},
         )
 
-        frames = list(_replay_session_backlog(session))
+        frames = [f for _e, f in _replay_session_backlog(session)]
 
         self.assertEqual(len(frames), 1)
         self.assertEqual(session.permission_calls, [])

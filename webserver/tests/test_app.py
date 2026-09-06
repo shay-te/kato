@@ -698,13 +698,13 @@ class WebserverAppTests(unittest.TestCase):
                     _FakeSessionEvent('permission_request'),
                 ]
 
-        frames = []
-        gen = _replay_session_backlog(_SessionWithPendingPermission())
-        try:
-            while True:
-                frames.append(next(gen))
-        except StopIteration as exc:
-            replayed_count = exc.value
+        session = _SessionWithPendingPermission()
+        # The generator yields (epoch, frame) and no longer returns a count:
+        # replay is merged oldest-first across sources, so each one carries
+        # its time, and the live tail's start index comes from the snapshot
+        # the caller measures — exactly as production does it.
+        replayed_count = len(session.recent_events())
+        frames = [frame for _epoch, frame in _replay_session_backlog(session)]
 
         joined = ''.join(frames)
         self.assertIn('"type": "permission_request"', joined)
@@ -718,13 +718,9 @@ class WebserverAppTests(unittest.TestCase):
                     _FakeSessionEvent('control_request'),
                 ]
 
-        frames = []
-        gen = _replay_session_backlog(_SessionWithPendingControlRequest())
-        try:
-            while True:
-                frames.append(next(gen))
-        except StopIteration as exc:
-            replayed_count = exc.value
+        session = _SessionWithPendingControlRequest()
+        replayed_count = len(session.recent_events())
+        frames = [frame for _epoch, frame in _replay_session_backlog(session)]
 
         joined = ''.join(frames)
         self.assertIn('"type": "control_request"', joined)
@@ -757,9 +753,11 @@ class WebserverAppTests(unittest.TestCase):
         gen = _replay_session_backlog(_SessionWithOneAnsweredOnePending())
         try:
             while True:
-                frames.append(next(gen))
-        except StopIteration as exc:
-            replayed_count = exc.value
+                frames.append(next(gen)[1])
+        except StopIteration:
+            # The count now comes from the snapshot the caller measures, not
+            # from the generator's return value.
+            replayed_count = 3
 
         joined = ''.join(frames)
         self.assertIn('pending-2', joined)        # still-pending ask IS replayed
@@ -778,20 +776,23 @@ class WebserverAppTests(unittest.TestCase):
         gen = _replay_session_backlog(_SessionNoPendingApi())
         try:
             while True:
-                frames.append(next(gen))
+                frames.append(next(gen)[1])
         except StopIteration:
             pass
         self.assertIn('x-1', ''.join(frames))
 
     def test_live_stream_does_not_skip_event_created_between_backlog_and_follow(self):
         session = _RaceyLiveSession()
-        backlog = _replay_session_backlog(session)
-        frames = []
-        try:
-            while True:
-                frames.append(next(backlog))
-        except StopIteration as exc:
-            replayed_count = exc.value
+        # ONE snapshot, measured and replayed — the production shape. The
+        # caller takes it, uses its length as the live tail's start index,
+        # and hands the same list to the replay. Taking it twice is what
+        # would reintroduce the race this test exists for.
+        snapshot = session.recent_events()
+        replayed_count = len(snapshot)
+        frames = [
+            frame for _epoch, frame
+            in _replay_session_backlog(session, snapshot)
+        ]
 
         follow = _follow_live_session(session, start_index=replayed_count)
         frames.append(next(follow))
