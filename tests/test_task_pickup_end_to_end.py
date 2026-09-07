@@ -1111,5 +1111,91 @@ class GuardsHoldOnADefaultInstallTests(TaskPickupEndToEndTests):
             )
 
 
+class AFailedWipePutsTheWorkBackTests(TaskPickupEndToEndTests):
+    """A wipe that fails must change nothing.
+
+    The stash and the wipe were two independent steps: ``git stash push``
+    empties the working tree, and ``_make_git_ready_for_work`` then runs
+    ``fetch origin`` first. When the fetch failed — unreachable remote,
+    expired token — the exception propagated and nothing popped the stash.
+    The repo was left on its old branch with an EMPTY tree, and the work
+    parked in a stash nothing mentions: "some repos" with their code gone,
+    repeating on every tick.
+    """
+
+    def _clone_with_work(self):
+        clone = self.workspaces / TASK_BRANCH / 'form-core-lib'
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        _git(clone.parent, 'clone', '-q', str(self.remote), 'form-core-lib')
+        (clone / 'form_service.py').write_text('AGENT WORK\n', encoding='utf-8')
+        (clone / 'brand_new.py').write_text('new\n', encoding='utf-8')
+        return clone
+
+    def _break_the_remote(self, clone):
+        _git(clone, 'remote', 'set-url', 'origin',
+             str(self.root / 'no-such-remote.git'))
+
+    def test_a_failed_wipe_leaves_the_work_in_place(self) -> None:
+        # THE REGRESSION: tree emptied, stash orphaned, nothing said.
+        clone = self._clone_with_work()
+        self._break_the_remote(clone)
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.root / 'no-such-remote.git'),
+            destination_branch='master',
+        )
+        with self.env:
+            with self.assertRaises(Exception):
+                self.service._make_git_ready_or_restore_stash(
+                    str(clone), 'master', repository,
+                )
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'),
+            'AGENT WORK\n',
+            'a failed wipe left the working tree empty',
+        )
+        self.assertTrue(
+            (clone / 'brand_new.py').is_file(),
+            'untracked work was left parked in an orphaned stash',
+        )
+
+    def test_a_failed_wipe_does_not_leave_an_orphaned_stash(self) -> None:
+        clone = self._clone_with_work()
+        self._break_the_remote(clone)
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.root / 'no-such-remote.git'),
+            destination_branch='master',
+        )
+        with self.env:
+            with self.assertRaises(Exception):
+                self.service._make_git_ready_or_restore_stash(
+                    str(clone), 'master', repository,
+                )
+        stashes = subprocess.run(
+            ['git', 'stash', 'list'], cwd=str(clone),
+            capture_output=True, text=True,
+        ).stdout.strip()
+        self.assertEqual(stashes, '', f'stash left behind: {stashes}')
+
+    def test_a_SUCCESSFUL_wipe_still_parks_the_work(self) -> None:
+        # The safety net must survive: on success the tree IS cleaned, and
+        # the work is recoverable from the stash.
+        clone = self._clone_with_work()
+        repository = SimpleNamespace(
+            id='form-core-lib', local_path=str(clone),
+            remote_url=str(self.remote), destination_branch='master',
+        )
+        with self.env:
+            self.service._make_git_ready_or_restore_stash(
+                str(clone), 'master', repository,
+            )
+        self.assertFalse((clone / 'brand_new.py').is_file())
+        _git(clone, 'stash', 'apply', 'stash@{0}')
+        self.assertEqual(
+            (clone / 'form_service.py').read_text(encoding='utf-8'), 'AGENT WORK\n',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

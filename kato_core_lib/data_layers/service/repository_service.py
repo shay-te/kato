@@ -1629,6 +1629,47 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         )
         return repository
 
+    def _make_git_ready_or_restore_stash(
+        self, local_path: str, destination_branch: str, repository,
+    ) -> str:
+        """Stash, make ready, and PUT THE WORK BACK if that fails.
+
+        The stash and the wipe were two independent steps: ``git stash push``
+        empties the working tree, and ``_make_git_ready_for_work`` then does
+        ``fetch origin`` first. If the fetch failed — an unreachable remote,
+        an expired token — the exception propagated and nothing popped the
+        stash. The repo was left on its old branch with an EMPTY tree and the
+        operator's work parked in a stash nothing mentions: "some repos" with
+        their code gone, and it repeated on every tick.
+
+        Recoverable, but only by an operator who thinks to run ``git stash
+        list`` inside the clone. Popping it back on failure means the failed
+        attempt simply changes nothing.
+        """
+        self._stash_before_forced_restore(repository)
+        try:
+            return self._make_git_ready_for_work(
+                local_path, destination_branch, repository,
+            )
+        except Exception:
+            try:
+                self._run_git(
+                    local_path,
+                    ['stash', 'pop'],
+                    f'failed to restore stashed work at {local_path}',
+                    repository,
+                )
+            except Exception:
+                # The work stays on the stash list rather than being lost;
+                # say so loudly, since this is the one path where the
+                # operator has to go and find it.
+                self.logger.exception(
+                    'could not restore stashed work at %s after a failed '
+                    'restore — it is still available via `git stash list`',
+                    local_path,
+                )
+            raise
+
     def _stash_before_forced_restore(self, repository) -> None:
         """Park the working tree so a forced restore can be undone.
 
@@ -1738,11 +1779,8 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 #
                 # Refuses to continue if the stash does not take: a restore
                 # that cannot be undone is not worth a tidy branch state.
-                self._stash_before_forced_restore(repository)
-                self._make_git_ready_for_work(
-                    repository.local_path,
-                    destination_branch,
-                    repository,
+                self._make_git_ready_or_restore_stash(
+                    repository.local_path, destination_branch, repository,
                 )
             else:
                 self._run_git(
@@ -1913,7 +1951,26 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         branch_name: str,
         status_output: str,
     ) -> None:
-        for artifact_path in self._generated_artifact_paths_from_status(status_output):
+        artifact_paths = self._generated_artifact_paths_from_status(status_output)
+        if not artifact_paths:
+            return
+        # Park first. This runs on the PUBLISH path, and unlike its sibling
+        # ``_discard_only_generated_artifacts`` it had NO stash and no
+        # "status contains only artifacts" guard — so it fired even when
+        # real source edits sat in the same commit, and an UNTRACKED file
+        # under build/dist/out/coverage/target was deleted outright: no
+        # stash, no commit, only a dangling blob with its filename gone.
+        #
+        # The classification is a bare top-level-name match, so a repo whose
+        # deliverable genuinely lives in one of those directories loses it.
+        # Stashing keeps the cleanup and makes a misclassification
+        # recoverable instead of terminal.
+        self._stash_before_forced_restore(
+            SimpleNamespace(
+                id=Path(local_path).name or 'repository', local_path=local_path,
+            ),
+        )
+        for artifact_path in artifact_paths:
             self._run_git(
                 local_path,
                 ['reset', 'HEAD', '--', artifact_path],
@@ -2148,11 +2205,8 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             # is stashed (untracked included, because clean -fd takes those
             # too) and the wipe proceeds. Nothing is lost either way, and a
             # genuinely disposable tree costs one unused stash entry.
-            self._stash_before_forced_restore(repository)
-            current_branch = self._make_git_ready_for_work(
-                local_path,
-                destination_branch,
-                repository,
+            current_branch = self._make_git_ready_or_restore_stash(
+                local_path, destination_branch, repository,
             )
         self._validate_destination_branch_tracking_state(local_path, destination_branch)
         if self._uses_remote_destination_sync(repository):

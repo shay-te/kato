@@ -252,6 +252,13 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=1, stdout='', stderr='unknown revision'),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                # The trailing HEAD re-read. The sequence must COMPLETE: run
+                # the mock dry and the wipe raises, at which point
+                # _make_git_ready_or_restore_stash correctly pops the work
+                # back and the trace grows a `stash pop`.
+                Mock(returncode=0, stdout='master\n', stderr=''),
+                # _ensure_clean_worktree's final status read — clean.
+                Mock(returncode=0, stdout='', stderr=''),
             ],
         ) as mock_run:
             restored_repositories = service.restore_task_repositories([repository], force=True)
@@ -272,6 +279,9 @@ class RepositoryServiceTests(unittest.TestCase):
                     'stash', 'push', '--include-untracked', '-m',
                     'kato: work in progress before forced restore of client',
                 ]),
+                # One more result than the wipe needs: the sequence must
+                # COMPLETE, or _make_git_ready_or_restore_stash correctly
+                # pops the stash back and the trace grows a `stash pop`.
                 # Local COMMITS are checked before the reset, not after it.
                 # The stash parks the working tree only — a commit is not
                 # stashed — and the old ordering ran this check after
@@ -280,8 +290,10 @@ class RepositoryServiceTests(unittest.TestCase):
                 build_safe_git_command('.', ['rev-parse', '--verify', 'origin/master']),
                 build_safe_git_command('.', ['checkout', '-f', 'master']),
                 build_safe_git_command('.', ['clean', '-fd']),
-                # _make_git_ready_for_work re-reads HEAD to return it.
+                # _make_git_ready_for_work re-reads HEAD to return it, then
+                # verifies the tree is clean.
                 build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
+                build_safe_git_command('.', ['status', '--porcelain']),
             ],
         )
 
@@ -1439,7 +1451,12 @@ class RepositoryServiceTests(unittest.TestCase):
                     build_safe_git_command('.', ['rev-parse', '--abbrev-ref', 'HEAD']),
                     build_safe_git_command('.', ['status', '--porcelain']),
                     build_safe_git_command('.', ['add', '-A']),
-                    build_safe_git_command('.', ['reset', 'HEAD', '--', 'build']),
+                    # Parked before deletion — see the sibling test.
+                build_safe_git_command('.', [
+                    'stash', 'push', '--include-untracked', '-m',
+                    'kato: work in progress before forced restore of repository',
+                ]),
+                build_safe_git_command('.', ['reset', 'HEAD', '--', 'build']),
                     build_safe_git_command('.', ['clean', '-fd', '--', 'build']),
                     build_safe_git_command('.', ['reset', 'HEAD', '--', 'validation_report.md']),
                     build_safe_git_command('.', ['clean', '-fd', '--', 'validation_report.md']),
@@ -2062,6 +2079,11 @@ class RepositoryServiceTests(unittest.TestCase):
             [call.args[1] for call in mock_run_git.call_args_list],
             [
                 ['add', '-A'],
+                # Parked before deletion: this path used to delete an
+                # untracked file under build/dist/out/coverage/target
+                # outright — no stash, no commit, filename gone.
+                ['stash', 'push', '--include-untracked', '-m',
+                 'kato: work in progress before forced restore of repo'],
                 ['reset', 'HEAD', '--', 'build'],
                 ['clean', '-fd', '--', 'build'],
                 ['add', '-A'],
