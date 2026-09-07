@@ -36,13 +36,19 @@ class DiffBaseGuardTests(unittest.TestCase):
             result = git_diff_utils._diff_base('/repo', 'origin/main')
         self.assertEqual(result, 'abc123')
         run_git_mock.assert_called_once_with(
-            '/repo', ['merge-base', 'origin/main', 'HEAD'], timeout=10
+            '/repo', ['merge-base', 'origin/main', 'HEAD'], timeout=60
         )
 
-    def test_falls_back_to_base_ref_when_no_merge_base(self) -> None:
+    def test_falls_back_to_head_never_to_the_tip_when_no_merge_base(self) -> None:
+        """Falling back to the tip re-enables the phantom-deletion diff.
+
+        An unresolvable merge-base (slow disk, unrelated histories) must
+        not turn into "master's post-fork lines are deletions" — that is
+        the "kato deleted the whole repo" report.
+        """
         with patch.object(git_diff_utils, 'run_git', return_value=''):
             result = git_diff_utils._diff_base('/repo', 'origin/main')
-        self.assertEqual(result, 'origin/main')
+        self.assertEqual(result, 'HEAD')
 
 
 if __name__ == '__main__':

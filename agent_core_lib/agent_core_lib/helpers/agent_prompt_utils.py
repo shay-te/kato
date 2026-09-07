@@ -87,12 +87,28 @@ def forbidden_repository_guardrails_text(raw_value: object = None) -> str:
     )
 
 
-def workspace_inventory_block(cwd: str, additional_dirs) -> str:
+def workspace_inventory_block(
+    cwd: str, additional_dirs, *, workspace_root: str = '',
+) -> str:
+    """The short, informational "here is what is on disk" block.
+
+    ``workspace_root`` — the task folder holding every listed path — is
+    named on its own first line when given. This block is the ONLY scope
+    text a RESUMED turn carries (the full strict-boundary block is
+    first-spawn-only, because re-sending it made the agent treat every turn
+    as a fresh task and re-explore the workspace), and without the root
+    named, a resumed session that had lost track of its own folder had
+    nothing to anchor on: it guessed a plausible-looking path, found
+    nothing there, and asked the operator to type the directory in.
+    """
     cwd_text = normalized_text(str(cwd or ''))
+    root_text = normalized_text(str(workspace_root or ''))
     extra_paths: list[str] = []
     seen: set[str] = set()
     if cwd_text:
         seen.add(cwd_text.rstrip('/\\'))
+    if root_text:
+        seen.add(root_text.rstrip('/\\'))
     for entry in (additional_dirs or []):
         path = normalized_text(str(entry or ''))
         if not path:
@@ -102,9 +118,12 @@ def workspace_inventory_block(cwd: str, additional_dirs) -> str:
             continue
         seen.add(normalized)
         extra_paths.append(path)
-    if not cwd_text and not extra_paths:
+    if not cwd_text and not extra_paths and not root_text:
         return ''
-    lines = ['Repositories available in this workspace:']
+    lines: list[str] = []
+    if root_text:
+        lines.extend([f'Your task folder is: {root_text}', ''])
+    lines.append('Repositories available in this workspace:')
     if cwd_text:
         lines.append(f'- (cwd) {cwd_text}')
     for path in extra_paths:

@@ -96,12 +96,17 @@ class DiffBaseTests(unittest.TestCase):
             mock_rg.call_args.args[1], ['merge-base', 'origin/master', 'HEAD'],
         )
 
-    def test_falls_back_to_base_ref_when_no_common_ancestor(self) -> None:
-        # Unrelated histories / unresolvable ref → run_git None → use tip.
+    def test_falls_back_to_head_when_no_common_ancestor(self) -> None:
+        # Unrelated histories / unresolvable ref / merge-base timeout →
+        # ``HEAD``, NOT the tip. Falling back to the tip is two-dot
+        # semantics, which is precisely the phantom-deletion diff this
+        # helper exists to prevent — and it would fire silently on the
+        # freshest task, where the operator reads it as "kato deleted
+        # the entire repo".
         with patch.object(git_diff_utils, 'run_git', return_value=None):
             self.assertEqual(
                 git_diff_utils._diff_base('/repo', 'origin/master'),
-                'origin/master',
+                'HEAD',
             )
 
     def test_changed_paths_diffs_against_merge_base_not_tip(self) -> None:

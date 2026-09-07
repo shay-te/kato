@@ -133,6 +133,43 @@ class KatoSettingsStoreTests(unittest.TestCase):
             self.assertEqual(os.environ.get('KATO_PINNED'), 'from-shell')
         self.assertEqual(added, 0)
 
+    def test_load_into_environ_never_exports_a_cleared_key(self) -> None:
+        """A cleared field must reach the config layer as UNSET, not as ''.
+
+        ``write_kato_settings`` keeps a cleared key in the file on purpose
+        ("kato treats empty as unset via ``${oc.env:KEY,"default"}``") — but
+        that is only true for a key ABSENT from the environment. omegaconf
+        resolves a set-but-empty var to '' and never reaches the default, so
+        exporting '' silently disabled the default of every field the
+        operator had cleared in the Settings UI.
+
+        The real failure: a cleared ``YOUTRACK_PROGRESS_STATE_FIELD``
+        resolved to '' instead of "State", ``move_task_to_in_progress``
+        raised ``missing issue field id for: ''``, and kato never started
+        the agent on ANY task.
+        """
+        self.path.write_text(
+            json.dumps({
+                'YOUTRACK_PROGRESS_STATE_FIELD': '',
+                'KATO_REAL_VALUE': 'kept',
+            }),
+            encoding='utf-8',
+        )
+        with patch.dict(os.environ, self._env()):
+            os.environ.pop('YOUTRACK_PROGRESS_STATE_FIELD', None)
+            os.environ.pop('KATO_REAL_VALUE', None)
+            added = load_kato_settings_into_environ()
+            self.assertNotIn('YOUTRACK_PROGRESS_STATE_FIELD', os.environ)
+            self.assertEqual(os.environ.get('KATO_REAL_VALUE'), 'kept')
+        self.assertEqual(added, 1)
+
+    def test_a_cleared_key_does_not_unset_a_real_shell_value(self) -> None:
+        # Skipping the export must not become "delete what the shell set".
+        self.path.write_text(json.dumps({'KATO_PINNED': ''}), encoding='utf-8')
+        with patch.dict(os.environ, self._env({'KATO_PINNED': 'from-shell'})):
+            load_kato_settings_into_environ()
+            self.assertEqual(os.environ.get('KATO_PINNED'), 'from-shell')
+
 
 if __name__ == '__main__':
     unittest.main()

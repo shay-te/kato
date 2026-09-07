@@ -137,10 +137,26 @@ def load_kato_settings_into_environ() -> int:
     A provider set to use a discovered credential source (the operator
     picked "use my gh CLI login" instead of pasting a token) has its
     token resolved HERE, at boot, from the live source.
+
+    EMPTY VALUES ARE NOT EXPORTED. ``write_kato_settings`` keeps a cleared
+    key in the file on purpose — "kato treats empty as unset via the
+    ``${oc.env:KEY,"default"}`` pattern" — but that is only true for a key
+    that is genuinely ABSENT from the environment: omegaconf resolves a
+    set-but-empty var to ``''`` and never reaches the default. Exporting
+    ``''`` therefore silently disabled the default of every setting the
+    operator had cleared, and the whole config layer disagreed with
+    ``effective_config_env`` (which already merges non-empty values only).
+
+    The failure this caused: a cleared ``YOUTRACK_PROGRESS_STATE_FIELD``
+    resolved to ``''`` instead of ``"State"``, so
+    ``move_task_to_in_progress`` raised ``missing issue field id for: ''``,
+    the ticket stayed in Open, ``_start_task_processing`` returned False,
+    and the agent never ran for ANY task — every scan tick re-failed and
+    re-ran the task-failure restore over the workspace clones.
     """
     added = 0
     for key, value in _settings_with_resolved_credentials().items():
-        if key in os.environ:
+        if key in os.environ or not value:
             continue
         os.environ[key] = value
         added += 1

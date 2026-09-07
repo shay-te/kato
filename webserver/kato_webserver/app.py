@@ -81,6 +81,10 @@ from kato_core_lib.helpers.explain_mode_utils import (
     session_is_in_explain_mode,
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
+from kato_core_lib.helpers.workspace_repo_utils import (
+    sibling_repository_dirs,
+    task_workspace_root,
+)
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_CONTROL_REQUEST,
     CLAUDE_EVENT_PERMISSION_REQUEST,
@@ -402,12 +406,25 @@ def _persist_settings(updates: dict) -> None:
     reads as "my change didn't save". Mirroring keeps the two stores saying
     the same thing inside the live process; anything already read at boot is
     unaffected, and live readers now see what the operator actually chose.
+
+    A CLEARED field is REMOVED from the env, not mirrored as ``''``. Every
+    other layer already treats empty as unset — ``_resolve_setting``
+    (``if live:``), ``effective_config_env``,
+    ``load_kato_settings_into_environ``, the setup-mode loader in ``main`` —
+    and a set-but-empty var is the one thing omegaconf will NOT apply a
+    default for (``${oc.env:KEY,"State"}`` resolves to ``''``). Mirroring the
+    blank therefore hands live readers the exact value that broke ticket
+    transitions, and it also hides a real shell value the next boot would
+    still use. Deleting shows what kato would actually resolve.
     """
     from kato_core_lib.helpers.kato_settings_store_utils import write_kato_settings
 
     write_kato_settings(updates)
     for key, value in updates.items():
-        os.environ[str(key)] = str(value)
+        if str(value):
+            os.environ[str(key)] = str(value)
+        else:
+            os.environ.pop(str(key), None)
 
 
 # ---------------------------------------------------------------------------
@@ -2580,7 +2597,7 @@ def _register_http_routes(app: Flask) -> None:
             # writes real deliverables here (a scratch page to open in a
             # browser, pr_description.md) and nothing listed them, so the
             # operator could not reach a file kato had just told them about.
-            task_root = _task_workspace_root(workspace_manager, task_id)
+            task_root = task_workspace_root(workspace_manager, task_id)
             if task_root:
                 own_files = task_folder_file_tree(
                     task_root, [t['cwd'] for t in trees],
@@ -2864,10 +2881,10 @@ def _register_http_routes(app: Flask) -> None:
         # operator opening one got "path is outside the task workspace",
         # which reads as kato refusing to show a file it just told them it
         # created. It is the task's own folder, so it is in scope by
-        # definition; ``_task_workspace_root`` never derives it by walking
+        # definition; ``task_workspace_root`` never derives it by walking
         # up from a repo path, so this cannot widen to the operator's whole
         # source root.
-        task_root = _task_workspace_root(workspace_manager, task_id)
+        task_root = task_workspace_root(workspace_manager, task_id)
         if task_root:
             roots.append(task_root)
         if not roots:
@@ -5410,7 +5427,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             # leave the task". It scopes the prompt's STRICT BOUNDARY block
             # and, in docker mode, is what the container bind-mounts (cwd is
             # one repo clone, so mounting that hides the task's other repos).
-            workspace_root=_task_workspace_root(workspace_manager, task_id),
+            workspace_root=task_workspace_root(workspace_manager, task_id),
             additional_dirs=additional_dirs,
             model=model_override,
             effort=effort_override,
@@ -5556,25 +5573,6 @@ def _chat_resume_context(
     return cwd, summary, description
 
 
-def _task_workspace_root(workspace_manager, task_id: str) -> str:
-    """The task's own folder — parent of every repo clone for this task.
-
-    Empty when the workspace manager can't produce one or the directory
-    doesn't exist. Never derived from a repo path by walking upward: an
-    adopted checkout's parent could be the operator's entire source root, and
-    handing THAT out as a scope boundary (or bind-mounting it) would be
-    strictly worse than the per-repo scope it replaced.
-    """
-    if workspace_manager is None:
-        return ''
-    try:
-        path = workspace_manager.workspace_path(task_id)
-    except Exception:
-        return ''
-    text = str(path or '')
-    return text if text and Path(text).is_dir() else ''
-
-
 def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:
     """Task-workspace-folder ``--add-dir`` path for the chat spawn.
 
@@ -5583,9 +5581,6 @@ def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:
     (a multi-repo task's agent must reach every repo, not just ``cwd`` —
     including a repo attached to the task after this session spawned).
     """
-    from kato_core_lib.helpers.workspace_repo_utils import (
-        sibling_repository_dirs,
-    )
     return sibling_repository_dirs(workspace_manager, task_id)
 
 

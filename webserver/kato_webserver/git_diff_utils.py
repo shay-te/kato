@@ -403,14 +403,31 @@ def _diff_base(cwd: str, base_ref: str) -> str:
     the PR, while ``git diff <merge-base>`` still spans merge-base →
     working tree so uncommitted work stays visible.
 
-    Falls back to ``base_ref`` when there is no common ancestor (unrelated
-    histories) or git cannot resolve the merge-base — no worse than the
-    old tip-diff behaviour in that corner case.
+    Falls back to ``HEAD`` — NOT to ``base_ref`` — when the merge-base
+    cannot be resolved. Falling back to the tip re-enables the exact
+    two-dot phantom-deletion this function exists to prevent, and it does
+    so silently, at the worst possible moment: a fresh task whose clone is
+    behind a busy ``master`` shows every line master gained since the fork
+    as a deletion, with no additions at all. That is what "kato deleted the
+    entire repo contents when starting a new task" looks like in the Files
+    tab — tens of thousands of red lines on a task where nothing has
+    happened yet and no file was touched.
+
+    ``HEAD`` is the honest degradation: the operator sees the uncommitted
+    working-tree changes (possibly none) instead of an invented mass
+    deletion. Reasons the merge-base call can come back empty are all
+    transient or environmental — unrelated histories, a big repo on a slow
+    disk timing out, git missing from PATH — none of which mean the branch
+    actually deleted anything.
+
+    The timeout is generous for the same reason: this runs against real
+    clones on the operator's machine, and a slow answer must not become a
+    wrong one.
     """
     if not cwd or not base_ref:
         return base_ref
-    out = run_git(cwd, ['merge-base', base_ref, 'HEAD'], timeout=10)
-    return (out or '').strip() or base_ref
+    out = run_git(cwd, ['merge-base', base_ref, 'HEAD'], timeout=60)
+    return (out or '').strip() or 'HEAD'
 
 
 def changed_paths(cwd: str, base_ref: str) -> list[str]:

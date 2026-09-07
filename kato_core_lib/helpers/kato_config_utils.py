@@ -30,8 +30,17 @@ def configured_state_value(config: DictConfig, state_key: str, defaults: dict) -
 
     Centralises the ``getattr(config, f'{state_key}_state', defaults[...])``
     accessor shared by the task services.
+
+    A BLANK configured value counts as unset. ``getattr`` only falls back
+    when the key is missing entirely, but the config layer resolves
+    ``${oc.env:YOUTRACK_DONE_STATE,"Done"}`` to ``''`` whenever that
+    variable is set-but-empty — a field the operator cleared in the
+    Settings UI. Without this, a cleared field became an empty state name
+    that no tracker can accept, and the transition failed on every task.
     """
-    return getattr(config, f'{state_key}_state', defaults[state_key])
+    return normalized_text(
+        getattr(config, f'{state_key}_state', ''),
+    ) or defaults[state_key]
 
 
 def resolved_agent_backend(open_cfg: DictConfig) -> str:

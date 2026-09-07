@@ -137,6 +137,50 @@ class TaskStateServiceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             service.move_task_to_done('PROJ-1')
 
+    def test_a_blank_configured_field_falls_back_instead_of_sending_nothing(self) -> None:
+        """A cleared Settings field must not become an empty tracker field.
+
+        This is the "kato does not auto start new tasks / the ticket is
+        stuck on Open" bug. The Settings UI wrote
+        ``YOUTRACK_PROGRESS_STATE_FIELD: ""``, the config layer resolved
+        ``${oc.env:YOUTRACK_PROGRESS_STATE_FIELD,"State"}`` to '' (the var
+        was SET, just empty, so the default never applied), and
+        ``move_issue_to_state`` got a nameless field and raised
+        ``missing issue field id for: ''``.
+
+        ``_start_task_processing`` moves the ticket BEFORE running the
+        agent, so that one blank stopped every task from ever starting.
+        """
+        config = types.SimpleNamespace(
+            base_url="https://youtrack.example",
+            token="yt-token",
+            project="PROJ",
+            assignee="me",
+            issue_states=["Open"],
+            progress_state_field='',
+            progress_state='In Progress',
+            review_state_field='State',
+            review_state='Pull Request',
+            done_state_field='',
+            done_state='',
+        )
+        client = Mock()
+
+        service = TaskStateService(config, TaskDataAccess(config, client))
+        service.move_task_to_in_progress('PROJ-1')
+        service.move_task_to_done('PROJ-1')
+
+        self.assertEqual(
+            client.move_issue_to_state.call_args_list,
+            [
+                # Blank progress field → follows review's field, as an
+                # unset one always did.
+                unittest.mock.call('PROJ-1', 'State', 'In Progress'),
+                # Blank done field AND blank done value → both fall back.
+                unittest.mock.call('PROJ-1', 'State', 'Done'),
+            ],
+        )
+
     def test_prefers_explicit_open_state_when_configured(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://jira.example",

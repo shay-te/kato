@@ -10,6 +10,39 @@ the cross-repo "that repo is forbidden" refusal).
 
 from __future__ import annotations
 
+from pathlib import Path
+
+
+def task_workspace_root(workspace_manager, task_id: str) -> str:
+    """The task's own folder — parent of every repo clone for this task.
+
+    Empty when the workspace manager can't produce one or the directory
+    doesn't exist. Never derived from a repo path by walking upward: an
+    adopted checkout's parent could be the operator's entire source root,
+    and handing THAT out as a scope boundary (or bind-mounting it) would be
+    strictly worse than the per-repo scope it replaced.
+
+    Lives here rather than in the webserver because both spawn paths need
+    the same answer: the chat-send route and the ``kato:wait-planning`` /
+    ``kato:wait-editing`` hold spawn. The hold spawn had no equivalent at
+    all, which is why a wait-editing session opened with no task-folder
+    boundary in its prompt and no sandbox root — the agent could not find
+    its own workspace and asked the operator for the clone directory.
+    """
+    if workspace_manager is None or not task_id:
+        return ''
+    try:
+        path = workspace_manager.workspace_path(task_id)
+    except Exception:
+        return ''
+    text = str(path or '')
+    if not text:
+        return ''
+    try:
+        return text if Path(text).is_dir() else ''
+    except OSError:
+        return ''
+
 
 def sibling_repository_dirs(workspace_manager, task_id: str) -> list[str]:
     """The task's whole workspace folder, for ``--add-dir`` beyond ``cwd``.

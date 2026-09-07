@@ -189,5 +189,36 @@ class SettingsPostTests(_Base):
         self.assertEqual(response.status_code, 200)
 
 
+class PersistSettingsEnvMirrorTests(_Base):
+    """A cleared field must leave the env UNSET, never set-but-empty.
+
+    ``${oc.env:KEY,"default"}`` applies its default only for an ABSENT
+    variable; a set-but-empty one resolves to ''. Mirroring a cleared field
+    as '' therefore hands live readers the exact value that made
+    ``move_issue_to_state`` raise ``missing issue field id for: ''`` and
+    left every ticket stuck in Open.
+    """
+
+    def test_a_saved_value_is_mirrored_into_the_env(self) -> None:
+        from kato_webserver.app import _persist_settings
+        with patch.dict(os.environ, self._env()):
+            os.environ.pop('YOUTRACK_PROGRESS_STATE_FIELD', None)
+            _persist_settings({'YOUTRACK_PROGRESS_STATE_FIELD': 'State'})
+            self.assertEqual(
+                os.environ.get('YOUTRACK_PROGRESS_STATE_FIELD'), 'State',
+            )
+
+    def test_a_cleared_value_is_removed_from_the_env_not_blanked(self) -> None:
+        from kato_webserver.app import _persist_settings
+        with patch.dict(
+            os.environ, self._env({'YOUTRACK_PROGRESS_STATE_FIELD': 'State'}),
+        ):
+            _persist_settings({'YOUTRACK_PROGRESS_STATE_FIELD': ''})
+            self.assertNotIn('YOUTRACK_PROGRESS_STATE_FIELD', os.environ)
+        # Still recorded as cleared in the file, so the UI shows it empty.
+        saved = json.loads(self.settings_path.read_text(encoding='utf-8'))
+        self.assertEqual(saved['YOUTRACK_PROGRESS_STATE_FIELD'], '')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -258,40 +258,14 @@ class WaitPlanningServiceTests(unittest.TestCase):
         self.assertEqual(result, 'fallback value')
         service.logger.exception.assert_called_once()
 
-    def test_session_starter_defaults_returns_empty_without_runner(self) -> None:
-        # Lines 282-283: ``return {}`` when runner is None.
-        service = self._service(planning_session_runner=None)
-        self.assertEqual(service._session_starter_defaults(), {})
-
-    def test_session_starter_defaults_handles_runner_without_defaults(
-        self,
-    ) -> None:
-        # Lines 296-298: ``if defaults is None: return {}``.
-        service = self._service(
-            planning_session_runner=SimpleNamespace(_defaults=None),
-        )
-        self.assertEqual(service._session_starter_defaults(), {})
-
-    def test_session_starter_defaults_pulls_fields_from_runner(self) -> None:
-        # Lines 299-304: read string fields + max_turns from defaults.
-        defaults = SimpleNamespace(
-            binary='claude',
-            model='haiku',
-            permission_mode='plan',
-            permission_prompt_tool='',
-            allowed_tools='',
-            disallowed_tools='',
-            effort='',
-            max_turns=12,
-        )
-        service = self._service(
-            planning_session_runner=SimpleNamespace(_defaults=defaults),
-        )
-        result = service._session_starter_defaults()
-        self.assertEqual(result['binary'], 'claude')
-        self.assertEqual(result['model'], 'haiku')
-        self.assertEqual(result['permission_mode'], 'plan')
-        self.assertEqual(result['max_turns'], 12)
+    # ``_session_starter_defaults`` and its three coverage tests are gone
+    # with the method: the hold spawn now goes through
+    # ``PlanningSessionRunner.start_session``, the same funnel every other
+    # spawn path uses, instead of hand-copying a SUBSET of that funnel's
+    # defaults. The subset was the bug — it silently dropped the sandbox
+    # root, the --add-dir set, the architecture/lessons docs, docker mode,
+    # the plan-mode lock and the per-task backend defaults. Funnel routing
+    # is covered by ``tests/test_wait_planning_service.py``.
 
 
 # ============================================================================

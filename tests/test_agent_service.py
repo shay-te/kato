@@ -823,6 +823,9 @@ class AgentServiceTests(unittest.TestCase):
         # No prior session — wait-planning short-circuits when one is alive
         # (so the scan loop doesn't respawn or spam logs every cycle).
         session_manager.get_session.return_value = None
+        # The spawn funnel. Hold sessions go through the runner (same path
+        # as every other spawn), not straight at the session manager.
+        planning_session_runner = _MagicMock()
         # Wait-planning is now its own service injected into AgentService,
         # not inline methods. Construct with the same dependencies the
         # real wiring uses.
@@ -830,6 +833,7 @@ class AgentServiceTests(unittest.TestCase):
             session_manager=session_manager,
             repository_service=self.repository_service,
             task_state_service=self.task_state_service,
+            planning_session_runner=planning_session_runner,
         )
         service = AgentService(
             self.task_data_access,
@@ -848,8 +852,9 @@ class AgentServiceTests(unittest.TestCase):
         # Tab is registered so the user can chat with the agent. The
         # session is spawned with a contextual prompt so claude doesn't
         # exit on empty stdin and the scan loop won't respawn it.
-        session_manager.start_session.assert_called_once()
-        kwargs = session_manager.start_session.call_args.kwargs
+        planning_session_runner.start_session.assert_called_once()
+        session_manager.start_session.assert_not_called()
+        kwargs = planning_session_runner.start_session.call_args.kwargs
         self.assertEqual(kwargs['task_id'], 'PROJ-1')
         # Initial prompt must be non-empty (claude -p exits on empty stdin)
         # and must not request any work — just announce readiness.
@@ -902,24 +907,33 @@ class AgentServiceTests(unittest.TestCase):
     def test_wait_planning_marks_workspace_as_operator_driven_for_startup_resume(self) -> None:
         from unittest.mock import MagicMock as _MagicMock
         from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
+        from kato_core_lib.data_layers.service.wait_planning_service import (
+            _PlanningContext,
+        )
         session_manager = _MagicMock()
         session_manager.get_session.return_value = None
         workspace_manager = _MagicMock()
+        planning_session_runner = _MagicMock()
         wait_planning_service = WaitPlanningService(
             session_manager=session_manager,
             repository_service=self.repository_service,
             task_state_service=self.task_state_service,
             workspace_manager=workspace_manager,
+            planning_session_runner=planning_session_runner,
         )
         wait_planning_service._resolve_planning_context = Mock(
-            return_value=types.SimpleNamespace(cwd='.', expected_branch='PROJ-1')
+            return_value=_PlanningContext(
+                cwd='.',
+                expected_branch='PROJ-1',
+                workspace_root='/wk/PROJ-1',
+            ),
         )
         task = build_task(tags=['kato:wait-planning'])
 
         results = wait_planning_service.handle_task(task)
 
         self.assertEqual(results.get(StatusFields.STATUS), StatusFields.SKIPPED)
-        session_manager.start_session.assert_called_once()
+        planning_session_runner.start_session.assert_called_once()
         workspace_manager.update_resume_on_startup.assert_called_once_with(
             'PROJ-1',
             False,

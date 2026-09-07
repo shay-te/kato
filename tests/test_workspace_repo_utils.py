@@ -1,7 +1,12 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
-from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
+from kato_core_lib.helpers.workspace_repo_utils import (
+    sibling_repository_dirs,
+    task_workspace_root,
+)
 
 
 class SiblingRepositoryDirsTests(unittest.TestCase):
@@ -51,6 +56,42 @@ class SiblingRepositoryDirsTests(unittest.TestCase):
         wm.get.return_value = object()
         wm.workspace_path.return_value = ''
         self.assertEqual(sibling_repository_dirs(wm, 'UNA-1'), [])
+
+
+class TaskWorkspaceRootTests(unittest.TestCase):
+    """The task folder the boundary block names and the sandbox mounts.
+
+    Shared by the chat-send route AND the wait-planning / wait-editing hold
+    spawn. The hold spawn had no equivalent at all, which is why a hold
+    session opened with no task-folder boundary and the operator had to
+    paste the clone path into the chat.
+    """
+
+    def test_returns_the_folder_when_it_exists_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'UNA-1'
+            root.mkdir()
+            wm = MagicMock()
+            wm.workspace_path.return_value = str(root)
+            self.assertEqual(task_workspace_root(wm, 'UNA-1'), str(root))
+
+    def test_a_folder_that_is_not_on_disk_yet_is_empty(self) -> None:
+        # Better an absent boundary than one naming a path that does not
+        # exist — the agent would go looking and find nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            wm = MagicMock()
+            wm.workspace_path.return_value = str(Path(tmp) / 'never-created')
+            self.assertEqual(task_workspace_root(wm, 'UNA-1'), '')
+
+    def test_none_manager_blank_task_and_failures_are_empty(self) -> None:
+        self.assertEqual(task_workspace_root(None, 'UNA-1'), '')
+        self.assertEqual(task_workspace_root(MagicMock(), ''), '')
+        failing = MagicMock()
+        failing.workspace_path.side_effect = RuntimeError('boom')
+        self.assertEqual(task_workspace_root(failing, 'UNA-1'), '')
+        blank = MagicMock()
+        blank.workspace_path.return_value = ''
+        self.assertEqual(task_workspace_root(blank, 'UNA-1'), '')
 
 
 if __name__ == '__main__':

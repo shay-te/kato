@@ -147,7 +147,7 @@ class PlanningSessionRunner(object):
         *,
         docker_mode_on: bool = False,
         hook_runner=None,
-    ) -> 'PlanningSessionRunner | None':
+    ) -> PlanningSessionRunner | None:
         """Build the runner (or return None) from the kato config block.
 
         Returns None when the active backend has no interactive chat model
@@ -198,7 +198,7 @@ class PlanningSessionRunner(object):
         claude_cfg,
         *,
         docker_mode_on: bool = False,
-    ) -> 'StreamingSessionDefaults':
+    ) -> StreamingSessionDefaults:
         bypass = bool(getattr(claude_cfg, 'bypass_permissions', False))
         return StreamingSessionDefaults(
             binary=str(getattr(claude_cfg, 'binary', '') or 'claude'),
@@ -247,7 +247,7 @@ class PlanningSessionRunner(object):
         self._hook_runner = hook_runner
         self.logger = configure_logger(self.__class__.__name__)
 
-    def _defaults_for(self, task_id: str) -> 'StreamingSessionDefaults':
+    def _defaults_for(self, task_id: str) -> StreamingSessionDefaults:
         """The spawn defaults for the backend THIS task's chat is on.
 
         Falls back to the configured backend's set when the manager cannot
@@ -342,8 +342,13 @@ class PlanningSessionRunner(object):
         )
         resume_session_id = read_session_id_from(existing_record)
         if resume_session_id:
+            # The task FOLDER goes in the reminder too, not just the repo
+            # list. A resumed session that has lost track of where it is
+            # cannot recover it from a list of repo paths alone — observed:
+            # the agent guessed a plausible workspaces path, found nothing
+            # there, and asked the operator to type the clone directory in.
             scope_reminder = agent_prompt_utils.workspace_inventory_block(
-                cwd, additional_dirs,
+                cwd, additional_dirs, workspace_root=workspace_root,
             )
             initial_prompt = (
                 f'{scope_reminder}\n\n{normalized_message}'
@@ -397,7 +402,7 @@ class PlanningSessionRunner(object):
             'cwd': normalized_text(cwd),
             'resumed': bool(resume_session_id),
         })
-        session = self._start_session(
+        session = self.start_session(
             task_id=normalized_task_id,
             task_summary=normalized_text(task_summary),
             initial_prompt=initial_prompt,
@@ -603,7 +608,7 @@ class PlanningSessionRunner(object):
         self.logger.info(
             'starting %s for task %s (cwd=%s)', log_label, task_id, cwd or '?',
         )
-        session = self._start_session(
+        session = self.start_session(
             task_id=task_id,
             task_summary=task_summary,
             initial_prompt=initial_prompt,
@@ -701,7 +706,7 @@ class PlanningSessionRunner(object):
             default_success=True,
         )
 
-    def _start_session(
+    def start_session(
         self,
         *,
         task_id: str,

@@ -41,30 +41,30 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
-from utils_core_lib.utils_core_lib.text_utils import text_from_attr
-
-
-# Fields the streaming runner exposes that ``start_session`` accepts.
-# Strings get an empty-string fallback (avoid ``None`` slipping through
-# to subprocess args); ``max_turns`` is passed through verbatim because
-# ``None`` is the legitimate "no cap" sentinel.
-_SESSION_STRING_FIELDS = (
-    'binary',
-    'model',
-    'permission_mode',
-    'permission_prompt_tool',
-    'allowed_tools',
-    'disallowed_tools',
-    'effort',
+from kato_core_lib.helpers.workspace_refusal_guidance import KATO_AGENT_GUIDANCE
+from kato_core_lib.helpers.workspace_repo_utils import (
+    sibling_repository_dirs,
+    task_workspace_root,
 )
+from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_attr
 
 
 @dataclass(frozen=True)
 class _PlanningContext(object):
-    """The cwd + branch the chat session opens on."""
+    """Where the chat session opens, and how far it may reach.
+
+    ``workspace_root`` is the TASK FOLDER — the parent of every repo clone
+    for this task. It is the boundary the docker sandbox bind-mounts and
+    the one the prompt's STRICT BOUNDARY block names, so both agree.
+    ``repository_paths`` are the individual clones, listed to the agent as
+    the inventory of what is actually on disk.
+    """
 
     cwd: str
     expected_branch: str
+    workspace_root: str = ''
+    repository_paths: tuple[str, ...] = ()
+    additional_dirs: tuple[str, ...] = ()
 
 
 # The two hold tags, in match order. ``permission_mode`` is the CLI override
@@ -177,53 +177,97 @@ class WaitPlanningService(object):
         context: _PlanningContext,
         mode: str = _WAIT_PLANNING_MODE,
     ) -> None:
-        spawn_defaults = self._session_starter_defaults()
-        if mode == _WAIT_PLANNING_MODE:
-            # Belt-and-suspenders: the prompt explicitly forbids tool use,
-            # AND the CLI runs in ``--permission-mode plan`` so Claude can't
-            # execute even if it tries. Removing the tag flips back to the
-            # configured permission mode via the autonomous path.
-            spawn_defaults['permission_mode'] = 'plan'
+        # Belt-and-suspenders for wait-planning: the prompt explicitly forbids
+        # tool use, AND the CLI runs in ``--permission-mode plan`` so Claude
+        # can't execute even if it tries. Removing the tag flips back to the
+        # configured permission mode via the autonomous path.
+        #
         # wait-editing deliberately does NOT pin a mode: it inherits the
         # runner's configured one so the agent can start editing the instant
         # the operator says go. Forcing ``plan`` here would recreate exactly
         # the plan-then-work latency the tag exists to avoid.
+        permission_mode = 'plan' if mode == _WAIT_PLANNING_MODE else ''
         prompt = (
-            self._build_planning_prompt(task) if mode == _WAIT_PLANNING_MODE
-            else self._build_editing_prompt(task)
+            self._build_planning_prompt(task, context)
+            if mode == _WAIT_PLANNING_MODE
+            else self._build_editing_prompt(task, context)
         )
         tag = (
             TaskTags.WAIT_PLANNING if mode == _WAIT_PLANNING_MODE
             else TaskTags.WAIT_EDITING
         )
         try:
-            self._session_manager.start_session(
-                task_id=str(task.id),
-                task_summary=str(task.summary or ''),
-                # ``claude -p --input-format stream-json`` stays alive
-                # across multiple user messages, but it must receive at
-                # least one prompt at startup — empty stdin makes it
-                # exit with an error and the scan loop would respawn it
-                # forever. The contextual prompt below puts Claude in
-                # "ready, waiting" state without kicking off any work.
-                initial_prompt=prompt,
-                cwd=context.cwd,
-                expected_branch=context.expected_branch,
-                **spawn_defaults,
-            )
+            self._start_hold_session(task, context, prompt, permission_mode)
             self._mark_workspace_waiting_for_operator(task)
             self.logger.info(
-                'task %s tagged %s — registered %s chat (cwd=%s); '
+                'task %s tagged %s — registered %s chat (cwd=%s, task folder=%s); '
                 'remove the tag to let the agent run autonomously',
                 task.id,
                 tag,
                 mode,
                 context.cwd or '?',
+                context.workspace_root or '?',
             )
         except Exception:
             self.logger.exception(
                 'failed to register %s session for task %s', mode, task.id,
             )
+
+    def _start_hold_session(
+        self,
+        task: Task,
+        context: _PlanningContext,
+        prompt: str,
+        permission_mode: str,
+    ):
+        """Spawn the hold session through the runner's single spawn funnel.
+
+        This used to call ``session_manager.start_session`` directly with a
+        hand-copied subset of the runner's defaults, and that subset was
+        missing everything that tells the agent WHERE it is: no
+        ``sandbox_root`` (so the docker sandbox mounted only ``cwd`` — the
+        FIRST repo clone — hiding every sibling repo of the same task) and no
+        ``additional_dirs`` (so a multi-repo task's agent had no ``--add-dir``
+        for the other clones). It also silently dropped the architecture doc,
+        the lessons file, docker mode, the per-task plan-mode lock, the
+        per-task backend defaults (a Codex tab got the Claude binary) and the
+        Remote Control bridge — every one of which the runner's funnel
+        applies.
+
+        The visible symptom was the operator having to paste the clone
+        directory into the chat before the agent could do anything: kato had
+        opened the session with no boundary block, no repo inventory and a
+        sandbox that did not cover the task folder.
+
+        ``claude -p --input-format stream-json`` stays alive across multiple
+        user messages, but it must receive at least one prompt at startup —
+        empty stdin makes it exit with an error and the scan loop would
+        respawn it forever. The hold prompt puts the agent in "ready,
+        waiting" state without kicking off any work.
+        """
+        runner = self._planning_session_runner
+        if runner is None:
+            # No runner means no spawn defaults to apply — the backend has no
+            # interactive CLI session (OpenHands). ``handle_task`` already
+            # refuses that case for a missing session manager; this is the
+            # same refusal for the missing runner.
+            raise RuntimeError(
+                f'cannot start a hold session for task {task.id}: '
+                'no planning session runner is wired'
+            )
+        return runner.start_session(
+            task_id=str(task.id),
+            task_summary=str(task.summary or ''),
+            initial_prompt=prompt,
+            cwd=context.cwd,
+            branch_name=context.expected_branch,
+            permission_mode=permission_mode,
+            # The TASK FOLDER, not ``cwd``: the docker sandbox bind-mounts
+            # this, and it is what the prompt's STRICT BOUNDARY block names,
+            # so the container and the prompt agree on one boundary.
+            workspace_root=context.workspace_root,
+            additional_dirs=list(context.additional_dirs),
+        )
 
     def _mark_workspace_waiting_for_operator(self, task: Task) -> None:
         if self._workspace_manager is None:
@@ -249,28 +293,59 @@ class WaitPlanningService(object):
             )
 
     def _resolve_planning_context(self, task: Task) -> _PlanningContext:
-        """Resolve + clone + check-out branches; return ``(cwd, branch)``.
+        """Resolve + clone + check-out branches; return where the chat opens.
 
         Best-effort: any failure (no repo match, git fetch error, etc.)
         falls back to a more conservative result so the chat tab still
         opens — the user sees an empty Files / Changes pane and can
         investigate, but the conversation isn't blocked.
+
+        The workspace scope is resolved on EVERY return, including the
+        degraded ones. A hold session whose branch prep failed still lives in
+        a real task folder, and telling the agent where that folder is costs
+        nothing — while omitting it is exactly how the agent ended up asking
+        the operator to name its own clone directory.
         """
         repositories = self._resolve_repositories(task)
         if not repositories:
-            return _PlanningContext(cwd='', expected_branch='')
+            return self._planning_context(task, [], '', '')
         repositories = self._provision_workspace(task, repositories)
         repositories = self._prepare_repositories(task, repositories)
         if not repositories:
-            return _PlanningContext(cwd='', expected_branch='')
+            return self._planning_context(task, [], '', '')
         primary = repositories[0]
         cwd = text_from_attr(primary, 'local_path')
         branch_name = self._build_branch_name(task, primary)
         if not branch_name:
-            return _PlanningContext(cwd=cwd, expected_branch='')
+            return self._planning_context(task, repositories, cwd, '')
         if not self._check_out_branches(task, repositories, branch_name):
-            return _PlanningContext(cwd=cwd, expected_branch='')
-        return _PlanningContext(cwd=cwd, expected_branch=branch_name)
+            return self._planning_context(task, repositories, cwd, '')
+        return self._planning_context(task, repositories, cwd, branch_name)
+
+    def _planning_context(
+        self,
+        task: Task,
+        repositories: list,
+        cwd: str,
+        branch_name: str,
+    ) -> _PlanningContext:
+        """Bundle the cwd/branch with the task's on-disk scope."""
+        task_id = str(task.id)
+        repository_paths = tuple(
+            path for path in (
+                normalized_text(text_from_attr(repo, 'local_path'))
+                for repo in repositories
+            ) if path
+        )
+        return _PlanningContext(
+            cwd=cwd,
+            expected_branch=branch_name,
+            workspace_root=task_workspace_root(self._workspace_manager, task_id),
+            repository_paths=repository_paths,
+            additional_dirs=tuple(
+                sibling_repository_dirs(self._workspace_manager, task_id),
+            ),
+        )
 
     def _resolve_repositories(self, task: Task) -> list:
         return self._safe_call(
@@ -379,24 +454,57 @@ class WaitPlanningService(object):
             return False
         return True
 
-    def _session_starter_defaults(self) -> dict[str, object]:
-        """Forward the streaming runner's defaults to start_session(...)."""
-        runner = self._planning_session_runner
-        if runner is None:
-            return {}
-        defaults = getattr(runner, '_defaults', None)
-        if defaults is None:
-            return {}
-        result: dict[str, object] = {
-            field: (getattr(defaults, field, '') or '')
-            for field in _SESSION_STRING_FIELDS
-        }
-        result['max_turns'] = getattr(defaults, 'max_turns', None)
-        return result
-
     @staticmethod
-    def _hold_prompt_preamble(task: Task, opening: str) -> list[str]:
-        """Opening line + the ticket text + the forbidden-repo guardrails.
+    def _workspace_scope_sections(context: _PlanningContext | None) -> list[str]:
+        """The STRICT BOUNDARY block + the on-disk repo inventory.
+
+        Both hold prompts open with this, and it goes FIRST — the block's own
+        first line is "read this first", and a boundary buried under the
+        ticket text is not a boundary the agent reads first.
+
+        Neither hold prompt had it. The autonomous run and the chat-send
+        route both emit it, so the ONE surface the operator actually drives
+        was the only one that never told the agent where its world is: it
+        opened with a ticket description, no paths, and a rule saying the
+        operator still owed it "the clone directory to work in". The agent
+        did exactly what it was told — guessed at
+        ``~/<agent-home>/workspaces/<TASK>``, found nothing, and asked the
+        operator to paste the path.
+
+        The task folder goes first in the scope list so
+        ``workspace_scope_block``'s redundant-descendant collapse reduces
+        every repo clone under it to that one boundary — and that boundary
+        still covers a repo attached to the task after this prompt was built.
+        """
+        if context is None:
+            return []
+        scope_paths = [
+            path for path in (
+                context.workspace_root, *context.repository_paths, context.cwd,
+            ) if path
+        ]
+        sections: list[str] = []
+        scope = agent_prompt_utils.workspace_scope_block(
+            scope_paths, extra_refusal_guidance=KATO_AGENT_GUIDANCE,
+        )
+        if scope:
+            sections.extend([scope, ''])
+        inventory = agent_prompt_utils.workspace_inventory_block(
+            context.cwd,
+            [path for path in context.repository_paths if path != context.cwd],
+        )
+        if inventory:
+            sections.extend([inventory, ''])
+        return sections
+
+    @classmethod
+    def _hold_prompt_preamble(
+        cls,
+        task: Task,
+        opening: str,
+        context: _PlanningContext | None = None,
+    ) -> list[str]:
+        """Workspace scope + opening line + ticket text + forbidden repos.
 
         Shared by both hold prompts — the only difference between them is the
         operating rules that follow, so everything up to that point lives here
@@ -404,7 +512,11 @@ class WaitPlanningService(object):
         """
         task_id = text_from_attr(task, 'id')
         header = f'ticket {task_id}' if task_id else 'this task'
-        sections = [opening.format(header=header), '']
+        sections = [
+            *cls._workspace_scope_sections(context),
+            opening.format(header=header),
+            '',
+        ]
         # Always framed as untrusted: the summary/description are tracker text
         # that anyone with comment access there can write.
         definition = task_definition_block(
@@ -419,19 +531,24 @@ class WaitPlanningService(object):
         return sections
 
     @classmethod
-    def _build_planning_prompt(cls, task: Task) -> str:
+    def _build_planning_prompt(
+        cls, task: Task, context: _PlanningContext | None = None,
+    ) -> str:
         """Initial prompt for a wait-planning chat tab.
 
-        Three jobs at once:
-          1. Hand Claude the full task description so it has context.
-          2. Hard-stop any tool use — wait-planning is **planning only**.
+        Four jobs at once:
+          1. Name the task folder and the repos on disk (the STRICT
+             BOUNDARY block), so the agent knows where it is and can't
+             wander outside.
+          2. Hand Claude the full task description so it has context.
+          3. Hard-stop any tool use — wait-planning is **planning only**.
              We have to be explicit because the agent's default behavior
              when handed a task is to start working on it.
-          3. Avoid empty stdin (which makes ``claude -p`` exit with an
+          4. Avoid empty stdin (which makes ``claude -p`` exit with an
              error and the scan loop would respawn it forever).
         """
         sections = cls._hold_prompt_preamble(
-            task, "You're pair-planning with the user on {header}.",
+            task, "You're pair-planning with the user on {header}.", context,
         )
         sections.extend([
             '',
@@ -451,7 +568,9 @@ class WaitPlanningService(object):
         return '\n'.join(sections)
 
     @classmethod
-    def _build_editing_prompt(cls, task: Task) -> str:
+    def _build_editing_prompt(
+        cls, task: Task, context: _PlanningContext | None = None,
+    ) -> str:
         """Initial prompt for a wait-editing chat tab.
 
         Same hold as wait-planning — the agent must not start until the
@@ -467,14 +586,21 @@ class WaitPlanningService(object):
         the relevant files starts faster when the go-ahead lands.
         """
         sections = cls._hold_prompt_preamble(
-            task, "You're working with the user on {header}.",
+            task, "You're working with the user on {header}.", context,
         )
         sections.extend([
             '',
             '## Operating rules — READ CAREFULLY',
+            # NOT "they still owe you the clone directory to work in". That
+            # sentence used to be here, and it was a lie kato told the agent
+            # about its own setup: the workspace is already cloned and its
+            # path is in the boundary block above. The agent believed it,
+            # waited to be told where to work, and the operator had to paste
+            # the path by hand on every hold task.
             '- **Do not start yet.** Wait for the operator to explicitly tell '
-            'you to go. They still owe you context — the clone directory to '
-            'work in, and possibly more files related to this task.',
+            'you to go. Your workspace is already on disk at the task folder '
+            'named above — you do not need to be told where to work, only '
+            'what to do. They may still hand you more context for this task.',
             '- **Do not produce a plan.** No proposal, no numbered approach, '
             'no "here is what I would do" round. When the go-ahead arrives, '
             'start editing directly.',

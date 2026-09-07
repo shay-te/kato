@@ -124,7 +124,7 @@ class SpawnsUseTheirOwnCliTests(unittest.TestCase):
                 ),
             },
         )
-        runner._start_session(
+        runner.start_session(
             task_id='T1', task_summary='s', initial_prompt='go', cwd='/w',
         )
         return manager.start_session.call_args.kwargs

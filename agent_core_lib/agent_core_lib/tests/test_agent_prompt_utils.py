@@ -85,6 +85,34 @@ class WorkspaceInventoryBlockBranchTests(unittest.TestCase):
         block = workspace_inventory_block(cwd='/wks/PROJ/repo-a', additional_dirs=None)
         self.assertNotIn('only where your shell starts', block)
 
+    def test_names_the_task_folder_first_when_given(self) -> None:
+        # This block is the ONLY scope text a resumed turn carries, so a
+        # session that lost track of its own folder has nothing else to
+        # anchor on — it guesses a path, finds nothing, and asks the
+        # operator to type the directory in.
+        block = workspace_inventory_block(
+            cwd='/wks/PROJ/repo-a',
+            additional_dirs=['/wks/PROJ'],
+            workspace_root='/wks/PROJ',
+        )
+        self.assertTrue(block.startswith('Your task folder is: /wks/PROJ'))
+        # Already named as the root — not repeated as a bullet.
+        self.assertNotIn('- /wks/PROJ\n', block)
+
+    def test_a_task_folder_alone_still_renders(self) -> None:
+        # Branch prep can fail before any repo path is known; naming the
+        # folder still beats saying nothing.
+        block = workspace_inventory_block(
+            cwd='', additional_dirs=None, workspace_root='/wks/PROJ',
+        )
+        self.assertIn('Your task folder is: /wks/PROJ', block)
+
+    def test_no_paths_at_all_stays_empty(self) -> None:
+        self.assertEqual(
+            workspace_inventory_block(cwd='', additional_dirs=None, workspace_root=''),
+            '',
+        )
+
 
 class WorkspaceScopeBlockBranchTests(unittest.TestCase):
     def test_skips_paths_that_normalize_to_dot_or_blank(self) -> None:

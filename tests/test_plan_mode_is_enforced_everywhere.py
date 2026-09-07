@@ -74,7 +74,7 @@ class TaskModeSpawnTests(_LockFileMixin, unittest.TestCase):
 
 
 class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
-    """``_start_session`` is the single funnel — assert AT it."""
+    """``start_session`` is the single funnel — assert AT it."""
 
     def _runner(self):
         manager = mock.MagicMock()
@@ -90,7 +90,7 @@ class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
 
     def test_an_unlocked_task_uses_the_configured_default(self) -> None:
         runner, manager = self._runner()
-        runner._start_session(
+        runner.start_session(
             task_id='PROJ-1', task_summary='s', initial_prompt='p', cwd='/w',
         )
         self.assertEqual(self._spawn_kwargs(manager)['permission_mode'], 'acceptEdits')
@@ -100,7 +100,7 @@ class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
         # before the fix it spawned at acceptEdits and edited files.
         self._lock('PROJ-1', 'plan')
         runner, manager = self._runner()
-        runner._start_session(
+        runner.start_session(
             task_id='PROJ-1', task_summary='s', initial_prompt='p', cwd='/w',
         )
         self.assertEqual(self._spawn_kwargs(manager)['permission_mode'], 'plan')
@@ -108,7 +108,7 @@ class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
     def test_an_explain_locked_task_spawns_without_edit_tools(self) -> None:
         self._lock('PROJ-1', EXPLAIN_MODE)
         runner, manager = self._runner()
-        runner._start_session(
+        runner.start_session(
             task_id='PROJ-1', task_summary='s', initial_prompt='p', cwd='/w',
         )
         kwargs = self._spawn_kwargs(manager)
@@ -118,7 +118,7 @@ class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
     def test_the_lock_only_applies_to_its_own_task(self) -> None:
         self._lock('PROJ-1', 'plan')
         runner, manager = self._runner()
-        runner._start_session(
+        runner.start_session(
             task_id='OTHER-9', task_summary='s', initial_prompt='p', cwd='/w',
         )
         self.assertEqual(self._spawn_kwargs(manager)['permission_mode'], 'acceptEdits')
@@ -128,7 +128,7 @@ class EverySpawnHonoursTheLockTests(_LockFileMixin, unittest.TestCase):
         # tool set through; it must not be second-guessed here.
         self._lock('PROJ-1', 'plan')
         runner, manager = self._runner()
-        runner._start_session(
+        runner.start_session(
             task_id='PROJ-1', task_summary='s', initial_prompt='p', cwd='/w',
             permission_mode='bypassPermissions',
         )

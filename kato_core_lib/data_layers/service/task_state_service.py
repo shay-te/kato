@@ -65,12 +65,28 @@ class TaskStateService(Service):
         return self._resolve_state_field(state_key, frozenset())
 
     def _resolve_state_field(self, state_key: str, visited: frozenset[str]) -> str:
+        """The tracker field name that ``state_key``'s transition writes.
+
+        A BLANK configured value counts as unset and follows the chain of
+        defaults, exactly as a missing key does. ``getattr`` alone could not
+        do that: the config layer resolves
+        ``${oc.env:YOUTRACK_PROGRESS_STATE_FIELD,"State"}`` to ``''`` when
+        that variable is set-but-empty — which is what a field the operator
+        cleared in the Settings UI looks like — so the default never
+        applied. The empty name then reached the tracker client and
+        ``move_issue_to_state`` raised ``missing issue field id for: ''``.
+
+        That single blank stopped kato dead: ``_start_task_processing``
+        moves the ticket to In Progress BEFORE running the agent, so the
+        failed transition left every task in Open and the agent never
+        started — the "kato does not auto start new tasks" report.
+        """
         config_key = f'{state_key}_state_field'
         default = self._STATE_FIELD_DEFAULTS[state_key]
         visited = visited | {state_key}
         if default in self._STATE_FIELD_DEFAULTS and default not in visited:
             default = self._resolve_state_field(default, visited)
-        return getattr(self._config, config_key, default)
+        return normalized_text(getattr(self._config, config_key, '')) or default
 
     def _configured_state_value(self, state_key: str) -> str:
         return configured_state_value(

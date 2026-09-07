@@ -41,7 +41,7 @@ class SpawnBinaryFollowsTheTabTests(unittest.TestCase):
         )
 
     def _spawn(self):
-        self.runner._start_session(
+        self.runner.start_session(
             task_id='T1', task_summary='s', initial_prompt='go', cwd='/w',
         )
         return self.manager.start_session.call_args.kwargs
@@ -72,7 +72,7 @@ class SpawnBinaryFollowsTheTabTests(unittest.TestCase):
             defaults=_defaults('claude'),
             defaults_by_backend={'codex': _defaults('codex')},
         )
-        runner._start_session(
+        runner.start_session(
             task_id='T1', task_summary='s', initial_prompt='go', cwd='/w',
         )
         self.assertEqual(manager.start_session.call_args.kwargs['binary'], 'claude')
@@ -85,7 +85,7 @@ class SpawnBinaryFollowsTheTabTests(unittest.TestCase):
         runner = PlanningSessionRunner(
             session_manager=self.manager, defaults=_defaults('claude'),
         )
-        runner._start_session(
+        runner.start_session(
             task_id='T1', task_summary='s', initial_prompt='go', cwd='/w',
         )
         self.assertEqual(
