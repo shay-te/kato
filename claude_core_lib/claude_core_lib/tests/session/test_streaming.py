@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import io
 import json
 import logging
@@ -61,7 +62,22 @@ class _FakeProc:
 class StreamingClaudeSessionTests(unittest.TestCase):
     def test_start_requires_task_id(self) -> None:
         with self.assertRaisesRegex(ValueError, 'task_id is required'):
-            StreamingClaudeSession(task_id='')
+            StreamingClaudeSession(task_id='', cwd=tempfile.gettempdir())
+
+    def test_start_refuses_to_inherit_the_orchestrator_working_directory(self) -> None:
+        """An empty cwd must fail loudly, never become ``os.getcwd()``.
+
+        The silent fallback did not stay local to the process: ``session.cwd``
+        is persisted into the session record, so a session spawned without a
+        cwd recorded the ORCHESTRATOR'S OWN directory and every later respawn
+        read it back and started there again. The same value feeds the sandbox
+        scope, so the agent's allowed roots became the orchestrator's source
+        tree instead of the task's clone.
+        """
+        for missing in ('', '   ', None):
+            with self.subTest(cwd=missing):
+                with self.assertRaisesRegex(ValueError, 'cwd is required'):
+                    StreamingClaudeSession(task_id='PROJ-1', cwd=missing)
 
     def test_start_launches_subprocess_and_pins_session_id(self) -> None:
         fake_proc = _FakeProc(stdout_lines=[
@@ -199,6 +215,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         ):
             session = StreamingClaudeSession(
                 task_id='PROJ-1',
+                cwd=tempfile.gettempdir(),
                 resume_session_id='  earlier-session-uuid\n',
             )
             session.start()
@@ -225,7 +242,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             with self.assertLogs(
                 'agent.workflow.StreamingClaudeSession', level='INFO',
             ) as cm:
@@ -246,6 +263,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         ):
             session = StreamingClaudeSession(
                 task_id='PROJ-1', resume_session_id='keep-me-123',
+                cwd=tempfile.gettempdir(),
             )
             with self.assertLogs(
                 'agent.workflow.StreamingClaudeSession', level='INFO',
@@ -264,7 +282,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_user_message('please add a hover state')
 
@@ -291,7 +309,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_user_message(
                 'look at this',
@@ -326,7 +344,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_user_message(
                 '',
@@ -352,7 +370,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_user_message(
                 'check',
@@ -385,7 +403,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_user_message('', images=[])
 
@@ -404,7 +422,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             # Stash a captured request so allow echoes the original input
             # back as ``updatedInput`` (the real wire contract for
@@ -438,7 +456,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.send_permission_response('req-99', allow=False, rationale='not safe')
 
@@ -451,7 +469,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         session.terminate(grace_seconds=0.2)
 
     def test_send_user_message_raises_when_subprocess_dead(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         with self.assertRaisesRegex(RuntimeError, 'subprocess is not running'):
             session.send_user_message('hi')
 
@@ -469,7 +487,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             collected: list[SessionEvent] = []
             # Wait briefly for reader thread to drain the stdout buffer.
@@ -497,7 +515,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-1')
+            session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
             session.start()
             session.terminate(grace_seconds=0.1)
 
@@ -508,7 +526,7 @@ class StreamingClaudeSessionTests(unittest.TestCase):
     def test_terminate_clears_pending_control_requests(self) -> None:
         # A stopped session must stop surfacing approval popups — terminate
         # drops any unanswered permission asks. (Runs even with no subprocess.)
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         with session._pending_control_requests_lock:
             session._pending_control_requests['req-1'] = {
                 'input': {'command': 'rm -rf x'},
@@ -1376,6 +1394,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # are NEVER auto-answered, regardless of permission mode.
         session = StreamingClaudeSession(
             task_id='PROJ-1',
+            cwd=tempfile.gettempdir(),
             permission_mode='bypassPermissions',
             permission_prompt_tool='',
         )
@@ -1385,6 +1404,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # An explicit prompt tool still wins in bypass mode.
         session = StreamingClaudeSession(
             task_id='PROJ-1',
+            cwd=tempfile.gettempdir(),
             permission_mode='bypassPermissions',
             permission_prompt_tool='custom-tool',
         )
@@ -1394,6 +1414,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # Line 182: ``normalized_prompt_tool`` truthy → use it as-is.
         session = StreamingClaudeSession(
             task_id='PROJ-1',
+            cwd=tempfile.gettempdir(),
             permission_prompt_tool='stdio',
         )
         self.assertEqual(session._permission_prompt_tool, 'stdio')
@@ -1482,6 +1503,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # Lines 688-694: optional CLI args appear when configured.
         session = StreamingClaudeSession(
             task_id='PROJ-X',
+            cwd=tempfile.gettempdir(),
             model='claude-opus-4-7',
             max_turns=10,
             effort='high',
@@ -1515,7 +1537,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertIn('"allow"', settings)
 
     def test_pending_request_input_reads_server_side(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         with session._pending_control_requests_lock:
             session._pending_control_requests['req-1'] = {
                 'tool_name': 'Bash', 'input': {'command': 'rm -rf /'},
@@ -1525,17 +1547,17 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertEqual(tool_input, {'command': 'rm -rf /'})
 
     def test_pending_request_input_unknown_id_is_empty(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         self.assertEqual(session.pending_request_input('nope'), ('', {}))
 
     def test_sandbox_allowed_paths_accessor(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         self.assertEqual(
             session.sandbox_allowed_paths, tuple(session._sandbox_allowed_paths),
         )
 
     def test_publish_system_notice_lands_in_feed(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         session.publish_system_notice(
             'action_guard_block', 'BLOCKED: cat ~/.ssh/id_rsa',
             {'action_guard': {'category': 'credential_read'}},
@@ -1973,7 +1995,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
         self.assertEqual(spawn_argv[:2], ['docker', 'run'])
 
     def test_docker_mode_default_is_off(self) -> None:
-        session = StreamingClaudeSession(task_id='PROJ-1')
+        session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())
         self.assertFalse(session._docker_mode_on)
 
     def test_docker_mode_off_does_not_append_sandbox_addendum(self) -> None:
@@ -1986,6 +2008,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
 
         session = StreamingClaudeSession(
             task_id='PROJ-1',
+            cwd=tempfile.gettempdir(),
             docker_mode_on=False,
         )
         cmd = session._build_command()
@@ -2012,6 +2035,7 @@ class StreamingClaudeSessionDockerModeTests(unittest.TestCase):
 
         session = StreamingClaudeSession(
             task_id='PROJ-1',
+            cwd=tempfile.gettempdir(),
             docker_mode_on=True,
         )
         cmd = session._build_command()
@@ -2054,7 +2078,7 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), self.assertLogs('agent.workflow.StreamingClaudeSession', level='WARNING') as cm:
-            session = StreamingClaudeSession(task_id='PROJ-CRED')
+            session = StreamingClaudeSession(task_id='PROJ-CRED', cwd=tempfile.gettempdir())
             session.start()
             # Consume events to drive the reader thread to the terminal.
             for _ in session.events_iter():
@@ -2083,7 +2107,7 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ):
-            session = StreamingClaudeSession(task_id='PROJ-CLEAN')
+            session = StreamingClaudeSession(task_id='PROJ-CLEAN', cwd=tempfile.gettempdir())
             logger = logging.getLogger('agent.workflow.StreamingClaudeSession')
             records = []
 
@@ -2128,7 +2152,7 @@ class StreamingClaudeSessionCredentialOutputScanTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
         ), self.assertLogs('agent.workflow.StreamingClaudeSession', level='WARNING') as cm:
-            session = StreamingClaudeSession(task_id='PROJ-PHISH')
+            session = StreamingClaudeSession(task_id='PROJ-PHISH', cwd=tempfile.gettempdir())
             session.start()
             for _ in session.events_iter():
                 pass

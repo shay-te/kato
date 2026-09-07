@@ -131,17 +131,25 @@ test('badgeKindFor maps kinds to the existing tooltip badge classes', () => {
   assert.equal(badgeKindFor('unknown'), '');
 });
 
-// ---- awaitingBackground: a scheduled background wait reads as working -------
+// ---- awaitingBackground: busy, but NOT the same thing as a live turn -------
 
-test('awaitingBackground (turn closed, blocked on a Monitor wait) → working', () => {
+test('awaitingBackground (turn closed, blocked on a Monitor wait) → background', () => {
+  // NOT "working". The turn has closed, so the in-chat working animation —
+  // which reads ``turnInFlight`` — is correctly absent; reporting WORKING here
+  // put a "working" chip and dot next to nothing working, on a task the
+  // operator had already finished and merged. Its own kind keeps the two
+  // surfaces telling the same story.
   const got = deriveAgentStatus(
     session(),
     // turn closed (turnInFlight false) but waiting on a background task
     live({ lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false, awaitingBackground: true }),
     false,
   );
-  assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
-  assert.equal(got.label, 'working');
+  assert.equal(got.kind, AGENT_STATUS_KIND.BACKGROUND);
+  assert.equal(got.label, 'background');
+  // Still visibly busy — it shares the workflow dot, not the working one.
+  assert.equal(got.status, 'workflow');
+  assert.equal(badgeKindFor(got.kind), 'flow');
 });
 
 test('no awaitingBackground + closed turn → idle (unchanged)', () => {
@@ -185,13 +193,28 @@ test('an IN-FLIGHT turn stays "working" even if the turn also has a workflow', (
   assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
 });
 
-test('a non-workflow background wait (Monitor) still reads working, not workflow', () => {
+test('a non-workflow background wait (Monitor) reads background, not workflow', () => {
   const got = deriveAgentStatus(
     session(),
     live({ turnInFlight: false, awaitingBackground: true, backgroundIsWorkflow: false }),
     false,
   );
-  assert.equal(got.kind, AGENT_STATUS_KIND.WORKING);
+  assert.equal(got.kind, AGENT_STATUS_KIND.BACKGROUND);
+});
+
+test('the polled working flag cannot override the live store', () => {
+  // The regression this whole split exists for: a task whose agent has
+  // finished (live store: streaming, no turn, no background wait) while the
+  // 5s-polled ``working`` flag is still true. Every surface must read the
+  // live answer — chip, label AND dot — because they all come from here.
+  const got = deriveAgentStatus(
+    { ...session(), working: true },
+    live({ lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false }),
+    false,
+  );
+  assert.equal(got.kind, AGENT_STATUS_KIND.IDLE);
+  assert.equal(got.label, 'idle');
+  assert.ok(!got.dotClass.includes('status-working'));
 });
 
 

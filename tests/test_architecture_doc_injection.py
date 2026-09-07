@@ -111,7 +111,13 @@ class StreamingClaudeSessionArchitectureDocTests(unittest.TestCase):
         self.doc_path = Path(self._tmp.name) / 'ARCHITECTURE.md'
 
     def _build_session(self, **overrides) -> StreamingClaudeSession:
-        kwargs = {'task_id': 'PROJ-1', 'binary': 'claude'}
+        kwargs = {
+            'task_id': 'PROJ-1',
+            'binary': 'claude',
+            # A streaming session refuses an empty cwd — it must never
+            # fall back to the orchestrator's own working directory.
+            'cwd': self._tmp.name,
+        }
         kwargs.update(overrides)
         return StreamingClaudeSession(**kwargs)
 
@@ -161,6 +167,7 @@ class ResumedSessionStillReceivesDocTests(unittest.TestCase):
         session = StreamingClaudeSession(
             task_id='PROJ-1',
             binary='claude',
+            cwd=self._tmp.name,
             architecture_doc_path=str(self.doc_path),
             resume_session_id='abc-123',
         )

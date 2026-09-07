@@ -45,13 +45,46 @@ export function normalizeTrees(payload) {
   }];
 }
 
+// A tree node's path resolved against its repo, so it names ONE file on disk.
+//
+// The git-repo trees come from ``git ls-files``, so their ``path`` is
+// REPO-RELATIVE ("Dockerfile"); the task-folder tree's is already absolute.
+// Openers used ``node.path`` as the ``absolutePath`` regardless, so in a
+// multi-repo task every repo's ``Dockerfile`` produced the identical value —
+// and both the editor tab key and the file-content cache are keyed on it.
+// Opening ``email-core-lib/Dockerfile`` after ``ob-love-admin-backend/
+// Dockerfile`` therefore focused the FIRST one and served its cached content,
+// and closing the tab didn't help because the cache entry outlived it: the
+// operator was shown a different repo's file under the right file's name.
+export function absolutePathForRepo(path, cwd) {
+  const normalizedPath = String(path || '').replace(/\\/g, '/');
+  const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalizedCwd || !normalizedPath) { return normalizedPath; }
+  // Already resolved (the task-folder tree, or a server that starts sending
+  // absolute paths later) — never join twice.
+  if (normalizedPath === normalizedCwd
+      || normalizedPath.startsWith(normalizedCwd + '/')) {
+    return normalizedPath;
+  }
+  // Any other absolute path belongs to something else entirely; leave it be
+  // rather than fabricating a path inside this repo.
+  if (normalizedPath.startsWith('/') || /^[A-Za-z]:\//.test(normalizedPath)) {
+    return normalizedPath;
+  }
+  return `${normalizedCwd}/${normalizedPath}`;
+}
+
 export function attachIds(nodes, cwd = '') {
   if (!Array.isArray(nodes)) { return []; }
   return nodes.map((node) => {
     const next = {
       ...node,
+      // ``id`` stays the RAW server path: react-arborist keys rows on it and
+      // ``findTreeNodeIdByRelativePath`` looks it up. Only openers need the
+      // resolved path, and they read ``absolutePath``.
       id: node.path,
       relativePath: relativePathForRepo(node.path, cwd),
+      absolutePath: absolutePathForRepo(node.path, cwd),
     };
     if (Array.isArray(node.children)) {
       next.children = attachIds(node.children, cwd);

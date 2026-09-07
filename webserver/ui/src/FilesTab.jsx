@@ -1415,7 +1415,11 @@ function Node({
     if (!isFolder) {
       if (typeof onOpenFile === 'function') {
         onOpenFile({
-          absolutePath: String(node.data?.path || ''),
+          // ``absolutePath`` (resolved against the repo cwd by
+          // ``attachIds``), NOT ``path`` — the git trees carry
+          // repo-RELATIVE paths, so ``path`` is just "Dockerfile" in
+          // every repo and collides in the tab key + content cache.
+          absolutePath: String(node.data?.absolutePath || node.data?.path || ''),
           relativePath: String(node.data?.relativePath || ''),
           repoId,
         });
@@ -1436,7 +1440,7 @@ function Node({
   function onOpenComment() {
     if (typeof onOpenFile !== 'function') { return; }
     onOpenFile({
-      absolutePath: String(node.data?.path || ''),
+      absolutePath: String(node.data?.absolutePath || node.data?.path || ''),
       relativePath: String(node.data?.relativePath || ''),
       repoId,
       view: 'diff',

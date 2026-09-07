@@ -22,7 +22,8 @@ import SettingsDrawer from './components/SettingsDrawer.jsx';
 import TabList from './components/TabList.jsx';
 import TaskPalette from './components/TaskPalette.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
-import { forgetTaskWorkspace, triggerScan } from './api.js';
+import { fetchScanStatus, forgetTaskWorkspace, triggerScan } from './api.js';
+import { waitForScanToFinish } from './utils/scanProgress.js';
 import { toast } from './stores/toastStore.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
@@ -365,11 +366,26 @@ export default function App() {
   }, [forgetCandidate, doForgetTask]);
 
   const [scanPending, setScanPending] = useState(false);
+  // Busy for the whole SCAN, not just the trigger request.
+  //
+  // ``triggerScan`` only sets an event server-side and returns immediately —
+  // the scan itself then runs on kato's scan-loop thread. Ending the busy
+  // state when that POST resolved meant the button's spinner flashed for a few
+  // milliseconds and went idle while kato was still scanning, which reads as
+  // "the click did nothing". We now hold it until the server says the scan is
+  // over (``/api/scan/status``), and ``waitForScanToFinish`` is bounded so a
+  // wedged loop can never leave the button disabled for good.
   const handleScanNow = useCallback(async () => {
     setScanPending(true);
-    await triggerScan();
-    await refresh();
-    setScanPending(false);
+    try {
+      await triggerScan();
+      await waitForScanToFinish({ fetchStatus: fetchScanStatus });
+      await refresh();
+    } finally {
+      // ``finally``: a rejected refresh used to leave the button disabled and
+      // spinning with no way back except a page reload.
+      setScanPending(false);
+    }
   }, [refresh]);
 
   // Header Refresh: re-scan tickets + reload sessions AND re-probe the agent

@@ -82,6 +82,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
 from kato_core_lib.helpers.workspace_repo_utils import (
+    resolve_session_cwd,
     sibling_repository_dirs,
     task_workspace_root,
 )
@@ -1516,6 +1517,28 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'status': 'scanning'})
         force_event.set()
         return jsonify({'status': 'triggered'})
+
+    @app.get('/api/scan/status')
+    def scan_status():
+        """Is a scan running RIGHT NOW?
+
+        The trigger above only SETS an event and returns — the scan itself runs
+        on the scan-loop thread and takes as long as it takes. So the POST
+        finishing says nothing about the scan finishing, and the Scan-now
+        button, which spun for exactly as long as that request was in flight,
+        blinked once and went idle while kato was still working. This endpoint
+        is the actual answer, read from the same ``SCAN_IN_PROGRESS`` event the
+        scan loop sets around ``job.run()``.
+
+        ``available`` is False when no scan loop is wired (a webserver-only
+        boot, setup mode), so the caller can stop polling instead of waiting
+        for a state that will never arrive.
+        """
+        in_progress = app.config.get('SCAN_IN_PROGRESS_EVENT')
+        return jsonify({
+            'scanning': bool(in_progress is not None and in_progress.is_set()),
+            'available': in_progress is not None,
+        })
 
     @app.get('/api/sessions/<task_id>')
     def get_session(task_id: str):
@@ -5570,7 +5593,17 @@ def _chat_resume_context(
                     cwd = str(workspace_manager.repository_path(task_id, first_repo))
                 except Exception:
                     cwd = ''
-    return cwd, summary, description
+    # The record's ``cwd`` is a HINT, not an authority. It won unconditionally
+    # here, and a record poisoned by the old empty-cwd fallback (which took
+    # kato's own working directory and persisted it) therefore respawned the
+    # agent inside kato's sources on every nudge, forever. The resolver keeps
+    # a cwd that is genuinely inside the task's workspace and replaces
+    # anything else with the task's own clone.
+    return (
+        resolve_session_cwd(workspace_manager, task_id, cwd),
+        summary,
+        description,
+    )
 
 
 def _chat_additional_dirs(workspace_manager, task_id: str) -> list[str]:
@@ -5624,8 +5657,29 @@ def _event_stream_generator(
         return
     session = manager.get_session(task_id) if manager is not None else None
     if session is None:
-        yield from _replay_preflight_log(workspace_manager, task_id)
-        yield from _replay_history(record, agent_session_id)
+        # UNPACK the ``(epoch, frame)`` pairs — and merge them oldest-first,
+        # for the same reason the live branch below does.
+        #
+        # ``yield from`` handed the TUPLES straight to WSGI, so werkzeug hit
+        # ``assert isinstance(data, bytes)`` and killed the response with
+        # ``applications must write bytes`` before a single frame reached the
+        # browser. The EventSource then retried every ~3s, spamming that
+        # traceback and leaving the tab stuck on "Connecting to session for
+        # <task>…" with an empty chat — "he is not connecting to the old
+        # chat".
+        #
+        # This is the NO-LIVE-SUBPROCESS path, so it fires for exactly the
+        # tabs that most need their history: every session after a kato
+        # restart (they are lazily resumed by design, so all of them are
+        # idle) and any tab whose agent has finished. The live path merged
+        # and unpacked correctly, which is why the bug stayed invisible
+        # while an agent happened to be running.
+        for _epoch, frame in heapq.merge(
+            _replay_preflight_log(workspace_manager, task_id),
+            _replay_history(record, agent_session_id),
+            key=lambda pair: pair[0],
+        ):
+            yield frame
         if _drain_queued_task_comment(agent_service, task_id):
             session = manager.get_session(task_id) if manager is not None else None
             if session is not None:

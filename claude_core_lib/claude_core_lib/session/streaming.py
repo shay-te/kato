@@ -239,7 +239,29 @@ class StreamingClaudeSession(object):
             raise ValueError('task_id is required for a streaming session')
         self._task_id = str(task_id).strip()
         self._binary = normalized_text(binary) or self.DEFAULT_BINARY
-        self._cwd = normalized_text(cwd) or os.getcwd()
+        # NO ``or os.getcwd()``. An empty cwd used to become the ORCHESTRATOR'S
+        # OWN working directory, and that value did not stay local: it is what
+        # the session reports as ``session.cwd``, so it was persisted into the
+        # session record, and every later respawn read the record back and
+        # spawned there again — permanently. It also feeds the sandbox scope,
+        # so the agent's allowed roots became the orchestrator's source tree.
+        #
+        # Observed exactly that: a task whose workspace is
+        # ``<workspaces>/<TASK>/<repo>`` had ``cwd`` recorded as the
+        # orchestrator's own checkout, so waking that tab started the agent
+        # inside the orchestrator's sources instead of the task's clone.
+        #
+        # A streaming session with no working directory is not a valid
+        # session, and guessing one is strictly worse than refusing: the
+        # caller knows the task's directory, and a loud failure names the
+        # caller that forgot to pass it.
+        normalized_cwd = normalized_text(cwd)
+        if not normalized_cwd:
+            raise ValueError(
+                f'cwd is required for a streaming session (task {self._task_id}); '
+                'refusing to fall back to the orchestrator working directory'
+            )
+        self._cwd = normalized_cwd
         self._model = normalized_text(model)
         self._permission_mode = normalized_text(permission_mode) or self.DEFAULT_PERMISSION_MODE
         normalized_prompt_tool = normalized_text(permission_prompt_tool)

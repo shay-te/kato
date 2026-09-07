@@ -43,6 +43,7 @@ from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from kato_core_lib.helpers.workspace_refusal_guidance import KATO_AGENT_GUIDANCE
 from kato_core_lib.helpers.workspace_repo_utils import (
+    resolve_session_cwd,
     sibling_repository_dirs,
     task_workspace_root,
 )
@@ -338,7 +339,11 @@ class WaitPlanningService(object):
             ) if path
         )
         return _PlanningContext(
-            cwd=cwd,
+            # Never spawn outside the task's own workspace. Repo resolution
+            # can degrade to no repos (a clone failure, an unmatched tag), and
+            # the empty cwd that produced used to be silently replaced with
+            # kato's own working directory at spawn time — and then persisted.
+            cwd=resolve_session_cwd(self._workspace_manager, task_id, cwd),
             expected_branch=branch_name,
             workspace_root=task_workspace_root(self._workspace_manager, task_id),
             repository_paths=repository_paths,

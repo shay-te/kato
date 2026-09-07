@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   findTreeNodeIdByRelativePath,
+  absolutePathForRepo,
   activateTreeNode,
   attachIds,
   countRepoComments,
@@ -478,4 +479,59 @@ test('countVisibleTreeRows: a filtered count never exceeds the whole tree', func
   // 8 nodes in total (3 roots + 3 under src + 1 under nested + 1 under
   // tests); a filter can only ever draw a subset of them.
   assert.ok(countVisibleTreeRows(_TREE, 'p') <= 8);
+});
+
+
+// ---------------------------------------------------------------------------
+// absolutePathForRepo / attachIds — same-named files across repos
+// ---------------------------------------------------------------------------
+
+test('attachIds resolves repo-relative git paths against the repo cwd', function () {
+  // The git trees come from ``git ls-files``, so a node's ``path`` is
+  // "Dockerfile" — identical in every repo of the task. Openers used it as
+  // the absolutePath, which is both the editor tab key AND the file-content
+  // cache key, so the SECOND repo's Dockerfile focused the FIRST one and
+  // served its cached content: the operator was shown a different repo's file
+  // under the right file's name, and closing the tab did not help because the
+  // cache entry outlived it.
+  const backend = attachIds(
+    [{ name: 'Dockerfile', path: 'Dockerfile' }],
+    '/wk/UNA-1/ob-love-admin-backend',
+  );
+  const email = attachIds(
+    [{ name: 'Dockerfile', path: 'Dockerfile' }],
+    '/wk/UNA-1/email-core-lib',
+  );
+
+  assert.equal(backend[0].absolutePath, '/wk/UNA-1/ob-love-admin-backend/Dockerfile');
+  assert.equal(email[0].absolutePath, '/wk/UNA-1/email-core-lib/Dockerfile');
+  assert.notEqual(backend[0].absolutePath, email[0].absolutePath);
+  // The raw id is untouched — react-arborist rows and
+  // findTreeNodeIdByRelativePath key on it.
+  assert.equal(backend[0].id, 'Dockerfile');
+  assert.equal(backend[0].relativePath, 'Dockerfile');
+});
+
+test('attachIds keeps an already-absolute path (the task-folder tree)', function () {
+  const nodes = attachIds(
+    [{ name: 'plan.md', path: '/wk/UNA-1/plan.md' }],
+    '/wk/UNA-1',
+  );
+  assert.equal(nodes[0].absolutePath, '/wk/UNA-1/plan.md');
+});
+
+test('absolutePathForRepo never joins twice or invents a path', function () {
+  assert.equal(absolutePathForRepo('a/b.js', '/wk/repo'), '/wk/repo/a/b.js');
+  // Trailing separator on the cwd must not double up.
+  assert.equal(absolutePathForRepo('a.js', '/wk/repo/'), '/wk/repo/a.js');
+  // Already inside the repo — leave it.
+  assert.equal(absolutePathForRepo('/wk/repo/a.js', '/wk/repo'), '/wk/repo/a.js');
+  // Absolute but elsewhere — do NOT fabricate a path inside this repo.
+  assert.equal(absolutePathForRepo('/etc/hosts', '/wk/repo'), '/etc/hosts');
+  // Windows: backslashes normalise, and a drive-letter path is absolute.
+  assert.equal(absolutePathForRepo('a.js', 'C:\\wk\\repo'), 'C:/wk/repo/a.js');
+  assert.equal(absolutePathForRepo('C:/other/a.js', 'C:/wk/repo'), 'C:/other/a.js');
+  // No cwd to resolve against — best effort, unchanged.
+  assert.equal(absolutePathForRepo('a.js', ''), 'a.js');
+  assert.equal(absolutePathForRepo('', '/wk/repo'), '');
 });

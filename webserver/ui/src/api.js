@@ -690,6 +690,15 @@ export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }
 
+// Is a scan running right now? ``triggerScan`` only ASKS for one — the scan
+// itself runs on kato's scan-loop thread — so this is the only way to know
+// when it is actually over. Degrades to "not scanning, not available" on any
+// error so a caller polling it can stop rather than spin forever.
+export function fetchScanStatus() {
+  return fetchJson('/api/scan/status', { timeoutMs: 10000 })
+    .catch(() => ({ scanning: false, available: false }));
+}
+
 // Delete kato's local copy of a task (clone + session record).
 // ``markDone`` is the dialog's "this task is done" checkbox: the server
 // moves the TICKET to the tracker's done column FIRST and refuses to

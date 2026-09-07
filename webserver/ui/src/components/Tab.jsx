@@ -506,7 +506,13 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   const summary = String(session?.task_summary || '').trim();
   const rows = [];
 
-  const statusLine = tabStatusTitle(baseStatus, needsAttention);
+  // The AGENT's own sentence, not a second guess at it. This row used to be
+  // ``tabStatusTitle(baseStatus)``, which read the 5s-polled ``working`` flag
+  // and hardcoded "Claude is working" — so it could say the agent was working
+  // while the badge beside it (derived from the live store) said otherwise,
+  // and it named Claude on a Codex tab. ``agent.title`` is the same value the
+  // badge and the dot come from.
+  const statusLine = agent?.title || tabStatusTitle(baseStatus, needsAttention);
   if (statusLine) {
     rows.push({ label: 'Status', value: statusLine });
   }

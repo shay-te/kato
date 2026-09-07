@@ -151,10 +151,12 @@ describe('SessionHeader — task summary + status dot', () => {
     expect(container.querySelector('.status-dot.status-working')).toBeInTheDocument();
   });
 
-  test('awaitingBackground reads as working too (matches the tab badge)', () => {
+  test('awaitingBackground paints the background dot, not the working one', () => {
     // Turn closed but the agent is blocked on a Monitor / run_in_background
-    // wait. The tab badge counts this as working; the header DOT must agree,
-    // or the operator sees an idle dot while the tab says "working".
+    // wait. Still busy — the dot must not go idle — but NOT the working dot:
+    // the in-chat working animation reads ``turnInFlight``, which is false
+    // here, so a working dot would sit beside nothing working. Same colour
+    // family as a background workflow, which is what this is.
     const { container } = render(
       <SessionHeader
         session={_session({ status: TAB_STATUS.REVIEW, working: false })}
@@ -164,8 +166,28 @@ describe('SessionHeader — task summary + status dot', () => {
       />,
     );
     expect(
-      container.querySelector('.status-dot.status-working'),
+      container.querySelector('.status-dot.status-workflow'),
     ).toBeInTheDocument();
+    expect(
+      container.querySelector('.status-dot.status-working'),
+    ).not.toBeInTheDocument();
+  });
+
+  test('a stale polled working flag cannot paint the dot', () => {
+    // The reported bug: a finished, merged task still showing "working".
+    // ``session.working`` is the 5s poll; the live stream is the authority
+    // and says the turn is over. One derivation, one answer.
+    const { container } = render(
+      <SessionHeader
+        session={_session({ status: TAB_STATUS.REVIEW, working: true })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+        turnInFlight={false}
+        awaitingBackground={false}
+      />,
+    );
+    expect(
+      container.querySelector('.status-dot.status-working'),
+    ).not.toBeInTheDocument();
   });
 
   test('needsAttention=true paints the dot with status-attention', () => {

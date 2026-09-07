@@ -458,7 +458,11 @@ export default function SessionHeader({
           <span
             id="session-status-dot"
             className={agent.dotClass}
-            title={tabStatusTitle(baseStatus, needsAttention)}
+            // Same source as the dot's own colour. It used to be
+            // ``tabStatusTitle(baseStatus)``, a second derivation off the
+            // polled ``working`` flag, so the dot and its tooltip could
+            // describe different states.
+            title={agent.title}
           />
           <strong id="session-task-id">{session.task_id}</strong>
           <span id="session-task-summary">{taskSummary}</span>

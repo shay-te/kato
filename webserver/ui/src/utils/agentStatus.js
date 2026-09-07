@@ -25,6 +25,7 @@ const STATUS_BY_KIND = {
   [AGENT_STATUS_KIND.PROVISIONING]: { label: 'provisioning', title: () => 'Workspace is being set up.' },
   [AGENT_STATUS_KIND.WORKING]: { label: 'working', title: (n) => `${n} is processing the current turn.` },
   [AGENT_STATUS_KIND.WORKFLOW]: { label: 'workflow', title: (n) => `A background workflow is running — ${n} will report back when it finishes.` },
+  [AGENT_STATUS_KIND.BACKGROUND]: { label: 'background', title: (n) => `The turn has finished; ${n} is waiting on background work it started.` },
   [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: (n) => `${n} is paused waiting for your approval.` },
   [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: (n) => `${n} is connected and waiting for input.` },
   [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: (n) => `Connecting to the ${n} session…` },
@@ -49,12 +50,14 @@ function liveKind(liveStatus, baseStatus, needsAttention) {
   if (liveStatus.turnInFlight) { return AGENT_STATUS_KIND.WORKING; }
   // ``awaitingBackground`` = turn closed but the agent is blocked on a
   // background wait it scheduled (Monitor / Workflow / run_in_background) —
-  // still busy, not idle. A background WORKFLOW gets its own status/colour
-  // so the operator can see "something is churning in the background".
+  // still busy, not idle. Each gets its OWN kind: reporting the plain case as
+  // WORKING made a closed turn indistinguishable from a live one, and since
+  // the in-chat working animation reads ``turnInFlight`` (correctly false
+  // here), the operator saw a "working" chip with nothing working beside it.
   if (liveStatus.awaitingBackground) {
     return liveStatus.backgroundIsWorkflow
       ? AGENT_STATUS_KIND.WORKFLOW
-      : AGENT_STATUS_KIND.WORKING;
+      : AGENT_STATUS_KIND.BACKGROUND;
   }
   if (needsAttention) { return AGENT_STATUS_KIND.APPROVAL; }
   return KIND_BY_LIFECYCLE[liveStatus.lifecycle] || AGENT_STATUS_KIND.UNKNOWN;
@@ -94,6 +97,7 @@ function polledKind(session, baseStatus) {
 const BADGE_KIND = {
   [AGENT_STATUS_KIND.WORKING]: 'work',
   [AGENT_STATUS_KIND.WORKFLOW]: 'flow',
+  [AGENT_STATUS_KIND.BACKGROUND]: 'flow',
   [AGENT_STATUS_KIND.IDLE]: 'idle',
   [AGENT_STATUS_KIND.CONNECTING]: 'idle',
   [AGENT_STATUS_KIND.SLEEPING]: 'sleep',
@@ -110,8 +114,12 @@ export function badgeKindFor(kind) {
 
 function dotStatusForKind(kind, resolved) {
   if (kind === AGENT_STATUS_KIND.WORKING) { return TAB_STATUS.WORKING; }
-  if (kind === AGENT_STATUS_KIND.WORKFLOW) { return TAB_STATUS.WORKFLOW; }
+  if (kind === AGENT_STATUS_KIND.WORKFLOW
+      || kind === AGENT_STATUS_KIND.BACKGROUND) { return TAB_STATUS.WORKFLOW; }
   if (kind === AGENT_STATUS_KIND.APPROVAL) { return TAB_STATUS.ATTENTION; }
+  // ``resolved`` is the WORKSPACE status now — it can no longer answer
+  // WORKING, so the dot's busy colours come from the kind above and nowhere
+  // else. That is the whole point: one derivation, one answer.
   return resolved;
 }
 
@@ -130,10 +138,15 @@ export function deriveAgentStatus(
 
   const resolved = resolveTabStatus(session, needsAttention);
   const dotStatus = dotStatusForKind(kind, resolved);
-  const turnish = liveStatus ? !!liveStatus.turnInFlight : (session?.working === true);
-  const idleAlive = dotStatus === TAB_STATUS.ACTIVE
-    && !turnish
-    && session?.working === false;
+  // ``idleAlive`` = connected but doing nothing. When the live store is
+  // present it is the authority on "doing nothing"; the polled flag is the
+  // fallback for background tabs only. Consulting BOTH (the old
+  // ``&& session?.working === false``) let a stale poll suppress the
+  // idle-alive dot on a session the live stream already knew was quiet.
+  const busy = liveStatus
+    ? (!!liveStatus.turnInFlight || !!liveStatus.awaitingBackground)
+    : session?.working === true;
+  const idleAlive = dotStatus === TAB_STATUS.ACTIVE && !busy;
   const dotClass = statusDotClass(dotStatus, {
     isLoading: baseStatus === TAB_STATUS.PROVISIONING,
     idleAlive,

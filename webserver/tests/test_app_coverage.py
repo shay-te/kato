@@ -1537,6 +1537,46 @@ class ChatResumeContextTests(unittest.TestCase):
         cwd, _, _description = _chat_resume_context(None, workspace_manager, 'T-1')
         self.assertEqual(cwd, '')
 
+    def test_a_record_cwd_outside_the_workspace_is_corrected(self):
+        """The record is a HINT about where to spawn, never an authority.
+
+        A session spawned with no cwd used to inherit kato's own working
+        directory, and that value was persisted onto the record — so every
+        later nudge of that tab respawned the agent inside kato's sources,
+        with the sandbox scoped to match. Records poisoned that way are
+        corrected here on the way out, without a migration.
+        """
+        import tempfile
+        from pathlib import Path
+        from kato_webserver.app import _chat_resume_context
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / 'UNA-1'
+            clone = workspace / 'client'
+            clone.mkdir(parents=True)
+            foreign = Path(tmp) / 'kato'
+            foreign.mkdir()
+
+            session_manager = MagicMock()
+            session_manager.get_record.return_value = SimpleNamespace(
+                cwd=str(foreign), task_summary='s',
+            )
+            workspace_manager = MagicMock()
+            workspace_manager.workspace_path.return_value = str(workspace)
+            workspace_manager.get.return_value = SimpleNamespace(
+                cwd='', task_summary='s', task_description='d',
+                repository_ids=['client'],
+            )
+            workspace_manager.repository_path.side_effect = (
+                lambda task_id, repo_id: workspace / repo_id
+            )
+
+            cwd, _, _ = _chat_resume_context(
+                session_manager, workspace_manager, 'UNA-1',
+            )
+
+        self.assertEqual(cwd, str(clone))
+
 
 class ChatAdditionalDirsTests(unittest.TestCase):
     def test_returns_empty_when_no_workspace_manager(self):

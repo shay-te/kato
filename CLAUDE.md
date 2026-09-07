@@ -19,6 +19,27 @@ kato test            # run the unittest suite
 - `python -m pyflakes kato_core_lib webserver/kato_webserver` — backend dead-import gate (expected hits are the package re-exports in `comment_core_lib/__init__.py`, `data_layers/data/fields.py`, `workspace_manager.py`, plus a couple known unused locals; any NEW finding is dead code to remove).
 - Reuse the shared hooks/utils/helpers under `webserver/ui/src/{hooks,utils,stores}` and `kato_core_lib/helpers/*_utils.py` instead of re-implementing; delete orphan (uncalled) code together with its test.
 
+**Agent status has EXACTLY ONE derivation — do not add a second.** Whether an agent is
+working / idle / sleeping / closed / waiting / background is decided ONLY by
+`webserver/ui/src/utils/agentStatus.js` → `deriveAgentStatus()`, fed by the one store
+`webserver/ui/src/stores/agentStatusStore.js`. Every surface (tab dot, tab tooltip, header
+dot, backend chips, task palette) renders that function's own `label` / `title` / `dotClass`
+— none of them may look at `session.working` or compose their own status sentence.
+
+This has regressed **twice**, and both times the second source hid as a *neighbouring helper*
+rather than an obvious copy: `tabStatus.js`'s `deriveTabStatus` answered `WORKING` off the
+5s-polled `session.working`, and `tabStatusTitle` hardcoded `"Claude is working"` (also wrong
+on a Codex tab). Because `deriveAgentStatus` falls through to `tabStatus`'s value for the dot,
+a stale poll painted the dot and tooltip "working" on a finished, merged task while the live
+store and the in-chat animation correctly showed nothing running.
+
+Rules: `tabStatus.js` is the WORKSPACE axis ONLY (active/provisioning/review/done/
+terminated/errored/idle) and must never mention `working`. Before touching any status surface,
+run `grep -rn "AGENT_STATUS_KIND\.\|\.working" webserver/ui/src --include=*.js*` — every hit
+outside `agentStatus.js` must be an INPUT passed in, never a decision. If two surfaces could
+disagree, fix the derivation, not the surface. The comment-run `kato_status` pill and the
+workspace/task status are SEPARATE axes — keep them separate.
+
 **Never run `npm run build`** — the React bundle is pre-compiled. Running it takes 30+ seconds, requires Node.js to be installed, and is not needed for backend changes or Python tests. To rebuild the frontend (only when changing files under `webserver/ui/src/`):
 
 ```bash

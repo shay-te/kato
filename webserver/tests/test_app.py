@@ -851,6 +851,38 @@ class WebserverAppTests(unittest.TestCase):
         self.assertTrue(any('session_idle' in frame for frame in frames))
         service.comment_runs.drain_next_queued_task_comment.assert_called_once_with('PROJ-1')
 
+    def test_idle_event_stream_yields_frames_not_epoch_pairs(self):
+        """WSGI can only write bytes/str — a ``(epoch, frame)`` pair kills it.
+
+        The replay helpers yield PAIRS so the live path can merge them
+        oldest-first. The idle path ``yield from``-ed them straight through,
+        so werkzeug hit ``assert isinstance(data, bytes)`` and 500'd the
+        response before one frame reached the browser: the tab sat on
+        "Connecting to session for <task>…" with an empty chat and the
+        EventSource retried every few seconds.
+
+        This is the NO-LIVE-SUBPROCESS path, so it covers every tab after a
+        kato restart — sessions are lazily resumed by design, so all of them
+        are idle and none of them could load their history.
+        """
+        workspace_manager = MagicMock()
+        workspace_manager.read_preflight_log.return_value = [
+            (1.0, 'preparing workspace (2 repository(ies))'),
+            (2.0, 'cloned 1/2: admin-client'),
+        ]
+
+        frames = list(_event_stream_generator(
+            self.manager, workspace_manager, 'PROJ-1',
+        ))
+
+        for frame in frames:
+            self.assertIsInstance(frame, str, f'non-str SSE chunk: {frame!r}')
+        joined = ''.join(frames)
+        self.assertIn('preparing workspace', joined)
+        # Oldest-first, same ordering guarantee the live path gives.
+        self.assertLess(joined.index('preparing workspace'), joined.index('admin-client'))
+        self.assertIn('session_idle', joined)
+
     def test_live_follow_drains_queue_after_result_event(self):
         session = MagicMock()
         session.is_alive = False
@@ -1414,6 +1446,42 @@ class ScanTriggerEndpointTests(unittest.TestCase):
         app = create_app(session_manager=_FakeManager())
         response = app.test_client().post('/api/scan/trigger')
         self.assertEqual(response.status_code, 503)
+
+    def test_scan_status_reports_the_live_scan_event(self):
+        """The trigger POST returns before the scan runs, so the button
+        needs a separate "is it still going" answer.
+
+        Without it the Scan-now spinner lived exactly as long as the POST —
+        a few milliseconds — and went idle while kato was still scanning,
+        which reads as "the click did nothing".
+        """
+        import threading
+        in_progress = threading.Event()
+        app = create_app(
+            session_manager=_FakeManager(),
+            force_scan_event=threading.Event(),
+            scan_in_progress_event=in_progress,
+        )
+        client = app.test_client()
+
+        self.assertEqual(
+            client.get('/api/scan/status').get_json(),
+            {'scanning': False, 'available': True},
+        )
+        in_progress.set()
+        self.assertEqual(
+            client.get('/api/scan/status').get_json(),
+            {'scanning': True, 'available': True},
+        )
+        in_progress.clear()
+        self.assertFalse(client.get('/api/scan/status').get_json()['scanning'])
+
+    def test_scan_status_reports_unavailable_with_no_scan_loop(self):
+        # Webserver-only boot / setup mode: the poller must stop rather than
+        # wait for a state nothing will ever report.
+        app = create_app(session_manager=_FakeManager())
+        payload = app.test_client().get('/api/scan/status').get_json()
+        self.assertEqual(payload, {'scanning': False, 'available': False})
 
 
 class EffortRespawnDecisionTests(unittest.TestCase):

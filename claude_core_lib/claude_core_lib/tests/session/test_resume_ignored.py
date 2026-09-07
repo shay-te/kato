@@ -243,6 +243,7 @@ class StreamingResumeFlagTests(unittest.TestCase):
     def test_init_echoing_resume_id_confirms(self) -> None:
         session = StreamingClaudeSession(
             task_id='T1', resume_session_id='resume-id-1',
+            cwd=tempfile.gettempdir(),
         )
         # ``_build_command`` pins ``agent_session_id`` synchronously —
         # the same point the real spawn path does it.
@@ -254,6 +255,7 @@ class StreamingResumeFlagTests(unittest.TestCase):
     def test_init_with_different_id_flags_ignored_resume(self) -> None:
         session = StreamingClaudeSession(
             task_id='T1', resume_session_id='resume-id-1',
+            cwd=tempfile.gettempdir(),
         )
         session._build_command()
         session._maybe_capture_session_id(self._init_event('other-id-2'))
@@ -263,7 +265,7 @@ class StreamingResumeFlagTests(unittest.TestCase):
         self.assertEqual(session.agent_session_id, 'resume-id-1')
 
     def test_fresh_spawn_mismatch_does_not_flag_ignored(self) -> None:
-        session = StreamingClaudeSession(task_id='T1')
+        session = StreamingClaudeSession(task_id='T1', cwd=tempfile.gettempdir())
         session._build_command()
         session._maybe_capture_session_id(self._init_event('actual-id-9'))
         self.assertFalse(session.resume_was_ignored)
@@ -307,13 +309,13 @@ class WindowsShimBypassTests(unittest.TestCase):
     )
 
     def test_streaming_build_command_bypasses_shim(self) -> None:
-        session = StreamingClaudeSession(task_id='T1', binary='claude')
+        session = StreamingClaudeSession(task_id='T1', binary='claude', cwd=tempfile.gettempdir())
         with mock.patch(self.BYPASS, return_value=['C:\\real\\claude.exe']):
             command = session._build_command()
         self.assertEqual(command[0], 'C:\\real\\claude.exe')
 
     def test_streaming_build_command_falls_back_to_which_result(self) -> None:
-        session = StreamingClaudeSession(task_id='T1', binary='claude')
+        session = StreamingClaudeSession(task_id='T1', binary='claude', cwd=tempfile.gettempdir())
         with mock.patch(self.BYPASS, return_value=None), mock.patch(
             'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
             return_value='/usr/local/bin/claude',
@@ -334,6 +336,7 @@ class ArgvOrderTests(unittest.TestCase):
     def _command(self, **kwargs) -> list[str]:
         session = StreamingClaudeSession(
             task_id='T1',
+            cwd=tempfile.gettempdir(),
             additional_dirs=['/extra/repo'],
             **kwargs,
         )
@@ -396,7 +399,7 @@ class WindowsTreeKillTests(unittest.TestCase):
 
     @staticmethod
     def _session_with_proc(proc):
-        session = StreamingClaudeSession(task_id='T1')
+        session = StreamingClaudeSession(task_id='T1', cwd=tempfile.gettempdir())
         session._proc = proc
         return session
 

@@ -86,7 +86,14 @@ test('deriveTabStatus: ACTIVE with live=true stays ACTIVE regardless of session 
   );
 });
 
-test('deriveTabStatus: working=true overrides stale persisted status', function () {
+test('deriveTabStatus: the polled working flag is NOT an input', function () {
+  // This module answers the WORKSPACE axis only. It used to return WORKING off
+  // the 5s-polled flag, which made it a second source of agent status
+  // competing with the live store: ``deriveAgentStatus`` falls through to this
+  // value for the dot, so a stale poll painted the dot and the tooltip
+  // "working" while the live store — and the in-chat animation, which reads
+  // ``turnInFlight`` — said nothing was running. Agent liveness has exactly
+  // one home now, and it is not here.
   assert.equal(
     deriveTabStatus({
       status: TAB_STATUS.REVIEW,
@@ -94,7 +101,11 @@ test('deriveTabStatus: working=true overrides stale persisted status', function 
       working: true,
       [AGENT_SESSION_ID]: 'sess-1',
     }),
-    TAB_STATUS.WORKING,
+    TAB_STATUS.REVIEW,
+  );
+  assert.equal(
+    deriveTabStatus({ status: TAB_STATUS.ACTIVE, live: true, working: true }),
+    TAB_STATUS.ACTIVE,
   );
 });
 
