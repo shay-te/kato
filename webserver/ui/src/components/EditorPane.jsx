@@ -6,6 +6,7 @@ import { useFindWidgetEscape } from '../hooks/useFindWidgetEscape.js';
 import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
 import {
   useTaskComments,
+  useTaskTree,
   createComment,
   resolveComment,
   reopenComment,
@@ -25,6 +26,7 @@ import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
 import { markdownViewFor } from '../utils/markdownView.js';
+import { importTargetAt, reposFromTrees } from '../utils/importNavigation.js';
 import MarkdownContent from './MarkdownContent.jsx';
 
 /**
@@ -49,6 +51,7 @@ export default function EditorPane({
   openFile,
   onCommentSpawned,
   onViewStateChange,
+  onOpenFile,
 }) {
   const [state, setState] = useState({
     loading: false,
@@ -84,6 +87,21 @@ export default function EditorPane({
   useEffect(() => { appendRef.current = appendToInput; }, [appendToInput]);
   useEffect(() => { onViewStateChangeRef.current = onViewStateChange; }, [onViewStateChange]);
   useEffect(() => { setActiveLineRef.current = setActiveLine; }, []);
+
+  // Cmd/Ctrl+click an import → open the file it points at.
+  //
+  // Resolved against the SAME per-repo file index the Files tab renders
+  // (``useTaskTree``), so a jump can only ever land on a file this task
+  // actually has — including one in a SIBLING REPO, which is the case that
+  // matters here (a backend importing a ``*-core-lib`` that is its own clone
+  // in the task folder). No language server, no new endpoint.
+  const { trees: workspaceTrees } = useTaskTree(taskId);
+  const reposRef = useRef([]);
+  const onOpenFileRef = useRef(onOpenFile);
+  useEffect(() => { onOpenFileRef.current = onOpenFile; }, [onOpenFile]);
+  useEffect(() => {
+    reposRef.current = reposFromTrees(workspaceTrees);
+  }, [workspaceTrees]);
 
   // Monaco editor instance + decoration ids for hover line +
   // glyph-margin ``+``. Stored as refs because the hover effect is
@@ -239,8 +257,82 @@ export default function EditorPane({
     });
   }
 
+  // The import target under a Monaco position, or null. Reads everything
+  // through refs so the mount-time listeners never see a stale file/index.
+  function importTargetAtPosition(position) {
+    if (!position) { return null; }
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    if (!model?.getLineContent) { return null; }
+    let lineText = '';
+    try {
+      lineText = model.getLineContent(position.lineNumber);
+    } catch {
+      return null;
+    }
+    const current = openFileRef.current || {};
+    return importTargetAt({
+      lineText,
+      column: position.column,
+      fromRepoId: current.repoId || '',
+      fromRelativePath: current.relativePath || '',
+      repos: reposRef.current,
+    });
+  }
+
+  // Underline-on-modifier-hover + click-to-open, the VS Code affordance.
+  // Implemented on the editor instance rather than through
+  // ``registerDefinitionProvider``: Monaco's own go-to-definition navigates
+  // between MODELS it already holds, while kato opens files through its tab
+  // system — routing the jump through ``onOpenFile`` keeps one way to open a
+  // file (tab reuse, pinning, per-tab view state) instead of a second one
+  // that bypasses it.
+  function installGoToDefinition(editor, monaco) {
+    if (!editor || !monaco || typeof editor.onMouseDown !== 'function') { return; }
+    const linkDecorations = editor.createDecorationsCollection?.([]) || null;
+    const clearLink = () => linkDecorations?.set?.([]);
+    const isModifier = (event) => !!(event?.metaKey || event?.ctrlKey);
+
+    editor.onMouseMove?.((event) => {
+      if (!isModifier(event?.event)) { clearLink(); return; }
+      const position = event?.target?.position;
+      const target = importTargetAtPosition(position);
+      if (!target || !linkDecorations) { clearLink(); return; }
+      // Underline the whole specifier's line span is too coarse; Monaco gives
+      // us the word range, which is close enough to read as a link without
+      // re-deriving the quote offsets here.
+      const word = editor.getModel?.()?.getWordAtPosition?.(position);
+      if (!word) { clearLink(); return; }
+      linkDecorations.set([{
+        range: new monaco.Range(
+          position.lineNumber, word.startColumn, position.lineNumber, word.endColumn,
+        ),
+        options: { inlineClassName: 'kato-goto-link' },
+      }]);
+    });
+
+    // Any modifier release / leave drops the underline, or it sticks after
+    // the operator lets go of Cmd.
+    editor.onKeyUp?.(() => clearLink());
+    editor.onMouseLeave?.(() => clearLink());
+
+    editor.onMouseDown((event) => {
+      if (!isModifier(event?.event)) { return; }
+      const target = importTargetAtPosition(event?.target?.position);
+      if (!target) { return; }
+      const open = onOpenFileRef.current;
+      if (typeof open !== 'function') { return; }
+      // Monaco's own Cmd+click (word selection / multi-cursor) would fire too.
+      event.event?.preventDefault?.();
+      event.event?.stopPropagation?.();
+      clearLink();
+      open(target);
+    });
+  }
+
   function handleEditorMount(editor, monaco) {
     editorRef.current = editor;
+    installGoToDefinition(editor, monaco);
     if (openFileRef.current?.editorViewState
         && typeof editor.restoreViewState === 'function') {
       editor.restoreViewState(openFileRef.current.editorViewState);
@@ -418,6 +510,28 @@ export default function EditorPane({
     if (activeLine === null || activeLine < 1) { return; }
     editorRef.current?.revealLineInCenterIfOutsideViewport?.(activeLine);
   }, [activeLine]);
+
+  // Jump to the line the OPENER asked for — a content-search hit, or a
+  // go-to-definition landing. Keyed on ``openRequestId`` (not on the line or
+  // the content) so it fires once per explicit open and never on a background
+  // refetch: a poll that re-delivered the same content must not yank the
+  // viewport out from under someone reading further down the file.
+  const revealedRequestRef = useRef(null);
+  useEffect(() => {
+    const line = Number(openFile?.line) || 0;
+    const requestId = openFile?.openRequestId;
+    if (line < 1 || !requestId || revealedRequestRef.current === requestId) { return; }
+    const editor = editorRef.current;
+    // Content arrives asynchronously; wait for the model rather than
+    // revealing into an empty editor.
+    if (!editor || state.loading || !state.content) { return; }
+    revealedRequestRef.current = requestId;
+    editor.revealLineInCenter?.(line);
+    editor.setSelection?.({
+      startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1,
+    });
+    editor.setPosition?.({ lineNumber: line, column: 1 });
+  }, [openFile?.line, openFile?.openRequestId, state.loading, state.content]);
 
   // Comments-at-end zone (anchored after the last line). The anchor
   // line is derived from ``state.content`` — counting newlines is

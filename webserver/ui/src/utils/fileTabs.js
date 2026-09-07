@@ -73,6 +73,12 @@ export function upsertTab(tabs, activeKey, info, taskId) {
     view: info.view === 'diff' ? 'diff' : 'file',
     focusComment: !!info.focusComment,
     kind: String(info.kind || ''),
+    // The line to jump to, when the opener knows one (a content-search hit,
+    // a go-to-definition). The tab patch didn't carry it, so the content
+    // search's ``line`` — which it has always sent — was dropped here and the
+    // editor opened the right file at the top: "it opens the file but won't
+    // scroll to the line I clicked". 0 means "no particular line".
+    line: Number(info.line) > 0 ? Number(info.line) : 0,
     openRequestId: info.openRequestId,
     // An explicit open/focus is NEVER a task-switch restore. Clear the
     // one-shot ``restoreViewState`` flag (stamped on every tab when a task's

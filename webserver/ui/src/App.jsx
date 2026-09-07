@@ -765,6 +765,10 @@ export default function App() {
         openFile={activeOpenFile}
         onCommentSpawned={handleCommentSpawned}
         onViewStateChange={handleFileViewStateChange}
+        // Cmd/Ctrl+click an import opens its file through the SAME opener the
+        // file tree and the content search use, so a jump reuses an open tab
+        // and respects pinning instead of being a second way to open a file.
+        onOpenFile={handleOpenFile}
       />
     );
     // The open-file tab strip stacks directly above the pane, so this

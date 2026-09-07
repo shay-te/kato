@@ -265,3 +265,43 @@ test('togglePin on an unknown key is a no-op', function () {
   assert.equal(togglePin(tabs, 'nope'), tabs);
 });
 
+
+test('upsertTab carries the opener line through to the tab', function () {
+  // The content search has always SENT ``line`` with its click; the tab patch
+  // dropped it, so the editor opened the right file at the top and the
+  // operator's clicked match was somewhere off screen — "it opens the file
+  // but won't scroll to the line I clicked".
+  const { tabs, activeKey } = upsertTab([], null, {
+    absolutePath: '/wk/repo/src/helpers.js',
+    relativePath: 'src/helpers.js',
+    repoId: 'repo',
+    line: 124,
+    openRequestId: 7,
+  }, 'T-1');
+  assert.equal(tabs[0].line, 124);
+  assert.equal(tabs[0].openRequestId, 7);
+  assert.equal(activeKey, '/wk/repo/src/helpers.js');
+});
+
+test('upsertTab normalises a missing or bogus line to 0', function () {
+  const none = upsertTab([], null, { absolutePath: '/a.js' }, 'T-1');
+  assert.equal(none.tabs[0].line, 0);
+  const bogus = upsertTab([], null, { absolutePath: '/b.js', line: 'x' }, 'T-1');
+  assert.equal(bogus.tabs[0].line, 0);
+  const negative = upsertTab([], null, { absolutePath: '/c.js', line: -3 }, 'T-1');
+  assert.equal(negative.tabs[0].line, 0);
+});
+
+test('re-opening the same file at a NEW line updates the line in place', function () {
+  // Clicking a second search hit in a file that is already open must move the
+  // viewport, not silently keep the first line.
+  const first = upsertTab([], null, {
+    absolutePath: '/wk/repo/src/helpers.js', line: 124, openRequestId: 1,
+  }, 'T-1');
+  const second = upsertTab(first.tabs, first.activeKey, {
+    absolutePath: '/wk/repo/src/helpers.js', line: 140, openRequestId: 2,
+  }, 'T-1');
+  assert.equal(second.tabs.length, 1);
+  assert.equal(second.tabs[0].line, 140);
+  assert.equal(second.tabs[0].openRequestId, 2);
+});
