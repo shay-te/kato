@@ -1,5 +1,5 @@
 import {
-  useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { Tree } from 'react-arborist';
 import {
@@ -35,6 +35,9 @@ import {
   repoCommentStatus,
   countVisibleTreeRows,
 } from './FilesTabHelpers.js';
+import { readFileSearchPrefs, writeFileSearchPrefs } from './utils/fileSearchPrefs.js';
+import { fuzzyMatches } from './utils/fuzzyMatch.js';
+import { cx } from './utils/cx.js';
 import { cssEscapeAttr } from './utils/dom.js';
 import { countNoun } from './utils/pluralize.js';
 import { apiErrorMessage } from './utils/apiError.js';
@@ -123,6 +126,19 @@ export default function FilesTab({
   );
   const [collapsed, setCollapsed] = useState(() => new Set());
   const [query, setQuery] = useState('');
+  // VS Code's find-widget narrowings. Remembered per browser: the operator
+  // turned them on to stop a search dragging in loosely-related paths, and a
+  // reload must not quietly widen it back out.
+  const [searchPrefs, setSearchPrefs] = useState(readFileSearchPrefs);
+  const toggleSearchPref = useCallback((key) => {
+    setSearchPrefs((prev) => writeFileSearchPrefs({ ...prev, [key]: !prev[key] }));
+  }, []);
+  // The tree calls this per node on every keystroke; bind the prefs once so a
+  // stable identity keeps react-arborist from re-filtering on every render.
+  const searchMatch = useCallback(
+    (node, term) => matchTreeNode(node, term, searchPrefs),
+    [searchPrefs],
+  );
   // The input itself stays bound to ``query`` (controlled, no input
   // lag), but the tree filter reads ``deferredQuery`` so the
   // potentially expensive node walk in ``matchTreeNode`` runs in a
@@ -528,6 +544,8 @@ export default function FilesTab({
           onOpenPathMenu={openPathMenu}
           onRecheckPush={recheckPush}
           searchTerm={deferredQuery}
+          searchPrefs={searchPrefs}
+          searchMatch={searchMatch}
           conflictedFiles={repoTree.conflictedFiles}
           changedFiles={repoTree.changedFiles}
           diffMeta={diffMeta}
@@ -564,6 +582,33 @@ export default function FilesTab({
           spellCheck={false}
           autoComplete="off"
         />
+        {/* VS Code's find-widget toggles, in its order and its glyphs. Both
+            narrow the SAME matcher the tree and the changed list share, so a
+            term can never filter the two lists differently. */}
+        <button
+          type="button"
+          className={cx('files-tab-filter-toggle', searchPrefs.matchCase && 'is-on')}
+          onClick={() => toggleSearchPref('matchCase')}
+          aria-label="Match case"
+          aria-pressed={searchPrefs.matchCase}
+          title="Match case — Dockerfile stops matching dockerfile.md"
+        >
+          Aa
+        </button>
+        <button
+          type="button"
+          className={cx('files-tab-filter-toggle', searchPrefs.exact && 'is-on')}
+          onClick={() => toggleSearchPref('exact')}
+          aria-label="Match the name exactly"
+          aria-pressed={searchPrefs.exact}
+          title={
+            'Exact — match the typed text literally. Off, the search is also '
+            + 'forgiving about separators and gaps ("authpy" finds auth.py), '
+            + 'which is what drags loosely-related paths into the results.'
+          }
+        >
+          ab
+        </button>
         {query && (
           <button
             type="button"
@@ -825,7 +870,8 @@ function collectFileRelativePaths(nodes, out = []) {
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile, onOpenPathMenu, onRecheckPush,
-  searchTerm = '', conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
+  searchTerm = '', searchPrefs = undefined, searchMatch = matchTreeNode,
+  conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
   commentMeta = EMPTY_COMMENT_META,
   showAllFiles = false, taskId = '', focusFileTarget = null,
   openFile = null,
@@ -873,8 +919,8 @@ function RepoTree({
     repoCommentStatus(commentMeta, moreUrgentCommentStatus, badgeFilePaths),
   );
   const filteredChangedNodes = useMemo(() => {
-    return filterChangedFileTree(changedTree.nodes, searchTerm);
-  }, [changedTree.nodes, searchTerm]);
+    return filterChangedFileTree(changedTree.nodes, searchTerm, searchPrefs);
+  }, [changedTree.nodes, searchTerm, searchPrefs]);
   const hasChangedFiles = changedTree.nodes.length > 0;
   // While filtering, expand by default so the operator sees every
   // matching descendant without clicking through ancestor folders.
@@ -884,8 +930,8 @@ function RepoTree({
   // showing nine files, and the operator scrolled past the empty space to
   // reach the next repo.
   const visibleRowCount = useMemo(
-    () => countVisibleTreeRows(treeData, isFiltering ? searchTerm : ''),
-    [treeData, isFiltering, searchTerm],
+    () => countVisibleTreeRows(treeData, isFiltering ? searchTerm : '', searchPrefs),
+    [treeData, isFiltering, searchTerm, searchPrefs],
   );
   const treeHeight = Math.max(
     28, Math.min(visibleRowCount * 28 + 8, 800),
@@ -1123,7 +1169,7 @@ function RepoTree({
         selection={selectedAllFileId || undefined}
         openByDefault={isFiltering}
         searchTerm={searchTerm}
-        searchMatch={matchTreeNode}
+        searchMatch={searchMatch}
         disableDrag
         disableDrop
         disableEdit
@@ -1565,31 +1611,32 @@ function Node({
   );
 }
 
-export function filterChangedFileTree(nodes, term) {
-  const raw = String(term || '').trim().toLowerCase();
+export function filterChangedFileTree(nodes, term, options) {
+  const raw = String(term || '').trim();
   if (!raw) { return nodes || []; }
   const matches = [];
   for (const node of nodes || []) {
     if (node.kind === 'folder') {
-      const childMatches = filterChangedFileTree(node.children, raw);
-      const folderMatches = String(node.name || '').toLowerCase().includes(raw);
+      const childMatches = filterChangedFileTree(node.children, raw, options);
+      const folderMatches = fuzzyMatches(raw, [node.name], options);
       if (folderMatches || childMatches.length > 0) {
         matches.push({
           ...node,
           children: folderMatches ? node.children : childMatches,
         });
       }
-    } else if (changedFileNodeMatches(node, raw)) {
+    } else if (changedFileNodeMatches(node, raw, options)) {
       matches.push(node);
     }
   }
   return matches;
 }
 
-function changedFileNodeMatches(node, raw) {
-  const name = String(node.name || '').toLowerCase();
-  const path = diffDisplayPath(node.file).toLowerCase();
-  return name.includes(raw) || path.includes(raw);
+// Same matcher — and the same Match case / Exact toggles — as the all-files
+// tree. Two hand-rolled rules would mean the SAME term filtered the two lists
+// differently, which reads as one of them being broken.
+function changedFileNodeMatches(node, raw, options) {
+  return fuzzyMatches(raw, [node.name, diffDisplayPath(node.file)], options);
 }
 
 function changedFileSelectionKey(file) {

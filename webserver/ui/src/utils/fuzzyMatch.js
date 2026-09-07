@@ -38,23 +38,48 @@ export function isSubsequence(needle, haystack) {
   return i === needle.length;
 }
 
-function alphanumeric(text) {
-  return String(text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// ``matchCase`` has to reach HERE too, not just the substring pass. Lowercasing
+// unconditionally meant "Match case" was half-on: ``Dockerfile`` failed the
+// case-sensitive substring test and then matched ``dockerfile.md`` anyway
+// through the subsequence fallback, so the toggle looked broken.
+function alphanumeric(text, matchCase = false) {
+  const raw = String(text || '');
+  return matchCase
+    ? raw.replace(/[^A-Za-z0-9]/g, '')
+    : raw.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 // Does ``term`` match ANY of ``targets``? Targets are the strings worth
 // searching for one item (a file's name and its path; a task's id and
 // its summary).
-export function fuzzyMatches(term, targets) {
-  const raw = String(term || '').trim().toLowerCase();
+//
+// Two opt-in narrowings, the VS Code find-widget toggles:
+//
+//   ``matchCase``  compare case-sensitively — ``Dockerfile`` stops matching
+//                  ``dockerfile.md``.
+//   ``exact``      substring ONLY: skip the separator-insensitive subsequence
+//                  half above. That half is what makes "authpy" find
+//                  ``auth.py``, and it is also what makes a search for a
+//                  specific file drag in a long tail of loosely-related
+//                  paths — "search the exact name of the file and not a vague
+//                  search".
+//
+// Both default OFF, so every existing caller keeps the lenient behaviour.
+export function fuzzyMatches(term, targets, { matchCase = false, exact = false } = {}) {
+  const trimmed = String(term || '').trim();
+  const raw = matchCase ? trimmed : trimmed.toLowerCase();
   if (!raw) { return true; }
   const list = (Array.isArray(targets) ? targets : [targets])
-    .map((value) => String(value || '').toLowerCase())
+    .map((value) => {
+      const text = String(value || '');
+      return matchCase ? text : text.toLowerCase();
+    })
     .filter(Boolean);
   if (list.some((value) => value.includes(raw))) { return true; }
-  const needle = alphanumeric(raw);
+  if (exact) { return false; }
+  const needle = alphanumeric(raw, matchCase);
   if (!needle) { return true; }
-  return list.some((value) => isSubsequence(needle, alphanumeric(value)));
+  return list.some((value) => isSubsequence(needle, alphanumeric(value, matchCase)));
 }
 
 // Rank a match for sorting — LOWER is better. Exact beats prefix beats

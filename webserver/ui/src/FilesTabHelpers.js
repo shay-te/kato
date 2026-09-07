@@ -156,9 +156,9 @@ export function activateTreeNode(node) {
 //
 // Folders only need to match themselves: react-arborist already keeps
 // the ancestors of any matching descendant visible.
-export function matchTreeNode(node, term) {
+export function matchTreeNode(node, term, options) {
   const data = node?.data || {};
-  return fuzzyMatches(term, [data.name, data.relativePath]);
+  return fuzzyMatches(term, [data.name, data.relativePath], options);
 }
 
 // How many rows the tree will actually draw, for sizing its viewport.
@@ -172,7 +172,7 @@ export function matchTreeNode(node, term) {
 //                  drawn to reach it (the tree opens by default while
 //                  filtering, so those ancestors are visible rows too);
 //   - otherwise  → the roots, since folders start closed.
-export function countVisibleTreeRows(nodes, term) {
+export function countVisibleTreeRows(nodes, term, options) {
   const query = String(term || '').trim();
   if (!query) { return Array.isArray(nodes) ? nodes.length : 0; }
 
@@ -181,7 +181,7 @@ export function countVisibleTreeRows(nodes, term) {
     let rows = 0;
     for (const node of list) {
       const children = countMatching(node?.children);
-      const self = matchTreeNode({ data: node || {} }, query);
+      const self = matchTreeNode({ data: node || {} }, query, options);
       // A folder is drawn when it matches OR when it leads to a match.
       if (self || children > 0) { rows += 1 + children; }
     }

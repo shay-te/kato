@@ -108,12 +108,12 @@ describe('PermissionModal — rendering', () => {
     );
     // A markdown heading renders as a real <h*> (raw text would not).
     expect(screen.getByRole('heading', { name: /My Plan/i })).toBeInTheDocument();
-    // The plan renders inside the markdown container: two list items, and
+    // The plan renders inside the plan dialog's own body: two list items, and
     // the raw "# " marker is consumed (not shown as literal text).
-    const md = container.querySelector('.permission-field-markdown');
-    expect(md).toBeInTheDocument();
-    expect(md.querySelectorAll('li')).toHaveLength(2);
-    expect(md.textContent).not.toContain('# My Plan');
+    const body = container.querySelector('.exit-plan-body');
+    expect(body).toBeInTheDocument();
+    expect(body.querySelectorAll('li')).toHaveLength(2);
+    expect(body.textContent).not.toContain('# My Plan');
   });
 
   test('empty / missing tool input shows "(no arguments)"', () => {
@@ -472,14 +472,43 @@ describe('PermissionModal — permission-changing tools are never remembered', (
     return _raw({ request: { request_id: 'req-1', tool_name: toolName, input: {} } });
   }
 
-  test('ExitPlanMode does not offer "Allow always"', () => {
-    // Leaving plan mode is the whole of plan mode's enforcement, and the
-    // grant would be stored under the bare tool name — global across every
-    // task, surviving restarts. One click would disarm the lock everywhere.
-    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={vi.fn()} />);
+  test('ExitPlanMode asks about the PLAN, and never offers to remember it', () => {
+    // Leaving plan mode is the whole of plan mode's enforcement, and a
+    // remembered grant would be stored under the bare tool name — global
+    // across every task, surviving restarts. One click would disarm the lock
+    // everywhere, so the plan dialog has no remember affordance at all.
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={onDecide} />);
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
-    // The one-off decision is still available.
-    expect(screen.getByRole('button', { name: /allow once/i })).toBeTruthy();
+    // ...and it reads as the decision it actually is, not as a tool grant.
+    expect(screen.queryByRole('button', { name: /allow once/i })).toBeNull();
+    const approve = screen.getByRole('button', { name: /start implementing/i });
+    expect(screen.getByRole('button', { name: /keep planning/i })).toBeTruthy();
+
+    fireEvent.click(approve);
+    expect(onDecide.mock.calls[0][0]).toMatchObject({ allow: true, remember: false });
+  });
+
+  test('"Keep planning" denies and carries the operator feedback back', () => {
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={onDecide} />);
+    fireEvent.change(
+      screen.getByPlaceholderText(/what should change about the plan/i),
+      { target: { value: 'split step two' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /keep planning/i }));
+    expect(onDecide.mock.calls[0][0]).toMatchObject({
+      allow: false, remember: false, rationale: 'split step two',
+    });
+  });
+
+  test('with no plan in the envelope it points at the centre pane', () => {
+    // kato writes plan.md from the ExitPlanMode event and renders it there;
+    // the envelope's ``input`` is often empty. Saying where the plan is beats
+    // the generic body's "(no arguments)".
+    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={vi.fn()} />);
+    expect(screen.queryByText(/\(no arguments\)/)).toBeNull();
+    expect(screen.getByText(/plan\.md/)).toBeInTheDocument();
   });
 
   test('an ordinary tool still offers "Allow always"', () => {
@@ -487,14 +516,15 @@ describe('PermissionModal — permission-changing tools are never remembered', (
     expect(screen.getByRole('button', { name: /allow always/i })).toBeTruthy();
   });
 
-  test('Shift+Enter cannot smuggle a remembered ExitPlanMode grant', () => {
-    // The keyboard path has its own remember flag — it must respect the
-    // same withholding, or the button being hidden means nothing.
+  test('no stray keystroke can approve a plan', () => {
+    // The plan dialog opts OUT of the global Enter/Esc shortcuts (like the
+    // answer form): "start implementing" must come from the button, not from
+    // whatever the operator happened to be pressing when the dialog appeared.
     const onDecide = vi.fn();
     render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={onDecide} />);
     fireEvent.keyDown(window, { key: 'Enter', shiftKey: true });
-    expect(onDecide).toHaveBeenCalled();
-    expect(onDecide.mock.calls[0][0].remember).toBe(false);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(onDecide).not.toHaveBeenCalled();
   });
 });
 

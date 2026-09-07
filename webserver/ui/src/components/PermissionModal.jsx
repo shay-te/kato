@@ -9,6 +9,7 @@ import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import { backendLabel } from './AgentBackendChip.jsx';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
+import ExitPlanModeForm from './ExitPlanModeForm.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
 
 export default function PermissionModal({
@@ -36,6 +37,11 @@ export default function PermissionModal({
   // shortcuts below can skip the AskUserQuestion form, which has its own
   // controls. See the ``if (askQuestions)`` branch further down.
   const askQuestions = extractAnswerableQuestions(toolInput);
+  // Plan approval has its own two-button form (see the ExitPlanMode branch),
+  // so like the answer form it opts OUT of the global Enter/Esc shortcuts:
+  // "start implementing" is not a keystroke that should fire from whatever
+  // the operator happened to be pressing.
+  const isPlanApproval = toolName === 'ExitPlanMode';
   // Out-of-task asks, high-risk Action Guard categories, AND permission-
   // changing tools never offer the remembered ("Allow always") scope — a
   // persisted grant for those is exactly what must never be one click (or
@@ -70,7 +76,7 @@ export default function PermissionModal({
   // keydown still reached the composer's own handler and sent the draft.
   // That was the second half of the double-fire.
   useEffect(() => {
-    if (!raw || askQuestions) { return undefined; }
+    if (!raw || askQuestions || isPlanApproval) { return undefined; }
     function onKeyDown(event) {
       const target = event.target || document.activeElement;
       const tag = target && target.tagName;
@@ -105,7 +111,7 @@ export default function PermissionModal({
     }
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [raw, askQuestions, withholdAllowAlways, rationale, requestId, toolName, command, onDecide]);
+  }, [raw, askQuestions, isPlanApproval, withholdAllowAlways, rationale, requestId, toolName, command, onDecide]);
 
   if (!raw) { return null; }
 
@@ -212,6 +218,45 @@ export default function PermissionModal({
             allow: false,
             rationale: 'The user dismissed the question without answering.',
             remember: false, requestId, toolName, command,
+          })}
+        />
+      </DialogShell>
+    );
+  }
+
+  // ``ExitPlanMode`` is a decision about the PLAN, not a tool permission.
+  // Rendered by the generic body it read as "Claude wants permission
+  // ExitPlanMode / (no arguments)" over a raw JSON envelope, with Deny and
+  // Allow once — none of which says what is being approved. Same treatment as
+  // the answerable-question ask: its own form, in the operator's language.
+  if (isPlanApproval) {
+    return (
+      <DialogShell
+        id="permission-modal"
+        ariaLabelledBy="permission-modal-title"
+        title={title}
+        subtitle={queuedNote}
+        subtitleId="permission-queued-note"
+        inline={inline}
+      >
+        <ExitPlanModeForm
+          key={requestId}
+          plan={typeof toolInput?.plan === 'string' ? toolInput.plan : ''}
+          agentName={agentName}
+          onApprove={() => onDecide({
+            allow: true, rationale: '', remember: false,
+            requestId, toolName, command,
+          })}
+          // "Keep planning" is a DENY carrying the operator's feedback — the
+          // same channel the rationale box used, so the agent reads why it is
+          // still planning instead of just being refused.
+          onKeepPlanning={(feedback) => onDecide({
+            allow: false,
+            rationale: feedback || 'Keep planning — do not start implementing yet.',
+            remember: false,
+            requestId,
+            toolName,
+            command,
           })}
         />
       </DialogShell>

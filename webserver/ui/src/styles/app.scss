@@ -4462,6 +4462,48 @@ code {
   min-height: 0;
 }
 
+// Plan approval (ExitPlanMode). Same column-with-a-scrolling-middle shape as
+// the answer form above, for the same reason: a long plan must scroll while
+// the two decisions stay pinned and reachable.
+.exit-plan {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-12;
+  min-height: 0;
+}
+
+.exit-plan-lead {
+  margin: 0;
+}
+
+.exit-plan-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  padding: $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.exit-plan-empty {
+  margin: 0;
+  color: $C-NEUTRAL-64;
+}
+
+.exit-plan-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-4;
+}
+
+.exit-plan-feedback-label {
+  color: $C-NEUTRAL-64;
+}
+
+.exit-plan-feedback-input {
+  width: 100%;
+  resize: vertical;
+}
+
 // Same clipping guard for the standard permission dialog: giant tool
 // arguments scroll while the rationale box + Deny/Allow stay visible.
 #permission-fields {
@@ -5710,7 +5752,7 @@ body.kato-resizing {
   height: $ICON-BOX-LG;
   /* Vertical centring is the height's job now; the horizontal padding still
    * reserves room for the leading icon (left) and the clear button (right). */
-  padding: 0 $SPACE-30 0 $SPACE-32;
+  padding: 0 $SPACE-72 0 $SPACE-32;
   font: inherit;
   font-size: $TEXT-12;
   outline: none;
@@ -5752,6 +5794,42 @@ body.kato-resizing {
 
 .files-tab-filter-scope:hover {
   color: $C-NEUTRAL-96;
+}
+
+
+/* Match case / Exact toggles, VS Code's find-widget pair, inside the search
+ * capsule and left of the clear button. Both narrow the SAME matcher the tree
+ * and the changed-files list share. ``is-on`` is the pressed state — it has to
+ * read as ON at a glance, so it takes the accent colour rather than a subtle
+ * background shift. */
+.files-tab-filter-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: $RADIUS-4;
+  color: $C-NEUTRAL-96-A42;
+  cursor: pointer;
+  font-size: $TEXT-11;
+  line-height: 1;
+  padding: 0;
+  width: $ICON-BOX-SM;
+  height: $ICON-BOX-SM;
+}
+
+.files-tab-filter-toggle:nth-of-type(1) { right: 48px; }
+.files-tab-filter-toggle:nth-of-type(2) { right: 26px; }
+
+.files-tab-filter-toggle:hover {
+  color: $C-NEUTRAL-96;
+  background: $C-NEUTRAL-100-A06;
+}
+
+.files-tab-filter-toggle.is-on {
+  color: $C-CYAN-52;
+  border-color: $C-CYAN-52-A55;
+  background: $C-NEUTRAL-100-A06;
 }
 
 .files-tab-filter-clear {
