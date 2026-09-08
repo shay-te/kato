@@ -41,33 +41,20 @@ test('the filter row is allowed to wrap', () => {
   assert.match(ruleBody('.files-tab-filter {'), /flex-wrap:\s*wrap/);
 });
 
-test('the field is a small pill at rest and the whole row when in use', () => {
-  // Spotlight-style. The pane is narrow, and the field shared its line with
-  // the repo picker and five buttons — there was no room for the search text
-  // AND the Match case / Exact toggles, so the toggles rendered on top of the
-  // placeholder. Collapsed it is one icon wide; focused it takes a 100% basis
-  // and the wrapping row pushes everything else to the next line.
-  assert.match(ruleBody('.files-tab-filter-field {'), /flex:\s*0\s+0\s+28px/);
-  assert.match(ruleBody('.files-tab-filter-field:focus-within,'), /flex:\s*1\s+1\s+100%/);
+test('the field owns the whole top row', () => {
+  // It used to share the line with the repo picker and five buttons, and at
+  // that width the Match case / Exact toggles rendered on top of the
+  // placeholder. A collapse-on-blur version fixed the overlap but jumped
+  // between a pill and a full row on every focus change; a permanent
+  // full-width row is calmer and always shows what is being searched.
+  assert.match(ruleBody('.files-tab-filter-field {'), /flex:\s*1\s+1\s+100%/);
 });
 
-test('a live query keeps the field open after blur', () => {
-  // Collapsing a field that is still FILTERING the tree hides why the tree
-  // looks the way it does — ``is-active`` shares the focused rule.
-  const at = css.indexOf('.files-tab-filter-field:focus-within,');
-  const selector = css.slice(at, css.indexOf('{', at));
-  assert.match(selector, /\.files-tab-filter-field\.is-active/);
-});
-
-test('collapsed, nothing renders on top of the icon', () => {
-  // The placeholder, the toggles and the clear button all live inside a field
-  // that is one icon wide when closed. This is the rule that stops them
-  // overlapping — the reported "Aa ab" sitting across "Search files…".
-  const at = css.indexOf('.files-tab-filter-field:not(:focus-within):not(.is-active)');
-  assert.ok(at !== -1, 'no collapsed-state rules emitted');
-  const block = css.slice(at, at + 700);
-  assert.match(block, /::placeholder[\s\S]{0,60}opacity:\s*0/);
-  assert.match(block, /filter-toggle[\s\S]{0,120}display:\s*none/);
+test('nothing collapses the field any more', () => {
+  // The collapsed-state rules hid the placeholder and the toggles. With the
+  // field always full width there is nothing to hide, and leaving them would
+  // blank the controls the moment focus left.
+  assert.equal(css.includes(':not(:focus-within):not(.is-active)'), false);
 });
 
 test('the field is the positioning context for its icon and clear button', () => {
