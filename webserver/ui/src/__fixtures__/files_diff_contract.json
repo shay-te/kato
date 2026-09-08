@@ -80,6 +80,7 @@
     ],
     "trees": [
       {
+        "branch": "PROJ-CONTRACT",
         "changed_files": [
           "src/app.py",
           "src/helper.py"

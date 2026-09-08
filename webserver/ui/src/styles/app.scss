@@ -6142,6 +6142,24 @@ body.kato-resizing {
   justify-content: center;
 }
 
+/* The branch the clone is actually on, beside the repo name. Quiet by design
+ * — it is reference information, not a state to act on — but present, because
+ * a clone stranded on the default branch looks identical to a healthy one
+ * until its work fails to push. */
+.files-tab-repo-branch {
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 $SPACE-6;
+  border: 1px solid $C-NEUTRAL-25-A45;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  line-height: $SPACE-16;
+}
+
 .files-tab-repo-name {
   color: $C-NEUTRAL-96;
   font-weight: 600;

@@ -15,6 +15,10 @@ export function normalizeTrees(payload) {
       return {
         repo_id: String(entry?.repo_id || '') || basenameOf(cwd),
         cwd,
+        // Which branch the clone is on. Surfaced in the repo header because a
+        // clone stranded on the default branch (a branch prep that failed)
+        // looks exactly like a healthy one until its work fails to push.
+        branch: String(entry?.branch || ''),
         tree: entry?.tree || [],
         conflictedFiles: new Set(conflicts),
         changedFiles: new Set(changed),

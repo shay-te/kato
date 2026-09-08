@@ -2604,6 +2604,12 @@ def _register_http_routes(app: Flask) -> None:
                     'repo_id': repo_id,
                     'cwd': cwd,
                     'read_only': repo_id in read_only_ids,
+                    # Which branch this clone is actually ON. The operator
+                    # could see a repo's files and its diff but nothing said
+                    # what they were relative to — and a clone stranded on the
+                    # default branch (a failed branch prep) looks exactly like
+                    # a healthy one until its work fails to push.
+                    'branch': current_branch(cwd) or '',
                     'tree': tracked_file_tree(cwd),
                     # Conflict markers — same source as the Changes
                     # tab. UI marks each path with a warning icon so

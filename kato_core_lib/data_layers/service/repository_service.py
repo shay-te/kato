@@ -1924,9 +1924,31 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         must survive on disk (see the merge call site). Returns what it
         excluded so the caller can tell an emptied index from an untouched one.
         """
+        # A "generated artifact" is only disposable if the repo does not TRACK
+        # it. The classification is a bare top-level-name match against
+        # {build, dist, out, coverage, target}, and some repos genuinely commit
+        # their build output — ``ob-love-admin-client`` has 446 files under
+        # ``build/`` on master.
+        #
+        # Unstaging one of those leaves it DIRTY in the working tree, and the
+        # caller's whole justification for that is "these paths don't exist on
+        # the default branch, so they cannot conflict". When they do exist, git
+        # refuses the merge outright:
+        #
+        #   error: Your local changes to the following files would be
+        #   overwritten by merge: build/asset-manifest.json, build/index.html
+        #
+        # ...and every "Merge master" click failed with nothing the operator
+        # could do about it. Asking git whether the path is on the destination
+        # branch replaces the guess with the fact.
+        destination = self._merge_exclusion_reference(local_path, repository)
         excluded = [
             *self._validation_report_paths_from_status(status_output),
-            *self._generated_artifact_paths_from_status(status_output),
+            *[
+                path
+                for path in self._generated_artifact_paths_from_status(status_output)
+                if not self._path_exists_on_ref(local_path, destination, path)
+            ],
         ]
         for path in excluded:
             self._run_git(
@@ -1936,6 +1958,42 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 repository,
             )
         return excluded
+
+    def _merge_exclusion_reference(self, local_path: str, repository) -> str:
+        """The ref to ask "is this path part of the repo?" — '' when unknown.
+
+        Prefers ``origin/<destination>`` and falls back to the local branch,
+        the same order the diff comparison uses. An unknown destination yields
+        '' and every artifact is treated as untracked, i.e. the old behaviour.
+        """
+        try:
+            destination = text_from_attr(repository, 'destination_branch') \
+                or self.destination_branch(repository)
+        except Exception:
+            return ''
+        if not destination:
+            return ''
+        try:
+            return self._comparison_reference(local_path, destination)
+        except Exception:
+            return ''
+
+    def _path_exists_on_ref(self, local_path: str, ref: str, path: str) -> bool:
+        """Is ``path`` present in ``ref``'s tree? False when it cannot be told.
+
+        False is the safe default: it keeps the pre-existing "exclude it"
+        behaviour, so a git hiccup can never start sweeping a repo's committed
+        build output into a WIP commit.
+        """
+        if not ref or not path:
+            return False
+        try:
+            result = self._run_git_subprocess(
+                local_path, ['cat-file', '-e', f'{ref}:{path}'], None,
+            )
+        except Exception:
+            return False
+        return getattr(result, 'returncode', 1) == 0
 
     def _staged_paths(self, local_path: str) -> list[str]:
         output = self._git_stdout(

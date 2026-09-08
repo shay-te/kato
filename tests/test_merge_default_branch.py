@@ -247,6 +247,99 @@ class MergeRealGitTests(unittest.TestCase):
         ).stdout
         self.assertIn('WIP: save in-progress work', log)
 
+    def test_merges_a_repo_that_COMMITS_its_build_output(self) -> None:
+        """A tracked ``build/`` is part of the repo, not a disposable artifact.
+
+        The publication exclusions unstage anything under a top-level
+        {build,dist,out,coverage,target} — a bare NAME match — and the merge
+        path leaves those paths dirty on the justification that "they don't
+        exist on the default branch, so they cannot conflict". Some repos
+        genuinely commit their build output (``ob-love-admin-client`` has 446
+        files under ``build/`` on master), and there git refuses outright:
+
+            error: Your local changes to the following files would be
+            overwritten by merge: build/asset-manifest.json, build/index.html
+
+        Every "Merge master" click failed with nothing the operator could do.
+        """
+        tmp = self.tmp
+        origin, work = tmp / 'o2.git', tmp / 'seed2'
+        work.mkdir()
+        _git(work, 'init', '-q')
+        _git(work, 'config', 'user.email', 't@example.com')
+        _git(work, 'config', 'user.name', 'Test')
+        _git(work, 'checkout', '-q', '-b', 'main')
+        # The repo COMMITS its build output — tracked on the default branch.
+        (work / 'shared.txt').write_text('base\n', encoding='utf-8')
+        (work / 'build').mkdir()
+        (work / 'build' / 'index.html').write_text('built v1\n', encoding='utf-8')
+        _git(work, 'add', '-A')
+        _git(work, 'commit', '-q', '-m', 'base + build output')
+        _git(work, 'clone', '-q', '--bare', str(work), str(origin))
+        _git(work, 'remote', 'add', 'origin', str(origin))
+
+        clone = tmp / 'clone2'
+        _git(tmp, 'clone', '-q', str(origin), str(clone))
+        _git(clone, 'config', 'user.email', 't@example.com')
+        _git(clone, 'config', 'user.name', 'Test')
+        _git(clone, 'checkout', '-q', '-b', 'feat/y', 'main')
+        _git(clone, 'commit', '-q', '--allow-empty', '-m', 'task work')
+
+        # main moves, and it moves the BUILD OUTPUT too.
+        (work / 'build' / 'index.html').write_text('built v2\n', encoding='utf-8')
+        _git(work, 'add', '-A')
+        _git(work, 'commit', '-q', '-m', 'main rebuilt')
+        _git(work, 'push', '-q', 'origin', 'main')
+
+        # A local rebuild leaves the tracked file dirty — the real situation.
+        (clone / 'build' / 'index.html').write_text('built locally\n', encoding='utf-8')
+
+        repo = SimpleNamespace(id='client', local_path=str(clone),
+                               destination_branch='main')
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/y')
+
+        # A REAL three-way merge happened. Before, git aborted before merging
+        # anything — "would be overwritten by merge … Aborting" — and the
+        # operator had no move: the file kato left dirty was the blocker.
+        self.assertNotIn('would be overwritten', str(out))
+        self.assertTrue(out['conflicts'], out)
+        self.assertEqual(out['conflicted_files'], ['build/index.html'])
+
+        # The local rebuild was preserved as a commit rather than left dirty…
+        log = subprocess.run(
+            ['git', 'log', '--oneline', '-3'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout
+        self.assertIn('WIP: save in-progress work', log)
+        # …and the conflict is in the tree with markers, which is kato's
+        # documented contract: the agent resolves it by editing files.
+        self.assertIn(
+            '<<<<<<<',
+            (clone / 'build' / 'index.html').read_text(encoding='utf-8'),
+        )
+
+    def test_untracked_build_output_is_still_excluded_from_the_wip_commit(self) -> None:
+        """The exclusion still holds for a repo that does NOT commit build/.
+
+        Only tracked-ness changed. A repo whose build output is genuinely
+        disposable must keep it out of the WIP commit — otherwise the fix for
+        the tracked case would start shipping build artifacts into PRs.
+        """
+        clone, repo = _build_repo_with_diverged_default(self.tmp)
+        (clone / 'build').mkdir()
+        (clone / 'build' / 'bundle.js').write_text('generated\n', encoding='utf-8')
+        (clone / 'agent-notes.txt').write_text('real work\n', encoding='utf-8')
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertTrue(out['merged'], out)
+        tracked = subprocess.run(
+            ['git', 'ls-files', 'build'], cwd=str(clone),
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertEqual(tracked, '', 'disposable build output must not be committed')
+        self.assertTrue((clone / 'build' / 'bundle.js').is_file())
+
     def test_wip_commit_never_tracks_the_validation_report(self) -> None:
         """The report is the PR description, not a file to ship.
 

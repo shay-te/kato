@@ -911,6 +911,7 @@ function RepoTree({
     return attachIds(repoTree.tree, repoTree.cwd);
   }, [repoTree.tree, repoTree.cwd]);
   const heading = repoTree.repo_id || repoTree.cwd || 'repo';
+  const repoBranch = String(repoTree.branch || '').trim();
   // The task folder is not a git repo, so "changed" has no meaning there and
   // the changed-files view can only ever say "Nothing changed yet" — hiding
   // the plan and PR-description files the agent actually wrote. Sections
@@ -1231,6 +1232,14 @@ function RepoTree({
             (not the whole header) so it never doubles up with the
             commits button's own tooltip. */}
         <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
+        {repoBranch && (
+          <span
+            className="files-tab-repo-branch"
+            data-tooltip={`${heading} is on branch ${repoBranch}`}
+          >
+            {repoBranch}
+          </span>
+        )}
         {headerStats}
         {repoTree.readOnly && (
           <button
