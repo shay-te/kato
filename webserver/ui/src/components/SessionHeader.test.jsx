@@ -497,6 +497,40 @@ describe('SessionHeader — Push / Pull / PR buttons', () => {
     expect(merge).not.toHaveAttribute('data-tooltip', expect.stringMatching(/no git workspace/i));
   });
 
+  test('Update source reports the LOAD failure, not "no workspace"', () => {
+    // A failed publish fetch keeps the empty default (hasWorkspace: false), so
+    // reading that field first made an unreachable server look like a task
+    // with no clone on disk — the operator went hunting for a provisioning
+    // problem that did not exist. Every other button leads with the shared
+    // blocked-reason; this one was the outlier.
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false, publishStateReady: false, publishStateError: true,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    const update = screen.getByRole('button', { name: /update source/i });
+    expect(update).toBeDisabled();
+    expect(update).toHaveAttribute(
+      'data-tooltip', expect.stringMatching(/isn't responding/i),
+    );
+    expect(update).not.toHaveAttribute(
+      'data-tooltip', expect.stringMatching(/no workspace for this task/i),
+    );
+  });
+
+  test('Update source still says so when there really is no workspace', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({
+      hasWorkspace: false, publishStateReady: true, publishStateError: false,
+    }));
+    render(
+      <SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    expect(screen.getByRole('button', { name: /update source/i })).toHaveAttribute(
+      'data-tooltip', expect.stringMatching(/no git workspace clone/i),
+    );
+  });
+
   test('git buttons say the server "isn\'t responding" on a failed/timed-out fetch', () => {
     useTaskPublish.mockReturnValue(_defaultTaskPublish({
       hasWorkspace: false, publishStateReady: false, publishStateError: true,

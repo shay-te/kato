@@ -23,9 +23,16 @@ const css = readFileSync(
   'utf8',
 ).replace(/\/\*[\s\S]*?\*\//g, '');
 
+// Anchored at a TOP-LEVEL selector (start of line in expanded sass output).
+// A bare ``indexOf`` also matches the same class inside a DESCENDANT selector
+// — ``.files-tab-filter-field:not(...) .files-tab-filter-clear`` — so once a
+// nested rule was emitted earlier in the file, these assertions silently
+// started reading the wrong block (it returned ``display: none`` for the
+// clear button and the position assertion failed for the right reason on the
+// wrong rule).
 function ruleBody(selector) {
-  const at = css.indexOf(selector);
-  assert.ok(at !== -1, `no rule emitted for ${selector}`);
+  const at = css.indexOf(`\n${selector}`);
+  assert.ok(at !== -1, `no top-level rule emitted for ${selector}`);
   const open = css.indexOf('{', at);
   return css.slice(open + 1, css.indexOf('}', open));
 }
@@ -34,11 +41,33 @@ test('the filter row is allowed to wrap', () => {
   assert.match(ruleBody('.files-tab-filter {'), /flex-wrap:\s*wrap/);
 });
 
-test('the field keeps a usable width instead of being squeezed', () => {
-  // A flex-basis, not a width: it still grows to fill a wide pane, but never
-  // collapses below the basis — it takes the whole row instead.
-  const body = ruleBody('.files-tab-filter-field {');
-  assert.match(body, /flex:\s*1\s+1\s+\d+px/);
+test('the field is a small pill at rest and the whole row when in use', () => {
+  // Spotlight-style. The pane is narrow, and the field shared its line with
+  // the repo picker and five buttons — there was no room for the search text
+  // AND the Match case / Exact toggles, so the toggles rendered on top of the
+  // placeholder. Collapsed it is one icon wide; focused it takes a 100% basis
+  // and the wrapping row pushes everything else to the next line.
+  assert.match(ruleBody('.files-tab-filter-field {'), /flex:\s*0\s+0\s+28px/);
+  assert.match(ruleBody('.files-tab-filter-field:focus-within,'), /flex:\s*1\s+1\s+100%/);
+});
+
+test('a live query keeps the field open after blur', () => {
+  // Collapsing a field that is still FILTERING the tree hides why the tree
+  // looks the way it does — ``is-active`` shares the focused rule.
+  const at = css.indexOf('.files-tab-filter-field:focus-within,');
+  const selector = css.slice(at, css.indexOf('{', at));
+  assert.match(selector, /\.files-tab-filter-field\.is-active/);
+});
+
+test('collapsed, nothing renders on top of the icon', () => {
+  // The placeholder, the toggles and the clear button all live inside a field
+  // that is one icon wide when closed. This is the rule that stops them
+  // overlapping — the reported "Aa ab" sitting across "Search files…".
+  const at = css.indexOf('.files-tab-filter-field:not(:focus-within):not(.is-active)');
+  assert.ok(at !== -1, 'no collapsed-state rules emitted');
+  const block = css.slice(at, at + 700);
+  assert.match(block, /::placeholder[\s\S]{0,60}opacity:\s*0/);
+  assert.match(block, /filter-toggle[\s\S]{0,120}display:\s*none/);
 });
 
 test('the field is the positioning context for its icon and clear button', () => {

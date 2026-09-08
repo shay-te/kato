@@ -28,7 +28,7 @@ import {
   pushTask,
 } from '../api.js';
 import { toastResult } from '../stores/toastStore.js';
-import { useTaskPublish } from './useTaskPublish.js';
+import { RETRY_DELAY_MS, useTaskPublish } from './useTaskPublish.js';
 
 
 beforeEach(() => {
@@ -312,5 +312,72 @@ describe('useTaskPublish — actions', () => {
     await act(async () => { await result.current.push(); });
 
     await waitFor(() => expect(result.current.hasChangesToPush).toBe(false));
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// A failed publish fetch must not strand the git buttons.
+//
+// They gate on ``publishStateReady`` / ``publishStateError``, and an error was
+// TERMINAL: nothing refetched it, so the only way back was the mount effect —
+// switching tabs. Reported as "the buttons remain disabled after I do update
+// source, I have to shift tabs on kato to get them enabled again", and the
+// tooltip literally said "Reopen the task to retry."
+//
+// It surfaces after a long git action because that is when the refresh is most
+// likely to fail: update-source can hold the workspace, and this fetch gives
+// up after 8s.
+// ---------------------------------------------------------------------------
+
+describe('useTaskPublish — a failed publish fetch recovers on its own', () => {
+  beforeEach(() => {
+    // ``shouldAdvanceTime`` so testing-library's ``waitFor`` (which polls on
+    // real timers) still makes progress while we control the retry clock.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  test('retries once after an error and re-enables when it succeeds', async () => {
+    fetchTaskPublishState
+      .mockRejectedValueOnce(new Error('8000ms timeout'))
+      .mockResolvedValue({ has_workspace: true, has_changes_to_push: false });
+
+    const { result } = renderHook(() => useTaskPublish('T-retry-1'));
+
+    await waitFor(() => expect(result.current.publishStateError).toBe(true));
+    expect(result.current.publishStateReady).toBe(false);
+
+    // ...and then it recovers itself — no remount, no tab switch.
+    await act(async () => { vi.advanceTimersByTime(RETRY_DELAY_MS); });
+    await waitFor(() => expect(result.current.publishStateReady).toBe(true));
+    expect(result.current.publishStateError).toBe(false);
+    expect(result.current.hasWorkspace).toBe(true);
+    expect(fetchTaskPublishState).toHaveBeenCalledTimes(2);
+  });
+
+  test('a still-broken server gets ONE retry, not a poll loop', async () => {
+    // The publish state is deliberately never polled; a permanent failure must
+    // not quietly turn this into a poller.
+    fetchTaskPublishState.mockRejectedValue(new Error('down'));
+
+    const { result } = renderHook(() => useTaskPublish('T-retry-2'));
+    await waitFor(() => expect(result.current.publishStateError).toBe(true));
+
+    await act(async () => { vi.advanceTimersByTime(RETRY_DELAY_MS * 10); });
+    expect(fetchTaskPublishState).toHaveBeenCalledTimes(2);
+  });
+
+  test('a healthy fetch never schedules a retry', async () => {
+    fetchTaskPublishState.mockResolvedValue({
+      has_workspace: true, has_changes_to_push: false,
+    });
+
+    const { result } = renderHook(() => useTaskPublish('T-retry-3'));
+    await waitFor(() => expect(result.current.publishStateReady).toBe(true));
+
+    await act(async () => { vi.advanceTimersByTime(RETRY_DELAY_MS * 5); });
+    expect(fetchTaskPublishState).toHaveBeenCalledTimes(1);
   });
 });

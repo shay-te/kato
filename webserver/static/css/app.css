@@ -5595,14 +5595,33 @@ body.kato-resizing {
  * with the row now able to wrap, anchoring to it would leave them floating
  * over whichever line came first, and the icon vertically centred across
  * BOTH lines. */
+/* Spotlight-style: a small glass pill at rest, the WHOLE row while you use it.
+ *
+ * The files pane is narrow, and the field shared its line with the repo picker
+ * and five action buttons. At that width there was no room for the search
+ * text AND the Match case / Exact toggles, so the toggles sat on top of the
+ * placeholder — the field was advertising a search you could not read.
+ *
+ * Expanding on focus resolves it without taking a permanent row: the row is
+ * ``flex-wrap: wrap``, so a ``100%`` basis pushes everything else onto the
+ * next line for exactly as long as the operator is searching.
+ *
+ * ``is-active`` keeps it open while a query is present even after blur —
+ * collapsing a field that is still FILTERING the tree would hide why the tree
+ * looks the way it does. */
 .files-tab-filter-field {
   position: relative;
   display: flex;
   align-items: center;
-  /* Never squeezed below a usable width — it takes the whole row instead.
-   * 200px is roughly where the placeholder stops being readable. */
-  flex: 1 1 200px;
+  /* Collapsed: just the glass circle around the leading search icon. */
+  flex: 0 0 28px;
   min-width: 0;
+  transition: flex-basis 160ms ease;
+}
+
+.files-tab-filter-field:focus-within,
+.files-tab-filter-field.is-active {
+  flex: 1 1 100%;
 }
 
 /* Spotlight-style leading glass icon. Sits inside the pill, dims
@@ -5657,6 +5676,22 @@ body.kato-resizing {
 
 .files-tab-filter-input::placeholder {
   color: rgba(245, 245, 247, 0.42);
+}
+
+/* Collapsed the field is one icon wide, so the placeholder, the toggles and
+ * the clear button have nowhere to go but on top of each other — which is
+ * exactly what they did. Hide them until it opens, and drop the right-hand
+ * padding that was reserving room for controls that are not there. */
+.files-tab-filter-field:not(:focus-within):not(.is-active) .files-tab-filter-input {
+  padding-right: 0;
+  cursor: pointer;
+}
+.files-tab-filter-field:not(:focus-within):not(.is-active) .files-tab-filter-input::placeholder {
+  opacity: 0;
+}
+.files-tab-filter-field:not(:focus-within):not(.is-active) .files-tab-filter-toggle,
+.files-tab-filter-field:not(:focus-within):not(.is-active) .files-tab-filter-clear {
+  display: none;
 }
 
 .files-tab-filter-input::-webkit-search-cancel-button {

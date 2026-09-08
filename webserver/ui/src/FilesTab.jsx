@@ -566,7 +566,13 @@ export default function FilesTab({
           they have to anchor to the INPUT — once the row is allowed to wrap
           (see app.scss), anchoring them to the row would leave them floating
           over whichever line the browser happened to lay out first. */}
-      <div className="files-tab-filter-field">
+      <div className={cx(
+        'files-tab-filter-field',
+        // Stays open while a query is filtering the tree, even after
+        // blur — collapsing it there would hide WHY the tree looks the
+        // way it does.
+        query && 'is-active',
+      )}>
         <span className="files-tab-filter-icon" aria-hidden="true">
           <Icon name="search" />
         </span>

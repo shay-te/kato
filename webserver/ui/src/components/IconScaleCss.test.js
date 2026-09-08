@@ -28,6 +28,9 @@ const EXEMPT = [
   /settings-drawer-approval-toggle/,
   /tabs-pane:not\(\.tabs-pane-top\)/, // legacy sidebar layout, never rendered
   // Text buttons: their font-size is a LABEL, not a glyph.
+  // ``files-tab-filter-toggle`` is the search field's Match case / Exact
+  // pair — its "Aa" / "ab" are literal text, sized to read as labels.
+  /files-tab-filter-toggle/,
   /files-tab-text-btn/, /bubble-tool-details-toggle/, /setup-wizard-btn/,
   /settings-drawer-action/, /settings-drawer-perm-clear/,
   /diff-context-expander-inner/,

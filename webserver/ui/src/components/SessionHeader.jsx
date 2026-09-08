@@ -411,9 +411,18 @@ export default function SessionHeader({
   // Update-source pushes the task branch then pulls each source repo — also a
   // git op, so it honours the same one-at-a-time gate.
   const updateSourceDisabled = gitDisabled;
-  const updateSourceTitle = !taskPublish.hasWorkspace
-    ? 'No workspace for this task — workspace must be provisioned before source can be updated.'
-    : 'Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes.';
+  // ``gitBlockedReason`` FIRST — it is the same gate that actually disabled
+  // the button, and it distinguishes "still loading" and "couldn't load" from
+  // "there is genuinely no workspace".
+  //
+  // Reading ``hasWorkspace`` first said "No workspace for this task" whenever
+  // the publish fetch had FAILED, because a failed fetch keeps the empty
+  // default (``hasWorkspace: false``). So a server that was merely unreachable
+  // was reported as a task with no clone on disk — the operator went looking
+  // for a provisioning problem that did not exist. Every other button already
+  // leads with this reason; this one was the outlier.
+  const updateSourceTitle = gitBlockedReason
+    || 'Update source — push the task branch, then for each repo under REPOSITORY_ROOT_PATH: fetch, checkout the task branch, and pull. Lets you test the task on your live running system. Refuses if a source repo has uncommitted changes.';
   const updateSourceLabel = updatingSource ? 'Updating source…' : 'Update source';
   const finishLabel = finishing ? 'Finishing…' : 'Done';
   const stopOrResumeButton = isResumable ? (
