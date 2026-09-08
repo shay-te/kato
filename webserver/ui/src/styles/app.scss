@@ -5803,10 +5803,15 @@ body.kato-resizing {
   /* Never squeezed: with the row able to wrap, the dropdown drops to its own
    * line rather than shrinking to something unreadable. */
   flex-shrink: 0;
-  max-width: 120px;
+  /* Room for a real repository id. 120px clipped ``ob-love-admin-backend``
+     to a few characters, and the horizontal padding below would have eaten
+     more of it. */
+  max-width: $SPACE-160;
   /* Same height as the search field and the round buttons beside it. */
   height: $ICON-BOX-LG;
-  padding: 0 $SPACE-4;
+  /* 4px put the label hard against the border on the left and against the
+     native chevron on the right. Matches the inset the rest of the row uses. */
+  padding: 0 $SPACE-8;
   border: 1px solid $C-NEUTRAL-25-A45;
   border-radius: $RADIUS-4;
   background: none;

@@ -83,6 +83,15 @@ test('the repo picker wraps rather than shrinking to nothing', () => {
   assert.match(ruleBody('.files-tab-filter-scope {'), /flex-shrink:\s*0/);
 });
 
+test('the repo picker has room for its label and its chevron', () => {
+  // 4px put the label hard against the border on one side and against the
+  // native chevron on the other, and a 120px cap clipped a real repository id
+  // like ``ob-love-admin-backend``.
+  const body = ruleBody('.files-tab-filter-scope {');
+  assert.match(body, /padding:\s*0\s+8px/);
+  assert.match(body, /max-width:\s*160px/);
+});
+
 // ---------------------------------------------------------------------------
 // One height for the whole row.
 //
