@@ -1824,6 +1824,45 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertTrue(result['has_workspace'])
         self.assertTrue(result['has_changes_to_push'])
 
+    def test_slow_push_scan_still_enables_the_buttons(self) -> None:
+        """A slow per-repo scan must never cost the workspace answer.
+
+        ``has_workspace`` is what the git buttons gate on and it is decided
+        the moment the workspace record resolves. ``has_changes_to_push`` is
+        one git subprocess PER REPOSITORY — "local git, well under a second"
+        held for a two-repo task and not for a real one (a 25-repo task
+        measured 3.6-4.9s against a client that aborts at 8s). Past the abort
+        the fetch fails and a task whose workspace is plainly on disk reports
+        "the server isn't responding" with every git button disabled.
+        """
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+
+        def _crawl(*_args, **_kwargs):
+            time.sleep(5)
+            return True
+
+        repo.branch_needs_push.side_effect = _crawl
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))), \
+                patch(
+                    'kato_core_lib.data_layers.service.task_publish_service.'
+                    '_PUSH_SCAN_BUDGET_SECONDS', 0.05):
+            started = time.monotonic()
+            result = service.publish.task_publish_state('T1')
+            elapsed = time.monotonic() - started
+
+        # Returned on the budget, not on the scan.
+        self.assertLess(elapsed, 2.0)
+        # The buttons enable...
+        self.assertTrue(result['has_workspace'])
+        # ...and the unfinished scan degrades to "nothing found", which costs a
+        # tooltip nuance rather than a disabled button.
+        self.assertFalse(result['has_changes_to_push'])
+
     def test_reports_existing_pull_request(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()

@@ -38,6 +38,11 @@ _ON_DEMAND_PUSH_EXPECTED_ERRORS = (RepositoryHasNoChangesError,)
 # an operator's git action.
 _RECONCILE_TIMEOUT_SECONDS = 10.0
 
+# How long the push-readiness scan may run before the git-button state is
+# returned without it. Comfortably inside the client's own 8s abort, so a
+# multi-repo task can never turn "is there a workspace?" into a failed fetch.
+_PUSH_SCAN_BUDGET_SECONDS = 3.0
+
 
 @dataclass(frozen=True)
 class _SourceRepoOutcome(object):
@@ -1162,19 +1167,47 @@ class TaskPublishService(object):
         repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
         if not repos:
             return {'has_workspace': False, 'has_changes_to_push': False}
-        has_changes_to_push = False
-        for repository in repos:
-            if has_changes_to_push:
-                break
-            branch_name = self._repository_service.build_branch_name(task_obj, repository)
-            try:
-                if self._repository_service.branch_needs_push(repository, branch_name):
-                    has_changes_to_push = True
-            except Exception:
-                self.logger.exception(
-                    'branch-needs-push check failed for task %s repository %s',
-                    normalized, repository.id,
+        # ``has_workspace`` is the answer the BUTTONS gate on, and it is already
+        # decided — the workspace record either exists or it does not. Nothing
+        # below may hold it up.
+        #
+        # ``has_changes_to_push`` is a different kind of answer: one git
+        # subprocess per repository. "Local git, well under a second" was true
+        # for a two-repo task and false for a real one — a 25-repo task
+        # measured 3.6-4.9s here, against a client that aborts at 8s. Past that
+        # the fetch fails, and a task whose workspace is plainly on disk
+        # reports "the server isn't responding" and disables every git button.
+        #
+        # So the scan gets a BUDGET. Whatever it has decided when the budget
+        # runs out is what we return: False simply means "no unpushed work
+        # found (yet)", which costs a tooltip nuance, never a disabled button.
+        def _scan_for_unpushed_work() -> bool:
+            for repository in repos:
+                branch_name = self._repository_service.build_branch_name(
+                    task_obj, repository,
                 )
+                try:
+                    if self._repository_service.branch_needs_push(repository, branch_name):
+                        return True
+                except Exception:
+                    self.logger.exception(
+                        'branch-needs-push check failed for task %s repository %s',
+                        normalized, repository.id,
+                    )
+            return False
+
+        has_changes_to_push = run_with_deadline(
+            _scan_for_unpushed_work,
+            seconds=_PUSH_SCAN_BUDGET_SECONDS,
+            default=False,
+            on_timeout=lambda: self.logger.warning(
+                'push-readiness scan for task %s exceeded %.1fs across %d '
+                'repositor%s; reporting "no changes to push" so the git '
+                'buttons still enable',
+                normalized, _PUSH_SCAN_BUDGET_SECONDS, len(repos),
+                'y' if len(repos) == 1 else 'ies',
+            ),
+        )
         return {'has_workspace': True, 'has_changes_to_push': has_changes_to_push}
 
     def task_pull_request_state(self, task_id: str) -> dict[str, object]:
