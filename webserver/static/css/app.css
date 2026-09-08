@@ -5724,9 +5724,20 @@ body.kato-resizing {
   gap: 4px;
 }
 
-/* ``is-on`` has to read as ON at a glance, so it takes the accent colour
- * rather than a subtle background shift. */
-.files-tab-filter-toggle {
+/* Scoped under the actions group ON PURPOSE, for SPECIFICITY.
+ *
+ * ``header button:not(.header-status)`` (0,1,2) styles every button inside any
+ * <header> as a 28px circle with a 14px glyph — the files toolbar's look. These
+ * sit inside ``.files-tab-header``, so a bare ``.files-tab-filter-toggle``
+ * (0,1,0) lost to it and the two text toggles rendered as big blue circles.
+ * The descendant form is (0,2,0) and wins, and every box property the generic
+ * rule sets is restated here so none of it leaks through.
+ *
+ * They are TEXT buttons ("Aa" / "ab"), so they size to their label — a fixed
+ * square would either clip the text or leave it swimming. ``is-on`` takes the
+ * accent colour rather than a subtle background shift: it has to read as ON at
+ * a glance. */
+.files-tab-filter-actions .files-tab-filter-toggle {
   background: none;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -5734,19 +5745,35 @@ body.kato-resizing {
   cursor: pointer;
   font-size: 11px;
   line-height: 1;
+  width: auto;
+  height: 20px;
   padding: 0 4px;
-  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.files-tab-filter-toggle:hover {
+.files-tab-filter-actions .files-tab-filter-toggle:hover {
   color: #f5f5f7;
   background: rgba(255, 255, 255, 0.06);
 }
 
-.files-tab-filter-toggle.is-on {
-  color: #0a84ff;
-  border-color: rgba(10, 132, 255, 0.55);
-  background: rgba(255, 255, 255, 0.06);
+/* The SAME on-state the header status chip already uses
+ * (``header button.header-status.is-clickable.is-active``): a soft filled
+ * background with a matching hairline, not a saturated ring. The ring read as
+ * two blue circles bolted onto the search box. */
+.files-tab-filter-actions .files-tab-filter-toggle.is-on {
+  background: rgba(10, 132, 255, 0.18);
+  border-color: rgba(10, 132, 255, 0.4);
+  color: #cce0ff;
+}
+
+/* Same specificity problem, same fix: the clear button's own 16px circle lost
+ * to the generic header rule and came out at 28px. */
+.files-tab-filter-actions .files-tab-filter-clear {
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
 }
 
 .files-tab-filter-clear {

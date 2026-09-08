@@ -58,7 +58,14 @@ test('the search controls are in normal flow, never overlaid', () => {
   // "Search files…" and on each other. A flex group cannot overlap anything.
   const actions = ruleBody('.files-tab-filter-actions {');
   assert.match(actions, /display:\s*inline-flex/);
-  assert.doesNotMatch(ruleBody('.files-tab-filter-toggle {'), /position:\s*absolute/);
+  // Scoped under the actions group for SPECIFICITY: ``header
+  // button:not(.header-status)`` (0,1,2) styles every button inside a <header>
+  // as a 28px circle, and a bare class (0,1,0) lost to it — which is how the
+  // two text toggles rendered as big blue circles.
+  const toggle = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle {');
+  assert.doesNotMatch(toggle, /position:\s*absolute/);
+  assert.match(toggle, /border-radius:\s*4px/);
+  assert.match(toggle, /width:\s*auto/);
   assert.doesNotMatch(ruleBody('.files-tab-filter-clear {'), /position:\s*absolute/);
   // ...and the input must yield to them instead of claiming the full width.
   assert.match(ruleBody('.files-tab-filter-input {'), /min-width:\s*0/);
@@ -108,4 +115,14 @@ test('the field centres by height, not by vertical padding', () => {
   // icon and the clear button.
   const body = ruleBody('.files-tab-filter-input {');
   assert.match(body, /padding:\s*0 \d+px 0 \d+px/);
+});
+
+
+test('the on-state reuses the app\'s existing selected-chip colours', () => {
+  // Operator: "the round blue is ugly, use gray/blue background color, use
+  // existing colors". Same fill + hairline the header status chip already uses
+  // for its active state — not a new saturated ring.
+  const on = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-on {');
+  assert.match(on, /background:\s*rgba\(10, 132, 255, 0\.18\)/);
+  assert.match(on, /border-color:\s*rgba\(10, 132, 255, 0\.4\)/);
 });

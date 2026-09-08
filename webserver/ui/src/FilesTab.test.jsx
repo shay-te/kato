@@ -1469,3 +1469,24 @@ describe('FilesTab — chaos / random button mashing', () => {
     expect(await screen.findByText('Nothing changed yet.')).toBeTruthy();
   });
 });
+
+describe('FilesTab — repo scope picker while the trees load', () => {
+  test('shows a disabled "Loading repos…" picker instead of nothing', async () => {
+    // It used to be absent until the trees arrived and then appear, shifting
+    // the header row under the operator's cursor. Reserving it keeps the
+    // header still and says why it is waiting.
+    //
+    // A never-resolving fetch holds the store in 'loading' — the suite drives
+    // the REAL cache through the api mock, so this is the genuine state, not a
+    // stubbed hook return. Unique task id so no earlier test's cached tree
+    // makes it ready.
+    fetchFileTree.mockReturnValue(new Promise(() => {}));
+    render(<FilesTab taskId="T-loading-picker" />);
+
+    const picker = await screen.findByRole('combobox', {
+      name: /loading repositories/i,
+    });
+    expect(picker).toBeDisabled();
+    expect(picker).toHaveTextContent(/loading repos/i);
+  });
+});

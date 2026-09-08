@@ -627,27 +627,45 @@ export default function FilesTab({
           )}
         </span>
       </div>
-      {trees.length > 1 && (
-        <select
-          className="files-tab-filter-scope"
-          value={scopeRepoId}
-          onChange={(e) => setScopeRepoId(e.target.value)}
-          aria-label="Limit the search to one repository"
-          title="Limit the search to one repository"
-        >
-          <option value="">All repos</option>
-          {trees.map((entry) => {
-            const id = entry.repo_id || entry.cwd;
-            return <option key={id} value={id}>{id}</option>;
-          })}
-        </select>
-      )}
     </div>
+  );
+
+  // The repo scope picker sits with the TOOLBAR on the second row, not inside
+  // the filter box. Inside it, the full-width search field pushed it onto a
+  // line of its own and the header cost three rows for two controls.
+  const scopePicker = status === 'loading' ? (
+    // A disabled placeholder rather than nothing: the picker used to be absent
+    // until the trees arrived and then appear, shifting the row under the
+    // operator's cursor. Reserving it — and saying it is loading — keeps the
+    // header still and explains the wait.
+    <select
+      className="files-tab-filter-scope"
+      disabled
+      aria-label="Loading repositories…"
+      title="Loading repositories…"
+    >
+      <option>Loading repos…</option>
+    </select>
+  ) : trees.length > 1 && (
+    <select
+      className="files-tab-filter-scope"
+      value={scopeRepoId}
+      onChange={(e) => setScopeRepoId(e.target.value)}
+      aria-label="Limit the search to one repository"
+      title="Limit the search to one repository"
+    >
+      <option value="">All repos</option>
+      {trees.map((entry) => {
+        const id = entry.repo_id || entry.cwd;
+        return <option key={id} value={id}>{id}</option>;
+      })}
+    </select>
   );
 
   const header = (
     <header className="files-tab-header">
       {filterRow}
+      {scopePicker}
       {toolbar}
     </header>
   );
