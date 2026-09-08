@@ -41,20 +41,27 @@ test('the filter row is allowed to wrap', () => {
   assert.match(ruleBody('.files-tab-filter {'), /flex-wrap:\s*wrap/);
 });
 
-test('the field owns the whole top row', () => {
-  // It used to share the line with the repo picker and five buttons, and at
-  // that width the Match case / Exact toggles rendered on top of the
-  // placeholder. A collapse-on-blur version fixed the overlap but jumped
-  // between a pill and a full row on every focus change; a permanent
-  // full-width row is calmer and always shows what is being searched.
+test('the search owns the whole top row of the files header', () => {
+  // ``.files-tab-filter`` is a flex CHILD of the header, so a 100% basis on
+  // the FIELD only ever filled the filter box — about half the header. That
+  // is why the field stayed a small pill beside the action buttons even after
+  // it was told to be full width. The header has to wrap, and the filter has
+  // to claim the row.
+  assert.match(ruleBody('.files-tab-header {'), /flex-wrap:\s*wrap/);
+  assert.match(ruleBody('.files-tab-filter {'), /flex:\s*1\s+1\s+100%/);
   assert.match(ruleBody('.files-tab-filter-field {'), /flex:\s*1\s+1\s+100%/);
 });
 
-test('nothing collapses the field any more', () => {
-  // The collapsed-state rules hid the placeholder and the toggles. With the
-  // field always full width there is nothing to hide, and leaving them would
-  // blank the controls the moment focus left.
-  assert.equal(css.includes(':not(:focus-within):not(.is-active)'), false);
+test('the search controls are in normal flow, never overlaid', () => {
+  // Absolute right-offsets put the two toggles 6px apart and let them ride
+  // over the placeholder in a narrow pane — the reported "Aa ab" on top of
+  // "Search files…" and on each other. A flex group cannot overlap anything.
+  const actions = ruleBody('.files-tab-filter-actions {');
+  assert.match(actions, /display:\s*inline-flex/);
+  assert.doesNotMatch(ruleBody('.files-tab-filter-toggle {'), /position:\s*absolute/);
+  assert.doesNotMatch(ruleBody('.files-tab-filter-clear {'), /position:\s*absolute/);
+  // ...and the input must yield to them instead of claiming the full width.
+  assert.match(ruleBody('.files-tab-filter-input {'), /min-width:\s*0/);
 });
 
 test('the field is the positioning context for its icon and clear button', () => {
@@ -63,7 +70,6 @@ test('the field is the positioning context for its icon and clear button', () =>
   // across both lines once it wrapped.
   assert.match(ruleBody('.files-tab-filter-field {'), /position:\s*relative/);
   assert.match(ruleBody('.files-tab-filter-icon {'), /position:\s*absolute/);
-  assert.match(ruleBody('.files-tab-filter-clear {'), /position:\s*absolute/);
 });
 
 test('the repo picker wraps rather than shrinking to nothing', () => {

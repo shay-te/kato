@@ -5683,9 +5683,21 @@ body.kato-resizing {
   flex-shrink: 0;
 }
 
+/* The FILES header wraps so the search owns the whole first row and the
+ * action buttons drop below it. Scoped to files: the changes header has no
+ * search field and must keep its single line.
+ *
+ * ``.files-tab-filter`` is a flex CHILD of this header, so making the FIELD
+ * ``flex: 1 1 100%`` only ever filled the filter box — about half the header,
+ * which is why the field stayed a small pill beside the buttons. The 100% has
+ * to be on the child of the wrapping container. */
+.files-tab-header {
+  flex-wrap: wrap;
+}
+
 /* ───── iOS-style search pill — files tab filter ────────────────── */
 .files-tab-filter {
-  flex: 1;
+  flex: 1 1 100%;
   display: flex;
   align-items: center;
   gap: $SPACE-6;
@@ -5744,7 +5756,10 @@ body.kato-resizing {
 }
 
 .files-tab-filter-input {
-  width: 100%;
+  /* A flex child, not a 100%-wide block: the controls sit beside it in the
+     same row now, and ``width: 100%`` would shove them off the end. */
+  flex: 1 1 auto;
+  min-width: 0;
   /* Frosted-glass capsule, matching the composer + task pills. */
   background: $C-NEUTRAL-100-A06;
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -5761,7 +5776,7 @@ body.kato-resizing {
   height: $ICON-BOX-LG;
   /* Vertical centring is the height's job now; the horizontal padding still
    * reserves room for the leading icon (left) and the clear button (right). */
-  padding: 0 $SPACE-72 0 $SPACE-32;
+  padding: 0 $SPACE-8 0 $SPACE-32;
   font: inherit;
   font-size: $TEXT-12;
   outline: none;
@@ -5805,15 +5820,24 @@ body.kato-resizing {
 }
 
 
-/* Match case / Exact toggles, VS Code's find-widget pair, inside the search
- * capsule and left of the clear button. Both narrow the SAME matcher the tree
- * and the changed-files list share. ``is-on`` is the pressed state — it has to
- * read as ON at a glance, so it takes the accent colour rather than a subtle
- * background shift. */
+/* Search controls, in normal flow at the end of the field. They were
+ * absolutely positioned at fixed right-offsets, which put the two toggles 6px
+ * apart and let them ride over the placeholder once the pane was narrow — the
+ * reported "Aa ab" sitting on top of "Search files…" and on each other. A flex
+ * group cannot overlap anything; it shrinks the input instead. */
+.files-tab-filter-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-4;
+  flex-shrink: 0;
+  /* Beside the capsule, not overlaid on it — that overlay is what allowed the
+     collision in the first place. */
+  gap: $SPACE-4;
+}
+
+/* ``is-on`` has to read as ON at a glance, so it takes the accent colour
+ * rather than a subtle background shift. */
 .files-tab-filter-toggle {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
   background: none;
   border: 1px solid transparent;
   border-radius: $RADIUS-4;
@@ -5821,13 +5845,9 @@ body.kato-resizing {
   cursor: pointer;
   font-size: $TEXT-11;
   line-height: 1;
-  padding: 0;
-  width: $ICON-BOX-SM;
+  padding: 0 $SPACE-4;
   height: $ICON-BOX-SM;
 }
-
-.files-tab-filter-toggle:nth-of-type(1) { right: 48px; }
-.files-tab-filter-toggle:nth-of-type(2) { right: 26px; }
 
 .files-tab-filter-toggle:hover {
   color: $C-NEUTRAL-96;
@@ -5841,10 +5861,6 @@ body.kato-resizing {
 }
 
 .files-tab-filter-clear {
-  position: absolute;
-  right: 6px;
-  top: 50%;
-  transform: translateY(-50%);
   background: $C-NEUTRAL-100-A10;
   border: none;
   color: $C-NEUTRAL-96;

@@ -582,44 +582,50 @@ export default function FilesTab({
           spellCheck={false}
           autoComplete="off"
         />
-        {/* VS Code's find-widget toggles, in its order and its glyphs. Both
-            narrow the SAME matcher the tree and the changed list share, so a
-            term can never filter the two lists differently. */}
-        <button
-          type="button"
-          className={cx('files-tab-filter-toggle', searchPrefs.matchCase && 'is-on')}
-          onClick={() => toggleSearchPref('matchCase')}
-          aria-label="Match case"
-          aria-pressed={searchPrefs.matchCase}
-          title="Match case — Dockerfile stops matching dockerfile.md"
-        >
-          Aa
-        </button>
-        <button
-          type="button"
-          className={cx('files-tab-filter-toggle', searchPrefs.exact && 'is-on')}
-          onClick={() => toggleSearchPref('exact')}
-          aria-label="Match the name exactly"
-          aria-pressed={searchPrefs.exact}
-          title={
-            'Exact — match the typed text literally. Off, the search is also '
-            + 'forgiving about separators and gaps ("authpy" finds auth.py), '
-            + 'which is what drags loosely-related paths into the results.'
-          }
-        >
-          ab
-        </button>
-        {query && (
+        {/* In NORMAL FLOW, not absolutely positioned. Fixed right-offsets
+            put the two toggles 6px apart and let them ride over the
+            placeholder in a narrow pane; a flex group cannot overlap
+            anything, and it shrinks the input instead. */}
+        <span className="files-tab-filter-actions">
+          {/* VS Code's find-widget toggles, in its order and its glyphs. Both
+              narrow the SAME matcher the tree and the changed list share, so a
+              term can never filter the two lists differently. */}
           <button
             type="button"
-            className="files-tab-filter-clear"
-            onClick={() => setQuery('')}
-            aria-label="Clear search"
-            title="Clear (Esc)"
+            className={cx('files-tab-filter-toggle', searchPrefs.matchCase && 'is-on')}
+            onClick={() => toggleSearchPref('matchCase')}
+            aria-label="Match case"
+            aria-pressed={searchPrefs.matchCase}
+            title="Match case — Dockerfile stops matching dockerfile.md"
           >
-            ×
+            Aa
           </button>
-        )}
+          <button
+            type="button"
+            className={cx('files-tab-filter-toggle', searchPrefs.exact && 'is-on')}
+            onClick={() => toggleSearchPref('exact')}
+            aria-label="Match the name exactly"
+            aria-pressed={searchPrefs.exact}
+            title={
+              'Exact — match the typed text literally. Off, the search is also '
+              + 'forgiving about separators and gaps ("authpy" finds auth.py), '
+              + 'which is what drags loosely-related paths into the results.'
+            }
+          >
+            ab
+          </button>
+          {query && (
+            <button
+              type="button"
+              className="files-tab-filter-clear"
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              title="Clear (Esc)"
+            >
+              ×
+            </button>
+          )}
+        </span>
       </div>
       {trees.length > 1 && (
         <select
