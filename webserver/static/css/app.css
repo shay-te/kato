@@ -5618,12 +5618,42 @@ body.kato-resizing {
  * full-width row is calmer and always shows what is being searched. The row
  * wraps (see .files-tab-filter), so a 100% basis simply puts everything else
  * on the next line. */
+/* The FIELD is the capsule, not the input.
+ *
+ * VS Code draws its Match case / Whole word toggles INSIDE the search box.
+ * Getting that while the input owned the border meant overlaying them on top
+ * of it — which is exactly the absolute positioning that had them sitting on
+ * the placeholder and on each other. Moving the chrome out to the field lets
+ * the input and the toggles be ordinary flex children of the same box: inside
+ * the border, and unable to overlap by construction. */
 .files-tab-filter-field {
   position: relative;
   display: flex;
   align-items: center;
   flex: 1 1 100%;
   min-width: 0;
+  /* Frosted-glass capsule, matching the composer + task pills. */
+  background: rgba(255, 255, 255, 0.06);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  /* One height for every control on this row — see the toolbar buttons. */
+  height: 28px;
+  /* Right inset so the controls clear the capsule's curve — at 6px the last
+     one sat in the tightest part of it. */
+  padding-right: 10px;
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+/* The focus ring belongs to the whole capsule now — clicking a toggle keeps
+ * focus inside the field, so the box must not flicker out of its focus state
+ * while the operator is using the controls in it. */
+.files-tab-filter-field:focus-within {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(10, 132, 255, 0.55);
+  /* Soft iOS focus ring — a halo, not a hard 2px outline. */
+  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.18), 0 1px 2px rgba(0, 0, 0, 0.35) inset;
 }
 
 /* Spotlight-style leading glass icon. Sits inside the pill, dims
@@ -5645,38 +5675,21 @@ body.kato-resizing {
 }
 
 .files-tab-filter-input {
-  /* A flex child, not a 100%-wide block: the controls sit beside it in the
-     same row now, and ``width: 100%`` would shove them off the end. */
+  /* A flex child, not a 100%-wide block: the toggles sit beside it inside the
+     same capsule, and ``width: 100%`` would shove them off the end. */
   flex: 1 1 auto;
   min-width: 0;
-  /* Frosted-glass capsule, matching the composer + task pills. */
-  background: rgba(255, 255, 255, 0.06);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
+  /* No chrome of its own — the field draws it. */
+  background: none;
+  border: none;
+  height: 100%;
   color: #f5f5f7;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 999px;
-  /* One height for every control on this row — the search field, the repo
-   * picker and the round buttons. They were set three different ways (padding
-   * here, a smaller padding on the picker, a fixed box on the buttons) and
-   * came out three different heights, which is what made the row look
-   * unfinished. $ICON-BOX-LG is the buttons' own size, so it is the one that
-   * cannot be changed without redrawing them. */
-  height: 28px;
-  /* Vertical centring is the height's job now; the horizontal padding still
-   * reserves room for the leading icon (left) and the clear button (right). */
-  padding: 0 8px 0 32px;
+  /* Left inset clears the leading search icon; the right side is the
+     toggles' own gap. */
+  padding: 0 0 0 32px;
   font: inherit;
   font-size: 12px;
   outline: none;
-  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-}
-
-.files-tab-filter-input:focus {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(10, 132, 255, 0.55);
-  /* Soft iOS focus ring — a halo, not a hard 2px outline. */
-  box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.18), 0 1px 2px rgba(0, 0, 0, 0.35) inset;
 }
 
 .files-tab-filter-input::placeholder {
@@ -5700,11 +5713,28 @@ body.kato-resizing {
   /* Same height as the search field and the round buttons beside it. */
   height: 28px;
   /* 4px put the label hard against the border on the left and against the
-     native chevron on the right. Matches the inset the rest of the row uses. */
-  padding: 0 8px;
+     native chevron on the right. Matches the inset the rest of the row uses,
+     plus a little more for the capsule's curve. */
+  padding: 0 10px;
   border: 1px solid rgba(64, 64, 64, 0.45);
-  border-radius: 4px;
-  background: none;
+  /* Capsule, like the search field it sits under.
+   *
+   * ``appearance: none`` is what makes that radius stick: a native <select>
+   * keeps the platform's own rounded-rect chrome and ignores it, which is why
+   * the picker still had square-ish corners next to a fully-rounded field.
+   * Dropping the native look costs us the platform chevron, so one is drawn
+   * below — an inline SVG, so it needs no asset and inherits nothing that can
+   * go missing. */
+  border-radius: 999px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6' fill='none' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 8px 5px;
+  /* Right side has to clear the drawn chevron, not just the curve. */
+  padding-right: 24px;
   color: #a3a3a3;
   font-size: 11px;
   cursor: pointer;
@@ -5714,19 +5744,16 @@ body.kato-resizing {
   color: #f5f5f7;
 }
 
-/* Search controls, in normal flow at the end of the field. They were
- * absolutely positioned at fixed right-offsets, which put the two toggles 6px
- * apart and let them ride over the placeholder once the pane was narrow — the
- * reported "Aa ab" sitting on top of "Search files…" and on each other. A flex
- * group cannot overlap anything; it shrinks the input instead. */
+/* Search controls, in normal flow at the end of the field — i.e. INSIDE the
+ * capsule, the way VS Code draws them. They were absolutely positioned at
+ * fixed right-offsets, which put the two toggles 6px apart and let them ride
+ * over the placeholder once the pane was narrow. As flex siblings of the
+ * input they cannot overlap anything; the input shrinks for them instead. */
 .files-tab-filter-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  /* Beside the capsule, not overlaid on it — that overlay is what allowed the
-     collision in the first place. */
-  gap: 4px;
 }
 
 /* Scoped under the actions group ON PURPOSE, for SPECIFICITY.
@@ -5745,7 +5772,11 @@ body.kato-resizing {
 .files-tab-filter-actions .files-tab-filter-toggle {
   background: none;
   border: 1px solid transparent;
-  border-radius: 4px;
+  /* A SOFTENED SQUARE, between the two shapes that both read wrong: 4px was
+     too hard against a fully-rounded container, and a pill turned a 20px-tall
+     box into an oval. 6px on 20px is a rounded rectangle that sits inside the
+     capsule without competing with its curve. */
+  border-radius: 6px;
   color: rgba(245, 245, 247, 0.42);
   cursor: pointer;
   font-size: 11px;
@@ -5756,6 +5787,15 @@ body.kato-resizing {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* VS Code draws Match Whole Word as ``ab`` with a bar under it — that
+ * underline IS the icon, and without it the two toggles were just two pairs of
+ * letters with nothing to tell them apart at a glance. */
+.files-tab-filter-actions .files-tab-filter-toggle.is-word {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .files-tab-filter-actions .files-tab-filter-toggle:hover {

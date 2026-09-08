@@ -587,6 +587,17 @@ export default function FilesTab({
             placeholder in a narrow pane; a flex group cannot overlap
             anything, and it shrinks the input instead. */}
         <span className="files-tab-filter-actions">
+          {query && (
+            <button
+              type="button"
+              className="files-tab-filter-clear"
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
+              title="Clear (Esc)"
+            >
+              ×
+            </button>
+          )}
           {/* VS Code's find-widget toggles, in its order and its glyphs. Both
               narrow the SAME matcher the tree and the changed list share, so a
               term can never filter the two lists differently. */}
@@ -602,7 +613,7 @@ export default function FilesTab({
           </button>
           <button
             type="button"
-            className={cx('files-tab-filter-toggle', searchPrefs.exact && 'is-on')}
+            className={cx('files-tab-filter-toggle', 'is-word', searchPrefs.exact && 'is-on')}
             onClick={() => toggleSearchPref('exact')}
             aria-label="Match the name exactly"
             aria-pressed={searchPrefs.exact}
@@ -614,17 +625,6 @@ export default function FilesTab({
           >
             ab
           </button>
-          {query && (
-            <button
-              type="button"
-              className="files-tab-filter-clear"
-              onClick={() => setQuery('')}
-              aria-label="Clear search"
-              title="Clear (Esc)"
-            >
-              ×
-            </button>
-          )}
         </span>
       </div>
     </div>

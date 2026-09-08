@@ -1490,3 +1490,23 @@ describe('FilesTab — repo scope picker while the trees load', () => {
     expect(picker).toHaveTextContent(/loading repos/i);
   });
 });
+
+describe('FilesTab — search control order', () => {
+  test('the clear button sits LEFT of the match toggles', async () => {
+    // Reading order inside the capsule: text, then clear, then the two
+    // narrowing toggles. The clear used to be last, tucked into the tightest
+    // part of the pill's curve.
+    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    render(<FilesTab taskId="T-clear-order" />);
+
+    const input = await screen.findByRole('searchbox', { name: /search files/i });
+    // ONE character: the clear button appears for any non-empty query, while
+    // the content search only fires at two or more — and it isn't mocked here.
+    fireEvent.change(input, { target: { value: 'a' } });
+
+    const actions = document.querySelector('.files-tab-filter-actions');
+    const order = Array.from(actions.querySelectorAll('button'))
+      .map((b) => b.getAttribute('aria-label'));
+    expect(order).toEqual(['Clear search', 'Match case', 'Match the name exactly']);
+  });
+});

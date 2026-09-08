@@ -64,7 +64,10 @@ test('the search controls are in normal flow, never overlaid', () => {
   // two text toggles rendered as big blue circles.
   const toggle = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle {');
   assert.doesNotMatch(toggle, /position:\s*absolute/);
-  assert.match(toggle, /border-radius:\s*4px/);
+  // A SOFTENED SQUARE. Both extremes read wrong in place: 4px was too hard
+  // against a fully-rounded container, and a pill turned a 20px-tall box into
+  // an oval. 6px on 20px sits inside the capsule without competing with it.
+  assert.match(toggle, /border-radius:\s*6px/);
   assert.match(toggle, /width:\s*auto/);
   assert.doesNotMatch(ruleBody('.files-tab-filter-clear {'), /position:\s*absolute/);
   // ...and the input must yield to them instead of claiming the full width.
@@ -88,8 +91,18 @@ test('the repo picker has room for its label and its chevron', () => {
   // native chevron on the other, and a 120px cap clipped a real repository id
   // like ``ob-love-admin-backend``.
   const body = ruleBody('.files-tab-filter-scope {');
-  assert.match(body, /padding:\s*0\s+8px/);
+  assert.match(body, /padding:\s*0\s+10px/);
   assert.match(body, /max-width:\s*160px/);
+  // Capsule, like the search field above it — the row reads as one family.
+  assert.match(body, /border-radius:\s*999px/);
+  // ...and the radius only STICKS with the native chrome off: a platform
+  // <select> keeps its own rounded-rect and ignores border-radius, which is
+  // why the picker still had square-ish corners beside a rounded field.
+  assert.match(body, /appearance:\s*none/);
+  // Dropping the native look drops the platform chevron, so one is drawn —
+  // and the right padding has to clear it, not just the curve.
+  assert.match(body, /background-image:\s*url/);
+  assert.match(body, /padding-right:\s*24px/);
 });
 
 // ---------------------------------------------------------------------------
@@ -105,7 +118,21 @@ test('the repo picker has room for its label and its chevron', () => {
 // ---------------------------------------------------------------------------
 
 test('the search field is the shared control height', () => {
-  assert.match(ruleBody('.files-tab-filter-input {'), /height:\s*28px/);
+  // The FIELD owns the capsule now (border, background, height) so the
+  // toggles can sit inside it as ordinary flex children, the way VS Code
+  // draws them. The input fills it and carries no chrome of its own.
+  assert.match(ruleBody('.files-tab-filter-field {'), /height:\s*28px/);
+  assert.match(ruleBody('.files-tab-filter-input {'), /height:\s*100%/);
+  assert.match(ruleBody('.files-tab-filter-input {'), /border:\s*none/);
+});
+
+test('the capsule keeps its focus ring while a toggle is clicked', () => {
+  // ``:focus-within``, not ``:focus`` on the input — clicking a toggle moves
+  // focus off the input but stays inside the field, and the box must not
+  // flicker out of its focus state while the operator uses the controls in it.
+  const ring = ruleBody('.files-tab-filter-field:focus-within {');
+  assert.match(ring, /border-color:\s*rgba\(10, 132, 255/);
+  assert.match(ring, /box-shadow:/);
 });
 
 test('the repo picker is the shared control height', () => {
@@ -119,11 +146,11 @@ test('the round buttons still define that height', () => {
 });
 
 test('the field centres by height, not by vertical padding', () => {
-  // Padding-based centring is what made it taller than its neighbours; the
-  // horizontal padding must survive, since it reserves room for the leading
-  // icon and the clear button.
-  const body = ruleBody('.files-tab-filter-input {');
-  assert.match(body, /padding:\s*0 \d+px 0 \d+px/);
+  // Padding-based centring is what made it taller than its neighbours. The
+  // LEFT inset must survive — it clears the leading search icon; the right
+  // side is now the toggles' own gap inside the capsule.
+  assert.match(ruleBody('.files-tab-filter-input {'), /padding:\s*0 0 0 \d+px/);
+  assert.match(ruleBody('.files-tab-filter-field {'), /padding-right:\s*\d+px/);
 });
 
 
@@ -134,4 +161,12 @@ test('the on-state reuses the app\'s existing selected-chip colours', () => {
   const on = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-on {');
   assert.match(on, /background:\s*rgba\(10, 132, 255, 0\.18\)/);
   assert.match(on, /border-color:\s*rgba\(10, 132, 255, 0\.4\)/);
+});
+
+test('the exact toggle carries VS Code\'s underlined "ab" icon', () => {
+  // The underline IS the icon in VS Code's Match Whole Word button. Without
+  // it the two toggles are just two pairs of letters with nothing telling
+  // them apart at a glance.
+  const body = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-word {');
+  assert.match(body, /text-decoration:\s*underline/);
 });
