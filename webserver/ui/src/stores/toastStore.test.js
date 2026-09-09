@@ -184,7 +184,7 @@ test('errorFromResult: empty fallback yields an empty-message error toast', () =
 test('toastResult: error kind carries through kind/title/message', () => {
   toastResult(
     { kind: 'error', title: 'E', message: 'oops' },
-    { errorMs: 50, defaultMs: 1 },
+    { problemMs: 50, defaultMs: 1 },
   );
   const [t] = _latest();
   assert.equal(t.kind, 'error');
@@ -200,13 +200,27 @@ test('toastResult: kind defaults to info when omitted', () => {
   assert.equal(t.message, 'hi');
 });
 
-test('toastResult: error auto-dismisses on errorMs, non-error on defaultMs', async () => {
-  // error → errorMs window, non-error → defaultMs window. Both short
-  // here so the test stays fast; both should be gone afterward.
-  const errId = toastResult({ kind: 'error', message: 'e' }, { errorMs: 10, defaultMs: 9999 });
-  const okId = toastResult({ kind: 'success', message: 'o' }, { errorMs: 9999, defaultMs: 10 });
+test('toastResult: a clean result expires, a problem waits for a click', async () => {
+  // The whole policy, in one test. A success is transient; anything the
+  // operator has to ACT on is not, because the alternative is losing the
+  // report mid-read — which cost one operator five "Merge master" clicks
+  // before they noticed a repo was refusing.
+  const okId = toastResult({ kind: 'success', message: 'o' }, { defaultMs: 10 });
+  const errId = toastResult({ kind: 'error', message: 'e' });
+  const warnId = toastResult({ kind: 'warning', message: 'w' });
   await new Promise((r) => setTimeout(r, 30));
   const ids = _latest().map((t) => t.id);
-  assert.ok(!ids.includes(errId), 'error toast auto-dismissed on errorMs');
-  assert.ok(!ids.includes(okId), 'non-error toast auto-dismissed on defaultMs');
+  assert.ok(!ids.includes(okId), 'success toast expired on defaultMs');
+  assert.ok(ids.includes(errId), 'error toast is sticky');
+  // A PARTIAL run reports as a warning, and is precisely the case that was
+  // being missed — 24 repos fine, one blocked, gone in six seconds.
+  assert.ok(ids.includes(warnId), 'warning toast is sticky');
+});
+
+test('toastResult: problemMs is still overridable', async () => {
+  // The default is the policy, not a hard rule — a caller with its own
+  // reason can still ask for a timed problem toast.
+  const id = toastResult({ kind: 'error', message: 'e' }, { problemMs: 10 });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(!_latest().map((t) => t.id).includes(id));
 });

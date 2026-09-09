@@ -6278,7 +6278,11 @@ body.kato-resizing {
 }
 
 .files-tab-commit-menu {
-  position: absolute;
+  /* FIXED, not absolute: the menu is portalled to document.body and placed
+   * from the trigger's viewport rect (useClampedPointMenu). As an absolutely
+   * positioned child of the repo section it was clipped away entirely by
+   * ``.files-tab-body``'s overflow — mounted, laid out, invisible. */
+  position: fixed;
   z-index: 10;
   list-style: none;
   margin: 0;

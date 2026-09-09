@@ -28,6 +28,7 @@ vi.mock('../api.js', () => ({
 
 import { approveTaskPush, fetchAwaitingPushApproval } from '../api.js';
 import { usePushApproval } from './usePushApproval.js';
+import { toastStore } from '../stores/toastStore.js';
 
 const session = (extra = {}) => ({ task_id: 'T1', ...extra });
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   approveTaskPush.mockReset();
   fetchAwaitingPushApproval.mockReset();
   approveTaskPush.mockResolvedValue({ ok: true });
+  toastStore.clear();
 });
 
 
@@ -221,3 +223,74 @@ describe('usePushApproval — the server confirming before the POST resolves', (
     expect(result.current.awaiting).toBe(true);
   });
 });
+
+
+// The reported bug: "i clicked on push button. no indication or message when
+// push is done." Approve push runs the whole publish — push every repo, open
+// the PRs, move the ticket — and reported the outcome by making its own
+// button disappear.
+describe('usePushApproval — always reports what happened', () => {
+  const publish = (body) => { approveTaskPush.mockResolvedValue({ ok: true, body }); };
+
+  test('a completed publish raises a toast naming the PR', async () => {
+    publish({
+      approved: true,
+      result: {
+        status: 'ready_for_review',
+        pull_requests: [{ repository_id: 'client', url: 'https://host/pr/1' }],
+        failed_repositories: [],
+      },
+    });
+    const { result } = renderHook(
+      () => usePushApproval(session({ has_changes_pending: true })),
+    );
+    await act(async () => { await result.current.approve(); });
+
+    const shown = _firstToast();
+    expect(shown.kind).toBe('success');
+    expect(shown.message).toContain('https://host/pr/1');
+  });
+
+  test('a FAILED approve toasts and leaves the button up', async () => {
+    approveTaskPush.mockResolvedValue({ ok: false, body: { error: 'git rejected' } });
+    const { result } = renderHook(
+      () => usePushApproval(session({ has_changes_pending: true })),
+    );
+    await act(async () => { await result.current.approve(); });
+
+    expect(_firstToast().kind).toBe('error');
+    // Still offered — the operator has to be able to retry.
+    expect(result.current.awaiting).toBe(true);
+  });
+
+  test('a publish that pushed NOTHING does not pass as success', async () => {
+    // 200 + the button vanishing used to be indistinguishable from a real
+    // push. Nothing left the machine and the ticket never moved.
+    publish({ approved: true, result: { status: 'no_changes', pull_requests: [] } });
+    const { result } = renderHook(
+      () => usePushApproval(session({ has_changes_pending: true })),
+    );
+    await act(async () => { await result.current.approve(); });
+
+    expect(_firstToast().kind).not.toBe('success');
+  });
+
+  test('a problem toast has no auto-dismiss timer', async () => {
+    approveTaskPush.mockResolvedValue({ ok: false, error: 'boom' });
+    const { result } = renderHook(
+      () => usePushApproval(session({ has_changes_pending: true })),
+    );
+    await act(async () => { await result.current.approve(); });
+
+    expect(_firstToast().durationMs).toBe(0);
+  });
+});
+
+// The store publishes its list through subscribe (which fires once with the
+// current snapshot) — the same read every other toast test uses.
+function _firstToast() {
+  let snapshot = [];
+  const unsubscribe = toastStore.subscribe((list) => { snapshot = list; });
+  unsubscribe();
+  return snapshot[0] || {};
+}

@@ -75,6 +75,145 @@ def _build_repo_with_diverged_default(tmp: Path):
     return clone, repo
 
 
+
+class InterruptedCloneRepairTests(unittest.TestCase):
+    """``git clone`` killed mid-fetch leaves a folder holding only ``.git``.
+
+    HEAD still points at the placeholder ``refs/heads/.invalid`` that clone
+    writes before fetching, so every git command answers:
+
+        fatal: ambiguous argument 'HEAD': unknown revision or path not in the
+        working tree.
+
+    It cannot self-heal on the normal path: every later pass sees ``.git``
+    and agrees the repo is already on disk. The operator clicked Merge five
+    times before realising one repo of twenty-five was in this state, so kato
+    now REPAIRS it rather than reporting it.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.service = _make_service()
+
+    def _origin(self) -> Path:
+        """A bare origin with one commit on ``main``."""
+        work = self.tmp / 'seed'
+        work.mkdir()
+        _git(work, 'init', '-q')
+        _git(work, 'config', 'user.email', 't@example.com')
+        _git(work, 'config', 'user.name', 'Test')
+        _git(work, 'checkout', '-q', '-b', 'main')
+        (work / 'shared.txt').write_text('base\n', encoding='utf-8')
+        _git(work, 'add', '-A')
+        _git(work, 'commit', '-q', '-m', 'base')
+        origin = self.tmp / 'origin.git'
+        _git(work, 'clone', '-q', '--bare', str(work), str(origin))
+        return origin
+
+    def _interrupted_clone(self, at: Path) -> Path:
+        """The exact on-disk shape a killed ``git clone`` leaves behind.
+
+        Including the ``tmp_pack_*`` scratch file. That detail is the whole
+        reason the repair sat dead: a fetch streams into
+        ``objects/pack/tmp_pack_XXXXXX`` and renames it only once the pack
+        is complete, so EVERY clone killed mid-download has one — and the
+        emptiness test counted it as real objects and refused to repair.
+        The operator kept getting git's raw fatal from a repo whose only
+        content was this 0-byte scratch file.
+        """
+        pack = at / '.git' / 'objects' / 'pack'
+        pack.mkdir(parents=True)
+        (pack / 'tmp_pack_HJydSJ').write_bytes(b'')
+        (at / '.git' / 'objects' / 'info').mkdir()
+        (at / '.git' / 'refs' / 'heads').mkdir(parents=True)
+        (at / '.git' / 'refs' / 'tags').mkdir()
+        (at / '.git' / 'HEAD').write_text(
+            'ref: refs/heads/.invalid\n', encoding='utf-8',
+        )
+        return at
+
+    def test_a_finished_pack_is_real_content_and_is_never_deleted(self) -> None:
+        """The line between "scratch file" and "your repository".
+
+        Only ``tmp_*`` is ignored. A completed ``pack-<sha>.pack`` means the
+        objects arrived, so the clone answers "not empty" and keeps every
+        byte — the emptiness test is what licenses removing the directory.
+        """
+        clone = self._interrupted_clone(self.tmp / 'has-a-pack')
+        pack = clone / '.git' / 'objects' / 'pack'
+        (pack / 'pack-0123456789abcdef.pack').write_bytes(b'PACK')
+
+        self.assertFalse(self.service._clone_is_empty_of_objects(clone))
+
+    def test_the_tmp_pack_scratch_file_does_not_count_as_content(self) -> None:
+        # The regression itself, pinned on the predicate directly.
+        clone = self._interrupted_clone(self.tmp / 'scratch-only')
+        self.assertTrue(self.service._clone_is_empty_of_objects(clone))
+
+    def test_the_clone_is_re_fetched_and_the_merge_then_runs(self) -> None:
+        origin = self._origin()
+        clone = self._interrupted_clone(self.tmp / 'event-core-lib')
+        repo = SimpleNamespace(
+            id='event-core-lib', local_path=str(clone),
+            remote_url=str(origin), destination_branch='main',
+        )
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        # Repaired and merged — NOT a refusal the operator has to act on.
+        self.assertTrue(out['merged'], out)
+        # The objects actually arrived and the working tree exists this time.
+        self.assertTrue((clone / 'shared.txt').is_file())
+        # ...on the task branch, which the interrupted clone never had. Without
+        # recreating it the repair "succeeds" and the merge then refuses with
+        # wrong_branch_checked_out — a second dead end for the same fault.
+        self.assertEqual(self.service._current_branch(str(clone)), 'feat/x')
+
+    def test_a_repair_that_cannot_run_reports_plainly(self) -> None:
+        # No remote_url — kato cannot re-fetch. The operator still gets a
+        # sentence naming the repo and the real cause, never git's
+        # "ambiguous argument 'HEAD'" for a state they cannot act on.
+        clone = self._interrupted_clone(self.tmp / 'event-core-lib')
+        repo = SimpleNamespace(
+            id='event-core-lib', local_path=str(clone),
+            remote_url='', destination_branch='main',
+        )
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertFalse(out['merged'])
+        self.assertEqual(out['reason'], 'incomplete_clone')
+        self.assertIn('event-core-lib', out['detail'])
+        self.assertIn('never finished downloading', out['detail'])
+        self.assertNotIn('ambiguous argument', out['detail'])
+
+    def test_a_clone_holding_real_objects_is_never_deleted(self) -> None:
+        """The guard on the destructive step, pinned.
+
+        The repair REMOVES the directory. It is licensed by the emptiness
+        test alone — a repo with objects whose HEAD is merely broken keeps
+        every file and gets reported instead.
+        """
+        origin = self._origin()
+        clone = self.tmp / 'client'
+        _git(self.tmp, 'clone', '-q', str(origin), str(clone))
+        (clone / '.git' / 'HEAD').write_text(
+            'ref: refs/heads/.invalid\n', encoding='utf-8',
+        )
+        repo = SimpleNamespace(
+            id='client', local_path=str(clone),
+            remote_url=str(origin), destination_branch='main',
+        )
+
+        out = self.service.merge_default_branch_into_clone(repo, 'feat/x')
+
+        self.assertFalse(out['merged'])
+        self.assertEqual(out['reason'], 'branch_lookup_failed')
+        self.assertTrue((clone / 'shared.txt').is_file())
+
+
 class MergePreflightTests(unittest.TestCase):
     """Mocked refusals — never reach a real git repo."""
 

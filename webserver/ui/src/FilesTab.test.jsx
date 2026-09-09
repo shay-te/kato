@@ -12,7 +12,7 @@ vi.mock('./api.js', () => ({
   fetchDiff: vi.fn(),
   fetchFileTree: vi.fn(),
   fetchFileContent: vi.fn(),
-  fetchRepoCommits: vi.fn().mockResolvedValue({ ok: true, body: [] }),
+  fetchRepoCommits: vi.fn().mockResolvedValue({ ok: true, body: { commits: [] } }),
   fetchTaskComments: vi.fn().mockResolvedValue({ ok: true, body: { comments: [] } }),
   syncTaskRepositories: vi.fn(),
 }));
@@ -28,7 +28,7 @@ import FilesTab, {
   formatSyncResult,
   listVisibleChangedFiles,
 } from './FilesTab.jsx';
-import { fetchDiff, fetchFileTree, fetchTaskComments } from './api.js';
+import { fetchDiff, fetchFileTree, fetchRepoCommits, fetchTaskComments } from './api.js';
 
 const FILE_TREE_PAYLOAD = {
   trees: [{
@@ -1508,5 +1508,90 @@ describe('FilesTab — search control order', () => {
     const order = Array.from(actions.querySelectorAll('button'))
       .map((b) => b.getAttribute('aria-label'));
     expect(order).toEqual(['Clear search', 'Match case', 'Match the name exactly']);
+  });
+});
+
+
+// ── Commit history dropdown ────────────────────────────────────────────────
+// Reported as "commit history not opening on click". It WAS opening — the
+// list mounted and laid out correctly inside the repo section, which lives
+// inside ``.files-tab-body``, a scroll container (``overflow-y: auto;
+// overflow-x: hidden``). A scrollport clips every descendant box, so the
+// menu was drawn where nobody could see it. An empty repo and a broken
+// button looked exactly the same.
+
+describe('commit history dropdown', () => {
+  const TREE = {
+    trees: [{
+      repo_id: 'client',
+      cwd: '/tmp/client',
+      tree: [{ name: 'a.js', path: '/tmp/client/a.js' }],
+      changed_files: ['a.js'],
+      conflicted_files: [],
+    }],
+  };
+
+  beforeEach(() => {
+    fetchFileTree.mockResolvedValue(TREE);
+    fetchDiff.mockResolvedValue({ diffs: [] });
+  });
+
+  test('the menu is portalled OUT of the scrolling file pane', async () => {
+    fetchRepoCommits.mockResolvedValue({
+      ok: true,
+      body: { commits: [{ sha: 'abc1234', short_sha: 'abc1234', subject: 'first', author: 'me' }] },
+    });
+    const { container } = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /commit history/i }));
+
+    const menu = await screen.findByRole('listbox');
+    // The whole fix: it must NOT be a descendant of the pane that clips.
+    expect(container.contains(menu)).toBe(false);
+    expect(menu.parentElement).toBe(document.body);
+    expect(screen.getByText('first')).toBeInTheDocument();
+  });
+
+  test('an empty history SAYS it is empty', async () => {
+    // "if there is none, we should see some indication" — the menu already
+    // had this line; it was inside the box nobody could see.
+    fetchRepoCommits.mockResolvedValue({ ok: true, body: { commits: [] } });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /commit history/i }));
+
+    expect(await screen.findByText(/No commits on this repo/i)).toBeInTheDocument();
+  });
+
+  test('a failed load shows the error, not an empty box', async () => {
+    fetchRepoCommits.mockResolvedValue({ ok: false, error: 'git exploded' });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /commit history/i }));
+
+    expect(await screen.findByText('git exploded')).toBeInTheDocument();
+  });
+
+  test('clicking the icon again closes it', async () => {
+    fetchRepoCommits.mockResolvedValue({ ok: true, body: { commits: [] } });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    const btn = await screen.findByRole('button', { name: /commit history/i });
+
+    fireEvent.click(btn);
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+    fireEvent.click(btn);
+    await waitFor(() => {
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+  });
+
+  test('the icon tooltip is short enough to fit its box', async () => {
+    // It was 110 characters, which wraps to four lines in the 220px
+    // ``tooltip-end`` box and is then sliced by the pane's overflow — the
+    // operator saw a floating sentence fragment with no visible owner.
+    fetchRepoCommits.mockResolvedValue({ ok: true, body: { commits: [] } });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    const btn = await screen.findByRole('button', { name: /commit history/i });
+
+    const tip = btn.getAttribute('data-tooltip');
+    expect(tip).toMatch(/commit history/i);
+    expect(tip.length).toBeLessThanOrEqual(60);
   });
 });

@@ -101,21 +101,33 @@ export const toast = {
 };
 
 // Dispatch a pre-built ``{ kind, title, message }`` result object as a
-// toast, applying the error-vs-other duration rule the action handlers
-// (Pull / Finish / Update source / Sync) repeat verbatim: error → a
-// longer ``errorMs``, anything else → ``defaultMs``. The formatXResult
-// builders stay distinct per payload; only this trailing dispatch is
-// shared.
+// toast, applying the one duration rule every git-action handler (Merge /
+// Pull / Push / Finish / Update source / Sync) shares. The formatXResult
+// builders stay distinct per payload; only this trailing dispatch is shared.
+//
+// AN ACTION THAT DID NOT FULLY COMPLETE NEVER EXPIRES.
+//
+// A blocked or failed repo is something the operator has to act on, and a
+// timer takes it away mid-read — or before it is read at all. One operator
+// clicked "Merge master" FIVE times before realising a repo was refusing:
+// the report was amber, up for six seconds, with the one ⚠ line buried
+// under twenty-four green ones. Losing a report you must act on is strictly
+// worse than a card that waits for a click, so problems now stay put.
+//
+// ``problemMs`` remains overridable, but the default is the policy: 0.
 export function toastResult(
   { kind = 'info', title, message, taskId = '', taskSummary = '' } = {},
-  { errorMs = 12000, defaultMs = 7000 } = {},
+  { problemMs = 0, defaultMs = 7000 } = {},
 ) {
+  // Both kinds, not just ``error``: a partial run is reported as a warning
+  // and is exactly the case that was being missed.
+  const needsAttention = kind === 'error' || kind === 'warning';
   return toastStore.push({
     kind,
     title,
     message,
     taskId,
     taskSummary,
-    durationMs: kind === 'error' ? errorMs : defaultMs,
+    durationMs: needsAttention ? problemMs : defaultMs,
   });
 }

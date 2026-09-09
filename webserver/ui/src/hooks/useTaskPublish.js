@@ -7,7 +7,10 @@ import {
 } from '../stores/taskCache/index.js';
 import { useBusyAction } from './useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
-import { formatPushResult } from '../components/sessionHeaderFormatters.js';
+import {
+  formatCreatePullRequestResult,
+  formatPushResult,
+} from '../components/sessionHeaderFormatters.js';
 import { recordGitActionNow } from '../utils/lastGitAction.js';
 import { toastResult } from '../stores/toastStore.js';
 
@@ -93,7 +96,17 @@ export function useTaskPublish(taskId) {
   );
   const [prBusy, createPullRequest] = useBusyAction(
     () => createTaskPullRequest(taskId),
-    { scope: gitActionKey(taskId, 'pr'), enabled: !!taskId, onDone: refresh },
+    {
+      scope: gitActionKey(taskId, 'pr'),
+      enabled: !!taskId,
+      onDone: (result) => {
+        refresh();
+        // Was ``onDone: refresh`` — no toast at all, so opening a PR looked
+        // identical whether it opened three, skipped them as duplicates, or
+        // failed on every repo.
+        toastResult(formatCreatePullRequestResult(result, taskId));
+      },
+    },
   );
 
   return {

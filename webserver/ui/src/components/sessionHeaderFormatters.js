@@ -304,56 +304,211 @@ export function formatMergeResult(result, taskId = '') {
   const skipped = body.skipped_repositories || [];
   const failed = body.failed_repositories || [];
 
-  const lines = [];
+  // PROBLEMS FIRST. On a 25-repo task the one repo that refused used to be
+  // printed in source order — buried somewhere inside twenty-four lines of
+  // "already up to date", in a toast that expired after six seconds. The
+  // operator clicked Merge master five times before spotting it. Whatever
+  // needs a human goes at the top, where a glance lands.
+  const problemLines = [];
+  const okLines = [];
   for (const entry of merged) {
     const count = Number(entry.commits_merged || 0);
     const branch = String(entry.default_branch || '').trim() || 'default branch';
     const wip = entry.wip_committed
       ? ' (uncommitted work saved as a WIP commit first)'
       : '';
-    lines.push(`✓ ${entry.repository_id}: merged ${count} commit(s) from ${branch}${wip}`);
+    okLines.push(`✓ ${entry.repository_id}: merged ${count} commit(s) from ${branch}${wip}`);
   }
   // A skip is only "already up to date" when the backend SAYS so — every
   // other reason (wrong branch, fetch failure, …) must be shown, not
   // masked. Masking was the "clicks Merge master, sees 'already up to
   // date' forever" bug: the merge was being refused and nobody knew why.
-  let blockedSkips = 0;
   for (const entry of skipped) {
     if ((entry.reason || '') === 'already_up_to_date') {
-      lines.push(`• ${entry.repository_id}: already up to date`);
+      okLines.push(`• ${entry.repository_id}: already up to date`);
     } else {
-      blockedSkips += 1;
       const why = String(entry.detail || entry.reason || 'skipped').trim();
-      lines.push(`⚠ ${entry.repository_id}: ${why}`);
+      problemLines.push(`⚠ ${entry.repository_id}: ${why}`);
     }
   }
-  lines.push(...formatFailedLines(failed));
+  problemLines.push(...formatFailedLines(failed));
+  const lines = [...problemLines, ...okLines];
   if (lines.length === 0) {
     lines.push('• no repositories eligible to merge');
   }
 
+  const problems = problemLines.length;
+  const total = problems + okLines.length;
   let title;
   let kind;
-  if (merged.length) {
-    title = failed.length ? 'Default branch merged (partial)' : 'Default branch merged';
-    kind = failed.length ? 'warning' : 'success';
-  } else if (failed.length) {
-    title = 'Merge failed';
+  if (problems === 0) {
+    title = merged.length ? 'Default branch merged' : 'Nothing to merge';
+    // Every repo already contained the default branch — the lines above
+    // list them, so the operator sees what was checked rather than a vague
+    // "nothing to merge".
+    kind = merged.length ? 'success' : 'info';
+  } else if (okLines.length === 0) {
+    // Nothing worked at all — the only case that deserves a wholesale verdict.
+    title = failed.length ? 'Merge failed' : 'Merge blocked';
     kind = 'error';
-  } else if (blockedSkips) {
-    title = 'Merge blocked';
-    kind = 'warning';
   } else {
-    // Every repo already contained the default branch — list them so the
-    // operator sees what was checked, not a vague "nothing to merge".
-    title = 'Nothing to merge';
-    kind = 'info';
+    // PARTIAL. "Merge blocked" over a run where 24 of 25 repos were fine
+    // reads as a wholesale refusal, and "(partial)" doesn't say how partial.
+    // The ratio does, and it is the number the operator is deciding on.
+    title = problems === 1
+      ? `1 of ${total} repositories needs attention`
+      : `${problems} of ${total} repositories need attention`;
+    kind = 'error';
   }
   const trimmedTask = String(taskId || '').trim();
   return {
     title: trimmedTask ? `${title} (${trimmedTask})` : title,
     kind,
     message: lines.join('\n'),
+  };
+}
+
+// Toast for "Approve push" — the button that resumes a publish kato parked
+// waiting for the operator.
+//
+// This button had NO toast at all. It runs the longest and most
+// consequential action in the app — push every repo's branch, open the pull
+// requests, move the ticket to In Review — and reported the outcome by
+// making itself disappear. Reported as: "i clicked on push button. no
+// indication or message when push is done."
+//
+// It reads the PUBLISH result — ``{status, pull_requests,
+// failed_repositories}`` — which is NOT the nested shape
+// ``formatFinishResult`` reads. Reusing that formatter here would have
+// printed "push: no action" over a perfectly good publish, which is exactly
+// the misread the flat-vs-nested comment above formatPushResult describes.
+export function formatApprovePushResult(result, taskId = '') {
+  const trimmedTask = String(taskId || '').trim();
+  const suffix = trimmedTask ? ` (${trimmedTask})` : '';
+  if (!result || !result.ok) {
+    const failure = formatRequestFailure(result, `Push failed${suffix}`);
+    // The known restart case, spelled out. Pending approvals are held in
+    // memory, so a kato restart drops them and this 404s. The work is not
+    // lost and the operator has a way through — say both, rather than
+    // handing over a bare "no pending publish for this task".
+    if (String(failure.message || '').includes('no pending publish')) {
+      return {
+        kind: 'error',
+        title: `Nothing left to approve${suffix}`,
+        message: 'Kato has no publish parked for this task — most likely it '
+          + 'restarted since parking it (pending approvals are held in '
+          + 'memory, not on disk).\nYour branch and commits are safe in the '
+          + 'workspace: use the Push button, then Pull request.',
+      };
+    }
+    return failure;
+  }
+  const publish = (result.body || {}).result;
+  if (!publish) {
+    // approve_push ran the publish and it did not come back with a result —
+    // the move-to-review step failed and the task was routed into kato's
+    // failure handler. Green here would be a lie.
+    return {
+      kind: 'error',
+      title: `Push did not finish${suffix}`,
+      message: 'Kato approved the push but the publish did not complete, so '
+        + 'the ticket was not moved to review. Check the kato log for the '
+        + 'failure, then retry with the Push button.',
+    };
+  }
+  const created = publish.pull_requests || [];
+  const failed = publish.failed_repositories || [];
+  const status = String(publish.status || '');
+  const lines = [];
+  // Failures first, same rule as every other report — see formatMergeResult.
+  for (const entry of failed) {
+    lines.push(`✗ ${entry.repository_id}: ${entry.error || 'failed'}`);
+  }
+  if (created.length) {
+    const urls = created.map((r) => r.url || r.repository_id).join(', ');
+    lines.push(`✓ opened ${created.length} pull request(s): ${urls}`);
+  }
+  if (status === 'no_changes') {
+    return {
+      kind: 'warning',
+      title: `Nothing was pushed${suffix}`,
+      message: 'The agent produced no commits in any repository, so nothing '
+        + 'was pushed and no pull request was opened. The ticket stays where '
+        + 'it is.',
+    };
+  }
+  if (status === 'partial_failure' || failed.length) {
+    return {
+      kind: 'error',
+      title: `Pushed with failures${suffix}`,
+      message: lines.join('\n'),
+    };
+  }
+  if (status === 'ready_for_review') {
+    lines.push('✓ ticket moved to In Review');
+    return { kind: 'success', title: `Pushed${suffix}`, message: lines.join('\n') };
+  }
+  // An outcome this UI does not recognise. Report it as unfinished rather
+  // than assuming the happy path — a wrong green is what sends an operator
+  // away from a task that still needs them.
+  return {
+    kind: 'warning',
+    title: `Push finished${suffix}`,
+    message: lines.length
+      ? lines.join('\n')
+      : `• kato reported an unrecognised outcome: ${status || 'none'}`,
+  };
+}
+
+// Toast for the operator-triggered "Pull request" button (POST /pull-request).
+// Also had no toast: the button spun, stopped, and said nothing — including
+// when every repo failed.
+export function formatCreatePullRequestResult(result, taskId = '') {
+  const trimmedTask = String(taskId || '').trim();
+  const suffix = trimmedTask ? ` (${trimmedTask})` : '';
+  if (!result || !result.ok) {
+    return formatRequestFailure(result, `Pull request failed${suffix}`);
+  }
+  const body = result.body || {};
+  const created = body.created_pull_requests || [];
+  const skipped = body.skipped_existing || [];
+  const failed = body.failed_repositories || [];
+  const lines = [];
+  for (const entry of failed) {
+    lines.push(`✗ ${entry.repository_id}: ${entry.error || 'failed'}`);
+  }
+  for (const entry of created) {
+    lines.push(`✓ ${entry.repository_id}: ${entry.url || 'opened'}`);
+  }
+  for (const entry of skipped) {
+    // A skip has two very different causes and the operator needs to tell
+    // them apart: a PR that already exists is fine, an empty diff means the
+    // repo has nothing to review.
+    const why = String(entry.reason || '').trim();
+    lines.push(`• ${entry.repository_id}: ${why || 'PR already open'}`);
+  }
+  if (failed.length) {
+    return {
+      kind: 'error',
+      title: created.length
+        ? `Pull requests opened with failures${suffix}`
+        : `Pull request failed${suffix}`,
+      message: lines.join('\n'),
+    };
+  }
+  if (created.length) {
+    return {
+      kind: 'success',
+      title: `Opened ${created.length} pull request(s)${suffix}`,
+      message: lines.join('\n'),
+    };
+  }
+  return {
+    kind: 'info',
+    title: `No pull request opened${suffix}`,
+    message: lines.length
+      ? lines.join('\n')
+      : '• no repositories needed a pull request',
   };
 }
 

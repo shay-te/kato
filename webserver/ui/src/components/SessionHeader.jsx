@@ -140,20 +140,23 @@ export default function SessionHeader({
           // The toast NAMES each conflicted repository (+ file count) so the
           // operator knows where to look; the per-file resolution went to
           // Claude above.
-          toast.show({
-            ...formatMergeConflicts(conflicted, {
-              chatDelivered: !!(sent && sent.ok),
-              taskId: session.task_id,
-            }),
-            durationMs: 12000,
-          });
+          // Sticky like every other unfinished outcome: conflict markers are
+          // sitting in the working tree and the operator needs to know which
+          // repos they are in.
+          toastResult(formatMergeConflicts(conflicted, {
+            chatDelivered: !!(sent && sent.ok),
+            taskId: session.task_id,
+          }));
           return;
         }
         // Clean / skipped / failed / nothing — one toast that NAMES every
         // repo merged from the default branch (formatMergeResult). The
         // conflict path above is handled separately (it messages Claude).
-        const merged = formatMergeResult(result, session.task_id);
-        toast.show({ ...merged, durationMs: merged.kind === 'success' ? 7000 : 6000 });
+        // Via toastResult, so a run with ANY blocked or failed repo is red
+        // and waits for a click. It used to be a 6s amber card, which is how
+        // one refusing repo out of twenty-five went unnoticed for five
+        // clicks of this button.
+        toastResult(formatMergeResult(result, session.task_id));
       },
     },
   );
@@ -190,7 +193,7 @@ export default function SessionHeader({
         // other toast.
         toastResult(
           { ...formatUpdateSourceResult(result), kind },
-          { defaultMs: 0, errorMs: 0 },
+          { defaultMs: 0 },  // problems are sticky by default now
         );
       },
     },

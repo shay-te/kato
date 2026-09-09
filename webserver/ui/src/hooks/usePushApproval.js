@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { approveTaskPush } from '../api.js';
 import { useBusyAction } from './useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
+import { formatApprovePushResult } from '../components/sessionHeaderFormatters.js';
+import { toastResult } from '../stores/toastStore.js';
 
 // "Kato is paused waiting for you to approve the push" — read from the session
 // record, not from a poll of its own.
@@ -52,9 +54,17 @@ export function usePushApproval(session) {
       // of the long ones, and the operator switches tabs while it runs.
       scope: gitActionKey(taskId, 'approve-push'),
       enabled: !!taskId,
-      // Only on success. A failed approve must leave the button up — hiding it
-      // would strand the operator with no way to retry and no sign why.
-      onDone: (result) => { if (result.ok) { setDismissed(true); } },
+      onDone: (result) => {
+        // ALWAYS report. This action pushes every repo, opens the pull
+        // requests and moves the ticket — and it used to say nothing at all,
+        // in either direction: on success the button just vanished, on
+        // failure it sat there with no reason given. "i clicked on push
+        // button. no indication or message when push is done."
+        toastResult(formatApprovePushResult(result, taskId));
+        // Dismiss only on success. A failed approve must leave the button up —
+        // hiding it would strand the operator with no way to retry.
+        if (result.ok) { setDismissed(true); }
+      },
     },
   );
 

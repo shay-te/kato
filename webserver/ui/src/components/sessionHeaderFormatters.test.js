@@ -10,6 +10,8 @@ import {
   formatPushSummary,
   formatRequestFailure,
   formatUpdateSourceResult,
+  formatApprovePushResult,
+  formatCreatePullRequestResult,
 } from './sessionHeaderFormatters.js';
 
 
@@ -79,7 +81,7 @@ test('formatMergeResult: a failure with no merges is an error toast', () => {
   assert.match(out.message, /✗ pay-core-lib: fetch refused/);
 });
 
-test('formatMergeResult: partial (some merged, some failed) downgrades to warning', () => {
+test('formatMergeResult: a partial run is red and NAMES the ratio', () => {
   const out = formatMergeResult({
     ok: true,
     body: {
@@ -88,11 +90,53 @@ test('formatMergeResult: partial (some merged, some failed) downgrades to warnin
       failed_repositories: [{ repository_id: 'c', error: 'boom' }],
     },
   });
-  assert.equal(out.title, 'Default branch merged (partial)');
-  assert.equal(out.kind, 'warning');
+  // "(partial)" never said HOW partial, and amber let a bad repo read as a
+  // footnote. The count is the number the operator is deciding on.
+  assert.equal(out.title, '1 of 3 repositories needs attention');
+  assert.equal(out.kind, 'error');
   assert.match(out.message, /✓ a: merged 2 commit\(s\) from main/);
   assert.match(out.message, /• b: already up to date/);
   assert.match(out.message, /✗ c: boom/);
+  // The failure comes FIRST — on a 25-repo task it used to be buried in
+  // source order among the "already up to date" lines.
+  assert.ok(
+    out.message.indexOf('✗ c: boom') < out.message.indexOf('✓ a:'),
+    'problem lines lead the report',
+  );
+});
+
+test('formatMergeResult: 24 fine + 1 blocked reads as 1 of 25, problem first', () => {
+  // The reported case, verbatim. Twenty-four repos already carried master
+  // and one had an unusable clone. It rendered as "Merge blocked" — which
+  // reads as a wholesale refusal — in amber, for six seconds, with the one
+  // ⚠ line somewhere in the middle. The operator clicked Merge master five
+  // times before working out what had happened.
+  const out = formatMergeResult({
+    ok: true,
+    body: {
+      merged_repositories: [],
+      skipped_repositories: [
+        ...Array.from({ length: 24 }, (_, i) => ({
+          repository_id: `repo-${i}`, reason: 'already_up_to_date',
+        })),
+        {
+          repository_id: 'event-core-lib',
+          reason: 'incomplete_clone',
+          detail: 'the workspace clone for event-core-lib never finished '
+            + 'downloading, and re-cloning it failed: no remote_url configured',
+        },
+      ],
+      failed_repositories: [],
+    },
+  }, 'UNA-2742');
+
+  assert.equal(out.title, '1 of 25 repositories needs attention (UNA-2742)');
+  assert.equal(out.kind, 'error');
+  // First line, not the fourteenth.
+  assert.match(out.message.split('\n')[0], /^⚠ event-core-lib: /);
+  // The 24 that were fine are still listed — the operator sees what was
+  // checked, they just aren't what leads.
+  assert.match(out.message, /• repo-0: already up to date/);
 });
 
 test('formatMergeResult surfaces a request failure', () => {
@@ -468,8 +512,9 @@ test('formatMergeResult: a blocked repo shows its real reason, not "already up t
         failed_repositories: [],
       },
     });
+    // Nothing at all worked here, so the wholesale verdict is honest.
     assert.equal(out.title, 'Merge blocked');
-    assert.equal(out.kind, 'warning');
+    assert.equal(out.kind, 'error');
     assert.ok(out.message.includes("workspace is on 'master'"));
     assert.ok(!out.message.includes('already up to date'));
   });
@@ -599,4 +644,134 @@ test('a carried-changes note is routine, not a warning', () => {
     },
   });
   assert.match(out.message, /• changes carried across untouched/);
+});
+
+
+// ── Approve push ───────────────────────────────────────────────────────────
+// The button that had no toast at all: "i clicked on push button. no
+// indication or message when push is done."
+
+test('formatApprovePushResult: a completed publish names the PRs and the ticket move', () => {
+  const out = formatApprovePushResult({
+    ok: true,
+    body: {
+      approved: true,
+      result: {
+        status: 'ready_for_review',
+        pull_requests: [{ repository_id: 'client', url: 'https://host/pr/1' }],
+        failed_repositories: [],
+      },
+    },
+  }, 'UNA-2742');
+  assert.equal(out.kind, 'success');
+  assert.equal(out.title, 'Pushed (UNA-2742)');
+  assert.match(out.message, /https:\/\/host\/pr\/1/);
+  assert.match(out.message, /ticket moved to In Review/);
+});
+
+test('formatApprovePushResult: no commits is NOT reported as a push', () => {
+  // The quiet false success. The publish returns 200 and the button
+  // disappears, so silence read as "pushed" — when in fact nothing left the
+  // machine and the ticket did not move.
+  const out = formatApprovePushResult({
+    ok: true,
+    body: { approved: true, result: { status: 'no_changes', pull_requests: [] } },
+  }, 'UNA-1');
+  assert.equal(out.kind, 'warning');
+  assert.equal(out.title, 'Nothing was pushed (UNA-1)');
+  assert.match(out.message, /no commits/);
+});
+
+test('formatApprovePushResult: a partial publish is red and lists the failures first', () => {
+  const out = formatApprovePushResult({
+    ok: true,
+    body: {
+      approved: true,
+      result: {
+        status: 'partial_failure',
+        pull_requests: [{ repository_id: 'ok-repo', url: 'u' }],
+        failed_repositories: [{ repository_id: 'bad-repo', error: 'auth 401' }],
+      },
+    },
+  });
+  assert.equal(out.kind, 'error');
+  assert.match(out.message.split('\n')[0], /^✗ bad-repo: auth 401/);
+});
+
+test('formatApprovePushResult: a lost pending publish explains the restart', () => {
+  // Pending approvals live in memory; a kato restart drops them and this
+  // 404s. The work is safe — say so and name the way through, instead of
+  // handing over the bare server string.
+  const out = formatApprovePushResult({
+    ok: false, status: 404, body: { error: 'no pending publish for this task' },
+  }, 'UNA-9');
+  assert.equal(out.kind, 'error');
+  assert.equal(out.title, 'Nothing left to approve (UNA-9)');
+  assert.match(out.message, /restarted/);
+  assert.match(out.message, /safe in the workspace/);
+  assert.match(out.message, /Push button/);
+});
+
+test('formatApprovePushResult: a publish with no result is never green', () => {
+  // approve_push ran and came back empty — the move-to-review step failed.
+  const out = formatApprovePushResult({ ok: true, body: { approved: true, result: null } });
+  assert.equal(out.kind, 'error');
+  assert.match(out.title, /did not finish/);
+});
+
+test('formatApprovePushResult: an unrecognised status is not assumed to be success', () => {
+  const out = formatApprovePushResult({
+    ok: true, body: { approved: true, result: { status: 'something_new' } },
+  });
+  assert.notEqual(out.kind, 'success');
+  assert.match(out.message, /something_new/);
+});
+
+// ── Create pull request ────────────────────────────────────────────────────
+
+test('formatCreatePullRequestResult: opened PRs are named', () => {
+  const out = formatCreatePullRequestResult({
+    ok: true,
+    body: {
+      created: true,
+      created_pull_requests: [{ repository_id: 'client', url: 'https://host/pr/7' }],
+      skipped_existing: [],
+      failed_repositories: [],
+    },
+  }, 'UNA-3');
+  assert.equal(out.kind, 'success');
+  assert.equal(out.title, 'Opened 1 pull request(s) (UNA-3)');
+  assert.match(out.message, /https:\/\/host\/pr\/7/);
+});
+
+test('formatCreatePullRequestResult: a skip says WHY, not just "skipped"', () => {
+  // "already open" and "there is nothing to review" are different answers
+  // and the operator acts differently on each.
+  const out = formatCreatePullRequestResult({
+    ok: true,
+    body: {
+      created_pull_requests: [],
+      skipped_existing: [
+        { repository_id: 'a', url: 'u' },
+        { repository_id: 'b', reason: 'no changes vs main' },
+      ],
+      failed_repositories: [],
+    },
+  });
+  assert.equal(out.kind, 'info');
+  assert.match(out.message, /• a: PR already open/);
+  assert.match(out.message, /• b: no changes vs main/);
+});
+
+test('formatCreatePullRequestResult: failures are red and lead', () => {
+  const out = formatCreatePullRequestResult({
+    ok: true,
+    body: {
+      created_pull_requests: [{ repository_id: 'ok', url: 'u' }],
+      skipped_existing: [],
+      failed_repositories: [{ repository_id: 'bad', error: '401' }],
+    },
+  });
+  assert.equal(out.kind, 'error');
+  assert.match(out.message.split('\n')[0], /^✗ bad: 401/);
 });

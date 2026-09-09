@@ -42,6 +42,28 @@ class _NothingToCommit(Exception):
     """
 
 
+def _is_partial_pack_download(name: str) -> bool:
+    """True for the scratch files ``git`` writes while fetching a pack.
+
+    A fetch streams into ``objects/pack/tmp_pack_XXXXXX`` and only renames it
+    to ``pack-<sha>.pack`` once the whole thing has arrived, so a clone killed
+    mid-download leaves one of these behind and NOTHING else. git treats them
+    as garbage itself — ``git gc`` prunes stale ``tmp_*`` files.
+
+    This is load-bearing for the interrupted-clone repair. Counting a
+    tmp_pack as "real objects" is what made
+    ``_clone_is_empty_of_objects`` answer False on the very shape it exists
+    to recognise: the repair never fired, and the operator got git's raw
+    "ambiguous argument 'HEAD'" instead — from a repo holding one 0-byte
+    scratch file.
+
+    Narrow on purpose. A FINISHED ``pack-<sha>.pack`` or ``.idx`` is real
+    content and must keep answering False, because that answer is what
+    licenses deleting the directory.
+    """
+    return str(name or '').startswith('tmp_')
+
+
 def _is_per_task_workspace_clone(repository) -> bool:
     """True when ``repository.local_path`` is under a per-task kato workspace.
 
@@ -245,8 +267,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 # else under objects/ means real content arrived.
                 if entry.name not in ('info', 'pack'):
                     return False
-                if entry.is_dir() and any(entry.iterdir()):
-                    if entry.name == 'pack':
+                if entry.name == 'pack' and entry.is_dir():
+                    if any(
+                        not _is_partial_pack_download(child.name)
+                        for child in entry.iterdir()
+                    ):
                         return False
             refs = target / '.git' / 'refs'
             if refs.is_dir():
@@ -1243,10 +1268,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             )
         if not normalized_branch:
             return fail('no_branch', f'no task branch for {repository.id}')
-        try:
-            current = self._current_branch(local_path)
-        except Exception as exc:
-            return fail('branch_lookup_failed', str(exc))
+        current, reason, detail = self._current_branch_repairing_the_clone(
+            repository, local_path, normalized_branch,
+        )
+        if reason:
+            return fail(reason, detail)
         if current != normalized_branch:
             return fail(
                 'wrong_branch_checked_out',
@@ -1257,6 +1283,109 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             return {'default_branch': self.destination_branch(repository)}
         except ValueError as exc:
             return fail('default_branch_unknown', str(exc))
+
+    def _current_branch_repairing_the_clone(
+        self,
+        repository,
+        local_path: str,
+        branch_name: str,
+    ) -> tuple[str, str, str]:
+        """``(branch, reason, detail)`` — repairing an interrupted clone once.
+
+        ``reason`` is empty when ``branch`` is usable.
+
+        An INTERRUPTED clone reaches here with a raw git fatal:
+
+            fatal: ambiguous argument 'HEAD': unknown revision or path not
+            in the working tree.
+
+        ``git clone`` creates the directory and points HEAD at the
+        placeholder ``refs/heads/.invalid`` before it fetches, so a run
+        killed in between — a dropped network, a full disk, a kato restart —
+        leaves a folder holding nothing but an empty ``.git``. It can never
+        recover on its own: every later pass sees ``.git`` and agrees the
+        repo is "already on disk", so the operator clicks Merge, gets git's
+        own wording for a state they cannot act on, and clicks it again.
+
+        So kato repairs it here rather than reporting it. The repair is not
+        new — ``ensure_clone`` has always known how to do exactly this — it
+        simply only ran during PROVISIONING, which a merge does not do.
+        """
+        try:
+            return self._current_branch(local_path), '', ''
+        except Exception as exc:
+            # Anything OTHER than the interrupted-clone signature is a real
+            # git fault and is reported as one. Never repair on a guess: the
+            # repair deletes the directory.
+            if not self._clone_is_empty_of_objects(Path(local_path)):
+                return '', 'branch_lookup_failed', str(exc)
+        repair_failure = self._repair_incomplete_clone(
+            repository, local_path, branch_name,
+        )
+        if repair_failure:
+            return '', 'incomplete_clone', repair_failure
+        try:
+            return self._current_branch(local_path), '', ''
+        except Exception as exc:
+            return '', 'incomplete_clone', (
+                f'the workspace clone for {repository.id} never finished '
+                f'downloading; kato re-cloned it, but it still has no usable '
+                f'checkout: {exc}'
+            )
+
+    def _repair_incomplete_clone(
+        self,
+        repository,
+        local_path: str,
+        branch_name: str,
+    ) -> str:
+        """Re-fetch a clone interrupted before it downloaded anything.
+
+        Returns '' when the clone is usable again, or a sentence naming what
+        stopped the repair — the operator still hears about it, they are
+        just not asked to perform it.
+
+        Deleting and re-fetching is safe here ONLY because of the caller's
+        ``_clone_is_empty_of_objects`` guard: the folder is verified to hold
+        no objects, no refs and no files, so there is provably nothing to
+        lose. Do not reach this without that proof — ``ensure_clone`` removes
+        the directory. It is the same standing rule as
+        ``_restore_unchecked_out_clone``'s ``checkout -f``: the destructive
+        step is licensed by the emptiness test, not by the caller's intent.
+        """
+        target = Path(local_path)
+        self.logger.warning(
+            'workspace clone for %s at %s never finished downloading; '
+            're-cloning it', repository.id, target,
+        )
+        try:
+            self.ensure_clone(repository, target)
+        except Exception as exc:
+            return (
+                f'the workspace clone for {repository.id} never finished '
+                f'downloading, and re-cloning it failed: {exc}'
+            )
+        if not (target / '.git').is_dir() or self._clone_is_empty_of_objects(target):
+            return (
+                f'the workspace clone for {repository.id} never finished '
+                f'downloading, and re-cloning it produced another empty clone'
+            )
+        # A fresh clone lands on the remote's default branch, so the task
+        # branch the interrupted clone never got is still missing. Without
+        # this the repair "succeeds" and the merge then refuses with
+        # ``wrong_branch_checked_out`` — a second unactionable message for
+        # the same fault.
+        try:
+            self._prepare_task_branch(repository, branch_name)
+        except Exception as exc:
+            return (
+                f'kato re-cloned {repository.id} after an interrupted clone, '
+                f'but could not recreate the task branch {branch_name!r}: {exc}'
+            )
+        self.logger.info(
+            're-cloned %s and recreated task branch %s', repository.id, branch_name,
+        )
+        return ''
 
     def merge_default_branch_into_clone(
         self,

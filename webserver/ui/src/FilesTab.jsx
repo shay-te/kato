@@ -1,6 +1,7 @@
 import {
   useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Tree } from 'react-arborist';
 import {
   fetchRepoCommits,
@@ -1011,6 +1012,10 @@ function RepoTree({
     status: 'idle', items: [], error: '',
   });
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  // Where to draw the dropdown, in VIEWPORT coordinates. The menu is
+  // portalled out of this section (see CommitDropdown), so it needs the
+  // trigger's rect — it can no longer just fall where it sits in flow.
+  const [commitAnchor, setCommitAnchor] = useState(null);
   const [activeCommit, setActiveCommit] = useState(null);
 
   useEffect(() => {
@@ -1080,12 +1085,23 @@ function RepoTree({
     // is "expand/collapse repo", which we explicitly DON'T want
     // when the operator clicks the commit-list icon.
     event.stopPropagation();
-    if (!commitMenuOpen) { ensureCommitsLoaded(); }
-    setCommitMenuOpen((prev) => !prev);
+    if (commitMenuOpen) { closeCommitMenu(); return; }
+    // Read the rect BEFORE the state update: the menu is fixed-positioned
+    // against the viewport, and ``currentTarget`` is nulled once the event
+    // finishes dispatching.
+    const rect = event.currentTarget.getBoundingClientRect();
+    setCommitAnchor({ x: rect.left, y: rect.bottom + 4 });
+    ensureCommitsLoaded();
+    setCommitMenuOpen(true);
+  }
+
+  function closeCommitMenu() {
+    setCommitMenuOpen(false);
+    setCommitAnchor(null);
   }
 
   function pickCommit(commit) {
-    setCommitMenuOpen(false);
+    closeCommitMenu();
     setActiveCommit(commit);
   }
   function toggleChangedFolder(key) {
@@ -1262,7 +1278,15 @@ function RepoTree({
             onClick={toggleCommitMenu}
             aria-haspopup="listbox"
             aria-expanded={commitMenuOpen ? 'true' : 'false'}
-            data-tooltip="Commit history — pick a commit on this repo's task branch to scope the Changes tab to that single commit's diff."
+            /* SHORT on purpose. This read "Commit history — pick a commit on
+               this repo's task branch to scope the Changes tab to that single
+               commit's diff." — 110 characters, which wraps to four lines in
+               the 220px tooltip-end box and is then sliced by
+               ``.files-tab-body``'s overflow. The operator saw a floating
+               fragment ending "…Changes tab to that single commit's diff."
+               with nothing to say what it belonged to. An icon tooltip has to
+               fit its box. */
+            data-tooltip="Commit history — scope Changes to one commit"
             aria-label={`View commit history for ${heading}`}
           >
             <Icon name="history" />
@@ -1271,9 +1295,10 @@ function RepoTree({
       </StickyHeader>
       {commitMenuOpen && (
         <CommitDropdown
+          anchor={commitAnchor}
           state={commitsState}
           onPick={pickCommit}
-          onClose={() => setCommitMenuOpen(false)}
+          onClose={closeCommitMenu}
         />
       )}
       {body}
@@ -1290,19 +1315,34 @@ function RepoTree({
 }
 
 
-function CommitDropdown({ state, onPick, onClose }) {
+function CommitDropdown({ anchor, state, onPick, onClose }) {
+  // PORTALLED, and fixed-positioned through the shared clamp hook.
+  //
+  // This was an ``position: absolute`` list rendered inside the repo section
+  // — which sits inside ``.files-tab-body``, a scroll container
+  // (``overflow-y: auto; overflow-x: hidden``). A scrollport clips every
+  // descendant box, so the menu mounted and laid out correctly and simply
+  // could not be seen: clicking the history icon looked like a dead button,
+  // and an empty repo looked identical to a broken one. Same escape route
+  // the path context menu and TabTooltip already take.
+  const { menuRef, style } = useClampedPointMenu(anchor);
   // Light-touch "click outside" behaviour: a backdrop catches
   // outside clicks without trapping mouse events on the rest of
   // the page (a real popover library would be overkill for one
   // dropdown).
-  return (
+  return createPortal(
     <>
       <div
         className="files-tab-commit-backdrop"
         onClick={onClose}
         aria-hidden="true"
       />
-      <ul className="files-tab-commit-menu" role="listbox">
+      <ul
+        ref={menuRef}
+        className="files-tab-commit-menu"
+        style={style}
+        role="listbox"
+      >
         {state.status === 'loading' && (
           <li className="files-tab-commit-empty">Loading commits…</li>
         )}
@@ -1311,7 +1351,8 @@ function CommitDropdown({ state, onPick, onClose }) {
         )}
         {state.status === 'ready' && state.items.length === 0 && (
           <li className="files-tab-commit-empty">
-            No commits on the task branch yet.
+            No commits on this repo&apos;s task branch yet — nothing has been
+            committed here, so there is no history to scope the Changes tab to.
           </li>
         )}
         {state.status === 'ready' && state.items.map((commit) => (
@@ -1333,7 +1374,8 @@ function CommitDropdown({ state, onPick, onClose }) {
           </li>
         ))}
       </ul>
-    </>
+    </>,
+    document.body,
   );
 }
 

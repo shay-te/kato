@@ -20,31 +20,47 @@ test('a zero duration means the store schedules no dismissal', () => {
   assert.match(source, /setTimeout\(\(\) => toastStore\.dismiss\(id\), durationMs\)/);
 });
 
-test('toastResult passes its duration straight through per kind', () => {
-  // So a caller can make BOTH the success and error variants sticky.
+test('a result that needs attention is sticky for every action, not just one', () => {
+  // The rule moved INTO toastResult, so Merge / Pull / Push / Finish / Sync
+  // all inherit it. It used to be per-caller, and the merge handler was the
+  // one that did not opt in — it asked for 6000ms.
   const source = readFileSync(join(ROOT, 'stores/toastStore.js'), 'utf8');
+  assert.match(source, /problemMs = 0, defaultMs = 7000/);
   assert.match(
-    source, /durationMs:\s*kind === 'error' \? errorMs : defaultMs/,
+    source,
+    /const needsAttention = kind === 'error' \|\| kind === 'warning'/,
   );
+  assert.match(source, /durationMs: needsAttention \? problemMs : defaultMs/);
 });
 
-test('the Update-source toast asks for no timeout at all', () => {
+test('the Update-source toast asks for no timeout even when it SUCCEEDS', () => {
   const source = readFileSync(
     join(ROOT, 'components/SessionHeader.jsx'), 'utf8',
   );
   const call = source.slice(
     source.indexOf('formatUpdateSourceResult(result), kind'),
   ).slice(0, 200);
-  // BOTH kinds — an errored run is exactly when the operator most needs to
-  // read which repo failed.
+  // The failure half is now the store's default. This override is for the
+  // other half: a CLEAN sync is still a per-repo record and still the only
+  // place it exists.
   assert.match(call, /defaultMs:\s*0/);
-  assert.match(call, /errorMs:\s*0/);
 });
 
-test('every OTHER toast still expires', () => {
-  // Sticky is for this one report, not a new default — a UI full of toasts
-  // that never leave is worse than one that vanishes.
+test('the merge toast goes through toastResult, so it inherits the rule', () => {
+  // It used to be a raw toast.show with durationMs 6000 — the one action
+  // that opted out, and the one the operator lost a report from.
+  const source = readFileSync(
+    join(ROOT, 'components/SessionHeader.jsx'), 'utf8',
+  );
+  assert.match(source, /toastResult\(formatMergeResult\(result, session\.task_id\)\)/);
+  assert.doesNotMatch(source, /durationMs: merged\.kind/);
+});
+
+test('a CLEAN result still expires', () => {
+  // Sticky is for outcomes that need a human, not a new default — a UI full
+  // of toasts that never leave is worse than one that vanishes. Successes
+  // keep both the plain push default and the toastResult default.
   const source = readFileSync(join(ROOT, 'stores/toastStore.js'), 'utf8');
   assert.match(source, /durationMs = 5000/);
-  assert.match(source, /errorMs = 12000, defaultMs = 7000/);
+  assert.match(source, /defaultMs = 7000/);
 });
