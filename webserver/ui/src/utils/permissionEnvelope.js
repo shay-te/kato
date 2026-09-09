@@ -369,3 +369,33 @@ export function decisionCommandFor(toolName, toolInput) {
 // including the autonomous wait-planning hold, with no popup left to notice.
 // Mirrors the backend's `_NEVER_AUTO_RESOLVED_TOOLS`; both must agree.
 export const NEVER_REMEMBERED_TOOLS = new Set(['ExitPlanMode']);
+
+// ── Time-boxed approval ("Allow for N min") ────────────────────────────────
+//
+// The middle ground between the two existing buttons: "Allow once" re-asks on
+// every command — for a task that runs docker in a loop that is a stream of
+// interruptions the operator stops reading — while "Allow always" is a
+// persisted, global grant, too much to hand over for a burst of work.
+//
+// Deliberately NARROW. Docker because a containerised task runs it in a loop,
+// and the network tools because research is the same shape: many calls, one
+// intent. Everything else keeps the existing two choices — this is not a
+// general "stop asking me" switch.
+//
+// Mirrors ``timed_tool_grant_store.py``; the backend re-derives eligibility
+// itself and is the authority, so a client that got this wrong could only
+// ever offer a button the server then declines to honour.
+export const TIMED_GRANT_MINUTES = 10;
+
+const TIMED_GRANT_PROGRAMS = new Set([
+  'docker', 'docker-compose', 'docker-buildx', 'podman',
+]);
+const TIMED_GRANT_TOOLS = new Set(['WebFetch', 'WebSearch']);
+
+export function isTimedGrantEligible(toolName, toolInput) {
+  const tool = String(toolName || '').trim();
+  if (TIMED_GRANT_TOOLS.has(tool)) { return true; }
+  const signature = decisionCommandFor(tool, toolInput);
+  if (!signature) { return false; }
+  return signature.split(' ').some((program) => TIMED_GRANT_PROGRAMS.has(program));
+}

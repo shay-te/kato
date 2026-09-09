@@ -44,6 +44,40 @@ _RECONCILE_TIMEOUT_SECONDS = 10.0
 _PUSH_SCAN_BUDGET_SECONDS = 3.0
 
 
+def _auth_hint_for(exc: Exception) -> str:
+    """An actionable suffix for an auth failure, or ''.
+
+    A bare ``401 Client Error: Unauthorized`` repeated once per repo per scan
+    tells the operator nothing they can act on. Bitbucket's own body does:
+
+        "API token must be used with an atlassian registered email"
+
+    Atlassian API tokens authenticate as EMAIL + token; the older app
+    passwords used USERNAME + password. kato prefers ``api_email`` and falls
+    back to ``username``, so an operator who pasted a new API token without
+    setting the email gets a guaranteed 401 on every call, with nothing
+    naming the setting that fixes it.
+
+    Read from the EXCEPTION TEXT rather than from config: the provider is the
+    authority on why it refused, and inferring "you must be using an API
+    token" from settings alone would misfire on a genuinely revoked app
+    password.
+    """
+    text = str(exc or '')
+    if 'atlassian registered email' in text.lower():
+        return (
+            ' — set BITBUCKET_API_EMAIL to the Atlassian account email that '
+            'owns this token (an API token authenticates as EMAIL + token, '
+            'not username + token)'
+        )
+    if '401' in text and 'unauthorized' in text.lower():
+        return (
+            ' — check the provider token, and that BITBUCKET_API_EMAIL is set '
+            'when the token is an Atlassian API token'
+        )
+    return ''
+
+
 @dataclass(frozen=True)
 class _SourceRepoOutcome(object):
     """What updating ONE operator clone did: updated, skipped, or failed.
@@ -1134,8 +1168,9 @@ class TaskPublishService(object):
         except Exception as exc:
             self.logger.warning(
                 'PR lookup failed for repository %s (branch %s): %s — '
-                'treating as no PR',
+                'treating as no PR%s',
                 getattr(repository, 'id', ''), branch_name, exc,
+                _auth_hint_for(exc),
             )
             return []
 

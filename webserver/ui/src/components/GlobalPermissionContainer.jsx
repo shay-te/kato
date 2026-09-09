@@ -129,13 +129,18 @@ export default function GlobalPermissionContainer({
     shownRequestIdRef.current = open ? currentRequestId : '';
   }, [open, currentRequestId]);
 
-  const submit = useCallback(async ({ requestId, allow, rationale, remember }) => {
+  const submit = useCallback(async ({
+    requestId, allow, rationale, remember, grantMinutes,
+  }) => {
     if (!currentTaskId) { return false; }
     const result = await postSession(currentTaskId, 'permission', {
       request_id: requestId,
       allow,
       rationale,
       remember: !!remember,
+      // Time-boxed approval ("Allow for N min"). The backend ignores it on a
+      // deny — a deny that silently lapses would re-run what was refused.
+      grant_minutes: Number(grantMinutes) > 0 ? Number(grantMinutes) : 0,
     });
     if (result.ok) {
       // Resolve immediately so the modal closes without waiting for the

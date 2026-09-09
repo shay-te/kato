@@ -702,3 +702,60 @@ describe('PermissionModal — keyboard activation of the buttons', () => {
     );
   });
 });
+
+describe('PermissionModal — time-boxed approval', () => {
+  function bashRaw(command, extra = {}) {
+    return _raw({
+      request: {
+        request_id: 'req-1', tool_name: 'Bash', input: { command }, ...extra,
+      },
+    });
+  }
+
+  test('docker gets an "Allow for 10 min" button', () => {
+    // "Allow once" re-asks on every command, and a task that runs docker in a
+    // loop turns that into a stream of interruptions the operator stops
+    // reading. This is the middle ground — a window, not a standing grant.
+    const onDecide = vi.fn();
+    render(<PermissionModal raw={bashRaw('docker compose up -d')} onDecide={onDecide} />);
+    const button = screen.getByRole('button', { name: /allow for 10 min/i });
+    fireEvent.click(button);
+    expect(onDecide.mock.calls[0][0]).toMatchObject({
+      allow: true, remember: false, grantMinutes: 10,
+    });
+  });
+
+  test('the network tools get it too', () => {
+    render(
+      <PermissionModal
+        raw={_raw({ request: { request_id: 'r', tool_name: 'WebFetch', input: {} } })}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /allow for 10 min/i })).toBeTruthy();
+  });
+
+  test('an ordinary command does NOT get it', () => {
+    // Deliberately narrow — this is not a general "stop asking me" switch.
+    render(<PermissionModal raw={bashRaw('rm -rf build')} onDecide={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /allow for 10 min/i })).toBeNull();
+  });
+
+  test('withheld wherever "Allow always" is withheld', () => {
+    // A time-boxed sandbox escape is still a sandbox escape, so this button
+    // rides on exactly the same gate as the remembered scope.
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r2', tool_name: 'Bash', input: { command: 'docker ps' },
+          },
+          outside_sandbox: true,
+        })}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /allow for 10 min/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+});

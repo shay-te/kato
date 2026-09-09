@@ -4384,6 +4384,39 @@ def _remember_decision_for_pending(session, request_id: str, allow: bool) -> Non
     )
 
 
+def _positive_float(value) -> float:
+    """``value`` as a positive float, else 0.0 — never raises on junk input."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number > 0 else 0.0
+
+
+def _grant_timed_for_pending(session, request_id: str, minutes: float) -> int:
+    """Record a time-boxed "allow" for this request's programs.
+
+    Same key as a remembered decision (tool + program), but held in memory
+    with an expiry — see ``timed_tool_grant_store``. Returns the number of
+    grants recorded so the caller can tell an eligible request from one that
+    was silently ignored.
+    """
+    from kato_core_lib.helpers.timed_tool_grant_store import (
+        grant_for, timed_grant_eligible,
+    )
+    from kato_core_lib.helpers.tool_decision_utils import (
+        decision_programs_for,
+        is_answerable_question,
+    )
+    tool_name, tool_input = _pending_tool(session, request_id)
+    if not tool_name or is_answerable_question(tool_input):
+        return 0
+    programs = decision_programs_for(tool_name, tool_input)
+    if not timed_grant_eligible(tool_name, programs):
+        return 0
+    return grant_for(tool_name, programs, minutes)
+
+
 def _register_post_permission_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/permission')
     def post_permission(task_id: str):
@@ -4400,6 +4433,11 @@ def _register_post_permission_route(app: Flask) -> None:
         rationale = str(payload.get('rationale', '') or '')
         if bool(payload.get('remember', False)):
             _remember_decision_for_pending(session, request_id, allow)
+        # A time-boxed allow. Only meaningful ON an approval — a deny that
+        # silently lapses would re-run the thing the operator refused.
+        grant_minutes = _positive_float(payload.get('grant_minutes'))
+        if allow and grant_minutes:
+            _grant_timed_for_pending(session, request_id, grant_minutes)
         result = _resolve_permission_decision(
             app, session, task_id, request_id, allow, rationale,
             hook_tool_name=str(payload.get('tool', '') or ''),
@@ -4765,6 +4803,7 @@ def _maybe_auto_resolve_pending(
     """
     if not request_id:
         return False
+    from kato_core_lib.helpers.timed_tool_grant_store import timed_grant_active
     from kato_core_lib.helpers.tool_decision_store import recall_command_decision
     from kato_core_lib.helpers.tool_decision_utils import (
         decision_programs_for,
@@ -4807,11 +4846,21 @@ def _maybe_auto_resolve_pending(
         and _action_guard_enum_value(verdict.category) in _HIGH_RISK_ACTION_GUARD_CATEGORIES
     ):
         return False
-    remembered = recall_command_decision(
-        tool_name, decision_programs_for(tool_name, tool_input),
-    )
+    programs = decision_programs_for(tool_name, tool_input)
+    remembered = recall_command_decision(tool_name, programs)
     if remembered is None:
-        return False
+        # No standing decision — but the operator may have granted a WINDOW
+        # ("Allow for 10 min"). Checked last, and only after every carve-out
+        # above, so a timed grant can never approve something a remembered
+        # one would have been refused: it is the same permission with an
+        # expiry, not a wider one.
+        if not timed_grant_active(tool_name, programs):
+            return False
+        _resolve_permission_decision(
+            app, session, task_id, request_id, True,
+            'auto-resolved: time-boxed approval', hook_tool_name=tool_name,
+        )
+        return True
     _resolve_permission_decision(
         app, session, task_id, request_id, remembered,
         'auto-resolved: remembered decision', hook_tool_name=tool_name,

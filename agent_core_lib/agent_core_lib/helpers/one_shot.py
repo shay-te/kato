@@ -15,6 +15,10 @@ difference is the ``command`` a caller passes and the optional
 from __future__ import annotations
 
 import subprocess
+
+from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
+    resolve_cli_spawn_prefix,
+)
 from typing import Callable, Sequence
 
 from utils_core_lib.utils_core_lib.text_utils import condensed_text
@@ -54,9 +58,18 @@ def run_one_shot(
     firing many one-shots should point this at a scratch dir instead of
     littering the operator's own session history.
     """
+    # Resolve the executable before spawning. A one-shot is handed a bare
+    # command name (``claude``), and on Windows ``CreateProcess`` does not
+    # apply ``PATHEXT`` — so the real ``claude.cmd`` was never found and every
+    # one-shot died with ``[WinError 2] The system cannot find the file
+    # specified``. That is silent for the operator: lessons compaction, triage
+    # and the PR helpers simply never worked on Windows.
+    argv = list(command)
+    if argv:
+        argv = [*resolve_cli_spawn_prefix(argv[0]), *argv[1:]]
     try:
         completed = subprocess.run(
-            list(command),
+            argv,
             input=prompt,
             capture_output=True,
             text=True,

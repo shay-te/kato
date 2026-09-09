@@ -59,6 +59,30 @@ def is_windows_host() -> bool:
     return os.name == 'nt'
 
 
+def resolve_cli_spawn_prefix(binary: str) -> list[str]:
+    """The argv prefix that actually launches ``binary``. Never empty.
+
+    Two steps, and BOTH are needed on Windows:
+
+    1. ``shutil.which`` — ``CreateProcess`` does not apply ``PATHEXT``, so a
+       bare ``"claude"`` looks for a file literally named ``claude`` and
+       raises ``[WinError 2] The system cannot find the file specified``. The
+       CLI is installed as ``claude.cmd``; only ``which`` finds it.
+    2. the shim bypass — see :func:`resolve_windows_cli_invocation`.
+
+    It lives here because the streaming path did both inline and the one-shot
+    path did NEITHER, while a comment in the streaming path claimed the two
+    were "shared". They were not: every one-shot (lessons compaction, triage,
+    the PR helpers) died on Windows at step 1 before the shim logic was ever
+    reached. One function both spawn paths call means a transport cannot
+    forget half of it.
+
+    On POSIX this is just ``which`` with a passthrough fallback.
+    """
+    resolved = shutil.which(binary) or binary
+    return resolve_windows_cli_invocation(resolved) or [resolved]
+
+
 def resolve_windows_cli_invocation(cmd_path: str) -> list[str] | None:
     """The argv prefix that bypasses ``cmd_path``'s shim, or ``None``.
 

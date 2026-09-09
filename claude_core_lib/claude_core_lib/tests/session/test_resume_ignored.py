@@ -303,25 +303,31 @@ class WindowsShimBypassTests(unittest.TestCase):
     per transport and silently drifted apart.
     """
 
-    BYPASS = (
-        'claude_core_lib.claude_core_lib.session.streaming'
-        '.resolve_windows_cli_invocation'
+    # Both halves — ``which`` and the shim bypass — now live behind the ONE
+    # shared ``resolve_cli_spawn_prefix``. Streaming did them inline while the
+    # one-shot path did neither, so every one-shot died on Windows with
+    # ``[WinError 2]``; the resolver's own behaviour is tested in
+    # ``agent_core_lib`` where it lives.
+    SPAWN_PREFIX = (
+        'claude_core_lib.claude_core_lib.session.streaming.resolve_cli_spawn_prefix'
     )
 
-    def test_streaming_build_command_bypasses_shim(self) -> None:
+    def test_streaming_build_command_uses_the_resolved_executable(self) -> None:
         session = StreamingClaudeSession(task_id='T1', binary='claude', cwd=tempfile.gettempdir())
-        with mock.patch(self.BYPASS, return_value=['C:\\real\\claude.exe']):
+        with mock.patch(self.SPAWN_PREFIX, return_value=['C:\\real\\claude.exe']):
             command = session._build_command()
         self.assertEqual(command[0], 'C:\\real\\claude.exe')
 
-    def test_streaming_build_command_falls_back_to_which_result(self) -> None:
+    def test_streaming_build_command_takes_a_multi_part_prefix(self) -> None:
+        # A shim that forwards through node resolves to TWO argv entries; the
+        # command must keep both, ahead of every flag.
         session = StreamingClaudeSession(task_id='T1', binary='claude', cwd=tempfile.gettempdir())
-        with mock.patch(self.BYPASS, return_value=None), mock.patch(
-            'claude_core_lib.claude_core_lib.session.streaming.shutil.which',
-            return_value='/usr/local/bin/claude',
+        with mock.patch(
+            self.SPAWN_PREFIX, return_value=['C:\\node.exe', 'C:\\cli.js'],
         ):
             command = session._build_command()
-        self.assertEqual(command[0], '/usr/local/bin/claude')
+        self.assertEqual(command[:2], ['C:\\node.exe', 'C:\\cli.js'])
+        self.assertIn('-p', command)
 
 
 class ArgvOrderTests(unittest.TestCase):

@@ -73,7 +73,7 @@ from claude_core_lib.claude_core_lib.helpers.context_window import (
 from claude_core_lib.claude_core_lib.session.index import parse_jsonl_dict_line
 from claude_core_lib.claude_core_lib.session.registry import kill_process_tree
 from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
-    resolve_windows_cli_invocation,
+    resolve_cli_spawn_prefix,
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import (
@@ -1455,18 +1455,18 @@ class StreamingClaudeSession(object):
     # ----- internals -----
 
     def _build_command(self) -> list[str]:
-        binary_path = shutil.which(self._binary) or self._binary
-        # Resolve PAST a Windows npm cmd-shim before spawning. cmd.exe
-        # silently cuts its command line at the first raw newline (and
-        # caps it at ~8K chars); the ``--append-system-prompt`` value
-        # below is multiline, so spawning through ``claude.cmd``
-        # dropped every later argument — including ``--resume`` /
-        # ``--session-id`` / ``--add-dir`` — and Claude started a
-        # fresh, memoryless session under a new id on every
-        # respawn (the Windows resume-amnesia bug). Shared with the
-        # one-shot client so both spawn paths bypass the shim the same
-        # way.
-        spawn_prefix = resolve_windows_cli_invocation(binary_path) or [binary_path]
+        # ``which`` + resolve PAST a Windows npm cmd-shim before spawning.
+        # cmd.exe silently cuts its command line at the first raw newline (and
+        # caps it at ~8K chars); the ``--append-system-prompt`` value below is
+        # multiline, so spawning through ``claude.cmd`` dropped every later
+        # argument — including ``--resume`` / ``--session-id`` / ``--add-dir``
+        # — and Claude started a fresh, memoryless session under a new id on
+        # every respawn (the Windows resume-amnesia bug).
+        #
+        # Now GENUINELY shared with the one-shot path. This used to say it was
+        # while the one-shot did neither half, so every one-shot died on
+        # Windows with ``[WinError 2]``.
+        spawn_prefix = resolve_cli_spawn_prefix(self._binary)
         command: list[str] = [
             *spawn_prefix,
             '-p',

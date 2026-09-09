@@ -138,6 +138,13 @@ def _export_agent_env_from_kato_config() -> None:
     )
 
 
+# Budget for the lessons compaction one-shot. Deliberately far above the
+# shared interactive default: nothing waits on this call, and the prompt grows
+# with the operator's lesson history, so a too-small budget makes it fail
+# silently and permanently (see the call site).
+_LESSONS_ONE_SHOT_TIMEOUT_SECONDS = 900
+
+
 class KatoCoreLib(CoreLib):
     def __init__(
         self,
@@ -787,7 +794,25 @@ class KatoCoreLib(CoreLib):
             # Best-effort: an uncreatable scratch dir degrades to kato's own
             # cwd (the one-shot still runs; its transcript just lands there).
             cwd = ''
-        llm_one_shot = make_one_shot(binary=binary, model=model, cwd=cwd)
+        # The lessons one-shot gets its OWN, much longer budget.
+        #
+        # The shared 120s default is sized for an INTERACTIVE one-shot, where
+        # a human is waiting. Compaction is neither: it merges the whole
+        # lessons file with every pending per-task lesson, so its prompt grows
+        # with the operator's history — and once it outgrew 120s it began
+        # timing out on every run:
+        #
+        #   OneShotError: claude one-shot did not finish within 120s
+        #   compact LLM call failed; leaving lesson files untouched
+        #
+        # Which is the worst shape of failure: it fails silently in the
+        # background, the pending lessons never merge, the prompt gets BIGGER
+        # next time, and the agent quietly stops learning. Nothing waits on
+        # this call, so the budget only has to be larger than a real merge.
+        llm_one_shot = make_one_shot(
+            binary=binary, model=model, cwd=cwd,
+            timeout_seconds=_LESSONS_ONE_SHOT_TIMEOUT_SECONDS,
+        )
         service = LessonsService(data_access, llm_one_shot)
         self._kick_startup_compact(service)
         return service

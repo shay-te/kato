@@ -6,6 +6,7 @@ import {
   revalidate,
 } from '../stores/taskCache/index.js';
 import { useBusyAction } from './useBusyAction.js';
+import { gitActionKey } from '../stores/gitActionStore.js';
 import { formatPushResult } from '../components/sessionHeaderFormatters.js';
 import { recordGitActionNow } from '../utils/lastGitAction.js';
 import { toastResult } from '../stores/toastStore.js';
@@ -63,9 +64,14 @@ export function useTaskPublish(taskId) {
     return () => clearTimeout(timer);
   }, [taskId, error]);
 
+  // ``scope``: these run for many seconds and the operator switches tabs
+  // while they do. An unscoped flag lives in this hook's component and is
+  // destroyed by that unmount, so the spinner vanished while the action was
+  // still running server-side.
   const [pushBusy, push] = useBusyAction(
     () => pushTask(taskId),
     {
+      scope: gitActionKey(taskId, 'push'),
       enabled: !!taskId,
       onDone: (result) => {
         // Record the push time (shown in the Push tooltip) before refresh.
@@ -80,12 +86,14 @@ export function useTaskPublish(taskId) {
   const [pullBusy, pull] = useBusyAction(
     () => pullTask(taskId),
     {
+      scope: gitActionKey(taskId, 'pull'),
       enabled: !!taskId,
       onDone: () => { recordGitActionNow(taskId, 'pull'); refresh(); },
     },
   );
   const [prBusy, createPullRequest] = useBusyAction(
-    () => createTaskPullRequest(taskId), { enabled: !!taskId, onDone: refresh },
+    () => createTaskPullRequest(taskId),
+    { scope: gitActionKey(taskId, 'pr'), enabled: !!taskId, onDone: refresh },
   );
 
   return {

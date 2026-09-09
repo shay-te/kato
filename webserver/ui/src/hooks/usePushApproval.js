@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { approveTaskPush } from '../api.js';
 import { useBusyAction } from './useBusyAction.js';
+import { gitActionKey } from '../stores/gitActionStore.js';
 
 // "Kato is paused waiting for you to approve the push" — read from the session
 // record, not from a poll of its own.
@@ -47,6 +48,9 @@ export function usePushApproval(session) {
   const [busy, approve] = useBusyAction(
     () => approveTaskPush(taskId),
     {
+      // Approving the push runs the whole publish — push + PR — so it is one
+      // of the long ones, and the operator switches tabs while it runs.
+      scope: gitActionKey(taskId, 'approve-push'),
       enabled: !!taskId,
       // Only on success. A failed approve must leave the button up — hiding it
       // would strand the operator with no way to retry and no sign why.

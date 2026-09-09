@@ -41,6 +41,16 @@ import { useBusyAction } from '../hooks/useBusyAction.js';
 // silently-dropped EventSource self-heals without a manual page refresh.
 const PERMISSION_RECONNECT_GRACE_MS = 2000;
 
+// What the confirmation bubble says. "delivered" means WRITTEN TO THE
+// AGENT'S STDIN — not read, and not acted on. Idle, those are the same
+// thing. MID-TURN they are not: the CLI picks the message up on its next
+// pump, and a second one sent before that pump supersedes the first.
+export function deliveredTextFor(midTurn, agentName) {
+  if (!midTurn) { return '✓ delivered'; }
+  return `✓ sent mid-turn — ${agentName} reads it on its next pump; `
+    + 'a newer message can supersede it';
+}
+
 export default function SessionDetail({
   session,
   onActivity,
@@ -456,6 +466,9 @@ export default function SessionDetail({
       echoText: text,
       imageCount: images.length,
     });
+    // Sampled BEFORE ``markTurnBusy`` flips it — afterwards every send looks
+    // mid-turn, including the idle one that just started the turn.
+    const midTurn = !!stream.turnInFlight;
     stream.markTurnBusy(true);
     const result = await postChatMessage(
       taskId, text, images, activeBackend,
@@ -469,8 +482,18 @@ export default function SessionDetail({
         });
         stream.reconnect();
       } else {
+        // "delivered" means WRITTEN TO THE AGENT'S STDIN — not read, and not
+        // acted on. Idle, those are the same thing. MID-TURN they are not:
+        // the CLI picks the message up on its next pump, and a second one
+        // sent before that pump supersedes the first. Two bubbles both
+        // saying "delivered" while only the last one changed anything is
+        // kato over-claiming — the operator asked "how come the previous
+        // prompt didn't land and it jumped to the second?" precisely
+        // because both lines promised the same thing.
         stream.appendLocalEvent({
-          source: ENTRY_SOURCE.LOCAL, kind: BUBBLE_KIND.SYSTEM, text: '✓ delivered',
+          source: ENTRY_SOURCE.LOCAL,
+          kind: BUBBLE_KIND.SYSTEM,
+          text: deliveredTextFor(midTurn, agentName),
         });
       }
       return true;

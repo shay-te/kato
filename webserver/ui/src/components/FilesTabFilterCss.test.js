@@ -170,3 +170,16 @@ test('the exact toggle carries VS Code\'s underlined "ab" icon', () => {
   const body = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-word {');
   assert.match(body, /text-decoration:\s*underline/);
 });
+
+test('the search row can shrink in a narrow pane', () => {
+  // A flex ITEM defaults to ``min-width: auto`` — it refuses to shrink below
+  // its content. The field said it could shrink, but its wrapper could not,
+  // so in a narrow pane the capsule was laid out wider than the column and
+  // its right edge — the ``ab`` toggle and the pill's own curve — was clipped
+  // away. Both levels have to opt in.
+  assert.match(ruleBody('.files-tab-filter {'), /min-width:\s*0/);
+  assert.match(ruleBody('.files-tab-filter-field {'), /min-width:\s*0/);
+  assert.match(ruleBody('.files-tab-filter-input {'), /min-width:\s*0/);
+  // ...and whatever the width, the capsule never paints outside its own box.
+  assert.match(ruleBody('.files-tab-filter-field {'), /overflow:\s*hidden/);
+});

@@ -10,6 +10,7 @@ import {
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { promptStore } from '../stores/promptStore.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
+import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { cx } from '../utils/cx.js';
@@ -86,9 +87,14 @@ export default function SessionHeader({
   // (the agent's clone can't run git itself). On conflict the
   // markers are left in the tree and we tell the chat agent —
   // listing the exact files — to resolve them.
+  // ``scope``: a merge across a multi-repo task runs for many seconds, and
+  // this header unmounts on a tab switch. Without it the operator came back
+  // to an idle-looking button while the merge was still running — and the
+  // obvious next move is to click it again.
   const [mergingDefault, onMergeDefault] = useBusyAction(
     () => mergeDefaultBranch(session.task_id),
     {
+      scope: gitActionKey(session?.task_id, 'merge'),
       onDone: async (result) => {
         // Record that the operator ran a merge from here (shown in the merge
         // tooltip) — before the refresh so the re-render reads the new time.
@@ -155,6 +161,7 @@ export default function SessionHeader({
   const [updatingSource, onUpdateSource] = useBusyAction(
     () => updateTaskSource(session.task_id),
     {
+      scope: gitActionKey(session?.task_id, 'update-source'),
       onDone: (result) => {
         if (typeof taskPublish.refresh === 'function') {
           taskPublish.refresh();
@@ -189,9 +196,13 @@ export default function SessionHeader({
     },
   );
 
+  // Scoped like the other long actions: Done pushes + opens the PR, which
+  // takes as long as a push does, and the operator switches away while it
+  // runs.
   const [finishing, onFinish] = useBusyAction(
     () => finishTask(session.task_id),
     {
+      scope: gitActionKey(session?.task_id, 'finish'),
       onDone: (result) => {
         // Force a publish-state refresh so the Push/PR buttons reflect
         // the new state immediately (PR exists, nothing to push).

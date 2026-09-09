@@ -4,6 +4,8 @@ import {
   decisionCommandFor,
   isHighRiskActionGuard,
   NEVER_REMEMBERED_TOOLS,
+  TIMED_GRANT_MINUTES,
+  isTimedGrantEligible,
 } from '../utils/permissionEnvelope.js';
 import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import { backendLabel } from './AgentBackendChip.jsx';
@@ -142,6 +144,19 @@ export default function PermissionModal({
   const allowAlwaysButton = renderAllowAlwaysButton(
     withholdAllowAlways, allowAlwaysTitle, handleAllowAlways,
   );
+  // A window, not a standing grant. Offered only for the repetitive,
+  // low-surprise commands (docker, the network tools) and never where the
+  // remembered scope is withheld — a time-boxed sandbox escape is still a
+  // sandbox escape. In-memory server-side, so a kato restart drops it.
+  const offerTimedGrant = (
+    !withholdAllowAlways && isTimedGrantEligible(toolName, toolInput)
+  );
+  function handleAllowForWindow() {
+    onDecide({
+      allow: true, rationale, remember: false, grantMinutes: TIMED_GRANT_MINUTES,
+      requestId, toolName, command,
+    });
+  }
 
   // Always name the task in the title so the operator knows WHICH task is
   // waiting — not just "approval requested". ``taskCode`` comes straight from
@@ -305,6 +320,21 @@ export default function PermissionModal({
         >
           Allow once
         </button>
+        {offerTimedGrant && (
+          <button
+            id="permission-allow-window"
+            type="button"
+            className="secondary tooltip-above"
+            data-tooltip={
+              `Approve ${command || toolName} for the next ${TIMED_GRANT_MINUTES} `
+              + 'minutes — kato stops asking for it until the window expires, '
+              + 'then asks again. Not remembered: a kato restart drops it.'
+            }
+            onClick={handleAllowForWindow}
+          >
+            {`Allow for ${TIMED_GRANT_MINUTES} min`}
+          </button>
+        )}
         {allowAlwaysButton}
       </div>
     </DialogShell>

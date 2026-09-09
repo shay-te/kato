@@ -29,9 +29,14 @@ import {
 } from '../api.js';
 import { toastResult } from '../stores/toastStore.js';
 import { RETRY_DELAY_MS, useTaskPublish } from './useTaskPublish.js';
+import { gitActionStore } from '../stores/gitActionStore.js';
 
 
 beforeEach(() => {
+  // The busy flags are module-global now (they outlive a component so a tab
+  // switch can't lose a running action), so they leak between tests: a push
+  // left busy by an earlier test makes the next one's push a silent no-op.
+  gitActionStore._reset();
   fetchTaskPublishState.mockReset();
   fetchTaskPullRequestState.mockReset();
   // Benign PR-state default so tests that only care about the git buttons

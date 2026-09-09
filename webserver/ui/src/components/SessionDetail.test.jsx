@@ -1244,3 +1244,21 @@ describe('SessionDetail — prompts kato composes itself', () => {
     expect(mine).toBeTruthy();
   });
 });
+
+describe('SessionDetail — a mid-turn send does not over-claim', () => {
+  test('idle says "delivered"; mid-turn says it can be superseded', async () => {
+    // "delivered" means written to the agent's stdin — not read, not acted
+    // on. Idle those coincide; mid-turn they do not: the CLI reads on its
+    // next pump, and a second message sent before that pump supersedes the
+    // first. Two bubbles both saying "delivered" while only the last one
+    // changed anything is kato over-claiming — which is exactly what the
+    // operator asked about ("how come the previous prompt didn't land?").
+    const { deliveredTextFor } = await import('./SessionDetail.jsx');
+    expect(typeof deliveredTextFor).toBe('function');
+    expect(deliveredTextFor(false, 'Claude')).toBe('✓ delivered');
+    const midTurn = deliveredTextFor(true, 'Claude');
+    expect(midTurn).toMatch(/mid-turn/i);
+    expect(midTurn).toMatch(/supersede/i);
+    expect(midTurn).toMatch(/Claude/);
+  });
+});

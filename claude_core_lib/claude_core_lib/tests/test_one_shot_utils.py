@@ -54,7 +54,16 @@ class ClaudeOneShotTests(unittest.TestCase):
         ) as mock_run:
             one_shot('x')
         cmd = mock_run.call_args.args[0]
-        self.assertEqual(cmd[0], 'claude')
+        # argv[0] is the RESOLVED executable, not the bare name. On Windows a
+        # bare ``claude`` never launches — CreateProcess does not apply
+        # PATHEXT, so it looked for a file literally named ``claude`` while
+        # the CLI is installed as ``claude.cmd``, and every one-shot died with
+        # ``[WinError 2]``. On POSIX this is ``which``'s absolute path, or the
+        # bare name when the CLI is not installed.
+        self.assertTrue(
+            cmd[0] == 'claude' or cmd[0].endswith(('claude', 'claude.cmd', 'claude.exe')),
+            f'argv[0] should resolve to the claude CLI, got {cmd[0]!r}',
+        )
         self.assertIn('-p', cmd)
 
     def test_model_flag_added_when_set(self) -> None:

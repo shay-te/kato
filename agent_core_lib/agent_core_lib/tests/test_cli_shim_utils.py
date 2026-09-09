@@ -26,6 +26,7 @@ from agent_core_lib.agent_core_lib.helpers.cli_shim_utils import (
     is_windows_host,
     read_shim_text,
     resolve_cli_shim_invocation,
+    resolve_cli_spawn_prefix,
     resolve_node_binary,
     resolve_shim_reference,
     resolve_windows_cli_invocation,
@@ -226,3 +227,44 @@ class HelperTests(ShimFixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ResolveCliSpawnPrefixTests(unittest.TestCase):
+    """Both halves of launching a CLI, in one place.
+
+    The streaming path did ``which`` + the shim bypass inline, and the
+    one-shot path did NEITHER — while a comment in the streaming path claimed
+    the two were "shared". They were not, so on Windows every one-shot
+    (lessons compaction, triage, the PR helpers) died before the shim logic
+    was ever reached:
+
+        [WinError 2] The system cannot find the file specified
+
+    ``CreateProcess`` does not apply ``PATHEXT``, so a bare ``"claude"`` looks
+    for a file literally named ``claude``; the CLI is installed as
+    ``claude.cmd`` and only ``which`` finds it.
+    """
+
+    def test_resolves_the_bare_name_through_which(self) -> None:
+        with patch(f'{MODULE}.shutil.which', return_value='C:\\npm\\claude.cmd'), \
+                patch(f'{MODULE}.resolve_windows_cli_invocation', return_value=None):
+            self.assertEqual(
+                resolve_cli_spawn_prefix('claude'), ['C:\\npm\\claude.cmd'],
+            )
+
+    def test_the_shim_bypass_wins_over_the_which_result(self) -> None:
+        with patch(f'{MODULE}.shutil.which', return_value='C:\\npm\\claude.cmd'), \
+                patch(
+                    f'{MODULE}.resolve_windows_cli_invocation',
+                    return_value=['C:\\node.exe', 'C:\\cli.js'],
+                ):
+            self.assertEqual(
+                resolve_cli_spawn_prefix('claude'), ['C:\\node.exe', 'C:\\cli.js'],
+            )
+
+    def test_an_uninstalled_cli_falls_back_to_the_bare_name(self) -> None:
+        # Never empty: the caller spawns what it is given and the OS reports a
+        # real "not found" error, which is a better failure than an empty argv.
+        with patch(f'{MODULE}.shutil.which', return_value=None), \
+                patch(f'{MODULE}.resolve_windows_cli_invocation', return_value=None):
+            self.assertEqual(resolve_cli_spawn_prefix('nope'), ['nope'])
