@@ -155,7 +155,15 @@ class SafetyEndpointTests(unittest.TestCase):
             response = app.test_client().get('/api/safety')
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
-        self.assertEqual(body, {'bypass_permissions': True, 'running_as_root': False})
+        # Asserted field-by-field, not as a whole-dict equality: this payload
+        # is a feed of safety flags that grows, and pinning its exact shape
+        # made every added flag a failing test in a file that has nothing to
+        # do with it.
+        self.assertIs(body['bypass_permissions'], True)
+        self.assertIs(body['running_as_root'], False)
+        # Off unless the operator opted in — a security switch must never
+        # read as enabled by default.
+        self.assertIs(body['timed_grant_outside_workspace'], False)
 
     def test_returns_false_state_when_no_bypass_no_root(self):
         app = create_app(session_manager=_FakeManager())

@@ -19,6 +19,7 @@ export default function PermissionDecisionContainer({
   taskSummary = '',
   queuedCount = 0,
   inline = false,
+  timedGrantOutsideWorkspace = false,
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
 
@@ -59,6 +60,7 @@ export default function PermissionDecisionContainer({
       taskSummary={taskSummary}
       queuedCount={queuedCount}
       inline={inline}
+      timedGrantOutsideWorkspace={timedGrantOutsideWorkspace}
     />
   );
 }

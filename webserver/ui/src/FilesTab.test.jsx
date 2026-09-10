@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { beforeEach, describe, test, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('./api.js', () => ({
   fetchDiff: vi.fn(),
@@ -29,6 +29,7 @@ import FilesTab, {
   listVisibleChangedFiles,
 } from './FilesTab.jsx';
 import { fetchDiff, fetchFileTree, fetchRepoCommits, fetchTaskComments } from './api.js';
+import { resetTaskCache } from './stores/taskCache/index.js';
 
 const FILE_TREE_PAYLOAD = {
   trees: [{
@@ -1593,5 +1594,67 @@ describe('commit history dropdown', () => {
     const tip = btn.getAttribute('data-tooltip');
     expect(tip).toMatch(/commit history/i);
     expect(tip.length).toBeLessThanOrEqual(60);
+  });
+});
+
+
+// "switching to task then try see loading files… can you show the repos
+// there. and make sure the loading is for each repo. it's super annoying
+// this loading."
+describe('FilesTab — the wait shows the workspace, not a blank line', () => {
+  const TREE = {
+    trees: [
+      {
+        repo_id: 'client', cwd: '/tmp/client', branch: 'UNA-1',
+        tree: [{ name: 'a.js', path: '/tmp/client/a.js' }],
+        changed_files: ['a.js'], conflicted_files: [],
+      },
+      {
+        repo_id: 'backend', cwd: '/tmp/backend', branch: 'UNA-1',
+        tree: [{ name: 'b.js', path: '/tmp/backend/b.js' }],
+        changed_files: ['b.js'], conflicted_files: [],
+      },
+    ],
+  };
+
+  beforeEach(() => { localStorage.clear(); });
+
+  test('a task never seen before still shows the plain message', () => {
+    // Nothing is remembered, so there is nothing honest to draw.
+    fetchFileTree.mockReturnValue(new Promise(() => {}));  // never resolves
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    render(<FilesTab taskId="NEW" onOpenFile={vi.fn()} />);
+    expect(screen.getByText(/loading files/i)).toBeInTheDocument();
+  });
+
+  test('a task seen before draws its repo headers immediately, each loading', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    // First visit populates the memory...
+    fetchFileTree.mockResolvedValue(TREE);
+    const first = render(<FilesTab taskId="T9" onOpenFile={vi.fn()} />);
+    await waitFor(() => {
+      expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
+    });
+    // Full teardown, not just unmount: RTL leaves the previous container in
+    // the document, and ``screen`` queries the whole document.
+    cleanup();
+    resetTaskCache();
+
+    // ...so the next one renders the workspace during the wait, not a
+    // single "Loading files…" line.
+    fetchFileTree.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<FilesTab taskId="T9" onOpenFile={vi.fn()} />);
+
+    const skeletons = container.querySelectorAll('.files-tab-repo.is-loading');
+    expect(skeletons.length).toBe(2);
+    const names = [...skeletons].map(
+      (el) => el.querySelector('.files-tab-repo-name').textContent,
+    );
+    expect(names).toEqual(['client', 'backend']);
+    // No single global "Loading files…" line any more.
+    expect(container.textContent).not.toMatch(/Loading files/i);
+    // Per repo, not one global spinner.
+    expect(screen.getByLabelText('Loading client')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading backend')).toBeInTheDocument();
   });
 });

@@ -20,7 +20,18 @@ import { treeChild } from './slices/treeChild.js';
 import { publishChild } from './slices/publishChild.js';
 import { pullRequestChild } from './slices/pullRequestChild.js';
 
-const RETAIN = 5;
+// How many recently-viewed tasks keep their fetched data.
+//
+// Was 5. An operator working across a dozen tickets fell out of the window
+// constantly, so switching back to a task they had been on minutes earlier
+// re-fetched everything and blanked the pane — the retention existed but the
+// window was smaller than the way the app is actually used.
+//
+// The cost is bounded and small: per task this holds a file tree, a diff, and
+// a comment list, all already-parsed JSON, and the poller still only ever
+// refreshes the ACTIVE task. Eviction is unchanged — the active task is never
+// a victim, and ``forget`` still purges immediately.
+const RETAIN = 15;
 const POLL_INTERVAL_MS = 5000;
 // Cadence once the task's agent is asleep. Each polled tick costs ~13 git
 // subprocesses PER REPO on the server (``/files`` walks the tree, resolves the

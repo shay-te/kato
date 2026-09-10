@@ -374,6 +374,20 @@ SETTINGS_SCHEMA: list[dict] = [
                         'either startup confirmation prompt. When on, '
                         'kato writes an unmissable banner. Only enable '
                         'if you understand BYPASS_PROTECTIONS.md.'}),
+            ('KATO_TIMED_GRANT_OUTSIDE_WORKSPACE', 'bool',
+             'Time-boxed approvals outside the task folder',
+             'Let "Allow for 10 min" cover a docker/podman command (or a '
+             'WebFetch / WebSearch) that reaches OUTSIDE the task folder — '
+             'a `docker run -v /host/path:/data` mounts an absolute host '
+             'path, so without this the button never appears on the '
+             'commands most people wanted it for. Off by default.',
+             {'warning': 'Widens WHERE a 10-minute window applies, never '
+                         'what can receive one: still only docker / podman '
+                         'and the network tools. "Allow always" is still '
+                         'NEVER offered outside the task folder, and a '
+                         'high-risk Action Guard category still refuses. '
+                         'Grants are in memory only — they expire on their '
+                         'own and die with a kato restart.'}),
             ('KATO_CODEX_BYPASS_PERMISSIONS', 'bool',
              'Bypass ALL permission prompts (Codex)',
              'The Codex equivalent of the switch above — every tool runs '

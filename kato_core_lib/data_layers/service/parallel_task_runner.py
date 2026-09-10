@@ -89,9 +89,16 @@ class ParallelTaskRunner(object):
         with self._lock:
             return normalized in self._in_flight
 
-    def shutdown(self, *, wait: bool = True) -> None:
-        """Stop accepting new submissions and (optionally) drain the pool."""
-        self._executor.shutdown(wait=wait, cancel_futures=False)
+    def shutdown(self, *, wait: bool = True, cancel_futures: bool = False) -> None:
+        """Stop accepting new submissions and (optionally) drain the pool.
+
+        ``cancel_futures`` drops work that has been QUEUED but not started.
+        Tasks already running are not interrupted either way — they are
+        daemon threads, so the process can still exit out from under them.
+        The shutdown path passes both flags; a normal drain keeps the
+        defaults.
+        """
+        self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
 
     # ----- internals -----
 

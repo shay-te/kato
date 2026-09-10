@@ -40,8 +40,16 @@ test('the scroller is flush, or the clip never reaches the corners', () => {
   const body = ruleBody('.files-tab-body');
   assert.match(body, /padding-left:\s*0;/);
   assert.match(body, /padding-right:\s*0;/);
-  assert.match(ruleBody('.files-tab-repo'), /padding-left:\s*6px;/);
-  assert.match(ruleBody('.files-tab-repo-header'), /margin-left:\s*-6px;/);
+  // Asserted as a PAIR reading one variable, not as two hard-coded numbers.
+  // The header cancels the section's inset exactly; pinning both literals
+  // meant bumping the inset for breathing room silently left the header
+  // 4px short of the card edge, and only one of the two assertions caught it.
+  assert.match(ruleBody('.files-tab-repo'), /padding-left:\s*var\(--files-card-inset\);/);
+  assert.match(ruleBody('.files-tab-repo'), /--files-card-inset:\s*\d+px;/);
+  assert.match(
+    ruleBody('.files-tab-repo-header'),
+    /margin-left:\s*calc\(-1 \* var\(--files-card-inset\)\);/,
+  );
 });
 
 test('the section itself is NOT clipped — that would kill the sticky header', () => {

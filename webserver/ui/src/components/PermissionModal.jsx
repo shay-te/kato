@@ -17,6 +17,10 @@ import MarkdownContent from './MarkdownContent.jsx';
 export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '', queuedCount = 0,
   inline = false,
+  // Server-reported opt-in (KATO_TIMED_GRANT_OUTSIDE_WORKSPACE). Default
+  // false, so a modal with no answer from the server offers nothing the
+  // server would refuse to honour.
+  timedGrantOutsideWorkspace = false,
 }) {
   const {
     taskId, taskSummary: envelopeSummary, agentBackend,
@@ -149,14 +153,33 @@ export default function PermissionModal({
   // remembered scope is withheld — a time-boxed sandbox escape is still a
   // sandbox escape. In-memory server-side, so a kato restart drops it.
   const timedGrantEligible = isTimedGrantEligible(toolName, toolInput);
-  const offerTimedGrant = !withholdAllowAlways && timedGrantEligible;
+  // A time-boxed grant is offered where the remembered scope is — plus, when
+  // the operator has opted in, on an out-of-workspace command that is
+  // otherwise eligible (docker/podman, the network tools).
+  //
+  // The two scopes were tied together on the reasoning that "a time-boxed
+  // sandbox escape is still a sandbox escape". That holds for a PERSISTED,
+  // global, restart-surviving grant — which is why "Allow always" is still
+  // never offered here, opt-in or not. It does not hold equally for ten
+  // in-memory minutes the operator is sitting in front of, and treating them
+  // as identical made the feature useless for the one workload it was built
+  // for: docker, whose volume mounts are absolute host paths by nature.
+  const outsideButOptedIn = (
+    outsideSandbox
+    && timedGrantOutsideWorkspace
+    && !isHighRiskActionGuard(actionGuard)
+    && !NEVER_REMEMBERED_TOOLS.has(toolName)
+  );
+  const offerTimedGrant = (
+    timedGrantEligible && (!withholdAllowAlways || outsideButOptedIn)
+  );
   // Withheld, but for a command the operator EXPECTS it on (docker, the
   // network tools). Silence here reads as "the feature is missing" — the
   // operator's words were "the allow for the next 10 minutes is not
   // there!!!". Say why instead of leaving a gap: same rule as every other
   // report in this app — never hide the thing that needs explaining.
   const timedGrantWithheldNote = (
-    timedGrantEligible && withholdAllowAlways
+    timedGrantEligible && !offerTimedGrant
       ? timedGrantWithheldReason(outsideSandbox, toolName)
       : ''
   );
@@ -407,8 +430,9 @@ function renderActionGuardBanner(actionGuard) {
 function timedGrantWithheldReason(outsideSandbox, toolName) {
   if (outsideSandbox) {
     return `"Allow for ${TIMED_GRANT_MINUTES} min" is not offered here: this `
-      + 'command reaches outside the task folder, so it can only be approved '
-      + 'one action at a time.';
+      + 'command reaches outside the task folder. Turn on '
+      + '"time-boxed approvals outside the task folder" in Settings to allow '
+      + 'it (a 10-minute, in-memory window — never a remembered approval).';
   }
   return `"Allow for ${TIMED_GRANT_MINUTES} min" is not offered for `
     + `${toolName}: its risk category can only be approved one action at a `

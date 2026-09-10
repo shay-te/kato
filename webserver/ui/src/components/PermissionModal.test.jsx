@@ -759,6 +759,85 @@ describe('PermissionModal — time-boxed approval', () => {
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
 
+  test('the opt-in restores it for an out-of-workspace docker run', () => {
+    // The reported dead end: "still i see only allow once on the docker run".
+    // ``docker run -v /host/path:/data`` mounts an absolute host path by
+    // nature, so it always trips the out-of-workspace check — which withheld
+    // the very button the operator asked for, on the only workload they
+    // wanted it for.
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r4', tool_name: 'Bash',
+            input: { command: 'docker run -v /Users/me/data:/data img' },
+          },
+          outside_sandbox: true,
+        })}
+        onDecide={vi.fn()}
+        timedGrantOutsideWorkspace
+      />,
+    );
+    expect(screen.getByRole('button', { name: /allow for 10 min/i })).toBeTruthy();
+    // ...and the note is gone, because there is no longer a gap to explain.
+    expect(document.getElementById('permission-timed-grant-withheld')).toBeNull();
+  });
+
+  test('the opt-in NEVER brings back "Allow always" out of workspace', () => {
+    // The line that is not configurable. A persisted, global, restart-
+    // surviving grant for something reaching outside the sandbox is a
+    // different class of risk from ten in-memory minutes.
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r5', tool_name: 'Bash',
+            input: { command: 'docker run -v /Users/me/data:/data img' },
+          },
+          outside_sandbox: true,
+        })}
+        onDecide={vi.fn()}
+        timedGrantOutsideWorkspace
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
+  });
+
+  test('the opt-in does not override a high-risk Action Guard category', () => {
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r6', tool_name: 'Bash',
+            input: { command: 'docker run img' },
+          },
+          outside_sandbox: true,
+          action_guard: { category: 'sandbox_escape', reason: 'nope' },
+        })}
+        onDecide={vi.fn()}
+        timedGrantOutsideWorkspace
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /allow for 10 min/i })).toBeNull();
+  });
+
+  test('the opt-in does not widen WHICH commands are eligible', () => {
+    // Still docker/podman + the network tools, opted in or not.
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r7', tool_name: 'Bash', input: { command: 'rm -rf /etc' },
+          },
+          outside_sandbox: true,
+        })}
+        onDecide={vi.fn()}
+        timedGrantOutsideWorkspace
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /allow for 10 min/i })).toBeNull();
+  });
+
   test('and SAYS why it is withheld, instead of leaving a gap', () => {
     // A ``docker run -v /host/path:/data`` trips the out-of-sandbox check,
     // so both durable scopes are withheld — correctly. But an operator who

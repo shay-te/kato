@@ -14,7 +14,7 @@ import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
 import DiffKindIcon from './components/DiffKindIcon.jsx';
-import Icon from './components/Icon.jsx';
+import Icon, { BusyIcon } from './components/Icon.jsx';
 import StickyHeader from './components/StickyHeader.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
 import {
@@ -49,6 +49,7 @@ import {
 } from './utils/commentStatus.js';
 import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsidePointerOrEscape.js';
 import { useClampedPointMenu } from './hooks/useClampedPointMenu.js';
+import { rememberRepos, rememberedRepos } from './utils/taskRepoMemory.js';
 
 
 // Same auto-poll cadence as ChangesTab. Keeps the file tree in sync
@@ -105,6 +106,17 @@ export default function FilesTab({
   // instantly instead of blanking + refetching. Deduped + polled by the cache;
   // this component keeps only its own view state (scroll / filter / focus).
   const { trees, status, error } = useTaskTree(taskId);
+  // Record the repo list whenever a fetch lands, so the NEXT switch to this
+  // task can draw its headers before the tree walk returns.
+  useEffect(() => {
+    if (status === 'ready') { rememberRepos(taskId, trees); }
+  }, [taskId, status, trees]);
+  // What to draw while the first fetch is still out. Read once per task, not
+  // per render: it touches localStorage, and it must not change under the
+  // pane mid-load.
+  const pendingRepos = useMemo(
+    () => (taskId ? rememberedRepos(taskId) : []), [taskId],
+  );
   // Comment badges read from the shared ``commentStore`` (single source
   // of truth) — the same always-current list the diff pane's inline
   // threads read. So deleting the last comment on a file clears its 💬
@@ -506,7 +518,21 @@ export default function FilesTab({
 
   let body;
   if (status === 'loading') {
-    body = <p className="files-tab-message">Loading files…</p>;
+    // PER-REPO, when we know which repos to expect. The pane draws the real
+    // headers immediately and each one carries its own spinner, so the
+    // operator sees the shape of their workspace during the wait instead of
+    // a single blank line. Falls back to the one-liner only on a task whose
+    // repos have never been seen in this browser.
+    body = pendingRepos.length
+      ? pendingRepos.map((repo) => (
+        <RepoTreeSkeleton
+          key={repo.repo_id || repo.cwd}
+          repoId={repo.repo_id}
+          cwd={repo.cwd}
+          branch={repo.branch}
+        />
+      ))
+      : <p className="files-tab-message">Loading files…</p>;
   } else if (status === 'error') {
     body = <p className="files-tab-message error">{error}</p>;
   } else if (trees.length === 0) {
@@ -892,6 +918,37 @@ function collectFileRelativePaths(nodes, out = []) {
   return out;
 }
 
+// One repo's header while its tree is still loading.
+//
+// Deliberately the SAME header markup as a loaded repo (name, branch, sticky
+// chrome) so nothing shifts when the real tree replaces it — the pane fills
+// in, it does not re-lay-out. See ``taskRepoMemory`` for where the names come
+// from and why they are trusted for display only.
+function RepoTreeSkeleton({ repoId, cwd, branch }) {
+  const heading = repoId || cwd || 'repository';
+  return (
+    <section className="files-tab-repo is-loading">
+      <StickyHeader as="header" className="files-tab-repo-header">
+        <div className="files-tab-repo-header-inner">
+          <span className="files-tab-repo-name" data-tooltip={cwd}>{heading}</span>
+          {branch && <span className="files-tab-repo-branch">{branch}</span>}
+          {/* The shared button spinner (``BusyIcon busy``) — a small rotating
+              ring, the same one every in-flight action in the app uses. It
+              read "loading…" as words, which on a 25-repo task stacked
+              twenty-five identical labels down the pane. */}
+          <span
+            className="files-tab-repo-loading"
+            role="status"
+            aria-label={`Loading ${heading}`}
+          >
+            <BusyIcon busy idle="" />
+          </span>
+        </div>
+      </StickyHeader>
+    </section>
+  );
+}
+
 function RepoTree({
   repoTree, width, collapsed, onToggle, onPickFile,
   onOpenFile, onOpenPathMenu, onRecheckPush,
@@ -1238,60 +1295,62 @@ function RepoTree({
         className="files-tab-repo-header"
         onClick={onToggle}
       >
-        <span className="files-tab-repo-chevron">
-          <Icon name={chevronName} />
-        </span>
-        {/* Use the custom (opaque) data-tooltip instead of the native
-            ``title``: the OS title tooltip renders with dark-mode
-            vibrancy that bleeds the rows behind it through, which the
-            operator read as "transparent". Anchored to the name span
-            (not the whole header) so it never doubles up with the
-            commits button's own tooltip. */}
-        <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
-        {repoBranch && (
-          <span
-            className="files-tab-repo-branch"
-            data-tooltip={`${heading} is on branch ${repoBranch}`}
-          >
-            {repoBranch}
+        <div className="files-tab-repo-header-inner">
+          <span className="files-tab-repo-chevron">
+            <Icon name={chevronName} />
           </span>
-        )}
-        {headerStats}
-        {repoTree.readOnly && (
-          <button
-            type="button"
-            className="files-tab-repo-readonly tooltip-above tooltip-anchor-right"
-            data-tooltip="Read-only: kato has no push permission for this repo. The agent can edit it for reference, but changes here are NOT pushed. Click to re-check push access."
-            aria-label={`${heading} is read-only — re-check push access`}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (typeof onRecheckPush === 'function') { onRecheckPush(repoId); }
-            }}
-          >
-            RO
-          </button>
-        )}
-        {repoId && taskId && (
-          <button
-            type="button"
-            className="files-tab-repo-commits-btn tooltip-end"
-            onClick={toggleCommitMenu}
-            aria-haspopup="listbox"
-            aria-expanded={commitMenuOpen ? 'true' : 'false'}
-            /* SHORT on purpose. This read "Commit history — pick a commit on
-               this repo's task branch to scope the Changes tab to that single
-               commit's diff." — 110 characters, which wraps to four lines in
-               the 220px tooltip-end box and is then sliced by
-               ``.files-tab-body``'s overflow. The operator saw a floating
-               fragment ending "…Changes tab to that single commit's diff."
-               with nothing to say what it belonged to. An icon tooltip has to
-               fit its box. */
-            data-tooltip="Commit history — scope Changes to one commit"
-            aria-label={`View commit history for ${heading}`}
-          >
-            <Icon name="history" />
-          </button>
-        )}
+          {/* Use the custom (opaque) data-tooltip instead of the native
+              ``title``: the OS title tooltip renders with dark-mode
+              vibrancy that bleeds the rows behind it through, which the
+              operator read as "transparent". Anchored to the name span
+              (not the whole header) so it never doubles up with the
+              commits button's own tooltip. */}
+          <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
+          {repoBranch && (
+            <span
+              className="files-tab-repo-branch"
+              data-tooltip={`${heading} is on branch ${repoBranch}`}
+            >
+              {repoBranch}
+            </span>
+          )}
+          {headerStats}
+          {repoTree.readOnly && (
+            <button
+              type="button"
+              className="files-tab-repo-readonly tooltip-above tooltip-anchor-right"
+              data-tooltip="Read-only: kato has no push permission for this repo. The agent can edit it for reference, but changes here are NOT pushed. Click to re-check push access."
+              aria-label={`${heading} is read-only — re-check push access`}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (typeof onRecheckPush === 'function') { onRecheckPush(repoId); }
+              }}
+            >
+              RO
+            </button>
+          )}
+          {repoId && taskId && (
+            <button
+              type="button"
+              className="files-tab-repo-commits-btn tooltip-end"
+              onClick={toggleCommitMenu}
+              aria-haspopup="listbox"
+              aria-expanded={commitMenuOpen ? 'true' : 'false'}
+              /* SHORT on purpose. This read "Commit history — pick a commit on
+                 this repo's task branch to scope the Changes tab to that single
+                 commit's diff." — 110 characters, which wraps to four lines in
+                 the 220px tooltip-end box and is then sliced by
+                 ``.files-tab-body``'s overflow. The operator saw a floating
+                 fragment ending "…Changes tab to that single commit's diff."
+                 with nothing to say what it belonged to. An icon tooltip has to
+                 fit its box. */
+              data-tooltip="Commit history — scope Changes to one commit"
+              aria-label={`View commit history for ${heading}`}
+            >
+              <Icon name="history" />
+            </button>
+          )}
+        </div>
       </StickyHeader>
       {commitMenuOpen && (
         <CommitDropdown

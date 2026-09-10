@@ -215,7 +215,27 @@ header .subtitle {
   display: inline-flex;
   align-items: center;
   height: 28px;
+  /* Pinned, like every other item sharing this row. An inline-flex box
+   * shrunk below its own text does NOT reflow — it spills past its edge onto
+   * its neighbour, which is the collision this guard exists to prevent. The
+   * status pill is the designated victim (``flex: 1`` + ellipsis); when even
+   * that is not enough, the rule below drops this label entirely. */
   flex-shrink: 0;
+}
+
+/* WHEN A TASK IS WAITING, THE DECORATION GOES.
+ *
+ * The bar already dropped "Planning UI" below 900px. That is the wrong
+ * trigger: the row overflows when it is FULL, and it is fullest exactly when
+ * attention chips are present — which can happen at any width. The operator
+ * saw "UNA-3067" drawn through "Planning UI" on a window far wider than
+ * 900px.
+ *
+ * Keyed on the chips actually being there, so the subtitle is only sacrificed
+ * while something is genuinely waiting for an answer, and it returns the
+ * moment the roster empties. */
+header:has(.permission-roster) .subtitle {
+  display: none;
 }
 
 /* "Planning UI" is decoration; the task waiting for an answer is not.
@@ -6107,6 +6127,13 @@ body.kato-resizing {
 /* iOS-style accordion cards (files-repo, diff-repo, diff-file).
  * Soft rounded glass instead of dark squares with hard borders. */
 .files-tab-repo {
+  /* The readable measure the header row and the file rows are both capped to
+   * — see .files-tab-repo-header-inner below for why. Declared here so one
+   * value governs the whole card. */
+  --files-measure: 680px;
+  /* Horizontal breathing room inside the repo card. See padding-left below
+   * and the header's cancelling margins. */
+  --files-card-inset: #{$SPACE-10};
   border: 1px solid $C-NEUTRAL-100-A06;
   /* TOP corners only — the tree scrolls past the bottom, where a curve
    * would have rows sliding under it. The header below carries the same
@@ -6120,13 +6147,51 @@ body.kato-resizing {
   /* The row inset that used to sit on the scroller. Applied here so the
    * section's own box still reaches the scroller's rounded corners and gets
    * clipped by them. */
-  padding-left: $SPACE-6;
-  padding-right: $SPACE-6;
+  /* 10px, not 6px. At 6px the header's stats and the file rows' +N/-N
+   * badges sat almost flush against the card border — "what the tree have
+   * no spacing from the side?".
+   *
+   * COUPLED: ``.files-tab-repo-header`` cancels this exact inset with
+   * negative margins so it still spans the full card. The two are read from
+   * the same variable because changing one alone silently insets the header
+   * (or lets it hang past the card edge) — a value that has to be edited in
+   * two places is a value that will be edited in one. */
+  padding-left: var(--files-card-inset);
+  padding-right: var(--files-card-inset);
   /* NOT clipped — clipping here makes this a scrollport and the header
    * stops pinning across the tree. The clip lives on the SCROLLER instead
    * (see .files-tab-body), which keeps both. */
   overflow: visible;
   background: $C-NEUTRAL-100-A06;
+}
+
+/* A repo whose tree has not arrived yet: header only, no body. Keeping the
+ * header identical to the loaded state is the point — the pane fills in
+ * rather than re-laying out under the operator's eyes. */
+.files-tab-repo.is-loading {
+  padding-bottom: $SPACE-6;
+}
+
+/* Holds the shared ``.kato-btn-spinner`` ring. Small and dim on purpose:
+ * twenty-five of these can be on screen at once during a sync, and at full
+ * contrast that reads as an alarm rather than as a wait. */
+.files-tab-repo-loading {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-45;
+  flex-shrink: 0;
+}
+
+/* The measure-capped content row. The header element itself stays full width
+ * so its sticky gradient + blur still cover the card edge to edge. */
+.files-tab-repo-header-inner {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  width: 100%;
+  min-width: 0;
 }
 
 .files-tab-repo-header {
@@ -6146,8 +6211,9 @@ body.kato-resizing {
    * padding exists to inset the tree rows; applied to the header it would
    * leave a square block sitting inside the section's curve — the very
    * artefact the radius is here to remove. */
-  margin-left: -$SPACE-6;
-  margin-right: -$SPACE-6;
+  /* Cancels the section's own inset EXACTLY — same variable, negated. */
+  margin-left: calc(-1 * var(--files-card-inset));
+  margin-right: calc(-1 * var(--files-card-inset));
   border-radius: $RADIUS-10 $RADIUS-10 0 0;
   background: $C-NEUTRAL-16;
   cursor: pointer;
@@ -7379,6 +7445,28 @@ body.kato-resizing {
   /* Top padding removed for the same reason as .changes-tab-body above —
    * two nested strips were stacking into a 16px leak over the header. */
   padding: 0 $SPACE-6 $SPACE-12;
+}
+
+/* A READABLE MEASURE for the file tree.
+ *
+ * The rows were ``width: 100%`` and their ``+N −N`` badges are pushed to the
+ * far edge by ``margin-left: auto``. On a wide pane that puts a stretch of
+ * empty space between every filename and its own numbers — the eye has to
+ * travel the width of the pane to pair them up, and the whole column reads as
+ * two unrelated lists. Capping the measure keeps a name and its stats within
+ * one glance while KEEPING them right-aligned, so the numbers still form a
+ * scannable column.
+ *
+ * ``min(100%, …)`` so a narrow pane is unaffected — this only bites once
+ * there is more width than the content can use.
+ *
+ * The repo header is capped to the same measure (via its inner row, so the
+ * sticky background still spans the whole card) — otherwise the header's own
+ * ``+N −N`` would sit at the far edge while every file's sat at the cap, and
+ * two misaligned columns look worse than one distant one. */
+.files-tab-repo-header-inner,
+.files-tab-repo .diff-file-tree-row {
+  max-width: min(100%, var(--files-measure));
 }
 
 .files-changed-tree-row {
@@ -11703,6 +11791,10 @@ body.kato-resizing {
   gap: $SPACE-6;
   align-items: center;
   flex-shrink: 0;
+  /* Never narrower than the id it carries. A task id is a fixed-shape string
+   * (letters, a dash, four digits); a chip that renders any narrower than
+   * that has clipped the very thing it exists to say. */
+  min-width: max-content;
   padding: $SPACE-2 $SPACE-8;
   font-family: inherit;
   font-size: $TEXT-12;
@@ -11728,6 +11820,9 @@ body.kato-resizing {
 .permission-roster-dot {
   width: $SPACE-6;
   height: $SPACE-6;
+  /* A flex child defaults to shrink:1, and a squeezed circle is an ellipse.
+   * It was the one part of the chip with no guard. */
+  flex-shrink: 0;
   border-radius: $RADIUS-CIRCLE;
   background: $C-AMBER-77;
   animation: permission-roster-flash 1.4s ease-in-out infinite;

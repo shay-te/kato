@@ -14,6 +14,7 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.deadline import run_with_deadline
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.shell_status_utils import (
+    clear_inline_status,
     sleep_with_countdown_spinner,
     supports_inline_status,
 )
@@ -1324,12 +1325,39 @@ def _register_shutdown_hook(app) -> None:
             app.logger.warning(
                 'second shutdown signal — exiting immediately, cleanup skipped',
             )
+            try:
+                sys.stderr.write('forcing exit.\n')
+                sys.stderr.flush()
+            except Exception:
+                pass
             os._exit(130)
             # Unreachable in production — os._exit does not return. Explicit
             # so the escalation cannot fall through into the graceful path it
             # exists to bypass.
             return
         shutting_down.set()
+        # SAY SOMETHING, IMMEDIATELY, ON THE TERMINAL.
+        #
+        # Cleanup can take seconds, and until this line existed the operator
+        # got NO acknowledgement in that window: the idle spinner had just
+        # repainted its "Idle · next scan in Ns" line, the shutdown went to
+        # the logger, and Ctrl+C looked ignored. Reported as "i cannot ctrl+c
+        # to stop kato" — for a process that was, in fact, stopping.
+        #
+        # Written straight to stderr rather than through the logger: this has
+        # to appear even if logging is configured away, and it has to clear
+        # the inline status line first or it lands on top of the spinner.
+        try:
+            if supports_inline_status(sys.stderr):
+                clear_inline_status(sys.stderr, status_text='Idle · next scan in 000s')
+            sys.stderr.write(
+                'stopping kato… (press Ctrl+C again to force an immediate exit)\n',
+            )
+            sys.stderr.flush()
+        except Exception:
+            # A closed / redirected stderr must never turn Ctrl+C into a
+            # crash. The shutdown below proceeds regardless.
+            pass
         app.logger.info('shutting down kato agent (signal %s)', signum)
         # BOUNDED. Cleanup used to run inline in the handler, so a session
         # whose subprocess would not terminate held the whole shutdown open

@@ -11,7 +11,9 @@ per-program keys, real expiry, and nothing on disk.
 
 from __future__ import annotations
 
+import os
 import unittest
+from unittest.mock import patch
 
 from kato_core_lib.helpers import timed_tool_grant_store as store
 
@@ -103,3 +105,50 @@ class TimedGrantLifetimeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OutsideWorkspaceOptInTests(unittest.TestCase):
+    """``KATO_TIMED_GRANT_OUTSIDE_WORKSPACE`` — the operator's switch.
+
+    Default OFF made the feature useless for the workload it was built for:
+    ``docker run -v /host/path:/data`` mounts an absolute host path by
+    nature, so it always reads as out-of-workspace and both durable scopes
+    were withheld. "still i see only allow once on the docker run."
+    """
+
+    def test_default_is_off(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('KATO_TIMED_GRANT_OUTSIDE_WORKSPACE', None)
+            self.assertFalse(store.timed_grant_allowed_outside_workspace())
+
+    def test_the_usual_truthy_spellings_turn_it_on(self) -> None:
+        for value in ('1', 'true', 'TRUE', 'yes', 'on', ' On '):
+            with self.subTest(value=value), patch.dict(
+                os.environ, {'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE': value},
+            ):
+                self.assertTrue(store.timed_grant_allowed_outside_workspace())
+
+    def test_anything_else_is_off(self) -> None:
+        # Including the empty string a cleared settings.json field exports —
+        # a blank must never read as "enabled" for a security switch.
+        for value in ('', '0', 'false', 'no', 'off', 'maybe'):
+            with self.subTest(value=value), patch.dict(
+                os.environ, {'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE': value},
+            ):
+                self.assertFalse(store.timed_grant_allowed_outside_workspace())
+
+    def test_it_is_read_live_not_cached_at_import(self) -> None:
+        # The Settings UI writes the value and the operator expects the NEXT
+        # prompt to honour it, not the next restart.
+        with patch.dict(os.environ, {'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE': 'on'}):
+            self.assertTrue(store.timed_grant_allowed_outside_workspace())
+        with patch.dict(os.environ, {'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE': 'off'}):
+            self.assertFalse(store.timed_grant_allowed_outside_workspace())
+
+    def test_the_switch_does_not_widen_ELIGIBILITY(self) -> None:
+        # It governs WHERE a timed grant may apply, never WHICH commands can
+        # receive one. ``rm -rf`` is not eligible at any setting.
+        with patch.dict(os.environ, {'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE': 'on'}):
+            self.assertFalse(store.timed_grant_eligible('Bash', ['rm']))
+            self.assertTrue(store.timed_grant_eligible('Bash', ['docker']))
+

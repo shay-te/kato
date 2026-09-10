@@ -93,3 +93,31 @@ test('the decorative subtitle yields before the pill does', () => {
   assert.match(block, /header \.subtitle/);
   assert.match(block, /display:\s*none/);
 });
+
+// ── Additions from the second report ───────────────────────────────────────
+// "these pending button on top are malformed please give them width and the
+// text should fit in the buttons", with a screenshot of a task id drawn
+// through the subtitle — on a window much WIDER than the 900px breakpoint
+// the rule above tests.
+
+test('the subtitle yields whenever a chip is present, not just below 900px', () => {
+  // The width breakpoint was the wrong trigger. The row overflows when it is
+  // FULL, and it is fullest exactly when attention chips are on screen —
+  // which happens at any width.
+  const at = css.indexOf('header:has(.permission-roster) .subtitle');
+  assert.notEqual(at, -1, 'the subtitle does not yield to a waiting task');
+  assert.match(css.slice(at, at + 120), /display:\s*none/);
+});
+
+test('the chip is never narrower than the id it carries', () => {
+  // "the text should fit in the buttons" — a chip that renders narrower than
+  // its id has clipped the one thing it exists to say.
+  assert.match(rulesFor('.permission-roster-chip'), /min-width:\s*max-content/);
+});
+
+test('the chip dot cannot be squeezed into an ellipse', () => {
+  // Every other part of the chip carried a shrink guard; the dot did not, and
+  // a flex child defaults to shrink:1.
+  assert.match(rulesFor('.permission-roster-dot'), /flex-shrink:\s*0/);
+});
+

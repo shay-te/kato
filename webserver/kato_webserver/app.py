@@ -2055,9 +2055,18 @@ def _register_http_routes(app: Flask) -> None:
             is_bypass_enabled,
             is_running_as_root,
         )
+        from kato_core_lib.helpers.timed_tool_grant_store import (
+            timed_grant_allowed_outside_workspace,
+        )
         return jsonify({
             'bypass_permissions': is_bypass_enabled(),
             'running_as_root': is_running_as_root(),
+            # Whether the permission modal may offer "Allow for N min" on a
+            # command that reaches outside the task folder. The SERVER is the
+            # authority — it re-derives this on every auto-resolve — so the
+            # UI reads it rather than keeping its own copy, and can never
+            # offer a button the backend would decline to honour.
+            'timed_grant_outside_workspace': timed_grant_allowed_outside_workspace(),
         })
 
     @app.get('/api/config-status')
@@ -4393,6 +4402,37 @@ def _positive_float(value) -> float:
     return number if number > 0 else 0.0
 
 
+def _timed_grant_may_cover_outside(tool_name: str, tool_input) -> bool:
+    """May an out-of-workspace ask be auto-resolved by a LIVE timed grant?
+
+    Only when the operator has opted in
+    (``KATO_TIMED_GRANT_OUTSIDE_WORKSPACE``), only for a request that is
+    timed-grant eligible to begin with (docker/podman, the network tools),
+    and only while a grant is actually live.
+
+    Returning True here does NOT approve anything: it lets the caller fall
+    through to its remaining carve-outs — plan mode, ``ExitPlanMode``,
+    high-risk Action Guard categories — every one of which still applies.
+    And because the caller reaches the timed-grant branch only when NO
+    remembered decision exists, an "Allow always" can still never
+    auto-resolve out of workspace.
+    """
+    from kato_core_lib.helpers.timed_tool_grant_store import (
+        timed_grant_active,
+        timed_grant_allowed_outside_workspace,
+    )
+    from kato_core_lib.helpers.tool_decision_utils import decision_programs_for
+    if not timed_grant_allowed_outside_workspace():
+        return False
+    # ``timed_grant_active`` is the whole gate. Eligibility does not need
+    # re-checking here: ``grant_for`` refuses to record anything ineligible,
+    # so an ineligible program can never have a live grant to be active. An
+    # explicit ``timed_grant_eligible`` call read as defence-in-depth but was
+    # unreachable — no mutation of it could fail a test, which on a security
+    # path means an untested branch rather than a second line of defence.
+    return timed_grant_active(tool_name, decision_programs_for(tool_name, tool_input))
+
+
 def _grant_timed_for_pending(session, request_id: str, minutes: float) -> int:
     """Record a time-boxed "allow" for this request's programs.
 
@@ -4812,7 +4852,7 @@ def _maybe_auto_resolve_pending(
     tool_name, tool_input = _pending_tool(session, request_id)
     if not tool_name or is_answerable_question(tool_input):
         return False
-    if outside_sandbox:
+    if outside_sandbox and not _timed_grant_may_cover_outside(tool_name, tool_input):
         return False
     # Leaving plan mode is the operator's decision, every time. A remembered
     # decision here is stored under the bare tool key (no command signature

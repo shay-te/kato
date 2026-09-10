@@ -7,16 +7,20 @@
 // guessing. localStorage-backed so it survives reloads; device-local by
 // nature (it records YOUR clicks in THIS browser).
 
+import { parseJsonOr } from './json.js';
+import { readStorageString, writeStorageItem } from './storage.js';
+
 const STORAGE_KEY = 'kato.lastGitAction.v1';
 
+// Storage access via the shared helpers, same as every other persisted
+// module. This used to hand-roll the getItem/JSON.parse/try-catch dance that
+// ``storage.js`` and ``json.js`` already own — and it was the copy that
+// reached ``localStorage`` directly rather than through ``resolveStorage``,
+// so it silently no-oped anywhere ``window`` was absent.
 function _readAll() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (_) {
-    return {};
-  }
+  const parsed = parseJsonOr(readStorageString(STORAGE_KEY, ''), {});
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed : {};
 }
 
 // Epoch ms of the last `action` on `taskId`, or 0 when never run here.
@@ -32,12 +36,9 @@ export function recordGitActionNow(taskId, action, now = Date.now()) {
   if (!taskId || !action) { return; }
   const all = _readAll();
   all[taskId] = { ...(all[taskId] || {}), [action]: now };
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-  } catch (_) {
-    // localStorage disabled / over quota — non-fatal, we just won't show the
-    // last-run time.
-  }
+  // Best-effort: a failed write (disabled storage / quota) just means the
+  // last-run time is not shown.
+  writeStorageItem(STORAGE_KEY, JSON.stringify(all));
 }
 
 // "Jul 18, 2:32 PM" in the operator's local time; '' for a never-run action.

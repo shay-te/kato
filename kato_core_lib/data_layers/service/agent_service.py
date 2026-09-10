@@ -462,7 +462,19 @@ class AgentService(MissionStepLoggerMixin, Service):
         """
         if self._parallel_task_runner is not None:
             try:
-                self._parallel_task_runner.shutdown(wait=True)
+                # DO NOT WAIT. ``wait=True`` blocks until every in-flight scan
+                # task finishes — a git clone, a provider call, a whole agent
+                # run. That is unbounded, so shutdown reliably burned its
+                # entire grace period and exited on the timeout instead of
+                # completing: Ctrl+C took ~9 seconds and looked like it had
+                # done nothing.
+                #
+                # Nothing is lost by not waiting. Queued tasks are cancelled
+                # (they never started), running ones are daemon threads the
+                # process exits out from under, and a task interrupted
+                # mid-flight is picked up again on the next scan — that is
+                # what the scan loop is for.
+                self._parallel_task_runner.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 self.logger.exception('error during parallel-runner shutdown')
         try:

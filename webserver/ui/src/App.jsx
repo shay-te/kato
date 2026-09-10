@@ -921,6 +921,11 @@ export default function App() {
       <GlobalPermissionContainer
         activeTaskId={activeTaskId}
         onSelectTask={selectTaskAndReveal}
+        // Passed down rather than polled again in the modal: App already
+        // holds this value, and the SERVER is its authority — the modal must
+        // not offer a time-boxed approval the backend would then decline to
+        // honour, which would look exactly like a dead button.
+        timedGrantOutsideWorkspace={!!safetyState?.timed_grant_outside_workspace}
       />
       {paletteOpen && (
         <TaskPalette

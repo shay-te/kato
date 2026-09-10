@@ -22,6 +22,7 @@ not a general "stop asking me" switch.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -40,6 +41,45 @@ _ELIGIBLE_PROGRAMS = frozenset({
     'docker', 'docker-compose', 'docker-buildx', 'podman',
 })
 _ELIGIBLE_TOOLS = frozenset({'WebFetch', 'WebSearch'})
+
+# May a timed grant cover a command that reaches OUTSIDE the task folder?
+#
+# Default OFF — the safe posture, and the one every existing install keeps
+# without doing anything.
+#
+# It exists because the default made the feature useless for the operator who
+# asked for it: they run ``docker run -v /host/path:/data``, the absolute path
+# trips the out-of-workspace check, and both durable scopes are withheld — so
+# the button they asked for never appeared on the only commands they wanted it
+# for. "still i see only allow once on the docker run."
+#
+# What this switch does NOT do, at any setting:
+#
+# * It never widens WHICH requests are eligible. Only docker/podman and the
+#   network tools can ever receive a timed grant (``timed_grant_eligible``),
+#   with or without this.
+# * It never enables a REMEMBERED ("Allow always") approval out of workspace.
+#   A persisted, global, restart-surviving grant for something reaching
+#   outside the sandbox is a different class of risk from a ten-minute window
+#   the operator is sitting in front of, and it stays refused.
+# * It never overrides a high-risk Action Guard category (credential_read,
+#   network_exfil, remote_exec, sandbox_escape).
+#
+# So the widest this reaches is: ten minutes, in memory, for docker — gone on
+# restart, gone when the window lapses.
+_OUTSIDE_WORKSPACE_ENV = 'KATO_TIMED_GRANT_OUTSIDE_WORKSPACE'
+
+
+def timed_grant_allowed_outside_workspace() -> bool:
+    """Is the operator opting in to timed grants for out-of-folder commands?
+
+    Read on every call rather than cached at import: the Settings UI writes
+    the value and the operator expects the next prompt to honour it, not the
+    next restart.
+    """
+    raw = str(os.environ.get(_OUTSIDE_WORKSPACE_ENV, '') or '').strip().lower()
+    return raw in ('1', 'true', 'yes', 'on')
+
 
 _lock = threading.Lock()
 # {(tool_name, program): expiry_epoch}

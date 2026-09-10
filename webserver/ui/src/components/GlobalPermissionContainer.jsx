@@ -59,6 +59,10 @@ const ROSTER_VISIBLE_CHIPS = 2;
 export default function GlobalPermissionContainer({
   activeTaskId = '',
   onSelectTask = null,
+  // Server-reported: may a time-boxed approval cover a command that reaches
+  // outside the task folder? Defaults false so a UI ahead of its server
+  // offers nothing the server would refuse.
+  timedGrantOutsideWorkspace = false,
 }) {
   const { list } = usePendingPermissions();
   // Where the ask is drawn. A setting, because neither answer is right for
@@ -275,6 +279,7 @@ export default function GlobalPermissionContainer({
       queuedCount={Math.max(0, mine.length - 1)}
       // Global mode is a real modal: an overlay, not a card in a transcript.
       inline={!globalMode}
+      timedGrantOutsideWorkspace={timedGrantOutsideWorkspace}
     />
   ) : null;
 
