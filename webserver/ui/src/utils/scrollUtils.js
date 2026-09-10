@@ -76,30 +76,29 @@ export function stickToBottomIfPinned(node, threshold = STICK_THRESHOLD_PX) {
 }
 
 
-// Scroll ``scroller`` so ``node`` sits at the top of the viewport — using the
-// node's FLOW position, not its painted one.
+
+// Scroll ``scroller`` so ``target`` sits at its top edge.
 //
-// ``scrollIntoView`` cannot do this job for a ``position: sticky`` header:
-// once it is stuck it is ALREADY at the top of the viewport, so the browser
-// reads the scroll as complete and does nothing. That is precisely the moment
-// the operator wants to jump — they are deep in a long turn, the prompt is
-// pinned above them, and they want to get back to where it actually began.
+// Two traps, both hit for real:
 //
-// ``offsetTop`` is unaffected by stickiness, so walking the offset chain up
-// to the scroller gives the position the element occupies in the document.
-export function scrollToFlowTop(node, scroller, { offset = 0 } = {}) {
-  if (!node || !scroller) { return; }
-  let top = 0;
-  let current = node;
-  // Walk offsetParents until we reach the scroller. A positioned ancestor
-  // BETWEEN the two contributes its own offset, which is why this is a walk
-  // and not a single ``node.offsetTop`` read.
-  while (current && current !== scroller) {
-    top += current.offsetTop || 0;
-    current = current.offsetParent;
-    // The chain left the scroller without passing through it (a fixed or
-    // detached ancestor). Give up rather than scroll somewhere arbitrary.
-    if (!current) { return; }
-  }
-  scroller.scrollTop = Math.max(0, top - offset);
+// 1. ``scrollIntoView`` cannot do this for a ``position: sticky`` header. Once
+//    stuck it is ALREADY at the top of the viewport, so the browser reads the
+//    scroll as complete and does nothing — and that is exactly the moment the
+//    operator wants to jump back.
+// 2. Neither can an ``offsetTop``/``offsetParent`` walk, which is what this
+//    used to be. It depends on the layout tree being positioned the way you
+//    assume, it silently no-ops when the chain misses the scroller, and jsdom
+//    reports ``offsetParent`` as null for EVERYTHING — so a unit test over
+//    fake objects passes while the real button does nothing at all.
+//
+// Rects are what the browser actually measured. Pass a NON-sticky ancestor as
+// ``target`` (the turn wrapper, not the stuck header) and its rect is its true
+// flow position, stuck or not.
+export function scrollElementToTop(target, scroller, { offset = 0 } = {}) {
+  if (!target || !scroller) { return; }
+  if (typeof target.getBoundingClientRect !== 'function') { return; }
+  if (typeof scroller.getBoundingClientRect !== 'function') { return; }
+  const delta = target.getBoundingClientRect().top
+    - scroller.getBoundingClientRect().top;
+  scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - offset);
 }

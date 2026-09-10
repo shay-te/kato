@@ -1192,3 +1192,59 @@ describe('EventLog — sending re-arms the sticky scroll', () => {
     expect(scroller(container)).toBeInTheDocument();
   });
 });
+
+// The jump-to-start target on a "You asked" header.
+//
+// It must be wired to the TURN WRAPPER, not to the sticky header itself: the
+// header is the stuck element, so measuring it yields a delta of zero and the
+// button silently does nothing — which is exactly how the first attempt
+// behaved ("not working when clicking on it").
+describe('EventLog — jump to the start of a prompt', () => {
+  function renderWithPrompt() {
+    return render(
+      <EventLog
+        entries={[
+          { source: 'history', raw: { type: 'user', uuid: 'u1', message: { content: 'first question' } } },
+          { source: 'history', raw: { type: 'assistant', uuid: 'u2', message: { id: 'm2', content: [{ type: 'text', text: 'an answer' }] } } },
+        ]}
+      />,
+    );
+  }
+
+  test('every prompt header offers the target button', () => {
+    renderWithPrompt();
+    expect(
+      screen.getByRole('button', { name: /scroll to the start of this prompt/i }),
+    ).toBeTruthy();
+  });
+
+  test('clicking it scrolls the log to the turn, not to the stuck header', () => {
+    const { container } = renderWithPrompt();
+    const log = container.querySelector('#event-log');
+    const turn = container.querySelector('.chat-turn');
+    expect(turn).toBeTruthy();
+
+    // Rects a browser would report with the operator read well past the
+    // prompt: the turn starts above the viewport...
+    log.getBoundingClientRect = () => ({ top: 100, bottom: 900, height: 800, left: 0, right: 0, width: 0 });
+    turn.getBoundingClientRect = () => ({ top: -500, bottom: 300, height: 800, left: 0, right: 0, width: 0 });
+    log.scrollTop = 1200;
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /scroll to the start of this prompt/i }),
+    );
+
+    // ...so the log scrolls UP by exactly that gap (1200 + (-500 - 100)).
+    expect(log.scrollTop).toBe(600);
+  });
+
+  test('it sits in the meta row, not floated into the corner', () => {
+    // A third absolutely-positioned icon in the top-right shared that corner
+    // with the collapse toggle and the comment-jump, and on a wide pane it
+    // was nowhere near the text being read.
+    const { container } = renderWithPrompt();
+    const button = screen.getByRole('button', { name: /scroll to the start of this prompt/i });
+    expect(button.closest('.chat-sticky-prompt-label-row')).toBeTruthy();
+    expect(container.querySelector('.chat-sticky-prompt-label-row .chat-sticky-prompt-label')).toBeTruthy();
+  });
+});

@@ -31,10 +31,13 @@ const LINE_ICONS = {
   'plus': 'M12 5v14M5 12h14',
   'minus': 'M5 12h14',
   'xmark': 'M18 6L6 18M6 6l12 12',
-  // Crosshair — "take me to this exact spot". Circle plus four ticks on
-  // the 24x24 grid; drawn rather than imported for the reason at the top.
-  'crosshair': 'M12 3v3M12 18v3M3 12h3M18 12h3'
-    + 'M12 6.5a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z',
+  // Crosshair — "take me to this exact spot". Four ticks reaching the edge
+  // of the 24x24 grid, an r=7 ring, and a centre dot. The first attempt
+  // used an r=5.5 ring with stubby ticks, which at icon size collapsed
+  // into an indistinct blob. Drawn rather than imported, per the top.
+  'crosshair': 'M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22'
+    + 'M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14z'
+    + 'M12 11.1a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8z',
   'check': 'M20 6L9 17l-5-5',
   'check-double': 'M2 12l5 5L17 7M13 17l1 1L22 10',
   'reply': 'M9 17l-6-6 6-6M3 11h11a6 6 0 0 1 6 6v3',

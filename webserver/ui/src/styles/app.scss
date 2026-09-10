@@ -2407,38 +2407,43 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * comment's live kato_status, reusing the .diff-file-comment-pill
  * palette so the chat and the files badge agree at a glance. Sits in
  * the toggle's right padding gutter, clear of the wrapped prompt text. */
-/* Jump back to where this prompt starts. Shares the comment-jump's shape and
- * sits to its LEFT, so a comment-run prompt shows both without overlap and an
- * ordinary prompt shows this one alone in the same corner. */
+/* "You asked" and the jump-to-start target share a row; the timestamp keeps
+ * the row below it. The meta block is a COLUMN, so without this wrapper the
+ * button lands under the time instead of beside the label. */
+.chat-sticky-prompt-label-row {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-2;
+}
+
+/* Jump back to where this prompt starts.
+ *
+ * IN FLOW, beside the label — deliberately not a third absolutely-positioned
+ * icon in the top-right corner. That corner already holds the collapse toggle
+ * and the comment-jump, on a wide chat pane it is a long way from the text
+ * being read, and every addition there needs another hand-tuned offset. */
 .chat-sticky-prompt-jump-start {
-  position: absolute;
-  top: $SPACE-6;
-  right: $SPACE-10;
-  z-index: 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: $ICON-BOX-LG;
-  height: $ICON-BOX-LG;
+  width: $ICON-BOX-SM;
+  height: $ICON-BOX-SM;
   padding: 0;
   border: none;
   border-radius: $RADIUS-CIRCLE;
   background: transparent;
+  /* Dimmer than the label until hovered: an affordance, not a status. */
   color: $C-NEUTRAL-45;
-  font-size: $ICON-GLYPH-LG;
+  font-size: $ICON-GLYPH-SM;
   line-height: 1;
   cursor: pointer;
+  flex-shrink: 0;
   transition: background 120ms ease, color 120ms ease;
 }
 
 .chat-sticky-prompt-jump-start:hover {
   background: $C-NEUTRAL-100-A10;
   color: $C-NEUTRAL-96;
-}
-
-/* Step left when the comment-jump icon is also present. */
-.chat-sticky-prompt.has-comment-jump .chat-sticky-prompt-jump-start {
-  right: calc(#{$SPACE-10} + #{$ICON-BOX-LG});
 }
 
 .chat-sticky-prompt-comment-jump {

@@ -22,7 +22,7 @@ import {
   isNearTop,
   isPinnedToBottom,
   scrollToBottom,
-  scrollToFlowTop,
+  scrollElementToTop,
 } from '../utils/scrollUtils.js';
 import { cx } from '../utils/cx.js';
 import { countNoun, withImageCountSuffix } from '../utils/pluralize.js';
@@ -996,14 +996,27 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   // The header is ``position: sticky``: once the operator has read down into
   // a long turn it stays pinned at the top, so "where did this begin?" is
   // several screens up with no way back short of scrolling by hand.
-  // ``scrollIntoView`` is no help — a stuck header is already at the top of
-  // the viewport, so the browser treats the scroll as already done.
+  //
+  // Anchored on the ``.chat-turn`` WRAPPER, never on the header itself. The
+  // header is the stuck element, so its own rect is pinned to the top of the
+  // viewport and measuring it would compute a delta of zero — a button that
+  // does nothing, which is precisely how the first attempt behaved.
   const promptRef = useRef(null);
   function jumpToPromptStart() {
     const node = promptRef.current;
     if (!node) { return; }
-    scrollToFlowTop(node, node.closest('#event-log'));
+    scrollElementToTop(
+      node.closest('.chat-turn') || node, node.closest('#event-log'),
+    );
   }
+  // INLINE, in the meta row beside "You asked" — not floated into a corner.
+  //
+  // It started as a third absolutely-positioned icon at top-right, sharing
+  // that corner with the collapse toggle and the comment-jump. On a wide chat
+  // pane that corner is a long way from the text the operator is reading, and
+  // stacking a third control there means every future one needs another
+  // hand-tuned offset. In the meta row it sits where the eye already is and
+  // needs no positioning at all.
   const jumpToStart = (
     <button
       type="button"
@@ -1037,11 +1050,13 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
 
   return (
     <StickyHeader className={promptClass} ref={promptRef}>
-      {jumpToStart}
       {jumpToComment}
       <div className="chat-sticky-prompt-toggle">
         <span className="chat-sticky-prompt-meta">
-          <span className="chat-sticky-prompt-label">You asked</span>
+          <span className="chat-sticky-prompt-label-row">
+            <span className="chat-sticky-prompt-label">You asked</span>
+            {jumpToStart}
+          </span>
           {promptTime && (
             <span className="chat-sticky-prompt-time">{promptTime}</span>
           )}
