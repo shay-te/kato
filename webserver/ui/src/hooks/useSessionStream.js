@@ -28,6 +28,9 @@ const IDLE_RETRY_MAX_MS = 30000;
 const ACTION_HYDRATE = 'hydrate';
 const ACTION_INCOMING_EVENT = 'incoming_event';
 const ACTION_INCOMING_HISTORY = 'incoming_history';
+// Many replayed history frames folded in ONE dispatch. See the flush buffer
+// in the stream listener below for why.
+const ACTION_INCOMING_HISTORY_BATCH = 'incoming_history_batch';
 const ACTION_LIFECYCLE = 'lifecycle';
 const ACTION_LOCAL_EVENT = 'local_event';
 const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
@@ -151,21 +154,55 @@ function entryDedupeKey(entry) {
   return `history:${rawFingerprint(entry.raw)}`;
 }
 
+// Cheap, stable string hash (djb2). Only ever used to keep a fingerprint
+// short — never for security, never persisted.
+function contentHash(text) {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (((hash << 5) + hash) ^ text.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 // Compact identity for a Claude raw event. Most events the SDK
 // emits carry a ``uuid``; assistant/user envelopes carry an
 // Anthropic ``message.id``; tool results carry a ``tool_use_id``.
 // Any of those uniquely identify the event without walking the
-// (potentially huge) prompt / tool-output payload. Falling back to
-// a type+subtype+session triple is good enough for the rare event
-// shape that lacks all three — collisions there only over-dedupe,
-// they don't drop distinct content.
+// (potentially huge) prompt / tool-output payload.
+//
+// THE FALLBACK CARRIES CONTENT, and must keep doing so.
+//
+// It used to be a bare ``type:subtype:session`` triple, with a comment
+// claiming a collision there "only over-dedupes, doesn't drop distinct
+// content". Those are the same thing: this fingerprint IS the history
+// entry's identity, so two different messages that share the triple collapse
+// into one and the second NEVER RENDERS. Every event lacking all three
+// strong ids — kato's own synthetic bubbles, the task-summary notice, some
+// Codex shapes — shares that triple with its neighbours, so a whole run of
+// them showed up as a single message. That is the reported "sometimes kato
+// chat hides messages; i need to refresh the page to see the summary".
+//
+// Hashing the payload keeps the property the dedupe actually needs — a
+// re-replay of the SAME JSONL record still produces the SAME key, so
+// reopening a chat does not double it — while two genuinely different
+// payloads can no longer be mistaken for one. The stringify cost is paid
+// only by events with no strong id, which is the rare shape.
 function rawFingerprint(raw) {
   if (!raw || typeof raw !== 'object') { return 'none'; }
   if (raw.uuid) { return `u:${raw.uuid}`; }
   const messageId = raw.message && raw.message.id;
   if (messageId) { return `m:${messageId}`; }
   if (raw.tool_use_id) { return `t:${raw.tool_use_id}`; }
-  return `s:${raw.type || ''}:${raw.subtype || ''}:${raw[AGENT_SESSION_ID] || ''}`;
+  const triple = `s:${raw.type || ''}:${raw.subtype || ''}:${raw[AGENT_SESSION_ID] || ''}`;
+  let payload = '';
+  try {
+    payload = JSON.stringify(raw);
+  } catch (_) {
+    // Circular or otherwise unserializable — fall back to the old triple
+    // rather than throwing inside the reducer. Over-dedupe beats a crash.
+    return triple;
+  }
+  return `${triple}:${contentHash(payload)}`;
 }
 
 // A CROSS-SOURCE identity, or '' when the event carries none.
@@ -498,6 +535,16 @@ export function reducer(state, action) {
     }
     case ACTION_INCOMING_HISTORY:
       return reduceIncomingHistory(state, action.event, action.receivedAtEpoch);
+    case ACTION_INCOMING_HISTORY_BATCH: {
+      // Folded through the SAME per-event reducer, in order — the batch is a
+      // scheduling change, not a second code path. Anything that depends on
+      // the entry before it (echo dedupe, turn pairing) behaves identically.
+      let next = state;
+      for (const item of action.items || []) {
+        next = reduceIncomingHistory(next, item.event, item.receivedAtEpoch);
+      }
+      return next;
+    }
     case ACTION_LOCAL_EVENT: {
       _localEventCounter += 1;
       const enriched = { ...action.event, localId: _localEventCounter };
@@ -793,6 +840,36 @@ export function useSessionStream(taskId, onIncomingEvent) {
       `/api/sessions/${encodeURIComponent(taskId)}/events`,
     );
 
+    // Replay coalescing (see the history listener below). One flush per
+    // animation frame — the browser will not paint more often than that, so
+    // dispatching more often only burns renders nobody sees. ``rAF`` does not
+    // fire in a background tab, so a timer backs it up: a transcript replayed
+    // while the operator is elsewhere must still be complete when they
+    // return, not frozen mid-replay.
+    let historyBuffer = [];
+    let historyFlushHandle = 0;
+    let historyFlushTimer = 0;
+    function flushHistory() {
+      historyFlushHandle = 0;
+      if (historyFlushTimer) {
+        clearTimeout(historyFlushTimer);
+        historyFlushTimer = 0;
+      }
+      if (historyBuffer.length === 0) { return; }
+      const items = historyBuffer;
+      historyBuffer = [];
+      dispatch({ type: ACTION_INCOMING_HISTORY_BATCH, items });
+    }
+    function scheduleHistoryFlush() {
+      if (historyFlushHandle || historyFlushTimer) { return; }
+      if (typeof requestAnimationFrame === 'function') {
+        historyFlushHandle = requestAnimationFrame(flushHistory);
+      }
+      // Always armed, rAF or not: the fallback covers a hidden tab (where rAF
+      // is throttled to never) and any environment without it.
+      historyFlushTimer = setTimeout(flushHistory, 32);
+    }
+
     stream.addEventListener('session_event', (event) => {
       const unwrapped = unwrapSessionEvent(event);
       if (!unwrapped) { return; }
@@ -806,14 +883,27 @@ export function useSessionStream(taskId, onIncomingEvent) {
         onIncomingEvent(raw, taskId);
       }
     });
+    // HISTORY FRAMES ARE COALESCED.
+    //
+    // On a reload the server replays the whole transcript, one SSE frame per
+    // event. Each frame is its own macrotask, so React cannot auto-batch
+    // them: a 3000-event session dispatched 3000 times, re-rendering the log
+    // and re-pinning it to the bottom on every one. The operator watched
+    // their chat scroll past for ~15 seconds before it settled — "he loading
+    // the chat content by showing me he is scrolling for 15 seconds".
+    //
+    // Buffering to the next frame collapses that into a handful of renders:
+    // the transcript appears essentially at once, already at the bottom.
+    // Live events are deliberately NOT batched — those are one at a time and
+    // want to appear the instant they arrive.
     stream.addEventListener('session_history_event', (event) => {
       const unwrapped = unwrapSessionEvent(event);
       if (!unwrapped) { return; }
-      dispatch({
-        type: ACTION_INCOMING_HISTORY,
+      historyBuffer.push({
         event: unwrapped.raw,
         receivedAtEpoch: unwrapped.envelope?.received_at_epoch,
       });
+      scheduleHistoryFlush();
     });
     stream.addEventListener('session_idle', () => {
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });
@@ -832,7 +922,17 @@ export function useSessionStream(taskId, onIncomingEvent) {
         dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.CLOSED });
       }
     };
-    return () => stream.close();
+    return () => {
+      stream.close();
+      // Drop anything still buffered rather than flushing it: the task is
+      // gone (switch / unmount) and this dispatch would land on the next
+      // task's state.
+      historyBuffer = [];
+      if (historyFlushHandle && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(historyFlushHandle);
+      }
+      if (historyFlushTimer) { clearTimeout(historyFlushTimer); }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, streamGeneration]);
 

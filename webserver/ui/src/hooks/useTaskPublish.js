@@ -30,7 +30,9 @@ export function useTaskPublish(taskId) {
   const {
     hasWorkspace, hasChangesToPush, ready, error,
   } = useTaskPublishState(taskId);
-  const { hasPullRequest, pullRequestUrls } = useTaskPullRequestState(taskId);
+  const {
+    hasPullRequest, pullRequestUrls, pullRequestLookupError,
+  } = useTaskPullRequestState(taskId);
 
   // Re-check both after a button action (push / pull / merge / create-PR /
   // update-source). On-demand only — never polled.
@@ -114,6 +116,10 @@ export function useTaskPublish(taskId) {
     hasChangesToPush,
     hasPullRequest,
     pullRequestUrls,
+    // "kato cannot SEE your pull requests" — distinct from "there is no pull
+    // request". A bad provider credential answers both the same way, and
+    // only this field tells them apart.
+    pullRequestLookupError,
     // Publish-state lifecycle from the LOCAL publish child: ``ready`` after a
     // successful fetch, ``error`` when the latest one failed. Lets callers say
     // "checking…" / "couldn't check" instead of a premature "no workspace".

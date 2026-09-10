@@ -12,6 +12,11 @@ export const pullRequestChild = createDataStore({
     hasPullRequest: !!body?.has_pull_request,
     pullRequestUrls: Array.isArray(body?.pull_request_urls)
       ? body.pull_request_urls.filter(Boolean) : [],
+    // A PERMANENT provider refusal (401/403) behind this answer. Carried as
+    // DATA, never as the child's ``error`` — that would put it back on the
+    // git-button path this store exists to stay off. Transient failures
+    // (429, network) stay silent; those heal on their own.
+    lookupError: String(body?.lookup_error || ''),
   }),
-  empty: { hasPullRequest: false, pullRequestUrls: [] },
+  empty: { hasPullRequest: false, pullRequestUrls: [], lookupError: '' },
 });

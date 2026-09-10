@@ -22,6 +22,7 @@ import {
   isNearTop,
   isPinnedToBottom,
   scrollToBottom,
+  scrollToFlowTop,
 } from '../utils/scrollUtils.js';
 import { cx } from '../utils/cx.js';
 import { countNoun, withImageCountSuffix } from '../utils/pluralize.js';
@@ -990,6 +991,30 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   // alone (a11y) — e.g. "Jump to this comment in the diff · working".
   const statusSuffix = commentStatus ? ` · ${commentStatus.replace(/_/g, ' ')}` : '';
   const jumpLabel = `Jump to this comment in the diff${statusSuffix}`;
+  // Jump back to where this prompt actually starts.
+  //
+  // The header is ``position: sticky``: once the operator has read down into
+  // a long turn it stays pinned at the top, so "where did this begin?" is
+  // several screens up with no way back short of scrolling by hand.
+  // ``scrollIntoView`` is no help — a stuck header is already at the top of
+  // the viewport, so the browser treats the scroll as already done.
+  const promptRef = useRef(null);
+  function jumpToPromptStart() {
+    const node = promptRef.current;
+    if (!node) { return; }
+    scrollToFlowTop(node, node.closest('#event-log'));
+  }
+  const jumpToStart = (
+    <button
+      type="button"
+      className="chat-sticky-prompt-jump-start"
+      data-tooltip="Scroll back to where this prompt starts."
+      aria-label="Scroll to the start of this prompt"
+      onClick={jumpToPromptStart}
+    >
+      <Icon name="crosshair" />
+    </button>
+  );
   const jumpToComment = hasCommentJump ? (
     <button
       type="button"
@@ -1011,7 +1036,8 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   ) : null;
 
   return (
-    <StickyHeader className={promptClass}>
+    <StickyHeader className={promptClass} ref={promptRef}>
+      {jumpToStart}
       {jumpToComment}
       <div className="chat-sticky-prompt-toggle">
         <span className="chat-sticky-prompt-meta">

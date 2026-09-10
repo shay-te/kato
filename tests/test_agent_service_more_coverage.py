@@ -1937,6 +1937,58 @@ class TaskPublishStateTests(unittest.TestCase):
         # ONE warning (no traceback) — has_pull_request stays False.
         service.logger.warning.assert_called()
         service.logger.exception.assert_not_called()
+        # A TRANSIENT failure stays quiet in the UI: surfacing every 429 /
+        # network blip would put a banner in front of the operator several
+        # times an hour for something that heals itself.
+        self.assertEqual(result['lookup_error'], '')
+
+    def test_pull_request_state_reports_a_rejected_credential(self) -> None:
+        """A 401 must not read as "this branch has no pull request".
+
+        Reported from a shared Bitbucket token used without
+        ``BITBUCKET_API_EMAIL`` — an Atlassian API token authenticates as
+        EMAIL + token, so every lookup 401s forever. Collapsed into "no PR",
+        that is a lie the operator acts on: the UI offers to open a pull
+        request that may already exist.
+        """
+        repo_obj = SimpleNamespace(id='client', local_path='/tmp/x')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError(
+            '401 Client Error: Unauthorized for url: '
+            'https://api.bitbucket.org/2.0/repositories/acme/client/pullrequests'
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+
+        detail = result['lookup_error']
+        self.assertIn('client', detail)
+        self.assertIn('rejected', detail)
+        # Names the setting that actually fixes it.
+        self.assertIn('BITBUCKET_API_EMAIL', detail)
+        # ...while STILL answering, so the git buttons never gate on it.
+        self.assertFalse(result['has_pull_request'])
+
+    def test_pull_request_state_reports_one_error_not_twenty_five(self) -> None:
+        # One bad credential fails every repo identically.
+        repos = [SimpleNamespace(id=f'r{i}', local_path='/tmp/x') for i in range(3)]
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError(
+            '401 Client Error: Unauthorized for url: https://host/pr'
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=(repos, 'T1', SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+
+        self.assertIn('r0', result['lookup_error'])
+        self.assertNotIn('r1', result['lookup_error'])
 
     def test_pull_request_state_default_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())

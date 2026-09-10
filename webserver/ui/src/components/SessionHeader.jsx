@@ -652,6 +652,13 @@ function prTitleFor(state) {
   if (!state.hasWorkspace) {
     return 'No workspace yet — kato needs to provision the task before you can open a PR.';
   }
+  // BEFORE the has/hasn't answer, because it says that answer is unreliable.
+  // A rejected credential makes "no pull request" indistinguishable from
+  // "kato cannot see your pull requests", and the operator acts on it by
+  // opening a duplicate.
+  if (state.pullRequestLookupError) {
+    return state.pullRequestLookupError;
+  }
   if (state.hasPullRequest) {
     const url = (state.pullRequestUrls && state.pullRequestUrls[0]) || '';
     return url

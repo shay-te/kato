@@ -1,8 +1,8 @@
 // Tests for PlanPane — the centre-pane view that renders the agent's
 // captured plan.md as markdown for review.
 
-import { describe, test, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import PlanPane from './PlanPane.jsx';
 
@@ -31,4 +31,20 @@ describe('PlanPane', () => {
     render(<PlanPane content={'   \n  '} />);
     expect(screen.getByText('No plan yet.')).toBeTruthy();
   });
+});
+
+
+test('the plan can be dismissed like every other centre-pane body', () => {
+  // It was the one view that took the centre column and would not give it
+  // back: a file tab has its ✕, the orchestrator feed has one, and the plan
+  // opens ITSELF when the agent writes a new one.
+  const onClose = vi.fn();
+  render(<PlanPane content="# hi" onClose={onClose} />);
+  fireEvent.click(screen.getByRole('button', { name: /close plan/i }));
+  expect(onClose).toHaveBeenCalled();
+});
+
+test('no close button when the host offers no handler', () => {
+  render(<PlanPane content="# hi" />);
+  expect(screen.queryByRole('button', { name: /close plan/i })).toBeNull();
 });

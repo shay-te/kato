@@ -2407,6 +2407,40 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * comment's live kato_status, reusing the .diff-file-comment-pill
  * palette so the chat and the files badge agree at a glance. Sits in
  * the toggle's right padding gutter, clear of the wrapped prompt text. */
+/* Jump back to where this prompt starts. Shares the comment-jump's shape and
+ * sits to its LEFT, so a comment-run prompt shows both without overlap and an
+ * ordinary prompt shows this one alone in the same corner. */
+.chat-sticky-prompt-jump-start {
+  position: absolute;
+  top: $SPACE-6;
+  right: $SPACE-10;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: $ICON-BOX-LG;
+  height: $ICON-BOX-LG;
+  padding: 0;
+  border: none;
+  border-radius: $RADIUS-CIRCLE;
+  background: transparent;
+  color: $C-NEUTRAL-45;
+  font-size: $ICON-GLYPH-LG;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.chat-sticky-prompt-jump-start:hover {
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
+}
+
+/* Step left when the comment-jump icon is also present. */
+.chat-sticky-prompt.has-comment-jump .chat-sticky-prompt-jump-start {
+  right: calc(#{$SPACE-10} + #{$ICON-BOX-LG});
+}
+
 .chat-sticky-prompt-comment-jump {
   position: absolute;
   top: $SPACE-6;
@@ -4422,6 +4456,15 @@ code {
   color: $C-NEUTRAL-96;
 }
 
+/* The one-line explanation for a button that is deliberately absent — e.g.
+ * "Allow for 10 min" on a docker command that reaches outside the task
+ * folder. Quiet: it explains a gap, it is not a warning of its own. */
+.permission-note {
+  margin: $SPACE-8 0 0;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
 // Action Guard banner: this modal is shown only for an ASK ("please confirm"),
 // so it's amber/caution — not the red the refusal/sandbox warning uses. (A red
 // "DESTRUCTIVE FS" on an in-scope `rm -rf tests/test_data` read as a
@@ -4664,6 +4707,13 @@ code {
   display: flex;
   justify-content: flex-end;
   gap: $SPACE-8;
+  /* WRAPS. The permission dialog can carry four buttons (Deny / Allow once /
+   * Allow for 10 min / Allow always) and flex items default to
+   * ``min-width: auto``, so they refuse to shrink below their label and the
+   * row overflows instead — pushing a button out of the dialog on a narrow
+   * window. A second row is always better than a button nobody can reach. */
+  flex-wrap: wrap;
+  row-gap: $SPACE-8;
 }
 
 .modal-actions button {
@@ -8344,7 +8394,10 @@ body.kato-resizing {
   white-space: nowrap;
 }
 
-.orchestrator-feed-close {
+/* The plan pane's dismiss button shares this rule rather than restating it —
+ * two centre-pane bodies, one close affordance. */
+.orchestrator-feed-close,
+.plan-pane-close {
   /* Bare glyph, circle on hover — same treatment as .session-action and the
    * files/changes toolbar buttons. Kept in step with them deliberately: a
    * strip where some icons carry chrome and others do not reads as a
@@ -8363,10 +8416,16 @@ body.kato-resizing {
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
-.orchestrator-feed-close:hover {
+.orchestrator-feed-close:hover,
+.plan-pane-close:hover {
   background: $C-NEUTRAL-100-A10;
   border-color: $C-NEUTRAL-100-A06;
   color: $C-NEUTRAL-96;
+}
+
+/* Pushed to the trailing edge — the title and its "review" pill lead. */
+.plan-pane-close {
+  margin-left: auto;
 }
 
 .orchestrator-feed-empty {

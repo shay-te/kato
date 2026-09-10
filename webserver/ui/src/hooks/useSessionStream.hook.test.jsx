@@ -14,7 +14,7 @@
 //   - The local-cache write happens so a remount can re-hydrate.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
 import {
   SESSION_LIFECYCLE,
@@ -325,7 +325,7 @@ describe('useSessionStream — incoming events drive lifecycle', () => {
     expect(result.current.turnInFlight).toBe(false);
   });
 
-  test('session_history_event appends to events without setting turnInFlight', () => {
+  test('session_history_event appends to events without setting turnInFlight', async () => {
     // Replayed history must NOT make the UI think Claude is
     // actively working. ASSISTANT-shaped HISTORY events are scrollback,
     // not live turn signals.
@@ -337,10 +337,46 @@ describe('useSessionStream — incoming events drive lifecycle', () => {
         ] } } },
       });
     });
+    // History is COALESCED — buffered and folded in one dispatch on the next
+    // frame — so it lands a tick later than a live event does. See the flush
+    // buffer in useSessionStream: replaying a long transcript one dispatch at
+    // a time re-rendered and re-scrolled the log thousands of times, which
+    // the operator saw as ~15 seconds of the chat scrolling itself.
+    await waitFor(() => {
+      expect(result.current.events.length).toBeGreaterThan(0);
+    });
     // turnInFlight stays false — history doesn't trigger live turn.
     expect(result.current.turnInFlight).toBe(false);
-    // But the event is in the log so EventLog can render it.
-    expect(result.current.events.length).toBeGreaterThan(0);
+  });
+
+  test('a replayed transcript lands in ONE render pass, in order', async () => {
+    // The whole point of the buffer: N history frames must not mean N
+    // dispatches. Order is preserved because the batch folds through the
+    // same per-event reducer, in sequence.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => {
+      for (let i = 0; i < 25; i += 1) {
+        FakeEventSource.instances[0].emit('session_history_event', {
+          event: { raw: { type: 'assistant', message: { content: [
+            { type: 'text', text: `line ${i}` },
+          ] } } },
+        });
+      }
+    });
+    // Asserted on CONTENT, not on entry count: consecutive assistant text
+    // frames legitimately merge into one bubble, and that merging is the
+    // per-event reducer's business — the batch must not change it.
+    await waitFor(() => {
+      expect(JSON.stringify(result.current.events)).toContain('line 24');
+    });
+    const blob = JSON.stringify(result.current.events);
+    // Nothing dropped...
+    expect(blob).toContain('line 0');
+    expect(blob).toContain('line 12');
+    // ...and folded in arrival order, because the batch replays the same
+    // reducer in sequence rather than merging the frames itself.
+    expect(blob.indexOf('line 0')).toBeLessThan(blob.indexOf('line 12'));
+    expect(blob.indexOf('line 12')).toBeLessThan(blob.indexOf('line 24'));
   });
 
   test('permission_request event sets pendingPermission', () => {
@@ -618,5 +654,47 @@ describe('useSessionStream — Codex history and live never double up', () => {
       receivedAtEpoch: 2,
     });
     expect(state.events).toHaveLength(2);
+  });
+});
+
+
+// The message-loss bug behind "sometimes kato chat hide mesages. i need to
+// refresh the page to see the summary of a task."
+describe('useSessionStream — distinct messages are never collapsed', () => {
+  function emitHistory(raw) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_history_event', { event: { raw } });
+    });
+  }
+
+  test('events with no uuid / message id still render individually', async () => {
+    // These share type+subtype+session — kato's own synthetic bubbles do —
+    // and that triple used to BE the identity, so the second and every one
+    // after it were dropped as duplicates and never rendered.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitHistory({ type: 'system', subtype: 'notice', text: 'first notice' });
+    emitHistory({ type: 'system', subtype: 'notice', text: 'task summary here' });
+    emitHistory({ type: 'system', subtype: 'notice', text: 'third notice' });
+
+    await waitFor(() => {
+      expect(result.current.events.length).toBe(3);
+    });
+    const blob = JSON.stringify(result.current.events);
+    expect(blob).toContain('task summary here');
+    expect(blob).toContain('third notice');
+  });
+
+  test('but an identical replay of the SAME record still dedupes', async () => {
+    // The property the fingerprint exists for: reopening a chat replays the
+    // JSONL, and that must not double every bubble.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    const record = { type: 'system', subtype: 'notice', text: 'same exact text' };
+    emitHistory({ ...record });
+    emitHistory({ ...record });
+
+    await waitFor(() => {
+      expect(JSON.stringify(result.current.events)).toContain('same exact text');
+    });
+    expect(result.current.events.length).toBe(1);
   });
 });

@@ -672,6 +672,10 @@ export default function App() {
     setOrchestratorOpen(false);
     setPlanOpen(true);
   }, [activeTaskId]);
+  // Dismiss it. ``usePlanWatch`` re-opens only on a strictly-newer plan
+  // mtime, so closing sticks until the agent writes a NEW plan — it does not
+  // fight the operator by springing back on the next poll.
+  const handleClosePlan = useCallback(() => { setPlanOpen(false); }, []);
   const { content: planContent, available: planAvailable } = usePlanWatch(
     activeTaskId, handleOpenPlan,
   );
@@ -748,7 +752,7 @@ export default function App() {
       />
     );
   } else if (planOpen) {
-    centerBody = <PlanPane content={planContent} />;
+    centerBody = <PlanPane content={planContent} onClose={handleClosePlan} />;
   } else {
     const filePane = activeOpenFile?.view === 'diff' ? (
       <DiffPane

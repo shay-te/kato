@@ -133,6 +133,7 @@ export function useTaskPullRequestState(taskId) {
   return pullRequestChild.use(taskId, (sl) => ({
     hasPullRequest: sl.data.hasPullRequest,
     pullRequestUrls: sl.data.pullRequestUrls,
+    pullRequestLookupError: sl.data.lookupError,
   }));
 }
 

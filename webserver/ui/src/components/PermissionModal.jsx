@@ -148,8 +148,17 @@ export default function PermissionModal({
   // low-surprise commands (docker, the network tools) and never where the
   // remembered scope is withheld — a time-boxed sandbox escape is still a
   // sandbox escape. In-memory server-side, so a kato restart drops it.
-  const offerTimedGrant = (
-    !withholdAllowAlways && isTimedGrantEligible(toolName, toolInput)
+  const timedGrantEligible = isTimedGrantEligible(toolName, toolInput);
+  const offerTimedGrant = !withholdAllowAlways && timedGrantEligible;
+  // Withheld, but for a command the operator EXPECTS it on (docker, the
+  // network tools). Silence here reads as "the feature is missing" — the
+  // operator's words were "the allow for the next 10 minutes is not
+  // there!!!". Say why instead of leaving a gap: same rule as every other
+  // report in this app — never hide the thing that needs explaining.
+  const timedGrantWithheldNote = (
+    timedGrantEligible && withholdAllowAlways
+      ? timedGrantWithheldReason(outsideSandbox, toolName)
+      : ''
   );
   function handleAllowForWindow() {
     onDecide({
@@ -301,6 +310,11 @@ export default function PermissionModal({
         value={rationale}
         onChange={handleRationaleChange}
       />
+      {timedGrantWithheldNote && (
+        <p id="permission-timed-grant-withheld" className="permission-note">
+          {timedGrantWithheldNote}
+        </p>
+      )}
       <div className="modal-actions">
         <button
           id="permission-deny"
@@ -383,6 +397,22 @@ function renderActionGuardBanner(actionGuard) {
       {reason && <p className="permission-sandbox-warning-body">{reason}</p>}
     </div>
   );
+}
+
+// Why the time-boxed button is missing from an ask that would otherwise
+// carry it. A ``docker run -v /some/host/path:/data`` reaches outside the
+// task folder, and both durable scopes ride on the same gate — a time-boxed
+// sandbox escape is still a sandbox escape. That decision stands; leaving it
+// unexplained does not.
+function timedGrantWithheldReason(outsideSandbox, toolName) {
+  if (outsideSandbox) {
+    return `"Allow for ${TIMED_GRANT_MINUTES} min" is not offered here: this `
+      + 'command reaches outside the task folder, so it can only be approved '
+      + 'one action at a time.';
+  }
+  return `"Allow for ${TIMED_GRANT_MINUTES} min" is not offered for `
+    + `${toolName}: its risk category can only be approved one action at a `
+    + 'time.';
 }
 
 // The remembered-scope button — withheld (null) for out-of-task asks and

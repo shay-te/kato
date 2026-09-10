@@ -74,3 +74,32 @@ export function stickToBottomIfPinned(node, threshold = STICK_THRESHOLD_PX) {
   scrollToBottom(node);
   return true;
 }
+
+
+// Scroll ``scroller`` so ``node`` sits at the top of the viewport — using the
+// node's FLOW position, not its painted one.
+//
+// ``scrollIntoView`` cannot do this job for a ``position: sticky`` header:
+// once it is stuck it is ALREADY at the top of the viewport, so the browser
+// reads the scroll as complete and does nothing. That is precisely the moment
+// the operator wants to jump — they are deep in a long turn, the prompt is
+// pinned above them, and they want to get back to where it actually began.
+//
+// ``offsetTop`` is unaffected by stickiness, so walking the offset chain up
+// to the scroller gives the position the element occupies in the document.
+export function scrollToFlowTop(node, scroller, { offset = 0 } = {}) {
+  if (!node || !scroller) { return; }
+  let top = 0;
+  let current = node;
+  // Walk offsetParents until we reach the scroller. A positioned ancestor
+  // BETWEEN the two contributes its own offset, which is why this is a walk
+  // and not a single ``node.offsetTop`` read.
+  while (current && current !== scroller) {
+    top += current.offsetTop || 0;
+    current = current.offsetParent;
+    // The chain left the scroller without passing through it (a fixed or
+    // detached ancestor). Give up rather than scroll somewhere arbitrary.
+    if (!current) { return; }
+  }
+  scroller.scrollTop = Math.max(0, top - offset);
+}

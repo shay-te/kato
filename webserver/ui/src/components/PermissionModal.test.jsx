@@ -758,4 +758,42 @@ describe('PermissionModal — time-boxed approval', () => {
     expect(screen.queryByRole('button', { name: /allow for 10 min/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /allow always/i })).toBeNull();
   });
+
+  test('and SAYS why it is withheld, instead of leaving a gap', () => {
+    // A ``docker run -v /host/path:/data`` trips the out-of-sandbox check,
+    // so both durable scopes are withheld — correctly. But an operator who
+    // asked for this button reads its silent absence as "the feature was
+    // never built": "the allow for the next 10 minutes is not there!!!".
+    render(
+      <PermissionModal
+        raw={_raw({
+          request: {
+            request_id: 'r3', tool_name: 'Bash',
+            input: { command: 'docker run -v /Users/me/data:/data img' },
+          },
+          outside_sandbox: true,
+          outside_path: '/Users/me/data',
+        })}
+        onDecide={vi.fn()}
+      />,
+    );
+    const note = document.getElementById('permission-timed-grant-withheld');
+    expect(note).toBeTruthy();
+    expect(note.textContent).toMatch(/outside the task folder/i);
+    expect(note.textContent).toMatch(/10 min/);
+  });
+
+  test('no note when the button is actually there', () => {
+    // The note explains an ABSENCE. Printing it beside the button would be
+    // its own confusion.
+    render(<PermissionModal raw={bashRaw('docker compose up')} onDecide={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /allow for 10 min/i })).toBeTruthy();
+    expect(document.getElementById('permission-timed-grant-withheld')).toBeNull();
+  });
+
+  test('no note for a command that was never eligible', () => {
+    // "rm -rf build" has no business advertising a 10-minute window.
+    render(<PermissionModal raw={bashRaw('rm -rf build')} onDecide={vi.fn()} />);
+    expect(document.getElementById('permission-timed-grant-withheld')).toBeNull();
+  });
 });

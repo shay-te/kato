@@ -78,6 +78,25 @@ def _auth_hint_for(exc: Exception) -> str:
     return ''
 
 
+def _is_permanent_auth_failure(exc) -> bool:
+    """True for a refusal that will NEVER succeed on retry.
+
+    Only 401/403. A 429 (Bitbucket rate limit — routine here) and any
+    network blip stay transient and keep degrading quietly, because
+    surfacing those would put a scary banner in front of the operator
+    several times an hour for a condition that fixes itself.
+
+    Text-matched off the exception, same reasoning as ``_auth_hint_for``:
+    the provider is the authority on why it refused.
+    """
+    text = str(exc or '').lower()
+    return (
+        '401' in text and 'unauthorized' in text
+    ) or (
+        '403' in text and 'forbidden' in text
+    )
+
+
 @dataclass(frozen=True)
 class _SourceRepoOutcome(object):
     """What updating ONE operator clone did: updated, skipped, or failed.
@@ -1151,8 +1170,8 @@ class TaskPublishService(object):
 
         self._lesson_service.capture_task_lesson(task_id, task_context)
 
-    def _find_pull_requests_safe(self, repository, branch_name: str) -> list:
-        """Direct PR-existence lookup for the publish-state check.
+    def _find_pull_requests_safe(self, repository, branch_name: str):
+        """``(pull_requests, permanent_error)`` for the publish-state check.
 
         ``task_publish_state`` is fetched on tab-load and after button
         clicks (NOT polled), so a direct provider call is fine — no cache,
@@ -1160,19 +1179,39 @@ class TaskPublishService(object):
         network) degrades to "no PR known" instead of failing the whole
         response: the git buttons gate on workspace presence and stay usable
         regardless of provider health. One warning line, never a traceback.
+
+        A 401/403 is NOT that kind of error, and collapsing it into "no PR"
+        is a lie the operator acts on. It never heals, so every later fetch
+        repeats it; the UI then shows "no pull request" for a branch that may
+        well have one, and offers to open a duplicate. The one report of this
+        was a shared Bitbucket token used without ``BITBUCKET_API_EMAIL`` —
+        an Atlassian API token authenticates as EMAIL + token, so every call
+        401s forever while the UI says the branch simply has no PR.
+
+        So a PERMANENT failure comes back as text for the caller to surface,
+        while transient ones keep degrading silently as before.
         """
         try:
             return self._repository_service.find_pull_requests(
                 repository, source_branch=branch_name,
-            ) or []
+            ) or [], ''
         except Exception as exc:
+            hint = _auth_hint_for(exc)
             self.logger.warning(
                 'PR lookup failed for repository %s (branch %s): %s — '
                 'treating as no PR%s',
                 getattr(repository, 'id', ''), branch_name, exc,
-                _auth_hint_for(exc),
+                hint,
             )
-            return []
+            if _is_permanent_auth_failure(exc):
+                repo_id = str(getattr(repository, 'id', '') or 'repository')
+                return [], (
+                    f'Cannot read pull requests for {repo_id}: the provider '
+                    f'rejected kato\'s credentials ({exc}){hint}. '
+                    f'Pull-request status below may be wrong until this is '
+                    f'fixed.'
+                )
+            return [], ''
 
     def task_publish_state(self, task_id: str) -> dict[str, object]:
         """LOCAL, INSTANT git-button state — never touches the provider.
@@ -1271,9 +1310,15 @@ class TaskPublishService(object):
             return {'has_pull_request': False, 'pull_request_urls': []}
         pull_request_urls: list[str] = []
         repos_missing_pull_request = 0
+        # First permanent failure only. One bad credential fails every repo
+        # identically, and 25 copies of the same sentence is not a better
+        # report than one.
+        lookup_error = ''
         for repository in repos:
             branch_name = self._repository_service.build_branch_name(task_obj, repository)
-            existing = self._find_pull_requests_safe(repository, branch_name)
+            existing, failure = self._find_pull_requests_safe(repository, branch_name)
+            if failure and not lookup_error:
+                lookup_error = failure
             if existing:
                 first = existing[0] if isinstance(existing[0], dict) else {}
                 url = str(first.get('url', '') or '')
@@ -1284,6 +1329,10 @@ class TaskPublishService(object):
         return {
             'has_pull_request': repos_missing_pull_request == 0,
             'pull_request_urls': pull_request_urls,
+            # Carried alongside, never INSTEAD of, the answer: the git
+            # buttons must stay usable when the provider is unreachable
+            # (see task_publish_state), so this is a note, not a failure.
+            'lookup_error': lookup_error,
         }
 
     def _resolve_publish_context(self, task_id: str):
