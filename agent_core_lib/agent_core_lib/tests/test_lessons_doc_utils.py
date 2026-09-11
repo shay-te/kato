@@ -77,12 +77,23 @@ class ReadLessonsFileTests(unittest.TestCase):
         # tracks the lessons file at all, so it cannot grow back into the
         # command-line limit. The old cap merely deferred it — and silently
         # dropped everything past 50K.
-        small = read_lessons_file(str(self._write('- one lesson\n')))
-        self._path.unlink()
-        huge = read_lessons_file(str(self._write('- ' + ('x' * 200_000) + '\n')))
+        # Two DIFFERENT files: ``read_lessons_file`` caches per path+mtime, so
+        # rewriting one in the same tick could serve a stale render and make
+        # this pass for the wrong reason.
+        small_path = self.tmp_dir / 'small.md'
+        small_path.write_text('- one lesson\n', encoding='utf-8')
+        huge_path = self.tmp_dir / 'huge.md'
+        huge_path.write_text('- ' + ('x' * 200_000) + '\n', encoding='utf-8')
+
+        small = read_lessons_file(str(small_path))
+        huge = read_lessons_file(str(huge_path))
+
         self.assertLess(len(huge), 1_000)
-        # Identical but for the path — the size is fixed, not merely bounded.
-        self.assertEqual(len(small), len(huge))
+        # The only difference is the path itself — size is FIXED, not merely
+        # bounded, so it can never grow back into the command-line limit.
+        self.assertEqual(
+            len(huge) - len(str(huge_path)), len(small) - len(str(small_path)),
+        )
 
     def test_unreadable_file_logs_and_returns_empty(self) -> None:
         # Path points at a directory — stat OK but not a regular file.
