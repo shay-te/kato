@@ -125,3 +125,50 @@ class RealGitExecutionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NoEmptyConfigValuesTests(unittest.TestCase):
+    """An empty config value is "run this empty command", not "unset".
+
+    POSIX git happens to skip one; Windows git tries to spawn it:
+
+        error: cannot spawn : No such file or directory
+        fatal: unable to parse commit 389122c0ecc8a2a74c5bcda9e46c9073f87b51df
+        warning: Clone succeeded, but checkout failed.
+
+    ``core.alternateRefsCommand`` is the one that fires on a clone, because
+    kato clones with ``--reference-if-able`` against the operator's existing
+    checkout — so every clone has an alternate. The operator hit it on both
+    GitHub and Bitbucket: "whenever I pull new repos he will fail with this
+    error and delete the entire content of that repo locally".
+
+    The module already documented this trap for ``diff.external``; it had just
+    not been applied to its neighbours. This test is the general guard so the
+    next override added cannot reintroduce it.
+    """
+
+    def test_no_override_is_set_to_an_empty_value(self) -> None:
+        empty = [
+            setting for setting in _EXECUTION_CONFIG_OVERRIDES
+            if setting.partition('=')[2] == ''
+        ]
+        self.assertEqual(
+            empty, [],
+            'these run an EMPTY command instead of being unset — give each a '
+            'real no-op program (see core.editor=true)',
+        )
+
+    def test_every_override_still_pins_a_value(self) -> None:
+        # A bare key with no '=' would inherit whatever the repo config says,
+        # which is the opposite of hardening.
+        for setting in _EXECUTION_CONFIG_OVERRIDES:
+            self.assertIn('=', setting, setting)
+            self.assertTrue(setting.partition('=')[0].strip(), setting)
+
+    def test_the_command_line_still_carries_every_override(self) -> None:
+        # The guard only holds because ``-c`` on the command line outranks a
+        # repository's own config.
+        argv = build_safe_git_command('/tmp/x', ['status'])
+        for setting in _EXECUTION_CONFIG_OVERRIDES:
+            self.assertIn(setting, argv)
+

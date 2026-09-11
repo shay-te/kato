@@ -242,15 +242,52 @@ test('a Monitor background wait is busy but NOT flagged as a workflow', function
   assert.equal(afterResult.backgroundIsWorkflow, false);
 });
 
-test('a fresh turn (assistant) clears a prior workflow background flag', function () {
+test('a fresh turn does NOT cancel a background job still running', function () {
+  // This asserted the opposite, and that was the bug. Background work
+  // outlives the turn that launched it: the operator asks "are you still
+  // running?", the agent answers, and that answer is a turn containing no
+  // background tool — so the flag was wiped and the tab read ``idle`` with a
+  // coverage suite still going.
+  //
+  // The turn still shows as WORKING while it runs: ``deriveAgentStatus``
+  // gives ``turnInFlight`` precedence. This flag only decides what the
+  // status falls back to once the turn ends.
   const busy = { ..._freshState(), awaitingBackground: true, backgroundIsWorkflow: true };
   const next = reducer(busy, {
     type: 'incoming_event',
     event: { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
     receivedAtEpoch: Date.now(),
   });
+  assert.equal(next.turnInFlight, true);
+  assert.equal(next.awaitingBackground, true);
+  assert.equal(next.backgroundIsWorkflow, true);
+});
+
+test('the background job reporting back is what clears the flag', function () {
+  // The one signal that the wait is over. Without it the flag could only be
+  // cleared by the session ending, leaving a "background" chip standing over
+  // work that finished hours ago.
+  const busy = { ..._freshState(), awaitingBackground: true, backgroundIsWorkflow: true };
+  const next = reducer(busy, {
+    type: 'incoming_event',
+    event: {
+      type: 'user',
+      message: { content: '<task-notification>\n<task-id>x</task-id>\n' },
+    },
+    receivedAtEpoch: Date.now(),
+  });
   assert.equal(next.awaitingBackground, false);
   assert.equal(next.backgroundIsWorkflow, false);
+});
+
+test('a human message does not clear it', function () {
+  const busy = { ..._freshState(), awaitingBackground: true };
+  const next = reducer(busy, {
+    type: 'incoming_event',
+    event: { type: 'user', message: { content: 'any update?' } },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(next.awaitingBackground, true);
 });
 
 test('idle-session reconnect settles back to idle: init then result', function () {

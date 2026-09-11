@@ -106,6 +106,29 @@ _ACTION_GUARD_FIELDS: list[tuple] = [
      'Master switch for content-aware action blocking (the permission-path '
      'guard). The non-overridable CLI denylist floor stays on regardless. '
      'Takes effect on the next agent action — no restart needed.', {}),
+    # Lives HERE, not under Sandbox. It was filed there because the gate it
+    # relaxes is the out-of-workspace one — but an operator looking for it is
+    # not thinking about sandboxes, they are thinking "the approval popup for
+    # docker": "no no sandbok. approval when the agent want to run docker. we
+    # talked about it 10 minutes to rememebt the decicition". Settings belong
+    # in the section matching the question they are asked to answer.
+    #
+    # The label leads with the words that question uses — docker, 10 min —
+    # so it is findable by scanning, not only by reading every description.
+    ('KATO_TIMED_GRANT_OUTSIDE_WORKSPACE', 'bool',
+     'Remember a docker approval for 10 minutes',
+     'Adds an "Allow for 10 min" button to the approval popup for docker / '
+     'podman commands (and WebFetch / WebSearch) that reach OUTSIDE the task '
+     'folder. Approve once and kato stops asking for that program until the '
+     'window lapses. Without this the button never appears on `docker run -v '
+     '/host/path:/data`, because a volume mount is an absolute host path by '
+     'nature — which is most real docker commands. Off by default.',
+     {'warning': 'Widens WHERE a 10-minute window applies, never what can '
+                 'receive one: still only docker / podman and the network '
+                 'tools. "Allow always" is still NEVER offered outside the '
+                 'task folder, and a high-risk Action Guard category still '
+                 'refuses. Grants live in memory only — they expire on their '
+                 'own and die with a kato restart.'}),
 ]
 for _category in CONFIGURABLE_CATEGORIES:
     _label, _help = _ACTION_GUARD_FIELD_META[_category.value]
@@ -374,20 +397,6 @@ SETTINGS_SCHEMA: list[dict] = [
                         'either startup confirmation prompt. When on, '
                         'kato writes an unmissable banner. Only enable '
                         'if you understand BYPASS_PROTECTIONS.md.'}),
-            ('KATO_TIMED_GRANT_OUTSIDE_WORKSPACE', 'bool',
-             'Time-boxed approvals outside the task folder',
-             'Let "Allow for 10 min" cover a docker/podman command (or a '
-             'WebFetch / WebSearch) that reaches OUTSIDE the task folder — '
-             'a `docker run -v /host/path:/data` mounts an absolute host '
-             'path, so without this the button never appears on the '
-             'commands most people wanted it for. Off by default.',
-             {'warning': 'Widens WHERE a 10-minute window applies, never '
-                         'what can receive one: still only docker / podman '
-                         'and the network tools. "Allow always" is still '
-                         'NEVER offered outside the task folder, and a '
-                         'high-risk Action Guard category still refuses. '
-                         'Grants are in memory only — they expire on their '
-                         'own and die with a kato restart.'}),
             ('KATO_CODEX_BYPASS_PERMISSIONS', 'bool',
              'Bypass ALL permission prompts (Codex)',
              'The Codex equivalent of the switch above — every tool runs '

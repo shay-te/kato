@@ -32,7 +32,12 @@ The post-hoc warning (``_maybe_warn_out_of_sandbox_write`` in
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import tempfile
+from pathlib import Path
+
+from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 import os
 import sys
 
@@ -159,3 +164,44 @@ def out_of_workspace_write_settings_json(
         out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads),
         separators=(',', ':'),
     )
+
+
+def out_of_workspace_write_settings_path(
+    cwd: str = '',
+    additional_dirs: tuple[str, ...] | list[str] = (),
+    dedupe_reads: bool | None = None,
+) -> str:
+    """The same settings, written to a file — pass the PATH to ``--settings``.
+
+    The JSON carries one rule per directory, so a 25-repo workspace produces
+    roughly 8KB. Inline on the command line that is enough to blow Windows'
+    limit on its own, and the spawn dies before the agent ever starts:
+
+        send failed: failed to launch claude CLI binary "claude":
+        [WinError 206] The filename or extension is too long
+
+    ``_build_command`` already notes that cmd.exe caps a command line at
+    ~8K — the settings value alone reaches that, and the multiline
+    ``--append-system-prompt`` is then pure overflow. A path is ~60
+    characters whatever the workspace holds.
+
+    Written OUTSIDE the workspace on purpose: this file is what forces
+    out-of-workspace writes back through the approval path, so putting it
+    somewhere the agent can edit would let it widen its own permissions.
+    Returns '' if the file cannot be written, so the caller can fall back to
+    the inline string rather than failing the spawn.
+    """
+    payload = out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads)
+    try:
+        directory = Path(tempfile.gettempdir()) / 'kato-agent-settings'
+        directory.mkdir(parents=True, exist_ok=True)
+        # Named for the workspace it describes, so two concurrent tasks never
+        # share one file and a re-spawn reuses its own.
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode('utf-8'),
+        ).hexdigest()[:16]
+        target = directory / f'settings-{digest}.json'
+        atomic_write_json(target, payload)
+        return str(target)
+    except Exception:
+        return ''

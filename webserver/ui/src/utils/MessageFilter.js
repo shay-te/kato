@@ -210,6 +210,16 @@ function _isInternalTaskNotificationText(text) {
   return String(text || '').trim().startsWith(TASK_NOTIFICATION_PREFIX);
 }
 
+// A background job reporting back. It is the SAME event this module hides
+// from the transcript — exported so the session stream can use it to decide
+// when the agent has stopped waiting on background work, rather than
+// re-deriving "what is a task notification" a second time.
+export function isTaskNotificationEvent(entry) {
+  return _isServerUserEntry(entry) && _isInternalTaskNotificationText(
+    _userEventText(entry),
+  );
+}
+
 function _hasMatchingLocalUser(recentEntries, serverText, lookback) {
   const start = Math.max(0, recentEntries.length - lookback);
   for (let i = recentEntries.length - 1; i >= start; i -= 1) {

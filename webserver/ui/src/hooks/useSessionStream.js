@@ -5,6 +5,7 @@ import {
   CODEX_EVENT, CODEX_ITEM, isCodexTerminal,
 } from '../constants/codexEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
+import { isTaskNotificationEvent } from '../utils/MessageFilter.js';
 import { safeParseJSON } from '../utils/sse.js';
 
 export const SESSION_LIFECYCLE = {
@@ -715,13 +716,36 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
         next.backgroundIsWorkflow = false;
       }
       break;
+    case CLAUDE_EVENT.USER:
+      // A background job reporting back. This is the ONE signal that the
+      // agent has stopped waiting — without it the flag could only be
+      // cleared by the session ending, which would leave a "background" chip
+      // standing over a session that finished its work hours ago.
+      //
+      // Recognised through ``isTaskNotificationEvent``, the same predicate
+      // that hides these from the transcript, so there is one answer to
+      // "what is a task notification" rather than two that can drift.
+      if (isTaskNotificationEvent({ source: ENTRY_SOURCE.SERVER, raw })) {
+        next.awaitingBackground = false;
+        next.backgroundIsWorkflow = false;
+      }
+      applyPermissionTransition(next, raw, state, { strict: true });
+      break;
     case CLAUDE_EVENT.ASSISTANT: {
       next.turnInFlight = true;
-      next.awaitingBackground = false;
-      next.backgroundIsWorkflow = false;
-      // Remember a background-wait tool seen this turn so the closing
-      // RESULT can keep the status "working" while the agent waits on it —
-      // and whether that wait was a Workflow (its own status).
+      // ``awaitingBackground`` is NOT cleared here.
+      //
+      // It used to be, which made it a property of the TURN rather than of
+      // the background job. Background work outlives the turn that launched
+      // it by definition: the operator asks "are you still running?" mid-wait,
+      // the agent answers, that reply is a turn with no background tool in it,
+      // and the flag was wiped — so the tab read ``idle`` with a coverage
+      // suite still going. Reported as "if it's still running why i dont see
+      // the animated label?".
+      //
+      // Nothing is lost by keeping it: the derivation gives ``turnInFlight``
+      // precedence, so a live turn still shows WORKING; this only decides
+      // what the status falls back to once that turn ends.
       const bg = eventBackgroundWaitTools(raw);
       if (bg.wait) { next.turnHasBackgroundWait = true; }
       if (bg.workflow) { next.turnHasWorkflow = true; }
@@ -730,10 +754,18 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
     case CLAUDE_EVENT.RESULT:
       // RESULT ends the turn AND clears pending. If the turn scheduled a
       // background wait (Monitor / Workflow / run_in_background), stay
-      // "working" (awaitingBackground) until the next turn or session close.
+      // "working" (awaitingBackground) until that work REPORTS BACK — see the
+      // task-notification branch above — or the session closes.
+      //
+      // ``||`` not ``=``: a turn that starts no background work must not
+      // cancel a job still running from an earlier one.
       next.turnInFlight = false;
-      next.awaitingBackground = !!state.turnHasBackgroundWait;
-      next.backgroundIsWorkflow = !!state.turnHasWorkflow;
+      next.awaitingBackground = (
+        !!state.turnHasBackgroundWait || !!state.awaitingBackground
+      );
+      next.backgroundIsWorkflow = (
+        !!state.turnHasWorkflow || !!state.backgroundIsWorkflow
+      );
       next.turnHasBackgroundWait = false;
       next.turnHasWorkflow = false;
       applyPermissionTransition(next, raw, state, { strict: true });

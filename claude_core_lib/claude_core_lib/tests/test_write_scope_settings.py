@@ -9,7 +9,11 @@ through with no prompt.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
+from pathlib import Path
 
 from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
     in_workspace_write_allow_rules,
@@ -17,6 +21,7 @@ from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
     out_of_workspace_write_ask_rules,
     out_of_workspace_write_settings,
     out_of_workspace_write_settings_json,
+    out_of_workspace_write_settings_path,
 )
 
 _WRITE_TOOLS = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
@@ -85,3 +90,84 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SettingsByPathTests(unittest.TestCase):
+    """The settings go to the CLI as a file path, not as an inline blob.
+
+    The JSON carries one rule per directory, so a 25-repo workspace is ~8KB.
+    Inline on the command line that alone reaches the cap ``_build_command``
+    warns about, and the multiline system prompt after it is pure overflow —
+    the spawn then dies before the agent starts:
+
+        send failed: failed to launch claude CLI binary "claude":
+        [WinError 206] The filename or extension is too long
+
+    Reported after a Stop + fresh prompt on a 25-repo task: "the chat is
+    completly broken for this task".
+    """
+
+    def _many_dirs(self, base: str, count: int = 25):
+        return tuple(
+            os.path.join(base, f'repo-number-{i:02d}-core-lib') for i in range(count)
+        )
+
+    def test_the_path_is_short_where_the_inline_json_is_not(self) -> None:
+        base = tempfile.mkdtemp()
+        dirs = self._many_dirs(base)
+        cwd = os.path.join(base, 'client')
+
+        path = out_of_workspace_write_settings_path(cwd, dirs)
+        inline = out_of_workspace_write_settings_json(cwd, dirs)
+
+        self.assertTrue(path)
+        self.assertLess(len(path), 300)
+        # The thing being avoided: kilobytes of argv per spawn.
+        self.assertGreater(len(inline), 3000)
+
+    def test_the_file_holds_exactly_the_same_settings(self) -> None:
+        # A shorter command line is worthless if it weakens the write scope.
+        base = tempfile.mkdtemp()
+        dirs = self._many_dirs(base, 4)
+        cwd = os.path.join(base, 'client')
+
+        path = out_of_workspace_write_settings_path(cwd, dirs)
+        with open(path, encoding='utf-8') as handle:
+            from_file = json.load(handle)
+
+        self.assertEqual(
+            from_file, json.loads(out_of_workspace_write_settings_json(cwd, dirs)),
+        )
+
+    def test_the_file_is_written_OUTSIDE_the_workspace(self) -> None:
+        """This file is what forces out-of-workspace writes to be approved.
+
+        Inside the workspace the agent could edit it and widen its own
+        permissions, which is the one place it must not live.
+        """
+        workspace = tempfile.mkdtemp()
+        path = out_of_workspace_write_settings_path(workspace, (workspace,))
+
+        self.assertFalse(
+            Path(path).is_relative_to(Path(workspace)),
+            f'settings landed inside the agent-writable workspace: {path}',
+        )
+
+    def test_two_different_workspaces_do_not_share_a_file(self) -> None:
+        a = out_of_workspace_write_settings_path('/tmp/ws-a', ('/tmp/ws-a',))
+        b = out_of_workspace_write_settings_path('/tmp/ws-b', ('/tmp/ws-b',))
+        self.assertNotEqual(a, b)
+
+    def test_an_unwritable_location_returns_empty_for_the_caller_to_fall_back(self) -> None:
+        # A too-long command line is still better than launching the agent
+        # with NO write-scope settings, so the caller keeps the inline string
+        # as its fallback and this must signal failure rather than raise.
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.write_scope_settings.'
+            'atomic_write_json',
+            side_effect=OSError('read-only file system'),
+        ):
+            self.assertEqual(
+                out_of_workspace_write_settings_path('/tmp/ws', ('/tmp/ws',)), '',
+            )
+

@@ -43,7 +43,9 @@ _EXECUTION_CONFIG_OVERRIDES = (
     # Runs on any ssh transport operation (fetch, push, ls-remote).
     'core.sshCommand=ssh',
     # Executed for git:// URLs.
-    'core.gitProxy=',
+    #
+    # ``true``, NOT an empty string — see the EMPTY-VALUE note below.
+    'core.gitProxy=true',
     # Pagers and editors are spawned as shell commands.
     'core.pager=cat',
     'core.editor=true',
@@ -52,8 +54,30 @@ _EXECUTION_CONFIG_OVERRIDES = (
     # command; a poisoned remote URL or insteadOf rewrite reaches it.
     'protocol.ext.allow=never',
     # Server-side hook honoured by some client operations.
-    'uploadpack.packObjectsHook=',
-    'core.alternateRefsCommand=',
+    'uploadpack.packObjectsHook=true',
+    # EMPTY VALUES ARE NOT "UNSET" — they are "run this empty command".
+    #
+    # POSIX git happens to skip an empty config command; Windows git tries to
+    # spawn it and fails:
+    #
+    #     error: cannot spawn : No such file or directory
+    #     error: cannot spawn : No such file or directory
+    #     fatal: unable to parse commit 389122c0ecc8a2a74c5bcda9e46c9073f87b51df
+    #     warning: Clone succeeded, but checkout failed.
+    #
+    # ``core.alternateRefsCommand`` is the one that fires here: kato clones
+    # with ``--reference-if-able`` against the operator's existing checkout,
+    # so every clone has an alternate and every clone tried to spawn "". The
+    # operator saw it on both GitHub and Bitbucket — "whenever I pull new
+    # repos he will fail with this error and delete the entire content of
+    # that repo locally".
+    #
+    # This file already knew the trap for ``diff.external`` ("setting it empty
+    # makes git run an empty external differ"); the lesson had just not been
+    # applied to its neighbours. A real no-op program keeps the guard — the
+    # command-line ``-c`` still overrides whatever a repo's own config asks
+    # for — without asking the OS to execute nothing.
+    'core.alternateRefsCommand=true',
     # A redirect is a credential-leak primitive: git would replay the
     # auth header to whatever host the redirect names. The caller only ever
     # talks to the provider URL it configured, so redirects are never

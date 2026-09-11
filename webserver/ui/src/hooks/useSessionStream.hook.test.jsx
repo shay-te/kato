@@ -698,3 +698,104 @@ describe('useSessionStream — distinct messages are never collapsed', () => {
     expect(result.current.events.length).toBe(1);
   });
 });
+
+
+// "if it's still running why i dont see the animated label?"
+//
+// Background work outlives the turn that launched it. ``awaitingBackground``
+// was a property of the TURN, so the operator asking "are you still running?"
+// mid-wait wiped it: the agent answered, that reply was a turn with no
+// background tool in it, and the tab fell back to ``idle`` with a coverage
+// suite still going.
+describe('useSessionStream — waiting on background work', () => {
+  const bgTool = {
+    type: 'assistant',
+    message: { id: 'm-bg', content: [
+      { type: 'tool_use', name: 'Bash', input: { run_in_background: true } },
+    ] },
+  };
+  const plainReply = (id, text) => ({
+    type: 'assistant',
+    message: { id, content: [{ type: 'text', text }] },
+  });
+  const result = (id) => ({ type: 'result', uuid: id });
+
+  function emit(raw) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_event', { event: { raw } });
+    });
+  }
+
+  test('a launched background job leaves the session waiting, not idle', () => {
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit(bgTool);
+    emit(result('r1'));
+    expect(hook.current.turnInFlight).toBe(false);
+    expect(hook.current.awaitingBackground).toBe(true);
+  });
+
+  test('a LATER turn that starts nothing does not cancel the wait', () => {
+    // The exact reported sequence: ask "are you still running?", get an
+    // answer, and the status must not drop back to idle.
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit(bgTool);
+    emit(result('r1'));
+
+    emit(plainReply('m-answer', 'Yes, about half done.'));
+    expect(hook.current.turnInFlight).toBe(true);   // that reply IS a live turn
+    emit(result('r2'));
+
+    expect(hook.current.turnInFlight).toBe(false);
+    expect(hook.current.awaitingBackground).toBe(true);
+  });
+
+  test('the job reporting back is what ends the wait', () => {
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit(bgTool);
+    emit(result('r1'));
+    expect(hook.current.awaitingBackground).toBe(true);
+
+    emit({
+      type: 'user',
+      uuid: 'u-notify',
+      message: { content: '<task-notification>\n<task-id>abc</task-id>\n' },
+    });
+
+    expect(hook.current.awaitingBackground).toBe(false);
+  });
+
+  test('an ordinary user message does NOT end the wait', () => {
+    // Only a task notification means the work reported; a person typing
+    // does not.
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit(bgTool);
+    emit(result('r1'));
+    emit({ type: 'user', uuid: 'u-human', message: { content: 'any update?' } });
+    expect(hook.current.awaitingBackground).toBe(true);
+  });
+
+  test('a Workflow is reported as a workflow, and that survives too', () => {
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit({
+      type: 'assistant',
+      message: { id: 'm-wf', content: [{ type: 'tool_use', name: 'Workflow', input: {} }] },
+    });
+    emit(result('r1'));
+    emit(plainReply('m-answer', 'still going'));
+    emit(result('r2'));
+
+    expect(hook.current.awaitingBackground).toBe(true);
+    expect(hook.current.backgroundIsWorkflow).toBe(true);
+  });
+
+  test('a session that closes drops the wait', () => {
+    // The flag must not outlive the session it belongs to — a "background"
+    // chip standing over a dead session is the stale-status failure this
+    // codebase keeps relearning.
+    const { result: hook } = renderHook(() => useSessionStream('T1'));
+    emit(bgTool);
+    emit(result('r1'));
+    act(() => { FakeEventSource.instances[0].emit('session_closed', {}); });
+    expect(hook.current.awaitingBackground).toBe(false);
+  });
+});

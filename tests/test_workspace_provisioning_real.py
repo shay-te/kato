@@ -140,6 +140,60 @@ class ProvisionTaskWorkspaceClonesRealTests(unittest.TestCase):
             ['backend', 'client', 'shared'],
         )
 
+    def test_one_unreachable_repo_does_not_abandon_the_others(self) -> None:
+        """PER-REPO ISOLATION — the rule ``prepare_task_branches`` already has.
+
+        This re-raised the FIRST failure immediately, abandoning every clone
+        still in flight and every repo behind it. Because the raise happened
+        before branch prep, the repos that HAD cloned were left sitting on the
+        remote's default branch: "he cloned all the repos but all the repos
+        are still on master and not on the task branch" — one bad repo, and
+        the whole task's provisioning was thrown away.
+        """
+        good_a = self._repo('client', _make_bare_with_initial_commit(self.root, 'client'))
+        broken = self._repo('gone', str(self.root / 'does-not-exist.git'))
+        good_b = self._repo('shared', _make_bare_with_initial_commit(self.root, 'shared'))
+        repos = [good_a, broken, good_b]
+        task = types.SimpleNamespace(id='PROJ-ISO', summary='x', tags=[])
+        service = self._service(repos)
+
+        # Still fails loudly — an agent must never work against a workspace
+        # that is quietly missing a repository.
+        with self.assertRaises(Exception) as caught:
+            provision_task_workspace_clones(
+                self.workspace_service, service, task, repos,
+            )
+
+        # ...but the healthy repos ARE on disk, so the retry starts from
+        # cloned repos instead of from nothing.
+        for name, seed in (('client', 'client.txt'), ('shared', 'shared.txt')):
+            path = self.workspace_service.repository_path('PROJ-ISO', name)
+            self.assertTrue((path / '.git').is_dir(), f'{name} was abandoned')
+            self.assertTrue((path / seed).is_file(), f'{name} has no files')
+
+        # And the failure names the repo that actually failed.
+        self.assertIn('gone', str(caught.exception))
+
+    def test_every_failure_is_reported_not_just_the_first(self) -> None:
+        # With two bad repos the operator used to learn about one, fix it, and
+        # hit the next on the following run.
+        good = self._repo('client', _make_bare_with_initial_commit(self.root, 'client'))
+        bad_a = self._repo('gone-a', str(self.root / 'nope-a.git'))
+        bad_b = self._repo('gone-b', str(self.root / 'nope-b.git'))
+        repos = [good, bad_a, bad_b]
+        task = types.SimpleNamespace(id='PROJ-MULTI', summary='x', tags=[])
+        service = self._service(repos)
+
+        with self.assertRaises(Exception) as caught:
+            provision_task_workspace_clones(
+                self.workspace_service, service, task, repos,
+            )
+
+        message = str(caught.exception)
+        self.assertIn('gone-a', message)
+        self.assertIn('gone-b', message)
+        self.assertIn('2 of 3', message)
+
     def test_provision_is_idempotent_when_clones_already_exist(self) -> None:
         bare = _make_bare_with_initial_commit(self.root, 'client')
         repo = self._repo('client', bare)

@@ -39,6 +39,7 @@ Bug 3 (draft input lost on tab switch):
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -363,6 +364,50 @@ class Bug2ResumePassesSameSessionIdTests(unittest.TestCase):
         self.assertIn('--resume', command)
         idx = command.index('--resume')
         self.assertEqual(command[idx + 1], 'persisted-id-xyz')
+
+    def test_settings_go_on_the_command_line_as_a_PATH(self) -> None:
+        """The spawn argv must stay far short of the OS command-line limit.
+
+        ``--settings`` carried the whole write-scope JSON inline, and that
+        JSON holds a rule per directory — roughly 8KB on a 25-repo workspace.
+        This method's own opening comment already warns that cmd.exe caps a
+        command line at ~8K; the settings value alone reached it, and the
+        multiline ``--append-system-prompt`` after it was pure overflow:
+
+            send failed: failed to launch claude CLI binary "claude":
+            [WinError 206] The filename or extension is too long
+
+        The chat for that task was then dead — every respawn hit the same
+        wall.
+        """
+        import json as _json
+        from claude_core_lib.claude_core_lib.session.streaming import (
+            StreamingClaudeSession,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            extra = tuple(
+                os.path.join(td, f'repo-number-{i:02d}-core-lib') for i in range(25)
+            )
+            session = StreamingClaudeSession(
+                task_id='T1', cwd=td, binary='claude', additional_dirs=extra,
+            )
+            command = session._build_command()
+
+            self.assertIn('--settings', command)
+            value = command[command.index('--settings') + 1]
+            # A path, not a blob.
+            self.assertTrue(os.path.isfile(value), f'not a file: {value[:80]}')
+            self.assertLess(len(value), 300)
+            # ...and it still carries the real settings, so the shorter
+            # command line costs nothing in write-scope enforcement.
+            with open(value, encoding='utf-8') as handle:
+                self.assertIn('permissions', _json.load(handle))
+
+        # The whole argv stays well inside the limit that was being hit.
+        self.assertLess(
+            sum(len(part) for part in command), 8000,
+            'spawn command line is back in cmd.exe truncation territory',
+        )
 
     def test_streaming_session_command_omits_resume_flag_when_blank(self) -> None:
         # Symmetric guarantee: on a true first spawn (no persisted id),

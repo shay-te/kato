@@ -1486,9 +1486,24 @@ class StreamingClaudeSession(object):
         # any path the rules don't enumerate.
         from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
             out_of_workspace_write_settings_json,
+            out_of_workspace_write_settings_path,
         )
-        command.extend(['--settings', out_of_workspace_write_settings_json(
+        # BY PATH, not inline. The JSON carries a rule per directory, so a
+        # 25-repo workspace is ~8KB — on its own enough to hit the command
+        # line limit this method's opening comment warns about, after which
+        # the spawn dies before the agent starts:
+        #
+        #     [WinError 206] The filename or extension is too long
+        #
+        # The inline string stays as the fallback: if the file cannot be
+        # written, a too-long command line is still better than launching the
+        # agent with NO write-scope settings at all, which would let
+        # out-of-workspace writes through unapproved.
+        settings_path = out_of_workspace_write_settings_path(
             self._cwd, self._additional_dirs,
+        )
+        command.extend(['--settings', settings_path or (
+            out_of_workspace_write_settings_json(self._cwd, self._additional_dirs)
         )])
         if self._permission_prompt_tool:
             command.extend(['--permission-prompt-tool', self._permission_prompt_tool])

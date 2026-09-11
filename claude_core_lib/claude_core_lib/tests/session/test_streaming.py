@@ -6,6 +6,8 @@ import json
 import logging
 import threading
 import time
+import os
+import pathlib
 import unittest
 import unittest.mock
 from types import SimpleNamespace
@@ -1532,9 +1534,21 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # every write tool (acceptEdits would otherwise auto-accept them),
         # with the workspace allow-listed so in-folder edits still flow.
         self.assertIn('--settings', cmd)
-        settings = cmd[cmd.index('--settings') + 1]
-        self.assertIn('"ask":["Write","Edit","MultiEdit","NotebookEdit"]', settings)
-        self.assertIn('"allow"', settings)
+        # A PATH now, not the JSON inline: the settings hold a rule per
+        # directory (~8KB on a 25-repo workspace) and inline that alone blew
+        # the Windows command-line limit — "[WinError 206] The filename or
+        # extension is too long". The content assertions move inside the file.
+        settings_path = cmd[cmd.index('--settings') + 1]
+        self.assertTrue(os.path.isfile(settings_path), settings_path)
+        # Parsed, not string-matched: the file is pretty-printed where the
+        # inline form was compact, and an assertion that breaks on whitespace
+        # is testing the serializer rather than the permissions.
+        settings = json.loads(pathlib.Path(settings_path).read_text(encoding='utf-8'))
+        self.assertEqual(
+            settings['permissions']['ask'],
+            ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
+        )
+        self.assertTrue(settings['permissions']['allow'])
 
     def test_pending_request_input_reads_server_side(self) -> None:
         session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())

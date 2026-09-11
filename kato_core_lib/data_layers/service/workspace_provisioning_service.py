@@ -130,6 +130,24 @@ def provision_task_workspace_clones(
             )
 
     provisioned: list = [None] * total
+    # PER-REPO ISOLATION, the same rule ``prepare_task_branches`` already
+    # learned one layer down: "One repo's fault must not cost the others their
+    # task branch."
+    #
+    # This collected the FIRST exception and re-raised it immediately, so a
+    # single unreachable repo abandoned every clone still running and every
+    # repo behind it — and because the raise happened before branch prep, the
+    # ones that HAD cloned were left sitting on the remote's default branch.
+    # That is the reported "he cloned all the repos but all the repos are
+    # still on master and not on the task branch": one failure, and the whole
+    # task's provisioning was thrown away.
+    #
+    # Every repo is attempted now, and the failures are raised TOGETHER at the
+    # end — so the task still fails loudly (it must: an agent must never work
+    # against a workspace that is quietly missing a repository), but the
+    # operator gets the full list instead of whichever one happened to fail
+    # first, and the clones that succeeded are on disk for the retry.
+    failures: list[str] = []
     try:
         workers = min(total, _MAX_PARALLEL_CLONES)
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -139,13 +157,30 @@ def provision_task_workspace_clones(
             }
             for future in as_completed(index_futures):
                 i, repository, clone_path = index_futures[future]
-                future.result()  # re-raises on error
+                try:
+                    future.result()
+                except Exception as exc:
+                    _logger.exception(
+                        'failed to clone %s for task %s; continuing with the '
+                        'other repositories', repository.id, task_id,
+                    )
+                    failures.append(f'{repository.id}: {exc}')
+                    workspace_service.append_preflight_log(
+                        task_id, f'✗ clone failed {i + 1}/{total}: {repository.id}: {exc}',
+                    )
+                    continue
                 workspace_service.append_preflight_log(
                     task_id, f'✓ cloned {i + 1}/{total}: {repository.id}',
                 )
                 rewritten = copy.copy(repository)
                 rewritten.local_path = str(clone_path)
                 provisioned[i] = rewritten
+        if failures:
+            raise RuntimeError(
+                f'failed to clone {len(failures)} of {total} repositor'
+                f'{"y" if len(failures) == 1 else "ies"} — the rest were '
+                f'cloned: {"; ".join(failures)}'
+            )
     except Exception as exc:
         workspace_service.append_preflight_log(task_id, f'✗ clone failed: {exc}')
         workspace_service.update_status(task_id, WORKSPACE_STATUS_ERRORED)
