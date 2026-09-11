@@ -53,29 +53,36 @@ class ReadLessonsFileTests(unittest.TestCase):
         )
         self.assertEqual(read_lessons_file(str(path)), '')
 
-    def test_populated_file_returns_wrapped_body(self) -> None:
+    def test_populated_file_returns_a_DIRECTIVE_not_the_body(self) -> None:
+        # The lessons text is no longer pasted into the prompt. It used to be
+        # (capped at 50K), and on Windows that pushed the spawn command line
+        # to ~37.6K against a 32,767 limit — the CLI never started:
+        # "[WinError 206] The filename or extension is too long".
         path = self._write(
             '<!-- last_compacted: 2026-05-04T12:00:00+00:00 -->\n\n'
             '- always use logger\n'
             '- never use print\n',
         )
         result = read_lessons_file(str(path))
-        # Wrapped with directive markers.
-        self.assertIn('--- BEGIN LEARNED LESSONS ---', result)
-        self.assertIn('--- END LEARNED LESSONS ---', result)
-        # Body present.
-        self.assertIn('- always use logger', result)
-        self.assertIn('- never use print', result)
-        # Timestamp NOT injected.
+        # Points at the file...
+        self.assertIn(str(path), result)
+        self.assertIn('Read tool', result)
+        # ...and does NOT carry its contents.
+        self.assertNotIn('- always use logger', result)
+        self.assertNotIn('- never use print', result)
         self.assertNotIn('last_compacted', result)
 
-    def test_body_is_capped(self) -> None:
-        big = '- ' + ('x' * 60_000) + '\n'
-        path = self._write(big)
-        result = read_lessons_file(str(path))
-        # The wrapper adds a fixed prefix + suffix; the body is clipped
-        # to the 50_000-char cap.
-        self.assertLess(len(result), 60_000 + 1_000)
+    def test_the_prompt_stays_small_however_big_the_lessons_get(self) -> None:
+        # The property that actually fixes the bug: prompt size no longer
+        # tracks the lessons file at all, so it cannot grow back into the
+        # command-line limit. The old cap merely deferred it — and silently
+        # dropped everything past 50K.
+        small = read_lessons_file(str(self._write('- one lesson\n')))
+        self._path.unlink()
+        huge = read_lessons_file(str(self._write('- ' + ('x' * 200_000) + '\n')))
+        self.assertLess(len(huge), 1_000)
+        # Identical but for the path — the size is fixed, not merely bounded.
+        self.assertEqual(len(small), len(huge))
 
     def test_unreadable_file_logs_and_returns_empty(self) -> None:
         # Path points at a directory — stat OK but not a regular file.

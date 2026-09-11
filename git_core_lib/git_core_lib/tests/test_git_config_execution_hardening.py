@@ -137,7 +137,7 @@ class NoEmptyConfigValuesTests(unittest.TestCase):
         warning: Clone succeeded, but checkout failed.
 
     ``core.alternateRefsCommand`` is the one that fires on a clone, because
-    kato clones with ``--reference-if-able`` against the operator's existing
+    the caller clones with ``--reference-if-able`` against an existing
     checkout — so every clone has an alternate. The operator hit it on both
     GitHub and Bitbucket: "whenever I pull new repos he will fail with this
     error and delete the entire content of that repo locally".

@@ -193,7 +193,7 @@ def out_of_workspace_write_settings_path(
     """
     payload = out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads)
     try:
-        directory = Path(tempfile.gettempdir()) / 'kato-agent-settings'
+        directory = Path(tempfile.gettempdir()) / 'agent-write-scope-settings'
         directory.mkdir(parents=True, exist_ok=True)
         # Named for the workspace it describes, so two concurrent tasks never
         # share one file and a re-spawn reuses its own.

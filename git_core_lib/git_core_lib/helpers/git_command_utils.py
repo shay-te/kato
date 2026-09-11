@@ -65,7 +65,7 @@ _EXECUTION_CONFIG_OVERRIDES = (
     #     fatal: unable to parse commit 389122c0ecc8a2a74c5bcda9e46c9073f87b51df
     #     warning: Clone succeeded, but checkout failed.
     #
-    # ``core.alternateRefsCommand`` is the one that fires here: kato clones
+    # ``core.alternateRefsCommand`` is the one that fires here: the caller clones
     # with ``--reference-if-able`` against the operator's existing checkout,
     # so every clone has an alternate and every clone tried to spawn "". The
     # operator saw it on both GitHub and Bitbucket — "whenever I pull new
