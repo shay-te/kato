@@ -171,3 +171,42 @@ class SettingsByPathTests(unittest.TestCase):
                 out_of_workspace_write_settings_path('/tmp/ws', ('/tmp/ws',)), '',
             )
 
+
+class LessonsGateWiringTests(unittest.TestCase):
+    """The gate ships with the settings, and only when there is a file."""
+
+    def test_the_hook_is_included_when_a_lessons_file_is_configured(self) -> None:
+        with patch.dict(os.environ, {'AGENT_LESSONS_PATH': '/ws/lessons.md'}):
+            settings = out_of_workspace_write_settings('/ws', ('/ws',))
+        hooks = settings['hooks']['PreToolUse']
+        self.assertTrue(any('lessons_gate' in h['hooks'][0]['command'] for h in hooks))
+        # ``*``, not a tool list: a new CLI capability must be gated the
+        # moment it exists, not when someone remembers to add it.
+        gate = next(h for h in hooks if 'lessons_gate' in h['hooks'][0]['command'])
+        self.assertEqual(gate['matcher'], '*')
+
+    def test_no_lessons_file_means_no_hook(self) -> None:
+        # ``read_lessons_file`` injects no directive for a missing or blank
+        # file; a gate without that directive would deny every tool while
+        # nothing on screen explained why.
+        env = dict(os.environ)
+        env.pop('AGENT_LESSONS_PATH', None)
+        with patch.dict(os.environ, env, clear=True):
+            settings = out_of_workspace_write_settings('/ws', ('/ws',))
+        hooks = settings.get('hooks', {}).get('PreToolUse', [])
+        self.assertFalse(any('lessons_gate' in h['hooks'][0]['command'] for h in hooks))
+
+    def test_both_hooks_survive_together(self) -> None:
+        # Two ``settings.update({'hooks': ...})`` calls would leave only the
+        # last one's PreToolUse list — the read-dedupe hook would vanish the
+        # moment a lessons file existed.
+        with patch.dict(os.environ, {'AGENT_LESSONS_PATH': '/ws/lessons.md'}):
+            settings = out_of_workspace_write_settings(
+                '/ws', ('/ws',), dedupe_reads=True,
+            )
+        commands = [
+            h['hooks'][0]['command'] for h in settings['hooks']['PreToolUse']
+        ]
+        self.assertTrue(any('lessons_gate' in c for c in commands))
+        self.assertTrue(any('read_dedupe' in c for c in commands))
+

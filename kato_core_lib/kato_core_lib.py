@@ -136,6 +136,17 @@ def _export_agent_env_from_kato_config() -> None:
         'AGENT_READ_DEDUPE_STATE_DIR',
         str(kato_home_path('read-dedupe', env_key='KATO_READ_DEDUPE_STATE_DIR')),
     )
+    # Lessons gate (agent_core_lib/helpers/lessons_gate.py): the lessons file
+    # is named in the prompt rather than pasted into it — inlining it pushed
+    # the Windows spawn command line past its 32,767-char limit — so a
+    # PreToolUse hook denies every other tool until the agent has read it.
+    # Its own state dir, not read-dedupe's: that hook is opt-in, and a gate
+    # that stopped recording because an unrelated feature was off would deny
+    # every tool for the rest of the session.
+    os.environ.setdefault(
+        'AGENT_LESSONS_GATE_STATE_DIR',
+        str(kato_home_path('lessons-gate', env_key='KATO_LESSONS_GATE_STATE_DIR')),
+    )
 
 
 # Budget for the lessons compaction one-shot. Deliberately far above the
@@ -774,6 +785,20 @@ class KatoCoreLib(CoreLib):
         # the reader with '' → the agent saw no
         # lessons and kept repeating mistakes.
         lessons_path = resolve_and_sync_lessons_path(claude_cfg)
+        # Tell the lessons GATE which file it is guarding. Set only when the
+        # file has content, matching ``read_lessons_file``: it injects its
+        # "read this first" directive on the same condition, so the gate and
+        # the instruction for satisfying it are never out of step. A gate with
+        # no directive would deny every tool while nothing said why.
+        try:
+            if lessons_path.is_file() and lessons_path.read_text(
+                encoding='utf-8',
+            ).strip():
+                os.environ['AGENT_LESSONS_PATH'] = str(lessons_path)
+            else:
+                os.environ.pop('AGENT_LESSONS_PATH', None)
+        except OSError:
+            os.environ.pop('AGENT_LESSONS_PATH', None)
         state_dir = lessons_path.parent
         data_access = LessonsDataAccess(state_dir)
         binary = ''

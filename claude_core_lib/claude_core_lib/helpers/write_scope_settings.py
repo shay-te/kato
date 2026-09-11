@@ -46,6 +46,15 @@ from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
 )
 
 _READ_DEDUPE_MODULE = 'agent_core_lib.agent_core_lib.helpers.read_dedupe'
+_LESSONS_GATE_MODULE = 'agent_core_lib.agent_core_lib.helpers.lessons_gate'
+
+# Read from the environment rather than passed in: the settings builder is
+# called from several places and every one of them would have to thread the
+# path through. The hook itself reads the same variable, so there is one
+# source for 'is there a lessons file'.
+from agent_core_lib.agent_core_lib.helpers.lessons_gate import (
+    LESSONS_PATH_ENV,
+)
 # Generic (product-agnostic) switch; the orchestrator bridges its own config
 # name onto it. Off unless explicitly turned on — the hook withholds content
 # from the agent, which is not a default anyone should get by surprise.
@@ -104,6 +113,30 @@ def read_dedupe_hook_settings() -> dict:
     }]}}
 
 
+def lessons_gate_hook_settings() -> dict:
+    """``PreToolUse`` hook that blocks every tool until the lessons file is read.
+
+    The lessons text is no longer pasted into the system prompt — it pushed
+    the Windows spawn command line past its 32,767-character limit — so the
+    prompt names the path instead. Prompt wording is a request; this is the
+    enforcement, and the two ship together: without it "read this file" would
+    be advice the agent is free to skip.
+
+    ``Read`` is never gated, so there is always a way to satisfy it. See
+    ``agent_core_lib.helpers.lessons_gate`` for the fail-open rules.
+
+    Matcher ``*`` rather than a tool list: a new CLI capability must be gated
+    the moment it exists, not whenever someone remembers to add it here.
+    """
+    return {'hooks': {'PreToolUse': [{
+        'matcher': '*',
+        'hooks': [{
+            'type': 'command',
+            'command': f'{sys.executable} -m {_LESSONS_GATE_MODULE}',
+        }],
+    }]}}
+
+
 def agent_state_dir_write_deny_rules() -> list[str]:
     """Deny-rules for the CLI's OWN state directory (``~/.claude``).
 
@@ -149,8 +182,22 @@ def out_of_workspace_write_settings(
         # memory out of the global agent folder and inside the task.
         'deny': agent_state_dir_write_deny_rules(),
     }}
+    hooks: list = []
     if dedupe_reads:
-        settings.update(read_dedupe_hook_settings())
+        hooks.extend(read_dedupe_hook_settings()['hooks']['PreToolUse'])
+    # Gated on the lessons path being CONFIGURED. ``read_lessons_file``
+    # injects its directive only for a file that exists and is non-empty, and
+    # the caller sets this env var on the same condition — so the gate and the
+    # instruction that tells the agent how to satisfy it are never out of step.
+    # A gate with no matching directive would deny every tool while nothing on
+    # screen said why.
+    if str(os.environ.get(LESSONS_PATH_ENV, '') or '').strip():
+        hooks.extend(lessons_gate_hook_settings()['hooks']['PreToolUse'])
+    # MERGED, not ``update``d. Two ``settings.update({'hooks': ...})`` calls
+    # would leave only the last one's PreToolUse list — the read-dedupe hook
+    # would vanish the moment a lessons file existed.
+    if hooks:
+        settings['hooks'] = {'PreToolUse': hooks}
     return settings
 
 
