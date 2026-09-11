@@ -493,3 +493,38 @@ describe('ChatsMenu — adopting an existing session', () => {
     );
   });
 });
+
+// "the new chat menu is going out of bounds" — it rendered off the left edge
+// of the chat pane with a horizontal scrollbar where the list should be.
+describe('ChatsMenu — stays inside the window', () => {
+  test('the menu is portalled OUT of the pane that clips it', async () => {
+    const { container } = render(<ChatsMenu taskId="T1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+
+    const menu = await screen.findByRole('menu');
+    // The whole fix: not a descendant of the bar that bounded it.
+    expect(container.contains(menu)).toBe(false);
+    expect(menu.parentElement).toBe(document.body);
+  });
+
+  test('it is placed from the trigger rect, not left in flow', async () => {
+    render(<ChatsMenu taskId="T1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+
+    const menu = await screen.findByRole('menu');
+    // useClampedPointMenu writes explicit viewport coordinates.
+    expect(menu.getAttribute('style')).toMatch(/left:/);
+    expect(menu.getAttribute('style')).toMatch(/top:/);
+  });
+
+  test('closing drops the anchor so it cannot reopen at a stale position', async () => {
+    render(<ChatsMenu taskId="T1" />);
+    const button = screen.getByRole('button', { name: 'Chats' });
+    fireEvent.click(button);
+    await screen.findByRole('menu');
+    fireEvent.click(button);
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+  });
+});

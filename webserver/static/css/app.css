@@ -1686,8 +1686,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chats-menu {
-  position: absolute;
-  top: calc(100% + 4px);
+  /* FIXED, not absolute: the menu is portalled to document.body and placed
+   * from the trigger's viewport rect (useClampedPointMenu). As an absolutely
+   * positioned child of the agent chat bar it was bounded by a pane far
+   * narrower than itself, so it grew out of that pane and was clipped. */
+  position: fixed;
+  top: auto;
   /* Anchored to the side the BUTTON is on, which has now moved twice:
    *   - session header, right end   → right: 0
    *   - agent-tab strip, left edge  → left: 0
@@ -5116,6 +5120,31 @@ code {
 .plan-pane-empty-hint {
   font-size: 12px;
   color: rgba(245, 245, 247, 0.42);
+}
+
+/* An image/SVG shown in the centre pane. Checkerboard so a transparent icon
+ * is readable against it — a white logo on the dark panel is invisible, which
+ * is the case an operator is most often checking. */
+.editor-pane-asset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+
+.editor-pane-asset-image {
+  /* Never upscaled: a 16px favicon blown up to the pane is not a preview of
+   * what shipped. Large art is bounded by the pane instead. */
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background-color: #2a2a2a;
+  background-image: linear-gradient(45deg, rgba(28, 28, 30, 0.62) 25%, transparent 25%), linear-gradient(-45deg, rgba(28, 28, 30, 0.62) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, rgba(28, 28, 30, 0.62) 75%), linear-gradient(-45deg, transparent 75%, rgba(28, 28, 30, 0.62) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  border-radius: 4px;
 }
 
 .editor-pane-message {

@@ -49,7 +49,9 @@ import {
 } from './utils/commentStatus.js';
 import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsidePointerOrEscape.js';
 import { useClampedPointMenu } from './hooks/useClampedPointMenu.js';
-import { rememberRepos, rememberedRepos } from './utils/taskRepoMemory.js';
+import {
+  branchWorthShowing, rememberRepos, rememberedRepos,
+} from './utils/taskRepoMemory.js';
 
 
 // Same auto-poll cadence as ChangesTab. Keeps the file tree in sync
@@ -530,6 +532,7 @@ export default function FilesTab({
           repoId={repo.repo_id}
           cwd={repo.cwd}
           branch={repo.branch}
+          taskId={taskId}
         />
       ))
       : <p className="files-tab-message">Loading files…</p>;
@@ -924,14 +927,16 @@ function collectFileRelativePaths(nodes, out = []) {
 // chrome) so nothing shifts when the real tree replaces it — the pane fills
 // in, it does not re-lay-out. See ``taskRepoMemory`` for where the names come
 // from and why they are trusted for display only.
-function RepoTreeSkeleton({ repoId, cwd, branch }) {
+function RepoTreeSkeleton({ repoId, cwd, branch, taskId }) {
   const heading = repoId || cwd || 'repository';
   return (
     <section className="files-tab-repo is-loading">
       <StickyHeader as="header" className="files-tab-repo-header">
         <div className="files-tab-repo-header-inner">
           <span className="files-tab-repo-name" data-tooltip={cwd}>{heading}</span>
-          {branch && <span className="files-tab-repo-branch">{branch}</span>}
+          {branchWorthShowing(branch, taskId) && (
+            <span className="files-tab-repo-branch">{branch}</span>
+          )}
           {/* The shared button spinner (``BusyIcon busy``) — a small rotating
               ring, the same one every in-flight action in the app uses. It
               read "loading…" as words, which on a 25-repo task stacked
@@ -1306,7 +1311,10 @@ function RepoTree({
               (not the whole header) so it never doubles up with the
               commits button's own tooltip. */}
           <span className="files-tab-repo-name" data-tooltip={repoTree.cwd}>{heading}</span>
-          {repoBranch && (
+          {/* Only when it is NOT the task branch — see branchWorthShowing.
+              Repeating the task code on all twenty-five rows says nothing the
+              tab header does not, and buries the one repo that is on master. */}
+          {branchWorthShowing(repoBranch, taskId) && (
             <span
               className="files-tab-repo-branch"
               data-tooltip={`${heading} is on branch ${repoBranch}`}

@@ -47,6 +47,19 @@ const KIND_BY_LIFECYCLE = {
 function liveKind(liveStatus, baseStatus, needsAttention) {
   if (baseStatus === TAB_STATUS.PROVISIONING) { return AGENT_STATUS_KIND.PROVISIONING; }
   // An in-flight turn is the foreground "working" state.
+  //
+  // The LIVE stream alone, never the 5s-polled ``session.working``. The poll
+  // is staler by up to five seconds, so a task whose agent has just finished
+  // still reads "working" there — letting it contribute would put the yellow
+  // dot back on a finished task, which is the regression this split exists to
+  // prevent (see the ``cannot override the live store`` test).
+  //
+  // ``turnInFlight`` is set by ``markTurnBusy`` the instant the operator
+  // sends, and by the first ``assistant`` event otherwise. It is deliberately
+  // NOT set by ``system/init`` any more: that fires on every spawn, including
+  // the one kato does just because the task was OPENED, and no result follows
+  // it — so a green tab turned yellow the moment you looked at it and stayed
+  // there. See the init branch in useSessionStream.
   if (liveStatus.turnInFlight) { return AGENT_STATUS_KIND.WORKING; }
   // ``awaitingBackground`` = turn closed but the agent is blocked on a
   // background wait it scheduled (Monitor / Workflow / run_in_background) —

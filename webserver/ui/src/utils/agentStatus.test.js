@@ -292,3 +292,64 @@ test('isAgentActive: unknown status counts as ACTIVE', () => {
   assert.equal(isAgentActive(null), true);
   assert.equal(isAgentActive(undefined), true);
 });
+
+// ---- The focused/unfocused disagreement ------------------------------------
+//
+// Reported three times, most recently as: "the task tab show green, moving to
+// it he become yellow working. it's not reflecting the reality."
+//
+// Cause: ``system/init`` set ``turnInFlight``. That event fires on EVERY
+// spawn, including the one kato does simply because the operator opened the
+// task (lazy resume). No prompt follows it, so no ``result`` ever arrived to
+// clear the flag — the tab was green in the strip and yellow the moment you
+// looked at it, on a task where nothing was running.
+
+test('opening an idle task does not turn it "working"', () => {
+  // The live stream has connected and nothing is running: the server agrees.
+  const status = deriveAgentStatus(session({ working: false }), live(), false, 'Claude');
+  assert.equal(status.kind, AGENT_STATUS_KIND.IDLE);
+});
+
+test('the focused and unfocused views agree on an idle task', () => {
+  // The whole point: same session, one derivation, same answer whether or not
+  // the live store has an entry for it.
+  const idle = session({ working: false });
+  const focused = deriveAgentStatus(idle, live(), false, 'Claude');
+  const background = deriveAgentStatus(idle, null, false, 'Claude');
+  assert.equal(focused.kind, background.kind);
+  assert.equal(focused.label, background.label);
+});
+
+test('the focused and unfocused views agree on a WORKING task', () => {
+  const busy = session({ working: true });
+  const focused = deriveAgentStatus(busy, live({ turnInFlight: true }), false, 'Claude');
+  const background = deriveAgentStatus(busy, null, false, 'Claude');
+  assert.equal(focused.kind, AGENT_STATUS_KIND.WORKING);
+  assert.equal(background.kind, AGENT_STATUS_KIND.WORKING);
+});
+
+test('a just-sent message shows working before the server catches up', () => {
+  // ``markTurnBusy`` fires on send, seconds before the 5s poll would report
+  // it. Only the live stream knows this — which is why the live stream, not
+  // the poll, is the authority for a focused tab.
+  const status = deriveAgentStatus(
+    session({ working: false }), live({ turnInFlight: true }), false, 'Claude',
+  );
+  assert.equal(status.kind, AGENT_STATUS_KIND.WORKING);
+});
+
+test('the dot and the label never disagree on one tab', () => {
+  // They used to be computed from different facts.
+  for (const [live_, working] of [[true, false], [false, true], [false, false]]) {
+    const status = deriveAgentStatus(
+      session({ working }), live({ turnInFlight: live_ }), false, 'Claude',
+    );
+    const isWorking = status.kind === AGENT_STATUS_KIND.WORKING;
+    // ``idle-alive`` is the dot's way of saying "connected, doing nothing".
+    assert.equal(
+      /idle-alive/.test(status.dotClass), !isWorking,
+      `dot and label disagree for live=${live_} working=${working}`,
+    );
+  }
+});
+

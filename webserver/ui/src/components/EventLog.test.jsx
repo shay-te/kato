@@ -1248,3 +1248,19 @@ describe('EventLog — jump to the start of a prompt', () => {
     expect(container.querySelector('.chat-sticky-prompt-label-row .chat-sticky-prompt-label')).toBeTruthy();
   });
 });
+
+test('the jump-to-start tooltip is anchored so it cannot clip on the left', () => {
+  // The button sits just inside the chat panel's left edge. A centre-anchored
+  // tooltip grows both ways from there and its left half lands outside the
+  // panel: "croll back to where this prompt starts."
+  render(
+    <EventLog
+      entries={[
+        { source: 'history', raw: { type: 'user', uuid: 'u1', message: { content: 'q' } } },
+      ]}
+    />,
+  );
+  const button = screen.getByRole('button', { name: /scroll to the start of this prompt/i });
+  expect(button.className).toMatch(/tooltip-start/);
+});
+

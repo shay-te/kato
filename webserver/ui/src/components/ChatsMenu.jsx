@@ -4,6 +4,8 @@ import { fetchTaskChats, renameTaskChat, startTaskChat } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { toast } from '../stores/toastStore.js';
+import { createPortal } from 'react-dom';
+import { useClampedPointMenu } from '../hooks/useClampedPointMenu.js';
 import { chatMeta, chatTitle } from './ChatsMenuHelpers.js';
 import AdoptSessionModal from './AdoptSessionModal.jsx';
 import Icon from './Icon.jsx';
@@ -12,6 +14,12 @@ import Icon from './Icon.jsx';
 // current conversation (the next message spawns a fresh Claude session);
 // picking a previous chat resumes that conversation instead. The detached
 // chat is never lost — it stays in the list and can be returned to.
+// Nominal width used to place the menu's right edge under the trigger. The
+// CSS ``min-width`` is the authority on the real width; this only decides
+// which way it grows, and ``useClampedPointMenu`` corrects any overshoot
+// against the real measured box.
+const _MENU_WIDTH = 420;
+
 export default function ChatsMenu({
   // Which backend's chats this menu shows and starts. Empty means "this
   // task's current chat", which is what a record predating per-backend
@@ -105,8 +113,25 @@ export default function ChatsMenu({
     if (typeof onChatChanged === 'function') { onChatChanged({}); }
   }
 
-  function toggle() {
+  // Where to draw the menu, in VIEWPORT coordinates. It is portalled out of
+  // the chat bar (see below), so it needs the trigger's rect rather than
+  // falling where it sits in flow.
+  const [anchor, setAnchor] = useState(null);
+  const { menuRef, style: menuStyle } = useClampedPointMenu(anchor);
+
+  function toggle(event) {
     const next = !open;
+    // Read the rect BEFORE the state update — ``currentTarget`` is nulled
+    // once the event finishes dispatching.
+    if (next && event && event.currentTarget) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      // Anchored to the button's RIGHT edge: the menu is far wider than the
+      // button and sits at the right end of the bar, so it grows leftward.
+      // ``useClampedPointMenu`` pulls it back from either viewport edge.
+      setAnchor({ x: rect.right - _MENU_WIDTH, y: rect.bottom + 4 });
+    } else if (!next) {
+      setAnchor(null);
+    }
     setOpen(next);
     setConfirmTarget(null);
     if (next) {
@@ -281,14 +306,25 @@ export default function ChatsMenu({
     </p>
   ) : null;
 
-  const menu = open ? (
+  // PORTALLED, and fixed-positioned from the trigger's rect.
+  //
+  // It was ``position: absolute; right: 0`` inside the agent chat bar, which
+  // anchors it to a pane far narrower than the menu — so it grew leftward
+  // straight out of the pane and was clipped, with a horizontal scrollbar
+  // where the chat list should be. Its own ``max-width`` clamped to the
+  // VIEWPORT, which the menu never exceeded; the pane was the real bound.
+  //
+  // Same escape route the commit dropdown, the path context menu and
+  // TabTooltip already take: leave the clipping ancestor entirely and clamp
+  // to the viewport.
+  const menu = open ? createPortal(
     <>
       <div
         className="chats-menu-backdrop"
         onClick={close}
         aria-hidden="true"
       />
-      <div className="chats-menu" role="menu">
+      <div ref={menuRef} className="chats-menu" style={menuStyle} role="menu">
         <button
           type="button"
           className="chats-menu-new"
@@ -314,7 +350,8 @@ export default function ChatsMenu({
         {confirmWarning}
         {listContent}
       </div>
-    </>
+    </>,
+    document.body,
   ) : null;
 
   const adoptModal = adoptOpen ? (

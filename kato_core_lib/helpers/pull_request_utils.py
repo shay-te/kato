@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from kato_core_lib.data_layers.data.fields import ImplementationFields, PullRequestFields
 from kato_core_lib.data_layers.data.task import Task
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
@@ -94,6 +96,66 @@ def _coerce_failed_repo_entry(entry) -> tuple[str, str]:
     return str(entry or ''), ''
 
 
+_LIST_MARKER = re.compile(r'^\s{0,3}(?:[-*+]\s|\d+[.)]\s)')
+_HEADING = re.compile(r'^\s{0,3}#{1,6}\s')
+
+
+def markdown_blocks(text: str) -> str:
+    """Make a body's block structure explicit for the provider's renderer.
+
+    Agents write summaries as::
+
+        Files changed:
+        - path/one.py did X
+        - path/two.py did Y
+
+    A Markdown renderer that requires a blank line before a list — Bitbucket's
+    does — folds all of that into ONE paragraph, and the operator gets a wall
+    of text with the bullets running inline: "Files changed: - path/one.py did
+    X - path/two.py did Y ...".
+
+    So insert the blank line the renderer wants, rather than hoping every
+    provider is lenient. Only where a block genuinely starts: a list item or
+    heading whose previous line is non-blank and is not itself a list item.
+    Fenced code is passed through untouched — a ``#`` comment inside a shell
+    block is not a heading, and spacing it out would corrupt the snippet.
+    """
+    lines = str(text or '').split('\n')
+    out: list[str] = []
+    in_fence = False
+    for line in lines:
+        if line.lstrip().startswith('```'):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+        starts_block = bool(_LIST_MARKER.match(line) or _HEADING.match(line))
+        if starts_block and out and out[-1].strip():
+            previous_is_item = bool(_LIST_MARKER.match(out[-1]))
+            # A run of list items stays tight — blank lines between them turn
+            # a compact list into a loose one, which renders with extra
+            # spacing and reads worse, not better.
+            if not (previous_is_item and _LIST_MARKER.match(line)):
+                out.append('')
+        out.append(line)
+    # ONE blank line is a paragraph break; more is just vertical noise, and
+    # the insertion above can stack them against spacing the agent already
+    # wrote.
+    collapsed: list[str] = []
+    blanks = 0
+    for line in out:
+        if line.strip():
+            blanks = 0
+        else:
+            blanks += 1
+            if blanks > 1:
+                continue
+        collapsed.append(line)
+    return '\n'.join(collapsed).strip()
+
+
 def pull_request_description(
     task: Task,
     execution: dict[str, str | bool],
@@ -103,18 +165,18 @@ def pull_request_description(
     if task_description:
         lines.append('')
         lines.append('Requested change:')
-        lines.append(task_description)
+        lines.append(markdown_blocks(task_description))
 
     implementation_summary = str(execution.get(Task.summary.key, '') or '').strip()
     if implementation_summary:
         lines.append('')
         lines.append('Implementation summary:')
-        lines.append(implementation_summary)
+        lines.append(markdown_blocks(implementation_summary))
 
     execution_notes = str(execution.get(ImplementationFields.MESSAGE, '') or '').strip()
     if execution_notes:
         lines.append('')
         lines.append('Execution notes:')
-        lines.append(execution_notes)
+        lines.append(markdown_blocks(execution_notes))
 
     return '\n'.join(lines)

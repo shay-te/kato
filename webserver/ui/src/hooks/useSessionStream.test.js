@@ -184,13 +184,22 @@ function _freshState() {
   };
 }
 
-test('system/init flips turnInFlight true so "working" shows at session start', function () {
+test('system/init does NOT flip turnInFlight — a spawn is not a turn', function () {
+  // This asserted the opposite, and that WAS the bug. ``init`` fires on every
+  // spawn, including the one kato does just because the operator opened the
+  // task; nothing follows it, so the flag never cleared and the tab sat on
+  // "working" for a task where nothing was running.
+  //
+  // The window it was protecting — an autonomous turn, whose prompt goes to
+  // the CLI's stdin and is never echoed back — is covered by the agent's
+  // first ``assistant`` event instead. That is a few seconds later and it is
+  // real evidence, where a spawn was only ever a guess.
   const next = reducer(_freshState(), {
     type: 'incoming_event',
     event: { type: 'system', subtype: 'init', session_id: 'b5e62b1c' },
     receivedAtEpoch: Date.now(),
   });
-  assert.equal(next.turnInFlight, true);
+  assert.equal(next.turnInFlight, false);
 });
 
 test('system/preflight does NOT flip turnInFlight (still provisioning)', function () {
@@ -290,17 +299,49 @@ test('a human message does not clear it', function () {
   assert.equal(next.awaitingBackground, true);
 });
 
-test('idle-session reconnect settles back to idle: init then result', function () {
-  // Backlog replay flows through the same live (incoming_event) path and
-  // always ends with the turn's ``result``. The transient init→true must
-  // be cleared by the trailing result so a reconnect to a finished session
-  // does not get stuck showing "working".
+test('a spawn does NOT make the task look busy', function () {
+  // ``system/init`` fires on EVERY spawn — including the one kato does just
+  // because the operator opened the task (lazy resume). No prompt follows
+  // that spawn, so no ``result`` ever arrives to clear the flag: the tab was
+  // green in the strip and turned yellow "working" the moment you looked at
+  // it, permanently, on a task where nothing was running.
+  //
+  // Reported three times, most recently: "the task tab show green, moving to
+  // it he become yellow working. it's not reflecting the reality."
   const afterInit = reducer(_freshState(), {
     type: 'incoming_event',
     event: { type: 'system', subtype: 'init' },
     receivedAtEpoch: Date.now(),
   });
-  assert.equal(afterInit.turnInFlight, true);
+  assert.equal(afterInit.turnInFlight, false);
+});
+
+test('a real turn still reports busy: assistant, then idle on result', function () {
+  // What actually marks a turn: the operator sending (``mark_turn_busy``) or
+  // the agent speaking. Both are real evidence a turn exists; a spawn is not.
+  const afterAssistant = reducer(_freshState(), {
+    type: 'incoming_event',
+    event: { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(afterAssistant.turnInFlight, true);
+  const afterResult = reducer(afterAssistant, {
+    type: 'incoming_event',
+    event: { type: 'result' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(afterResult.turnInFlight, false);
+});
+
+test('idle-session reconnect settles back to idle: init then result', function () {
+  // Backlog replay flows through the same live (incoming_event) path and
+  // always ends with the turn's ``result``.
+  const afterInit = reducer(_freshState(), {
+    type: 'incoming_event',
+    event: { type: 'system', subtype: 'init' },
+    receivedAtEpoch: Date.now(),
+  });
+  assert.equal(afterInit.turnInFlight, false);
   const afterResult = reducer(afterInit, {
     type: 'incoming_event',
     event: { type: 'result' },

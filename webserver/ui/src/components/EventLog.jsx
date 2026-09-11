@@ -1020,7 +1020,13 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   const jumpToStart = (
     <button
       type="button"
-      className="chat-sticky-prompt-jump-start"
+      // ``tooltip-start``: this button sits just inside the chat panel's LEFT
+      // edge, beside the "You asked" label. A centre-anchored tooltip grows
+      // both ways from there and its left half lands outside the panel, which
+      // clips it — the operator saw "croll back to where this prompt starts."
+      // Anchoring the tooltip's left edge to the trigger makes it grow right,
+      // into the panel. Same reason the chat copy button carries this class.
+      className="chat-sticky-prompt-jump-start tooltip-start"
       data-tooltip="Scroll back to where this prompt starts."
       aria-label="Scroll to the start of this prompt"
       onClick={jumpToPromptStart}

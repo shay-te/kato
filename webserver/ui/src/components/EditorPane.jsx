@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
-import { fetchFileContent } from '../api.js';
+import { fetchFileContent, fileRawUrl } from '../api.js';
 import { useFindWidgetEscape } from '../hooks/useFindWidgetEscape.js';
 import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
 import {
@@ -25,7 +25,7 @@ import { toast } from '../stores/toastStore.js';
 import { commentDraftKey } from '../utils/composerDraft.js';
 import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useMonacoViewZone } from '../hooks/useMonacoViewZone.js';
-import { markdownViewFor } from '../utils/markdownView.js';
+import { isImagePath, markdownViewFor } from '../utils/markdownView.js';
 import { importTargetAt, reposFromTrees } from '../utils/importNavigation.js';
 import MarkdownContent from './MarkdownContent.jsx';
 
@@ -653,6 +653,11 @@ export default function EditorPane({
   // operator, and raw ``##``/``|---|`` is not how you read a plan. The
   // switch lives on the file tab, beside the diff toggle.
   const showMarkdownPreview = previewing;
+  // Draw it as an image when the tab is in its preview view: every raster
+  // format is always preview (no source to offer), and an SVG only while the
+  // operator has not flipped the switch to read its XML.
+  const assetPath = openFile.relativePath || openFile.absolutePath;
+  const showImage = isImagePath(assetPath) && previewing;
 
   // Built once and spread at BOTH render sites (Monaco's view zone and the
   // markdown preview) — two hand-copied prop lists is how one of the views
@@ -670,6 +675,24 @@ export default function EditorPane({
     body = (
       <div className="editor-pane-message">
         File is too large for the in-browser preview (max 1 MB).
+      </div>
+    );
+  } else if (showImage) {
+    // An asset the pane can SHOW. It used to answer "Binary file — no text
+    // preview available" for exactly the files an operator most wants to look
+    // at: a logo the agent just changed, an icon, a screenshot.
+    //
+    // Served by ``/file/raw`` as an ``<img>`` src rather than fetched — the
+    // browser streams and caches it, and there is nothing for JS to do with
+    // the bytes. An SVG keeps the tab's preview/source switch because it IS
+    // text; a PNG has no source, so it shows no switch at all.
+    body = (
+      <div className="editor-pane-asset">
+        <img
+          className="editor-pane-asset-image"
+          src={fileRawUrl(taskId, openFile.absolutePath, String(state.mtime || ''))}
+          alt={openFile.relativePath || openFile.absolutePath}
+        />
       </div>
     );
   } else if (state.binary) {

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isImagePath,
+  canToggleView,
   TASK_FOLDER_REPO_ID, isMarkdownPath, isTaskFolderRepo,
   defaultMarkdownView, markdownViewFor,
 } from './markdownView.js';
@@ -63,4 +65,53 @@ test('absolutePath is used when relativePath is missing', () => {
   assert.equal(
     markdownViewFor({ repoId: 'task files', absolutePath: '/w/t/plan.md' }), 'preview',
   );
+});
+
+// "load svgs (with a swich on the tab to view the code), images and other
+// assets" — the pane used to answer "Binary file — no text preview
+// available" for exactly the files an operator most wants to look at.
+
+const assetTab = (relativePath, extra = {}) => ({ relativePath, ...extra });
+
+test('an SVG opens RENDERED and keeps the source switch', () => {
+  // It is text, so it has a source worth reading — but nobody opens an icon
+  // to read its path data first.
+  assert.equal(markdownViewFor(assetTab('icons/logo.svg')), 'preview');
+  assert.equal(canToggleView(assetTab('icons/logo.svg')), true);
+});
+
+test('flipping the switch on an SVG shows its code', () => {
+  assert.equal(
+    markdownViewFor(assetTab('icons/logo.svg', { mdView: 'source' })), 'source',
+  );
+});
+
+test('a raster image renders with NO switch', () => {
+  // An inert toggle is worse than none — a PNG has no source to show.
+  for (const name of ['shot.png', 'a.JPG', 'b.gif', 'c.webp', 'd.ico']) {
+    assert.equal(markdownViewFor(assetTab(name)), 'preview', name);
+    assert.equal(canToggleView(assetTab(name)), false, name);
+  }
+});
+
+test('an SVG in a repo still opens rendered, unlike markdown in a repo', () => {
+  // Repo markdown opens as source because line numbers anchor comments; that
+  // reasoning does not carry to an icon.
+  assert.equal(
+    markdownViewFor(assetTab('src/logo.svg', { repoId: 'client' })), 'preview',
+  );
+  assert.equal(
+    markdownViewFor(assetTab('src/README.md', { repoId: 'client' })), 'source',
+  );
+});
+
+test('ordinary source files are untouched', () => {
+  assert.equal(markdownViewFor(assetTab('src/main.py')), '');
+  assert.equal(canToggleView(assetTab('src/main.py')), false);
+});
+
+test('isImagePath covers both families', () => {
+  assert.equal(isImagePath('a.svg'), true);
+  assert.equal(isImagePath('a.png'), true);
+  assert.equal(isImagePath('a.md'), false);
 });

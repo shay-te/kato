@@ -89,3 +89,26 @@ export function forgetRepos(taskId) {
   delete all[key];
   writeAll(all);
 }
+
+// Is this repo's local branch worth SHOWING?
+//
+// The branch chip exists to answer one question: "is this repo actually on
+// the task branch?" — the failure the operator hit, where a clone stayed on
+// master and its work was never pushed. On a healthy task every repo carries
+// the same task branch, so drawing it on all twenty-five rows repeats
+// something already in the tab header and buries the one row that differs:
+// "we already know the task code, no need to add it for every repo".
+//
+// So: shown only when it does NOT match the task. A repo on master, or on
+// some other branch, still stands out — and now it is the only chip on
+// screen, which is the whole point.
+export function branchWorthShowing(branch, taskId) {
+  const name = String(branch || '').trim();
+  const task = String(taskId || '').trim();
+  if (!name) { return false; }
+  if (!task) { return true; }
+  // ``UNA-1234``, ``feature/UNA-1234``, ``kato/UNA-1234-thing`` all count as
+  // "on the task branch" — the prefix is a convention, not a difference.
+  return !name.toLowerCase().includes(task.toLowerCase());
+}
+

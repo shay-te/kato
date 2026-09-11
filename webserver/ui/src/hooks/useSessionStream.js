@@ -69,6 +69,19 @@ function emptyTaskState() {
     // run_in_background) and is blocked on it — still "working", not idle.
     // Cleared when the next turn starts or the session closes.
     awaitingBackground: false,
+    // Monotonic count of turns that actually ENDED (a ``result`` event).
+    //
+    // The queue drain used to watch ``turnInFlight`` fall from true to false,
+    // which is not the same thing: a lifecycle reset (waking a sleeping
+    // session), a late trailing event from the previous turn, or any other
+    // path that clears the flag reads as "a turn ended" and releases another
+    // queued message. Six queued prompts were consumed in one go — "i gave
+    // him review a couple of time and he consumes all of the prompts… we
+    // have queue, i didnt steer them, so do them one by one".
+    //
+    // A counter only the ``result`` branch increments cannot be moved by any
+    // of those.
+    turnsCompleted: 0,
     // The outstanding background wait is specifically a Workflow (the
     // ultracode orchestrator), so the status surfaces read "workflow" in
     // its own colour rather than the generic "working".
@@ -711,7 +724,20 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       // INIT counts — PREFLIGHT (workspace cloning) is masked by the
       // PROVISIONING status anyway.
       if (raw.subtype === CLAUDE_SYSTEM_SUBTYPE.INIT) {
-        next.turnInFlight = true;
+        // DOES NOT claim a turn any more.
+        //
+        // ``init`` is emitted by every spawn, including the one kato does
+        // simply because the operator OPENED the task (lazy resume). No
+        // prompt follows that spawn, so no ``result`` ever arrives to clear
+        // the flag — the tab was green in the strip and turned yellow
+        // "working" the moment you looked at it, permanently, on a task
+        // where nothing was running.
+        //
+        // The window this was protecting — an autonomous turn, whose prompt
+        // goes to stdin and is never echoed back — is covered by the
+        // server's own ``working`` flag instead (see ``liveKind``), which is
+        // the same fact every background tab already reads. One fact, both
+        // surfaces, no disagreement to arbitrate.
         next.awaitingBackground = false;
         next.backgroundIsWorkflow = false;
       }
@@ -760,6 +786,7 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       // ``||`` not ``=``: a turn that starts no background work must not
       // cancel a job still running from an earlier one.
       next.turnInFlight = false;
+      next.turnsCompleted = (state.turnsCompleted || 0) + 1;
       next.awaitingBackground = (
         !!state.turnHasBackgroundWait || !!state.awaitingBackground
       );
@@ -1009,6 +1036,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
     turnInFlight: state.turnInFlight,
     awaitingBackground: state.awaitingBackground,
     backgroundIsWorkflow: state.backgroundIsWorkflow,
+    turnsCompleted: state.turnsCompleted || 0,
     pendingPermission: state.pendingPermission,
     lastEventAt: state.lastEventAt,
     // Stamp the wall-clock at append (epoch SECONDS, matching the server's

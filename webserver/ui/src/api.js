@@ -743,6 +743,20 @@ export function recheckRepositoryPush(taskId, repoId) {
  * ever see, so only the server confirming the mtime still matches
  * makes it safe to reuse cached content.
  */
+// URL for a workspace file's BYTES — images, SVG, PDFs. Used as an ``<img>``
+// src rather than fetched: the browser streams it and caches it per URL, and
+// there is nothing for JS to do with the bytes.
+//
+// ``v`` busts that cache on a workspace bump, so an icon the agent just
+// rewrote does not keep showing its old pixels.
+export function fileRawUrl(taskId, absolutePath, version = '') {
+  if (!taskId || !absolutePath) { return ''; }
+  let url = `/api/sessions/${encodeURIComponent(taskId)}/file/raw`
+    + `?path=${encodeURIComponent(absolutePath)}`;
+  if (version) { url += `&v=${encodeURIComponent(version)}`; }
+  return url;
+}
+
 export function fetchFileContent(taskId, absolutePath, knownMtime = '') {
   let url = `/api/sessions/${encodeURIComponent(taskId)}/file`
     + `?path=${encodeURIComponent(absolutePath)}`;

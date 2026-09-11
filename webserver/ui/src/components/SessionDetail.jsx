@@ -237,10 +237,15 @@ export default function SessionDetail({
     return () => { cancelled = true; };
   }, [taskId]);
   const prevTurnInFlightRef = useRef(false);
-  // Seed the turn-flight tracker for this mount (the queue itself is restored
+  // ``null`` until the first render seeds it — see the drain effect. A number
+  // here would make the first completed turn this mount sees look like a new
+  // one and fire a delivery on tab switch.
+  const prevTurnsCompletedRef = useRef(null);
+  // Seed the turn trackers for this mount (the queue itself is restored
   // by the lazy initializer above, not cleared).
   useEffect(() => {
     prevTurnInFlightRef.current = stream.turnInFlight;
+    prevTurnsCompletedRef.current = Number(stream.turnsCompleted) || 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
@@ -592,18 +597,38 @@ export default function SessionDetail({
   // next one waits for the turn after — messages stay strictly
   // ordered without ever interrupting Claude (unless the operator
   // explicitly steers).
+  //
+  // Keyed on ``turnsCompleted``, NOT on ``turnInFlight`` falling.
+  //
+  // Those are not the same event. The flag is also cleared whenever the
+  // session's lifecycle resets — which is exactly what happens when a queued
+  // message wakes a SLEEPING session — and by any late trailing event from
+  // the previous turn. Each of those read as "a turn ended" and released the
+  // next message, so a queue emptied itself in seconds: "i gave him review a
+  // couple of time and he consumes all of the prompts… we have queue, i
+  // didnt steer them, so do them one by one".
+  //
+  // ``turnsCompleted`` is incremented only by a ``result`` event — the
+  // agent actually finishing — so nothing else can advance the queue.
   useEffect(() => {
-    const wasInFlight = prevTurnInFlightRef.current;
-    prevTurnInFlightRef.current = stream.turnInFlight;
-    if (wasInFlight && !stream.turnInFlight
-        && !chatSwitchPendingRef.current
-        && queuedMessagesRef.current.length > 0) {
-      const next = queuedMessagesRef.current[0];
-      commitQueue((prev) => prev.filter((item) => item.id !== next.id));
-      deliverMessage(next.text, next.images);
-    }
+    // Coerced, because "no counter" must never read as "a turn just ended".
+    // An undefined value compares false against everything, so a bare
+    // ``<=`` check would fall through and deliver — which is exactly the
+    // failure mode this effect exists to prevent.
+    const current = Number(stream.turnsCompleted) || 0;
+    const previous = prevTurnsCompletedRef.current;
+    prevTurnsCompletedRef.current = current;
+    // Guard the FIRST render (and a remount on tab switch): the counter
+    // arrives non-zero from the cached stream state, and treating that as a
+    // fresh completion would fire a delivery nobody asked for.
+    if (previous === null || current <= previous) { return; }
+    if (chatSwitchPendingRef.current) { return; }
+    if (queuedMessagesRef.current.length === 0) { return; }
+    const next = queuedMessagesRef.current[0];
+    commitQueue((prev) => prev.filter((item) => item.id !== next.id));
+    deliverMessage(next.text, next.images);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream.turnInFlight]);
+  }, [stream.turnsCompleted]);
 
   // Composer Stop — same action the header's Stop runs, reusing its result
   // handler so both surfaces report the outcome identically. Offered only

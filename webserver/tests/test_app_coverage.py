@@ -677,6 +677,87 @@ class SessionFileEndpointTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 403)
 
+    def test_raw_serves_an_image_inline_with_its_real_type(self) -> None:
+        """``/file/raw`` — the asset route behind the image preview.
+
+        The JSON ``/file`` route answers ``{"binary": true}`` for anything
+        that is not text, so the Files tab could only ever say "Binary file —
+        no text preview available" for the files an operator most wants to
+        look at: a logo the agent just changed, an icon, a screenshot.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            png = Path(workspace) / 'logo.png'
+            png.write_bytes(b'\x89PNG\r\n\x1a\n' + b'0' * 32)
+            manager = _FakeManager(records=[_FakeRecord(task_id='T-1', cwd=workspace)])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file/raw?path=logo.png',
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'image/png')
+        self.assertTrue(response.data.startswith(b'\x89PNG'))
+        # Sniff-proof: these bytes are written by an agent.
+        self.assertEqual(response.headers.get('X-Content-Type-Options'), 'nosniff')
+
+    def test_raw_refuses_a_path_outside_the_workspace(self) -> None:
+        """The containment check must hold on BOTH routes.
+
+        The raw route calls the same resolver rather than repeating it —
+        a second, slightly-different copy of a containment check is how a
+        path-traversal hole gets introduced.
+        """
+        with tempfile.TemporaryDirectory() as workspace, \
+                tempfile.TemporaryDirectory() as outside:
+            leak = Path(outside) / 'id_rsa'
+            leak.write_bytes(b'PRIVATE KEY')
+            manager = _FakeManager(records=[_FakeRecord(task_id='T-1', cwd=workspace)])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                f'/api/sessions/T-1/file/raw?path={leak}',
+            )
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn(b'PRIVATE KEY', response.data)
+
+    def test_raw_hands_back_an_unlisted_type_as_a_download(self) -> None:
+        # Only an allowlist of media types is served inline. An
+        # agent-authored HTML file rendered as a document in the operator's
+        # session origin would be a stored-XSS primitive.
+        with tempfile.TemporaryDirectory() as workspace:
+            page = Path(workspace) / 'evil.html'
+            page.write_text('<script>alert(1)</script>', encoding='utf-8')
+            manager = _FakeManager(records=[_FakeRecord(task_id='T-1', cwd=workspace)])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file/raw?path=evil.html',
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'application/octet-stream')
+        self.assertIn('attachment', response.headers.get('Content-Disposition', ''))
+
+    def test_raw_serves_svg_with_a_locked_down_policy(self) -> None:
+        # SVG is XML: a browser runs script inside it when the document is
+        # navigated to directly.
+        with tempfile.TemporaryDirectory() as workspace:
+            svg = Path(workspace) / 'icon.svg'
+            svg.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding='utf-8')
+            manager = _FakeManager(records=[_FakeRecord(task_id='T-1', cwd=workspace)])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file/raw?path=icon.svg',
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, 'image/svg+xml')
+        self.assertIn("default-src 'none'", response.headers.get('Content-Security-Policy', ''))
+
+    def test_raw_missing_file_is_a_404(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            manager = _FakeManager(records=[_FakeRecord(task_id='T-1', cwd=workspace)])
+            app = create_app(session_manager=manager)
+            response = app.test_client().get(
+                '/api/sessions/T-1/file/raw?path=nope.png',
+            )
+        self.assertEqual(response.status_code, 404)
+
     def test_relative_path_resolves_inside_workspace(self):
         with tempfile.TemporaryDirectory() as workspace:
             f = Path(workspace) / 'hello.py'

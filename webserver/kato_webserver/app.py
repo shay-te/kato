@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from concurrent.futures import ThreadPoolExecutor
+
 from flask import (
     Flask,
     Response,
@@ -1222,6 +1224,139 @@ def create_app(
 
 
 # ----- HTTP routes -----
+
+
+#: Extensions served with their REAL content type so a browser renders them.
+#: Deliberately an allowlist: these bytes come from an agent, and anything
+#: not listed is handed back as an opaque download rather than something the
+#: browser will execute or render in the operator's own origin.
+_INLINE_MEDIA_TYPES = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.avif': 'image/avif',
+    '.bmp': 'image/bmp',
+    '.ico': 'image/x-icon',
+    '.svg': 'image/svg+xml',
+    '.pdf': 'application/pdf',
+}
+
+
+#: Parallelism for the Files-tree build. Each repo is four git/disk passes;
+#: past a handful the disk, not the CPU, is the limit, so this is deliberately
+#: modest rather than "one thread per repo".
+_FILES_TREE_MAX_WORKERS = 8
+
+
+def build_in_parallel(items, build_one, max_workers: int = _FILES_TREE_MAX_WORKERS):
+    """``[build_one(item) …]`` computed concurrently, ``None``s dropped.
+
+    ORDER IS THE POINT. The Files pane renders repos in the order the task
+    lists them, so results are placed by index rather than appended as they
+    finish — a fan-out that returns them in completion order would shuffle
+    the pane on every load.
+
+    Extracted from the route so the concurrency and the ordering can be
+    tested without standing up Flask, a workspace manager and a git tree.
+    """
+    entries = list(items or [])
+    if not entries:
+        return []
+    workers = max(1, min(len(entries), max_workers))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        built = list(executor.map(build_one, entries))
+    return [entry for entry in built if entry is not None]
+
+
+def _resolve_task_workspace_file(app, task_id: str, path_arg: str):
+    """``(Path, None)`` for a readable file, or ``(None, error_response)``.
+
+    THE single place a caller-supplied path is checked against the task's
+    workspace roots. Extracted rather than copied so the raw-asset route
+    below cannot drift from it — a second, slightly-different copy of a
+    containment check is how a path-traversal hole gets introduced.
+    """
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    # Build the set of legitimate workspace roots for this task
+    # so we can refuse anything that escapes them.
+    roots: list[str] = []
+    for repo_id in _task_repository_ids(workspace_manager, task_id):
+        cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+        if cwd:
+            roots.append(cwd)
+    # The TASK FOLDER itself, not just the repo clones inside it. The
+    # agent writes real deliverables there — a scratch HTML page to try
+    # something in a browser, pr_description.md, plan.md — and the
+    # operator opening one got "path is outside the task workspace",
+    # which reads as kato refusing to show a file it just told them it
+    # created. It is the task's own folder, so it is in scope by
+    # definition; ``task_workspace_root`` never derives it by walking
+    # up from a repo path, so this cannot widen to the operator's whole
+    # source root.
+    task_root = task_workspace_root(workspace_manager, task_id)
+    if task_root:
+        roots.append(task_root)
+    if not roots:
+        manager = app.config['SESSION_MANAGER']
+        legacy_cwd = _record_cwd_or_none(manager, task_id)
+        if legacy_cwd:
+            roots.append(legacy_cwd)
+    if not roots:
+        return None, (jsonify({'error': 'no workspace for this task'}), 404)
+    from pathlib import Path
+    # The file tree returns repo-relative paths (e.g.
+    # ``dev_scripts/export_users.py``) — the UI forwards those
+    # verbatim. An absolute path is also accepted so legacy
+    # callers / direct API users keep working. For a relative
+    # input we try joining with each workspace root and pick the
+    # first one that lands on a real file inside that root.
+    candidates: list[Path] = []
+    raw_path = Path(path_arg)
+    if raw_path.is_absolute():
+        try:
+            candidates.append(raw_path.resolve())
+        except (OSError, ValueError):
+            return None, (jsonify({'error': 'invalid path'}), 400)
+    else:
+        for root in roots:
+            try:
+                candidates.append((Path(root) / raw_path).resolve())
+            except (OSError, ValueError):
+                continue
+    resolved_roots: list[Path] = []
+    for root in roots:
+        try:
+            resolved_roots.append(Path(root).resolve())
+        except (OSError, ValueError):
+            continue
+    # First preference: a candidate that lives inside a root AND
+    # exists on disk — the file the operator actually clicked.
+    # Fallback: a candidate that lives inside a root but doesn't
+    # exist (so the caller still gets a clear 404 instead of a
+    # 403). 403 is reserved for "path escaped every root".
+    resolved: Path | None = None
+    in_workspace: Path | None = None
+    for candidate in candidates:
+        inside_a_root = any(
+            _is_inside(candidate, root_resolved)
+            for root_resolved in resolved_roots
+        )
+        if not inside_a_root:
+            continue
+        if in_workspace is None:
+            in_workspace = candidate
+        if candidate.is_file():
+            resolved = candidate
+            break
+    if resolved is None and in_workspace is None:
+        return None, (jsonify({'error': 'path is outside the task workspace'}), 403)
+    if resolved is None:
+        return None, (jsonify({'error': 'file not found'}), 404)
+    if not resolved.is_file():
+        return None, (jsonify({'error': 'file not found'}), 404)
+    return resolved, None
 
 
 def _register_http_routes(app: Flask) -> None:
@@ -2605,11 +2740,22 @@ def _register_http_routes(app: Flask) -> None:
         # session record cwd so the response shape is unchanged.
         if repository_ids:
             trees = []
-            for repo_id in repository_ids:
+            # PARALLEL across repos. Each one costs four git/disk passes
+            # (branch, tracked tree, conflicts, changed set), so a 25-repo
+            # workspace ran ~100 subprocesses strictly in series and the Files
+            # pane sat empty for seconds — "it loaded now but took lots of
+            # time". Git spends that time in subprocesses, which release the
+            # GIL, so threads convert the sum into roughly the max.
+            #
+            # Bounded, and ORDER-PRESERVING: the pane renders repos in the
+            # order the task lists them, so results are placed by index rather
+            # than appended as they finish. Same shape as the clone fan-out in
+            # workspace_provisioning_service.
+            def _tree_for(repo_id: str):
                 cwd = _repository_cwd(workspace_manager, task_id, repo_id)
                 if cwd is None:
-                    continue
-                trees.append({
+                    return None
+                return {
                     'repo_id': repo_id,
                     'cwd': cwd,
                     'read_only': repo_id in read_only_ids,
@@ -2630,7 +2776,9 @@ def _register_http_routes(app: Flask) -> None:
                     'changed_files': _changed_files_for_repo(
                         repo_id, cwd, agent_service,
                     ),
-                })
+                }
+
+            trees.extend(build_in_parallel(repository_ids, _tree_for))
             # The task folder's OWN files, after the repo clones. The agent
             # writes real deliverables here (a scratch page to open in a
             # browser, pr_description.md) and nothing listed them, so the
@@ -2880,6 +3028,46 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'discarded': discarded, 'repo_id': candidate})
         return jsonify({'error': 'file not found in this task workspace'}), 404
 
+    @app.get('/api/sessions/<task_id>/file/raw')
+    def get_session_file_raw(task_id: str):
+        """Serve a workspace file's BYTES — images, SVG, fonts, PDFs.
+
+        The JSON ``/file`` route answers ``{"binary": true}`` for anything
+        that is not text, so the Files tab could only ever say "Binary file —
+        no text preview available" for the assets an operator most wants to
+        look at: a logo the agent just changed, an icon, a screenshot.
+
+        Same containment check as ``/file`` — it calls the one resolver, so a
+        path that escapes the workspace is refused identically here. Served
+        ``inline`` with a sniff-proof content type: these bytes are written by
+        an agent, and a workspace HTML file rendered as a document in the
+        operator's session origin would be a stored-XSS primitive. Only the
+        media types below are given their real type; everything else is
+        handed back as an opaque download.
+        """
+        path_arg = str(request.args.get('path', '') or '').strip()
+        if not path_arg:
+            return jsonify({'error': 'path query parameter is required'}), 400
+        resolved, error = _resolve_task_workspace_file(app, task_id, path_arg)
+        if error is not None:
+            return error
+        media_type = _INLINE_MEDIA_TYPES.get(resolved.suffix.lower(), '')
+        response = send_file(
+            resolved,
+            mimetype=media_type or 'application/octet-stream',
+            as_attachment=not media_type,
+            download_name=resolved.name,
+            max_age=0,
+        )
+        # SVG is XML: a browser renders script inside it when the document is
+        # navigated to directly. ``img-src``-only plus a strict CSP keeps an
+        # agent-authored file from executing in the operator's origin.
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+        )
+        return response
+
     @app.get('/api/sessions/<task_id>/file')
     def get_session_file(task_id: str):
         """Return the contents of a single tracked file in the task workspace.
@@ -2905,84 +3093,9 @@ def _register_http_routes(app: Flask) -> None:
         path_arg = (request.args.get('path') or '').strip()
         if not path_arg:
             return jsonify({'error': 'path query parameter is required'}), 400
-        workspace_manager = app.config.get('WORKSPACE_MANAGER')
-        # Build the set of legitimate workspace roots for this task
-        # so we can refuse anything that escapes them.
-        roots: list[str] = []
-        for repo_id in _task_repository_ids(workspace_manager, task_id):
-            cwd = _repository_cwd(workspace_manager, task_id, repo_id)
-            if cwd:
-                roots.append(cwd)
-        # The TASK FOLDER itself, not just the repo clones inside it. The
-        # agent writes real deliverables there — a scratch HTML page to try
-        # something in a browser, pr_description.md, plan.md — and the
-        # operator opening one got "path is outside the task workspace",
-        # which reads as kato refusing to show a file it just told them it
-        # created. It is the task's own folder, so it is in scope by
-        # definition; ``task_workspace_root`` never derives it by walking
-        # up from a repo path, so this cannot widen to the operator's whole
-        # source root.
-        task_root = task_workspace_root(workspace_manager, task_id)
-        if task_root:
-            roots.append(task_root)
-        if not roots:
-            manager = app.config['SESSION_MANAGER']
-            legacy_cwd = _record_cwd_or_none(manager, task_id)
-            if legacy_cwd:
-                roots.append(legacy_cwd)
-        if not roots:
-            return jsonify({'error': 'no workspace for this task'}), 404
-        from pathlib import Path
-        # The file tree returns repo-relative paths (e.g.
-        # ``dev_scripts/export_users.py``) — the UI forwards those
-        # verbatim. An absolute path is also accepted so legacy
-        # callers / direct API users keep working. For a relative
-        # input we try joining with each workspace root and pick the
-        # first one that lands on a real file inside that root.
-        candidates: list[Path] = []
-        raw_path = Path(path_arg)
-        if raw_path.is_absolute():
-            try:
-                candidates.append(raw_path.resolve())
-            except (OSError, ValueError):
-                return jsonify({'error': 'invalid path'}), 400
-        else:
-            for root in roots:
-                try:
-                    candidates.append((Path(root) / raw_path).resolve())
-                except (OSError, ValueError):
-                    continue
-        resolved_roots: list[Path] = []
-        for root in roots:
-            try:
-                resolved_roots.append(Path(root).resolve())
-            except (OSError, ValueError):
-                continue
-        # First preference: a candidate that lives inside a root AND
-        # exists on disk — the file the operator actually clicked.
-        # Fallback: a candidate that lives inside a root but doesn't
-        # exist (so the caller still gets a clear 404 instead of a
-        # 403). 403 is reserved for "path escaped every root".
-        resolved: Path | None = None
-        in_workspace: Path | None = None
-        for candidate in candidates:
-            inside_a_root = any(
-                _is_inside(candidate, root_resolved)
-                for root_resolved in resolved_roots
-            )
-            if not inside_a_root:
-                continue
-            if in_workspace is None:
-                in_workspace = candidate
-            if candidate.is_file():
-                resolved = candidate
-                break
-        if resolved is None and in_workspace is None:
-            return jsonify({'error': 'path is outside the task workspace'}), 403
-        if resolved is None:
-            return jsonify({'error': 'file not found'}), 404
-        if not resolved.is_file():
-            return jsonify({'error': 'file not found'}), 404
+        resolved, error = _resolve_task_workspace_file(app, task_id, path_arg)
+        if error is not None:
+            return error
         try:
             stat_result = resolved.stat()
         except OSError as exc:

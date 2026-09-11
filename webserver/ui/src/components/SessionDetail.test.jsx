@@ -312,6 +312,11 @@ describe('SessionDetail — working indicator placement', () => {
       events: [],
       lifecycle: SESSION_LIFECYCLE.STREAMING,
       turnInFlight: true,
+      // Turns that have actually ENDED. The queue drains on THIS advancing,
+      // not on ``turnInFlight`` falling — a lifecycle reset (waking a
+      // sleeping session) also clears the flag, and reading that as "a turn
+      // ended" emptied a whole queue in one go.
+      turnsCompleted: 0,
       pendingPermission: null,
       lastEventAt: 0,
       appendLocalEvent: vi.fn(),
@@ -541,8 +546,9 @@ describe('SessionDetail — outgoing message queue', () => {
 
   test('the queued message flushes when the turn finishes', async () => {
     postChatMessage.mockClear();
-    const busy = _stream({ turnInFlight: true });
-    const idle = _stream({ turnInFlight: false });
+    const busy = _stream({ turnInFlight: true, turnsCompleted: 0 });
+    // A turn ENDING is the counter advancing — not merely the flag dropping.
+    const idle = _stream({ turnInFlight: false, turnsCompleted: 1 });
 
     useSessionStream.mockReturnValue(busy);
     const { rerender } = render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
@@ -558,6 +564,67 @@ describe('SessionDetail — outgoing message queue', () => {
     });
     expect(postChatMessage).toHaveBeenCalledTimes(1);
     expect(idle.markTurnBusy).toHaveBeenCalledWith(true);
+  });
+
+  test('waking a sleeping session does NOT empty the queue', async () => {
+    // The reported bug: six queued prompts consumed in one go — "i gave him
+    // review a couple of time and he consumes all of the prompts… we have
+    // queue, i didnt steer them, so do them one by one".
+    //
+    // The drain used to watch ``turnInFlight`` fall from true to false. That
+    // flag is ALSO cleared by a lifecycle reset, which is exactly what
+    // delivering a message to a sleeping session causes — so every delivery
+    // manufactured another "turn ended" and released the next message.
+    //
+    // ``turnsCompleted`` does not move, so nothing is released.
+    postChatMessage.mockClear();
+    const busy = _stream({ turnInFlight: true, turnsCompleted: 3 });
+    useSessionStream.mockReturnValue(busy);
+    const { rerender } = render(
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+    expect(screen.getByText('hello')).toBeInTheDocument();
+
+    // The flag drops WITHOUT a turn completing (lifecycle reset).
+    useSessionStream.mockReturnValue(
+      _stream({ turnInFlight: false, turnsCompleted: 3 }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    await Promise.resolve();
+    expect(postChatMessage).not.toHaveBeenCalled();
+    expect(screen.getByText('hello')).toBeInTheDocument();
+  });
+
+  test('each completed turn releases exactly ONE queued message', async () => {
+    // "so do them one by one" — two queued, two turn completions, two sends,
+    // in order, never both at once.
+    postChatMessage.mockClear();
+    useSessionStream.mockReturnValue(
+      _stream({ turnInFlight: true, turnsCompleted: 0 }),
+    );
+    const { rerender } = render(
+      <SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    useSessionStream.mockReturnValue(
+      _stream({ turnInFlight: false, turnsCompleted: 1 }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledTimes(1);
+    });
+
+    useSessionStream.mockReturnValue(
+      _stream({ turnInFlight: false, turnsCompleted: 2 }),
+    );
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+    await waitFor(() => {
+      expect(postChatMessage).toHaveBeenCalledTimes(2);
+    });
   });
 
   test('a chat switch DISCARDS queued messages instead of flushing them into the new chat', async () => {

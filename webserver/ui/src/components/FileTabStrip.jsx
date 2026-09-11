@@ -4,7 +4,10 @@ import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import Icon from './Icon.jsx';
 import DiffKindIcon from './DiffKindIcon.jsx';
-import { markdownViewFor } from '../utils/markdownView.js';
+import {
+  canToggleView,
+  markdownViewFor,
+} from '../utils/markdownView.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -326,7 +329,11 @@ function FileTab({
           control next to the close X, where a tab's actions live. */}
       {tabIcon}
       <span className="file-tab-label">{name}</span>
-      {mdView && typeof onToggleMarkdownView === 'function' && (
+      {/* ``mdView`` also carries the diff-view rule (a diff IS a source view,
+          so there is nothing to switch to); ``canToggleView`` adds the file's
+          own: markdown and SVG have both a rendered form and a source worth
+          reading, a PNG has only the picture. */}
+      {mdView && canToggleView(tab) && typeof onToggleMarkdownView === 'function' && (
         <button
           type="button"
           className="file-tab-view-toggle tooltip-start"
