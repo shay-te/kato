@@ -214,6 +214,149 @@ class InterruptedCloneRepairTests(unittest.TestCase):
         self.assertTrue((clone / 'shared.txt').is_file())
 
 
+class CloneCheckoutFailedTests(unittest.TestCase):
+    """``warning: Clone succeeded, but checkout failed.``
+
+    git exits NON-ZERO for this, but the clone is complete: every object is
+    present and the branch is set — only the working tree is empty. Reported
+    from a Windows machine where the checkout step died mid-clone:
+
+        error: cannot spawn : No such file or directory
+        fatal: unable to parse commit 731628754213b64137e077c3518be6fb21de68f0
+        warning: Clone succeeded, but checkout failed.
+
+    kato raised on the non-zero exit, so the repair that does exactly what
+    git's own advice says (``git restore --source=HEAD :/``) was never
+    reached. The operator saw a repo with every file gone — "for some repos
+    he just deletes all the files in the repo, I have to manually reset all
+    the changes to bring the files back" — and, because the clone raised,
+    branch prep never ran either: "all the repos are still on master and not
+    on the task branch".
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.service = _make_service()
+
+    def _origin(self) -> Path:
+        work = self.tmp / 'seed'
+        work.mkdir()
+        _git(work, 'init', '-q')
+        _git(work, 'config', 'user.email', 't@example.com')
+        _git(work, 'config', 'user.name', 'Test')
+        _git(work, 'checkout', '-q', '-b', 'main')
+        (work / 'kept.txt').write_text('real content\n', encoding='utf-8')
+        _git(work, 'add', '-A')
+        _git(work, 'commit', '-q', '-m', 'base')
+        origin = self.tmp / 'origin.git'
+        _git(work, 'clone', '-q', '--bare', str(work), str(origin))
+        return origin
+
+    def _clone_then_empty_the_worktree(self, origin: Path, at: Path) -> None:
+        """The exact on-disk state git leaves: complete .git, no files."""
+        _git(self.tmp, 'clone', '-q', str(origin), str(at))
+        for entry in at.iterdir():
+            if entry.name != '.git':
+                entry.unlink()
+
+    def test_a_failed_checkout_is_restored_instead_of_failing_the_task(self) -> None:
+        origin = self._origin()
+        target = self.tmp / 'achievement-core-lib'
+        repo = SimpleNamespace(
+            id='achievement-core-lib', local_path=str(target),
+            remote_url=str(origin), destination_branch='main',
+        )
+
+        # Stand in for git's "clone succeeded, but checkout failed": leave the
+        # real repository behind, then report the non-zero exit.
+        real_run_git = self.service._run_git
+        calls = {'n': 0}
+
+        def fake_run_git(cwd, args, message, repository=None, **kwargs):
+            if args and args[0] == 'clone':
+                calls['n'] += 1
+                self._clone_then_empty_the_worktree(origin, target)
+                raise RuntimeError(f'{message}: warning: Clone succeeded, but checkout failed.')
+            return real_run_git(cwd, args, message, repository, **kwargs)
+
+        self.service._run_git = fake_run_git
+        self.service.ensure_clone(repo, target)
+
+        self.assertEqual(calls['n'], 1)
+        # The files are BACK — not left for the operator to restore by hand.
+        self.assertTrue((target / 'kept.txt').is_file())
+        self.assertEqual(
+            (target / 'kept.txt').read_text(encoding='utf-8'), 'real content\n',
+        )
+
+    def test_a_genuinely_failed_clone_still_raises(self) -> None:
+        # The rescue must not swallow a real failure — a task whose repo never
+        # arrived has to fail loudly, not proceed against an empty folder.
+        target = self.tmp / 'never-arrived'
+        repo = SimpleNamespace(
+            id='never-arrived', local_path=str(target),
+            remote_url='https://example.invalid/x.git', destination_branch='main',
+        )
+
+        def fake_run_git(cwd, args, message, repository=None, **kwargs):
+            raise RuntimeError(f'{message}: could not read from remote')
+
+        self.service._run_git = fake_run_git
+        with self.assertRaises(RuntimeError) as caught:
+            self.service.ensure_clone(repo, target)
+        # ...and the ORIGINAL cause survives, not a second error from the
+        # rescue attempt.
+        self.assertIn('could not read from remote', str(caught.exception))
+
+    def test_a_directory_with_files_but_NO_git_is_not_mistaken_for_success(self) -> None:
+        """The check the rescue turns on.
+
+        A clone that died early can leave a folder holding partial content
+        and no ``.git`` at all. "Are there files?" alone would read that as a
+        healthy repository and let the task proceed against a folder git
+        knows nothing about — no branch, no remote, nothing to push.
+        """
+        target = self.tmp / 'half-written'
+        target.mkdir()
+        (target / 'stray.txt').write_text('partial\n', encoding='utf-8')
+        repo = SimpleNamespace(
+            id='half-written', local_path=str(target),
+            remote_url='https://example.invalid/x.git', destination_branch='main',
+        )
+
+        def fake_run_git(cwd, args, message, repository=None, **kwargs):
+            raise RuntimeError(f'{message}: died early')
+
+        self.service._run_git = fake_run_git
+        with self.assertRaises(RuntimeError):
+            self.service.ensure_clone(repo, target)
+
+    def test_the_rescue_never_touches_a_directory_that_holds_files(self) -> None:
+        """The destructive-step guard, on the new path.
+
+        ``_restore_unchecked_out_clone`` runs ``checkout -f``. It is licensed
+        ONLY by the directory holding nothing but ``.git`` — reaching it with
+        the agent's uncommitted work present is how 41 files were destroyed
+        once before.
+        """
+        origin = self._origin()
+        target = self.tmp / 'has-work'
+        _git(self.tmp, 'clone', '-q', str(origin), str(target))
+        (target / 'kept.txt').write_text('OPERATOR EDIT\n', encoding='utf-8')
+        repo = SimpleNamespace(
+            id='has-work', local_path=str(target),
+            remote_url=str(origin), destination_branch='main',
+        )
+
+        self.service._restore_unchecked_out_clone(repo, target)
+
+        self.assertEqual(
+            (target / 'kept.txt').read_text(encoding='utf-8'), 'OPERATOR EDIT\n',
+        )
+
+
 class MergePreflightTests(unittest.TestCase):
     """Mocked refusals — never reach a real git repo."""
 

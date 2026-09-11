@@ -1990,6 +1990,74 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertIn('r0', result['lookup_error'])
         self.assertNotIn('r1', result['lookup_error'])
 
+    def test_a_github_404_is_reported_as_a_permissions_gap(self) -> None:
+        """GitHub hides "you cannot write here" behind 404, not 403.
+
+        It will not confirm a repository exists to a caller that cannot see
+        it, so the error an operator is most likely to hit reads as "kato
+        asked for the wrong URL". Reported as "for github it is not creating
+        PRs at all by my token… it works on bitbucket" — Bitbucket needs no
+        equivalent grant, so the same setup works there.
+        """
+        repo_obj = SimpleNamespace(id='client', local_path='/tmp/x')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError(
+            '404 Client Error: Not Found for url: '
+            'https://api.github.com/repos/acme/client/pulls'
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            service.publish.task_pull_request_state('T1')
+
+        hint = ' '.join(str(c) for c in service.logger.warning.call_args[0])
+        self.assertIn('permissions', hint)
+        self.assertIn('repo', hint)
+        self.assertIn('Pull requests: Read and write', hint)
+
+    def test_a_github_403_names_the_missing_grant(self) -> None:
+        repo_obj = SimpleNamespace(id='client', local_path='/tmp/x')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError(
+            '403 Client Error: Forbidden for url: '
+            'https://api.github.com/repos/acme/client/pulls'
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+
+        self.assertIn('missing a permission', result['lookup_error'])
+        # A 403 IS permanent, so it reaches the UI rather than degrading to
+        # "no pull request" like a 429 does.
+        self.assertIn('Contents: Read and write', result['lookup_error'])
+
+    def test_bitbucket_guidance_is_not_offered_for_a_github_failure(self) -> None:
+        # The two providers fail for completely different reasons; naming the
+        # wrong setting sends the operator to the wrong place.
+        repo_obj = SimpleNamespace(id='client', local_path='/tmp/x')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError(
+            '401 Client Error: Unauthorized for url: '
+            'https://api.github.com/repos/acme/client/pulls'
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+
+        self.assertIn('GITHUB_API_TOKEN', result['lookup_error'])
+        self.assertNotIn('BITBUCKET_API_EMAIL', result['lookup_error'])
+
     def test_pull_request_state_default_for_blank_task_id(self) -> None:
         service = AgentService(**_kwargs())
         result = service.publish.task_pull_request_state('')

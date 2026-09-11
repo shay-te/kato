@@ -158,13 +158,42 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         # up on their host (ssh-agent, git credential helper, or token
         # baked into the URL); kato doesn't manage credentials at the
         # transport layer.
-        self._run_git(
-            str(target.parent),
-            ['clone', *self._clone_speedup_args(repository, target), remote_url,
-             target.name],
-            f'failed to clone {repository.id} from {remote_url} into {target}',
-            repository,
-        )
+        try:
+            self._run_git(
+                str(target.parent),
+                ['clone', *self._clone_speedup_args(repository, target), remote_url,
+                 target.name],
+                f'failed to clone {repository.id} from {remote_url} into {target}',
+                repository,
+            )
+        except Exception:
+            # A NON-ZERO CLONE IS NOT ALWAYS A FAILED CLONE.
+            #
+            # git's own words for the case this handles:
+            #
+            #     warning: Clone succeeded, but checkout failed.
+            #     You can inspect what was checked out with 'git status'
+            #     and retry with 'git restore --source=HEAD :/'
+            #
+            # The objects are all there and the branch is set; only the
+            # working tree is empty. git exits non-zero anyway, so this call
+            # raised and the repair below — which does exactly what git's
+            # advice says — was never reached. The operator got a clone that
+            # looked like kato had deleted every file in the repo, and had to
+            # restore it by hand.
+            #
+            # So: attempt the restore first, and re-raise only if the clone is
+            # still unusable. The restore is safe here for the same reason it
+            # is safe anywhere — it refuses to touch a directory that holds
+            # any file besides ``.git``.
+            if not self._clone_is_usable_after_repair(repository, target):
+                raise
+            self.logger.warning(
+                'clone of %s exited non-zero but left a complete repository; '
+                'restored the working tree instead of failing the task',
+                repository.id,
+            )
+            return
         # A clone that exits 0 is still not proof of a usable checkout. The
         # reuse path below already had to learn this; a FRESH clone can land
         # the same way — ``--reference-if-able ... --dissociate`` does real
@@ -173,6 +202,30 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         # handed an empty repository on the very first pickup: "he will just
         # delete the entire code from some repos".
         self._restore_unchecked_out_clone(repository, target)
+
+    def _clone_is_usable_after_repair(self, repository, target: Path) -> bool:
+        """Try to rescue a clone whose checkout failed. True when it worked.
+
+        Never raises: the caller is already on a failure path and re-raises
+        the ORIGINAL clone error, which names the real cause. A repair that
+        also fails must not replace that with its own.
+        """
+        if not (target / '.git').is_dir():
+            return False
+        try:
+            self._restore_unchecked_out_clone(repository, target)
+        except Exception:
+            self.logger.exception(
+                'could not restore the working tree for %s after a failed '
+                'clone', repository.id,
+            )
+            return False
+        try:
+            return any(
+                entry.name != '.git' for entry in target.iterdir()
+            )
+        except OSError:
+            return False
 
     def _restore_unchecked_out_clone(self, repository, target: Path) -> None:
         """Check out a clone that has ``.git`` but no working files.

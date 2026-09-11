@@ -64,16 +64,52 @@ def _auth_hint_for(exc: Exception) -> str:
     password.
     """
     text = str(exc or '')
-    if 'atlassian registered email' in text.lower():
+    lowered = text.lower()
+    if 'atlassian registered email' in lowered:
         return (
             ' — set BITBUCKET_API_EMAIL to the Atlassian account email that '
             'owns this token (an API token authenticates as EMAIL + token, '
             'not username + token)'
         )
+    if 'api.github.com' in lowered or 'github.com' in lowered:
+        return _github_permission_hint(lowered)
     if '401' in text and 'unauthorized' in text.lower():
         return (
             ' — check the provider token, and that BITBUCKET_API_EMAIL is set '
             'when the token is an Atlassian API token'
+        )
+    return ''
+
+
+def _github_permission_hint(lowered: str) -> str:
+    """GitHub refuses on SCOPE far more often than on a bad token.
+
+    And it hides the difference: a token that cannot write to a repository
+    gets **404 Not Found** on ``POST /repos/…/pulls``, not 403 — GitHub
+    will not confirm a repository exists to a caller that cannot see it. So
+    the one error an operator is most likely to hit is also the one that
+    reads as "kato is asking for the wrong URL".
+
+    Reported as "for github it is not creating PRs at all by my token… it
+    works on bitbucket" — a Bitbucket token needs no equivalent grant, so
+    the same setup works there and silently does nothing here.
+    """
+    grants = (
+        'a classic token needs the `repo` scope; a fine-grained token needs '
+        'this repository selected plus Contents: Read and write, Pull '
+        'requests: Read and write, and Metadata: Read'
+    )
+    if '404' in lowered:
+        return (
+            ' — GitHub answers 404 (not 403) when a token cannot WRITE to a '
+            f'repository, so this is almost always a permissions gap: {grants}'
+        )
+    if '403' in lowered:
+        return f' — the GitHub token is missing a permission: {grants}'
+    if '401' in lowered:
+        return (
+            ' — the GitHub token was rejected outright: check GITHUB_API_TOKEN '
+            'is set and has not expired'
         )
     return ''
 
