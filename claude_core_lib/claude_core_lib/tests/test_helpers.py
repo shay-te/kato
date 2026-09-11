@@ -374,8 +374,12 @@ class ReadLessonsFileTests(unittest.TestCase):
         path = Path(self._tmp.name) / 'lessons.md'
         path.write_text('- Always use type hints\n', encoding='utf-8')
         result = read_lessons_file(str(path))
-        self.assertIn('Always use type hints', result)
-        self.assertIn('BEGIN LEARNED LESSONS', result)
+        # The lessons are NAMED, not pasted. Inlining them (capped at 50K)
+        # pushed the Windows spawn command line to ~37.6K against a 32,767
+        # limit — "[WinError 206] The filename or extension is too long" — so
+        # the prompt carries the path and a PreToolUse hook enforces the read.
+        self.assertNotIn('Always use type hints', result)
+        self.assertIn('Read tool', result)
 
     def test_empty_body_returns_empty(self) -> None:
         path = Path(self._tmp.name) / 'empty_lessons.md'
@@ -390,16 +394,22 @@ class ReadLessonsFileTests(unittest.TestCase):
         )
         result = read_lessons_file(str(path))
         self.assertNotIn('last_compacted', result)
-        self.assertIn('Lesson one', result)
+        # Body not inlined any more — see above.
+        self.assertNotIn('Lesson one', result)
 
-    def test_body_truncated_at_max_chars(self) -> None:
-        from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import _MAX_BODY_CHARS
+    def test_the_directive_stays_small_however_big_the_file_is(self) -> None:
+        """The truncation is gone because the body is gone.
+
+        ``_MAX_BODY_CHARS`` capped the inlined text at 50,000 — which both
+        silently dropped everything past it AND still left the spawn command
+        line far over the Windows limit. Naming the path instead makes the
+        prompt size independent of the file entirely.
+        """
         path = Path(self._tmp.name) / 'long_lessons.md'
-        big = 'x' * (_MAX_BODY_CHARS + 1000)
-        path.write_text(big, encoding='utf-8')
+        path.write_text('x' * 200_000, encoding='utf-8')
         result = read_lessons_file(str(path))
-        # The content in the result should be truncated
-        self.assertIn('BEGIN LEARNED LESSONS', result)
+        self.assertLess(len(result), 1_000)
+        self.assertIn(str(path), result)
 
     def test_directive_does_not_mention_orchestrator(self) -> None:
         path = Path(self._tmp.name) / 'lessons2.md'
