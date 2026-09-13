@@ -148,7 +148,10 @@ export default function EventLog({
       // deal than it looked: it revealed the ENTIRE remaining history in one
       // frame, and the operator usually just wanted a few more lines of
       // context above what they were already reading.
-      if (isNearTop(node)) { revealOlder(); }
+      // NOT while pinned. Following the newest message and reading back
+      // through history are opposite intents; revealing older chunks while
+      // glued to the bottom just grows the log under the operator.
+      if (!pinned && isNearTop(node)) { revealOlder(); }
     };
     node.addEventListener('scroll', onScroll, { passive: true });
     return () => node.removeEventListener('scroll', onScroll);
@@ -234,7 +237,12 @@ export default function EventLog({
   // tab-switch bug). ``pinnedRef`` starts true and only flips when
   // the operator actually scrolls up (listener above), so a fresh
   // log opens pinned and a tab switch lands at the newest message.
-  useEffect(() => {
+  // ``useLayoutEffect``, not ``useEffect``: this POSITIONS the log, and an
+  // effect that runs after paint means the browser first shows the transcript
+  // from the top and then jumps. Repeated once per history chunk, that is the
+  // "it scrolls the entire chat" the operator sees on opening a task. Running
+  // before paint means the log is simply THERE, at the bottom, first frame.
+  useLayoutEffect(() => {
     if (pinnedRef.current) {
       scrollToBottom(containerRef.current);
     }
@@ -256,7 +264,7 @@ export default function EventLog({
   // remounts SessionDetail (and thus EventLog) per task, so a fresh
   // ``pinnedRef`` starts true here — re-arm + jump on the taskId
   // change too, for the rare reuse-without-remount path.
-  useEffect(() => {
+  useLayoutEffect(() => {
     pinnedRef.current = true;
     scrollToBottom(containerRef.current);
   }, [taskId]);
@@ -273,7 +281,7 @@ export default function EventLog({
   // scroll path existing to cover the case the first one missed.
   //
   // Guarded on the initial 0 so a fresh mount does not scroll twice.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pinRequestId) { return; }
     pinnedRef.current = true;
     setAtBottom(true);

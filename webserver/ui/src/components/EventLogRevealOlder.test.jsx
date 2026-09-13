@@ -42,12 +42,20 @@ function logNode(container) {
   return container.querySelector('#event-log');
 }
 
-// jsdom leaves every geometry at 0, which reads as "at the top" — fine for
-// the reveal test, but we set it explicitly so each test states its intent.
-function scrollTo(node, top) {
-  Object.defineProperty(node, 'scrollTop', {
-    value: top, writable: true, configurable: true,
-  });
+// jsdom leaves every geometry at 0. That is not merely "at the top" — it is
+// also "this container does not overflow", which is an impossible real state
+// and the one the reveal must NOT fire in: a log short enough to fit sits at
+// scrollTop 0 forever, so every scroll event pulled another chunk, grew the
+// log, and fired more events (the endless scroll on opening a task). So the
+// helper states the whole geometry, not just the offset.
+function scrollTo(node, top, { scrollHeight = 5000, clientHeight = 600 } = {}) {
+  for (const [prop, value] of [
+    ['scrollTop', top], ['scrollHeight', scrollHeight], ['clientHeight', clientHeight],
+  ]) {
+    Object.defineProperty(node, prop, {
+      value, writable: true, configurable: true,
+    });
+  }
   fireEvent.scroll(node);
 }
 
@@ -161,5 +169,37 @@ describe('EventLog — a reveal inside one long turn still progresses', () => {
     // Everything is shown, and the status line is gone rather than stuck on
     // "Loading earlier events…".
     expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  test('a log that FITS never reveals, however often it is scrolled', async () => {
+    // The endless scroll: a container that does not overflow reports
+    // scrollTop 0 permanently, so "near the top" was true forever. Each
+    // scroll event revealed another chunk, which made the log taller, which
+    // produced more scroll events.
+    const { container } = render(
+      <EventLog entries={transcript(EVENT_LOG_WINDOW_SIZE + 120)} />,
+    );
+    const before = container.querySelectorAll('.bubble').length;
+    for (let i = 0; i < 5; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await act(async () => {
+        scrollTo(logNode(container), 0, { scrollHeight: 400, clientHeight: 600 });
+      });
+    }
+    expect(container.querySelectorAll('.bubble').length).toBe(before);
+  });
+
+  test('following the newest message does not drag in older history', async () => {
+    // Reading back and staying glued to the bottom are opposite intents.
+    const { container } = render(
+      <EventLog entries={transcript(EVENT_LOG_WINDOW_SIZE + 120)} />,
+    );
+    const before = container.querySelectorAll('.bubble').length;
+    await act(async () => {
+      // Pinned to the bottom AND at scrollTop 0 — only possible mid-render,
+      // which is exactly when this used to fire.
+      scrollTo(logNode(container), 0, { scrollHeight: 600, clientHeight: 600 });
+    });
+    expect(container.querySelectorAll('.bubble').length).toBe(before);
   });
 });

@@ -50,6 +50,14 @@ export function tabKeyFor(info) {
 //   - New file: inserted immediately after the current active tab
 //     (or appended if there is no active tab / it's not found) and
 //     made active.
+// Which view a tab should show after an open: stated > remembered > default.
+export function pickTabView(requested, existing) {
+  if (requested === 'diff' || requested === 'file') { return requested; }
+  const remembered = existing && existing.view;
+  return remembered === 'diff' || remembered === 'file' ? remembered : 'file';
+}
+
+
 export function upsertTab(tabs, activeKey, info, taskId) {
   const list = Array.isArray(tabs) ? tabs : [];
   const key = tabKeyFor(info);
@@ -70,7 +78,20 @@ export function upsertTab(tabs, activeKey, info, taskId) {
     absolutePath: info.absolutePath,
     relativePath,
     repoId,
-    view: info.view === 'diff' ? 'diff' : 'file',
+    // AN OPENER THAT SAYS NOTHING INHERITS THE TAB'S OWN VIEW.
+    //
+    // This was ``info.view === 'diff' ? 'diff' : 'file'``, so any re-open
+    // that did not restate the view forced the file back to whole-file —
+    // and the file tree, the content search and the reveal button all open
+    // without stating one. Put a file in diff view, click another file, come
+    // back to the first: it was showing the whole file again. "switching the
+    // files, he forget the last state, what is showing."
+    //
+    // Same precedence the ``repoId``/``relativePath`` lines above already
+    // use: an EXPLICIT value wins, otherwise keep what the tab has, and only
+    // fall back to the default for a genuinely new tab. The view toggle still
+    // works because it always states the view it wants.
+    view: pickTabView(info.view, existing),
     focusComment: !!info.focusComment,
     kind: String(info.kind || ''),
     // The line to jump to, when the opener knows one (a content-search hit,

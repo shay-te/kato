@@ -15,6 +15,7 @@ import DiffFileWithComments, {
   splitCommentsForDisplay,
 } from './DiffFileWithComments.jsx';
 import { LARGE_FILE_LINE_THRESHOLD } from './diffFileSize.js';
+import { toastStore } from '../stores/toastStore.js';
 
 const apiMocks = vi.hoisted(() => {
   return {
@@ -676,5 +677,93 @@ describe('DiffFileWithComments — file-level comment shortcut', () => {
       .some((el) => el.closest('.diff-file-comment-body'))).toBe(true);
     expect(screen.queryByRole('button', { name: /add file-level comment/i }))
       .not.toBeInTheDocument();
+  });
+});
+
+// "will not expose more rows... it's broken now!"
+//
+// ``expandFromRawCode`` returns the hunks UNCHANGED when the base source does
+// not cover the requested range — no throw, no error. Verified against the
+// real library. So a stale or wrong base made the gap expander a button that
+// did nothing at all, with nothing on screen to say why.
+//
+// The toast store is REAL here, not mocked: the assertion is that the operator
+// is actually told, and a mock would only prove a call was made.
+describe('DiffFileWithComments — a failed expansion is never silent', () => {
+  const rawDiff = [
+    'diff --git a/src/f.scss b/src/f.scss',
+    '--- a/src/f.scss',
+    '+++ b/src/f.scss',
+    '@@ -1,3 +1,3 @@',
+    ' line 1',
+    '-line 2',
+    '+line 2 changed',
+    ' line 3',
+    '@@ -30,3 +30,3 @@',
+    ' line 30',
+    '-line 31',
+    '+line 31 changed',
+    ' line 32',
+    '',
+  ].join('\n');
+
+  // Only toasts raised AFTER this call. The toast store is a real module
+  // singleton and ``subscribe`` replays its current state on attach, so a
+  // sticky toast left by an earlier test would otherwise count as this one's.
+  function collectToasts() {
+    const seen = [];
+    let before = null;
+    const stop = toastStore.subscribe((list) => {
+      if (before === null) { before = new Set(list.map((t) => t.id)); return; }
+      seen.push(...list.filter((t) => !before.has(t.id)));
+    });
+    return { seen, stop };
+  }
+
+  test('a base file too short to cover the gap reports why', async () => {
+    const file = parseDiff(rawDiff)[0];
+    // "Below" asks for lines 10..29; this base stops at 5, so the library
+    // hands the hunks back untouched. ("Above" starts at line 4, inside the
+    // file, and really does reveal — verified against react-diff-view.)
+    apiMocks.fetchBaseFileContent.mockResolvedValue({
+      content: ['line 1', 'line 2', 'line 3', 'line 4', 'line 5'].join('\n'),
+      binary: false,
+    });
+    const { seen, stop } = collectToasts();
+    renderDiff({ file, initiallyExpanded: true });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: /show hidden lines below \(26 hidden lines\)/i,
+    }));
+
+    await waitFor(() => {
+      expect(seen.some((t) => /Could not expand context/i.test(t.title))).toBe(true);
+    });
+    const warned = seen.find((t) => /Could not expand context/i.test(t.title));
+    expect(warned.message).toMatch(/5 lines/);
+    expect(warned.message).toMatch(/out of date/);
+    // Sticky — a failure the operator must actually read.
+    expect(warned.durationMs).toBe(0);
+    stop();
+  });
+
+  test('a successful expansion says nothing at all', async () => {
+    const file = parseDiff(rawDiff)[0];
+    apiMocks.fetchBaseFileContent.mockResolvedValue({
+      content: new Array(40).fill(0).map((_, i) => `line ${i + 1}`).join('\n'),
+      binary: false,
+    });
+    const { seen, stop } = collectToasts();
+    renderDiff({ file, initiallyExpanded: true });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: /show hidden lines above \(26 hidden lines\)/i,
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByText('line 4')).toBeInTheDocument();
+    });
+    expect(seen.some((t) => /Could not expand context/i.test(t.title))).toBe(false);
+    stop();
   });
 });

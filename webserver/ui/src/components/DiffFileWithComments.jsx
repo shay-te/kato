@@ -47,6 +47,8 @@ import StickyHeader from './StickyHeader.jsx';
 import {
   basePathForDiffFile,
   buildDiffRenderItems,
+  expansionChanged,
+  expansionFailureReason,
   expansionRangeForGap,
   pendingCommentExpansions,
   splitSourceLines,
@@ -151,6 +153,15 @@ function DiffFileWithComments({
       : _defaultInitiallyExpanded(file)
   ));
   const [renderedHunks, setRenderedHunks] = useState(() => file.hunks || []);
+  // Mirrors ``renderedHunks`` so the expand handler can read the CURRENT
+  // hunks after an await without a stale closure, and can tell whether an
+  // expansion actually revealed anything. Kept in step by the effect below,
+  // and advanced eagerly by the handler itself for back-to-back clicks.
+  const renderedHunksRef = useRef(renderedHunks);
+  // One place keeps the mirror true, so the other four setters (file switch,
+  // de-eliding a large file, the comment-reveal expansion) need no bookkeeping
+  // and cannot forget it.
+  useEffect(() => { renderedHunksRef.current = renderedHunks; }, [renderedHunks]);
   // In-flight base-source fetch, so concurrent callers coalesce (see
   // ``loadBaseSourceLines``). Cleared on file switch below.
   const baseSourcePromiseRef = useRef(null);
@@ -749,9 +760,28 @@ function DiffFileWithComments({
       });
       return;
     }
-    setRenderedHunks((current) => (
-      expandFromRawCode(current, sourceLines, range.start, range.end)
-    ));
+    // Read through the ref, not the state closure: two quick clicks both
+    // await the same base-source load, and the second one's closure still
+    // holds the pre-first-expansion hunks — applying that would silently undo
+    // the first. The ref is advanced below, so the second click builds on the
+    // first without waiting for a render.
+    const current = renderedHunksRef.current;
+    const next = expandFromRawCode(current, sourceLines, range.start, range.end);
+    if (!expansionChanged(current, next)) {
+      // ``expandFromRawCode`` returns the input unchanged when the base source
+      // does not cover the range — no throw, no error. Left unreported, the
+      // expander is simply a button that does nothing, which is what the
+      // operator hit: "will not expose more rows... it's broken now!".
+      toast.show({
+        kind: 'warning',
+        title: 'Could not expand context',
+        message: expansionFailureReason(range, sourceLines.length),
+        durationMs: 0,
+      });
+      return;
+    }
+    renderedHunksRef.current = next;
+    setRenderedHunks(next);
   }
 
   function renderGapDecoration(gap) {

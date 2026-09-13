@@ -43,6 +43,14 @@ def _patch_run_git(stub):
 
 
 class DetectDefaultBranchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # ``detect_default_branch`` memoizes per clone path — resolving it
+        # can cost a ``git ls-remote`` NETWORK round-trip, and the Files
+        # tree asks once per repo on every load. Module-level state leaks
+        # between cases, so each one starts from a cold cache.
+        git_diff_utils.forget_default_branches()
+        self.addCleanup(git_diff_utils.forget_default_branches)
+
     def test_returns_branch_from_local_origin_head_symref(self) -> None:
         # Fast path: the local clone has ``refs/remotes/origin/HEAD``
         # set, so we never need to talk to the remote.
@@ -117,3 +125,130 @@ class DetectDefaultBranchTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DefaultBranchCacheTests(unittest.TestCase):
+    """Resolving the default branch is expensive; do it once per clone.
+
+    When a clone has no ``origin/HEAD`` — a ``--reference`` clone often does
+    not — the fallback is ``git ls-remote``, a NETWORK round-trip to the
+    provider. The Files tree asks once per repo, so a 25-repo task paid 25 SSH
+    handshakes every time the pane opened: "on reload the page he reload all
+    the repos and it taking forever".
+    """
+
+    def setUp(self) -> None:
+        git_diff_utils.forget_default_branches()
+        self.addCleanup(git_diff_utils.forget_default_branches)
+
+    def test_the_remote_is_asked_once_not_once_per_load(self) -> None:
+        calls = []
+
+        def fake_run_git(cwd, args, **kwargs):
+            calls.append(args[0])
+            return '' if args[0] == 'symbolic-ref' else 'ref: refs/heads/develop\tHEAD'
+
+        with patch.object(git_diff_utils, 'run_git', side_effect=fake_run_git):
+            first = git_diff_utils.detect_default_branch('/ws/repo')
+            second = git_diff_utils.detect_default_branch('/ws/repo')
+            third = git_diff_utils.detect_default_branch('/ws/repo')
+
+        self.assertEqual([first, second, third], ['develop'] * 3)
+        self.assertEqual(calls.count('ls-remote'), 1, f'asked the remote {calls.count("ls-remote")}x')
+
+    def test_each_clone_is_cached_separately(self) -> None:
+        answers = {'/ws/a': 'main', '/ws/b': 'develop'}
+
+        def fake_run_git(cwd, args, **kwargs):
+            if args[0] == 'symbolic-ref':
+                return f'origin/{answers[cwd]}'
+            return ''
+
+        with patch.object(git_diff_utils, 'run_git', side_effect=fake_run_git):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/a'), 'main')
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/b'), 'develop')
+            # ...and still correct on the cached second pass.
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/a'), 'main')
+
+    def test_a_failure_is_not_cached_forever(self) -> None:
+        """Caching '' permanently would pin a transient network blip.
+
+        But not caching it at all means an unreachable remote costs a full
+        timeout on every load, which is the problem in the first place — so
+        the miss is remembered briefly and then retried.
+        """
+        # The clock is pinned on BOTH sides — the miss is recorded against it
+        # too, so a fake "later" that is earlier than the real monotonic clock
+        # would silently read as "still within the TTL".
+        with patch.object(git_diff_utils.time, 'monotonic', return_value=100.0), \
+                patch.object(git_diff_utils, 'run_git', return_value=''):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/down'), '')
+
+        # Within the TTL: the remote is not asked again.
+        with patch.object(git_diff_utils.time, 'monotonic', return_value=102.0), \
+                patch.object(git_diff_utils, 'run_git') as never:
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/down'), '')
+            never.assert_not_called()
+
+        # Past it, kato retries and a recovered remote is picked up.
+        with patch.object(git_diff_utils.time, 'monotonic', return_value=200.0), \
+                patch.object(git_diff_utils, 'run_git', return_value='origin/main'):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/down'), 'main')
+
+    def test_a_miss_clears_within_seconds_not_minutes(self) -> None:
+        """An unresolved base fails the Changes tab, the commit list AND diff
+        context expansion closed. Remembering that for a minute after one blip
+        — or right after a clone, before ``origin/HEAD`` exists — hides a repo
+        that would have answered on the very next try. The window only has to
+        be long enough to collapse one tree walk's burst.
+        """
+        self.assertLessEqual(
+            git_diff_utils._DEFAULT_BRANCH_MISS_TTL_SECONDS, 10.0,
+            'a cached miss disables the diff base while it lasts',
+        )
+        with patch.object(git_diff_utils.time, 'monotonic', return_value=100.0), \
+                patch.object(git_diff_utils, 'run_git', return_value=''):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/fresh'), '')
+        # Ten seconds later the repo has finished cloning and answers.
+        with patch.object(git_diff_utils.time, 'monotonic', return_value=110.0), \
+                patch.object(git_diff_utils, 'run_git', return_value='origin/main'):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/fresh'), 'main')
+
+    def test_forget_clears_it_for_a_re_clone(self) -> None:
+        # A repo that was deleted and cloned again can have a different
+        # default branch; the reset is how that is picked up.
+        with patch.object(git_diff_utils, 'run_git', return_value='origin/main'):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/r'), 'main')
+        git_diff_utils.forget_default_branches()
+        with patch.object(git_diff_utils, 'run_git', return_value='origin/develop'):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/r'), 'develop')
+
+
+class SyncInvalidatesTheCacheTests(unittest.TestCase):
+    """A sync can clone a repo that was missing, or replace a broken one.
+
+    The cache is keyed by clone PATH and lives for the process, so a fresh
+    clone landing on a different default branch would otherwise keep being
+    diffed against the old one. ``forget_default_branches`` existed only as a
+    test seam until this wired it where its docstring already claimed it ran.
+    """
+
+    def test_the_sync_route_drops_the_cached_branches(self) -> None:
+        from unittest.mock import MagicMock
+        from webserver.kato_webserver.app import create_app
+        from webserver.kato_webserver import app as app_module
+
+        git_diff_utils.forget_default_branches()
+        self.addCleanup(git_diff_utils.forget_default_branches)
+
+        with patch.object(git_diff_utils, 'run_git', return_value='origin/main'):
+            self.assertEqual(git_diff_utils.detect_default_branch('/ws/r'), 'main')
+
+        service = MagicMock()
+        service.repositories.sync_task_repositories.return_value = {'synced': []}
+        app = create_app(session_manager=MagicMock())
+        app.config['AGENT_SERVICE'] = service
+        with patch.object(app_module, 'forget_default_branches') as dropped:
+            app.test_client().post('/api/sessions/T-1/sync-repositories')
+        dropped.assert_called_once()
+

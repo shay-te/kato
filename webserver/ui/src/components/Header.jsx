@@ -85,8 +85,16 @@ export default function Header({
           <span className="header-status-text">{statusText}</span>
         </span>
       )}
+      {/* ``header-icon-btn`` is an OPT-IN, and these two are the entire reason
+          the style exists. It used to be a descendant rule — ``header
+          button:not(.header-status)`` — which reached every button inside
+          every <header> in the app and forced an icon box on things that are
+          not icons (the waiting-task chip is portaled in here, so no reading
+          of this file could have shown that). A class only reaches what asks
+          for it. */}
       <button
         type="button"
+        className="header-icon-btn"
         data-tooltip="Settings — repositories, providers, notifications, and more."
         aria-label="Open settings"
         onClick={onOpenSettings}
@@ -96,6 +104,7 @@ export default function Header({
       </button>
       <button
         type="button"
+        className="header-icon-btn"
         data-tooltip="Refresh the task list — re-scans tickets and reloads workspace state."
         aria-label={refreshing ? 'Refreshing…' : 'Refresh sessions'}
         aria-busy={refreshing}

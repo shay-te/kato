@@ -333,10 +333,17 @@ export default function FilesTab({
   function closePathMenu() {
     setPathMenu(null);
   }
-  async function copyPathMenuRelativePath() {
-    const repoId = pathMenu?.repoId;
+  // What the path menu was opened on, read BEFORE it closes (closing clears
+  // ``pathMenu``). Every menu action starts here rather than each one
+  // re-reading and re-trimming the same two fields.
+  function takePathMenuTarget() {
+    const repoId = String(pathMenu?.repoId || '').trim();
     const path = String(pathMenu?.relativePath || '').trim();
     closePathMenu();
+    return { repoId, path };
+  }
+  async function copyPathMenuRelativePath() {
+    const { repoId, path } = takePathMenuTarget();
     await copyRepoRelativePath(repoId, path);
   }
   // Throw away this file's changes — measured against the SAME base branch
@@ -350,9 +357,7 @@ export default function FilesTab({
   //
   // Confirms first — unlike every other item in this menu it destroys work.
   async function discardPathMenuFileChanges() {
-    const repoId = String(pathMenu?.repoId || '').trim();
-    const path = String(pathMenu?.relativePath || '').trim();
-    closePathMenu();
+    const { repoId, path } = takePathMenuTarget();
     if (!path) { return; }
     const ok = typeof window !== 'undefined' && typeof window.confirm === 'function'
       ? window.confirm(
@@ -381,17 +386,14 @@ export default function FilesTab({
   }
 
   async function copyPathMenuFileName() {
-    const path = String(pathMenu?.relativePath || '').trim();
-    closePathMenu();
+    const { path } = takePathMenuTarget();
     await copyFileName(path);
   }
   // Drop the file's path into the chat composer as a reference (repo-scoped
   // when the repo is known), so the operator can point Claude at the whole
   // file without pasting its contents.
   function placePathInChat() {
-    const repoId = String(pathMenu?.repoId || '').trim();
-    const path = String(pathMenu?.relativePath || '').trim();
-    closePathMenu();
+    const { repoId, path } = takePathMenuTarget();
     if (!path) { return; }
     const reference = repoId ? `${repoId}/${path}` : path;
     appendToInput(`\`${reference}\``);
@@ -535,7 +537,20 @@ export default function FilesTab({
           taskId={taskId}
         />
       ))
-      : <p className="files-tab-message">Loading files…</p>;
+      : (
+        /* No remembered repos — a task never opened in this browser, or one
+           whose memory was cleared. A bare "Loading files…" line reads as a
+           dead pane on a slow first load, so this is a real indeterminate
+           bar: "i don't need to see this after kato restart, just show the
+           repos or show progressbar." */
+        <div
+          className="files-tab-progress"
+          role="progressbar"
+          aria-label="Loading files"
+        >
+          <span className="files-tab-progress-bar" aria-hidden="true" />
+        </div>
+      );
   } else if (status === 'error') {
     body = <p className="files-tab-message error">{error}</p>;
   } else if (trees.length === 0) {
@@ -932,15 +947,25 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId }) {
   return (
     <section className="files-tab-repo is-loading">
       <StickyHeader as="header" className="files-tab-repo-header">
+        {/* THE SAME ROW as a loaded repo, with the spinner standing in for the
+            +/- stats — chevron, name, branch chip and history button all in
+            their final places. It used to be a stripped-down header, so the
+            pane visibly RE-LAID-OUT when the tree arrived: "when loaded looks
+            different, make them the same just with loader."
+
+            The controls are inert while loading (there is nothing to collapse
+            and no commits to list yet) but they hold their space, so nothing
+            moves under the operator when the real row replaces this one. */}
         <div className="files-tab-repo-header-inner">
+          <span className="files-tab-repo-chevron">
+            <Icon name="chevron-down" />
+          </span>
           <span className="files-tab-repo-name" data-tooltip={cwd}>{heading}</span>
           {branchWorthShowing(branch, taskId) && (
             <span className="files-tab-repo-branch">{branch}</span>
           )}
-          {/* The shared button spinner (``BusyIcon busy``) — a small rotating
-              ring, the same one every in-flight action in the app uses. It
-              read "loading…" as words, which on a 25-repo task stacked
-              twenty-five identical labels down the pane. */}
+          {/* Where the +N/-N stats land. The shared button spinner — the same
+              rotating ring every in-flight action in the app uses. */}
           <span
             className="files-tab-repo-loading"
             role="status"
@@ -948,6 +973,15 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId }) {
           >
             <BusyIcon busy idle="" />
           </span>
+          <button
+            type="button"
+            className="files-tab-repo-commits-btn"
+            disabled
+            aria-hidden="true"
+            tabIndex={-1}
+          >
+            <Icon name="history" />
+          </button>
         </div>
       </StickyHeader>
     </section>

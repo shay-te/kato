@@ -159,3 +159,154 @@ describe('createDataStore.use — React binding', () => {
     expect(result.current.data).toBe(dataRef);
   });
 });
+
+
+// A REAL in-memory adapter with the same contract as ./persistedPayloads.js
+// (read / write / forget over stored TEXT). Gated so a test can hold the
+// restore mid-read and let the fetch win the race.
+//
+// ``read`` snapshots the value at CALL time, matching a real IndexedDB
+// readonly transaction — it sees the store as it was when the read was issued,
+// not after a later write commits. Re-reading the map on resume instead made
+// the gated race test tautological: the fetch's own write-back had already
+// replaced the stale value it was supposed to prove gets dropped.
+function makePersist(seed = {}) {
+  const s = { store: new Map(Object.entries(seed)), gate: null, reads: 0, writes: [] };
+  const persist = {
+    read: async (taskId) => {
+      s.reads += 1;
+      const snapshot = s.store.get(taskId);
+      if (s.gate) { await s.gate.promise; }
+      return snapshot;
+    },
+    write: async (taskId, text) => { s.writes.push(taskId); s.store.set(taskId, text); },
+    forget: async (taskId) => { s.store.delete(taskId); },
+  };
+  return { persist, s };
+}
+
+describe('createDataStore — durable payloads (reload is instant)', () => {
+  test('a stored payload paints BEFORE the fetch lands', async () => {
+    const { fetch, s } = makeFetcher({ v: 2 });
+    s.gate = deferred();                                   // fetch held open
+    const { persist } = makePersist({ T1: JSON.stringify({ v: 1 }) });
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    const p = child.load('T1');
+    await flush();
+    expect(child.get('T1')).toMatchObject({ data: { v: 1 }, status: 'ready' });
+
+    s.gate.resolve(); await p;                             // fresh data still wins in the end
+    expect(child.get('T1').data).toEqual({ v: 2 });
+  });
+
+  test('the restore adopts the stored bytes as the signature — an identical fetch re-renders nothing', async () => {
+    const { fetch } = makeFetcher({ v: 1 });
+    let parses = 0;
+    const parse = (x) => { parses += 1; return { ...x }; };
+    const { persist } = makePersist({ T1: JSON.stringify({ v: 1 }) });
+    const child = createDataStore({ fetch, parse, empty: null, persist });
+
+    await child.load('T1');
+    await flush();
+    const restored = child.get('T1').data;
+    expect(parses).toBe(1);                                // parsed for the restore ONLY
+    expect(child.get('T1').data).toBe(restored);           // fetch found identical bytes
+  });
+
+  test('a fetch that wins the race is never overwritten by the restore', async () => {
+    const { fetch } = makeFetcher({ v: 'fresh' });
+    const { persist, s } = makePersist({ T1: JSON.stringify({ v: 'stale' }) });
+    s.gate = deferred();                                   // restore held open
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    await child.load('T1');                                // fetch lands first
+    expect(child.get('T1').data).toEqual({ v: 'fresh' });
+    s.gate.resolve(); await flush();
+    expect(child.get('T1').data).toEqual({ v: 'fresh' });  // stale restore dropped
+  });
+
+  test('a task purged mid-restore is never resurrected', async () => {
+    const { fetch } = makeFetcher({ v: 1 });
+    const { persist, s } = makePersist({ T1: JSON.stringify({ v: 1 }) });
+    s.gate = deferred();
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    const p = child.load('T1');
+    child.purge('T1');
+    s.gate.resolve(); await flush(); await p;
+    expect(child.get('T1')).toBe(null);
+  });
+
+  test('a corrupt stored payload is ignored, not thrown', async () => {
+    const { fetch, s } = makeFetcher({ v: 1 });
+    s.gate = deferred();
+    const { persist } = makePersist({ T1: 'not json{' });
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    const p = child.load('T1');
+    await flush();
+    expect(child.get('T1').status).toBe('loading');        // no restore, no crash
+    s.gate.resolve(); await p;
+    expect(child.get('T1').data).toEqual({ v: 1 });
+  });
+
+  test('storage is read at most once per task', async () => {
+    const { fetch } = makeFetcher({ v: 1 });
+    const { persist, s } = makePersist();
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+    await child.load('T1');
+    await child.load('T1');
+    await child.load('T1');
+    expect(s.reads).toBe(1);
+  });
+
+  test('only CHANGED bytes are written back', async () => {
+    const { fetch, s: f } = makeFetcher({ v: 1 });
+    const { persist, s } = makePersist();
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    await child.load('T1');
+    expect(s.writes).toEqual(['T1']);
+    expect(s.store.get('T1')).toBe(JSON.stringify({ v: 1 }));
+
+    await child.load('T1');                                // identical bytes
+    expect(s.writes).toEqual(['T1']);                      // no second write
+
+    f.payload = { v: 2 };
+    await child.load('T1');
+    expect(s.writes).toEqual(['T1', 'T1']);
+    expect(s.store.get('T1')).toBe(JSON.stringify({ v: 2 }));
+  });
+
+  test('LRU eviction keeps the durable copy; forgetting the task drops it', async () => {
+    const { fetch } = makeFetcher({ v: 1 });
+    const { persist, s } = makePersist();
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+
+    await child.load('T1');
+    child.purge('T1');                                     // memory only
+    await flush();
+    expect(s.store.has('T1')).toBe(true);
+
+    await child.load('T1');
+    child.purge('T1', { persisted: true });                // operator forgot it
+    await flush();
+    expect(s.store.has('T1')).toBe(false);
+  });
+
+  test('a re-visited task restores again after eviction', async () => {
+    const { fetch, s: f } = makeFetcher({ v: 1 });
+    const { persist, s } = makePersist();
+    const child = createDataStore({ fetch, parse: clone, empty: null, persist });
+    await child.load('T1');
+    child.purge('T1');
+
+    f.gate = deferred();
+    const p = child.load('T1');
+    await flush();
+    expect(child.get('T1')).toMatchObject({ data: { v: 1 }, status: 'ready' });
+    expect(s.reads).toBe(2);                               // hydrate flag cleared by purge
+    f.gate.resolve(); await p;
+  });
+});

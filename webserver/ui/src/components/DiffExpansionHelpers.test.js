@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   basePathForDiffFile,
   buildDiffRenderItems,
+  expansionChanged,
+  expansionFailureReason,
   expansionRangeForGap,
   pendingCommentExpansions,
   splitSourceLines,
@@ -118,4 +120,55 @@ test('expansionRangeForGap expands one edge or the whole gap with shift', () => 
     start: 10,
     end: 50,
   });
+});
+
+// "will not expose more rows... it's broken now!"
+//
+// ``expandFromRawCode`` returns the hunks UNCHANGED — no throw, no error —
+// when the base source it was handed does not cover the requested range. A
+// stale or wrong base file therefore made the gap expander a button that did
+// nothing at all. Verified against the real library: a 6-line base asked to
+// reveal line 8 comes back byte-identical.
+test('expansionChanged sees a revealed line', () => {
+  const before = [{ oldStart: 5, oldLines: 3, changes: [1, 2, 3] }];
+  const after = [{ oldStart: 5, oldLines: 4, changes: [1, 2, 3, 4] }];
+  assert.equal(expansionChanged(before, after), true);
+});
+
+test('expansionChanged is false when nothing was revealed', () => {
+  const hunks = [{ oldStart: 5, oldLines: 3, changes: [1, 2, 3] }];
+  // A fresh array of equal hunks is still nothing revealed — the library may
+  // hand back a new reference, so identity is not the test.
+  const same = [{ oldStart: 5, oldLines: 3, changes: [1, 2, 3] }];
+  assert.equal(expansionChanged(hunks, same), false);
+  assert.equal(expansionChanged(hunks, hunks), false);
+});
+
+test('expansionChanged notices two hunks merging into one', () => {
+  const before = [{ oldStart: 5, oldLines: 3, changes: [] }, { oldStart: 9, oldLines: 3, changes: [] }];
+  const after = [{ oldStart: 5, oldLines: 7, changes: [] }];
+  assert.equal(expansionChanged(before, after), true);
+});
+
+test('expansionChanged tolerates junk instead of throwing', () => {
+  assert.equal(expansionChanged(null, null), false);
+  assert.equal(expansionChanged(undefined, []), false);
+  assert.equal(expansionChanged([], [{ oldStart: 1, oldLines: 1, changes: [] }]), true);
+});
+
+test('expansionFailureReason names the stale base and the numbers', () => {
+  const reason = expansionFailureReason({ start: 438, end: 439 }, 120);
+  assert.match(reason, /120 lines/);
+  assert.match(reason, /line 438/);
+  assert.match(reason, /out of date/);
+});
+
+test('expansionFailureReason reports an empty base as empty', () => {
+  assert.match(expansionFailureReason({ start: 5, end: 6 }, 0), /came back empty/);
+});
+
+test('expansionFailureReason does not blame length when the base is long enough', () => {
+  const reason = expansionFailureReason({ start: 5, end: 6 }, 500);
+  assert.doesNotMatch(reason, /out of date/);
+  assert.match(reason, /does not match/);
 });

@@ -201,6 +201,26 @@ export function deriveAgentStatus(
 //
 // Under-polling a busy task shows the operator stale code; over-polling a quiet
 // one costs only what we are trimming. Every uncertain case takes the second.
+// Is an agent of this derived KIND busy — i.e. must a queued prompt wait?
+//
+// Lives here, next to the derivation, because answering it IS a status
+// decision, and CLAUDE.md allows exactly one place to make those. Callers pass
+// the ``kind`` that ``deriveAgentStatus`` returned; they never inspect
+// ``session.working`` themselves.
+//
+// Uncertain kinds count as BUSY. The queue drain delivers on a busy -> idle
+// edge, so treating "connecting" or "unknown" as idle would manufacture an
+// ending that never happened and release a prompt mid-turn.
+const IDLE_AGENT_KINDS = new Set([
+  AGENT_STATUS_KIND.IDLE,
+  AGENT_STATUS_KIND.SLEEPING,
+  AGENT_STATUS_KIND.CLOSED,
+]);
+
+export function isBusyAgentKind(kind) {
+  return !IDLE_AGENT_KINDS.has(kind);
+}
+
 export function isAgentActive(liveStatus) {
   if (!liveStatus) { return true; }
   // A turn in flight, or a background wait the turn scheduled (Monitor /

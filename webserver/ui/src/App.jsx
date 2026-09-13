@@ -34,6 +34,7 @@ import { useConfigStatus } from './hooks/useConfigStatus.js';
 import { refreshAgentVersion } from './hooks/useAgentVersion.js';
 import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
 import { useSessions } from './hooks/useSessions.js';
+import { useBackgroundQueueDrain } from './hooks/useBackgroundQueueDrain.js';
 import { clearTaskStreamCache } from './hooks/useSessionStream.js';
 import {
   setActiveTask as activateTaskCache,
@@ -105,6 +106,11 @@ export default function App() {
   // same value as the header chip (UNA-2492).
   const [agentStatuses, setAgentStatuses] = useState({});
   useEffect(() => agentStatusStore.subscribe(setAgentStatuses), []);
+  // Queued prompts for every task that is NOT on screen. The focused task's
+  // chat drains its own; without this one, a background task's next prompt
+  // waited until the operator opened its tab — "feels like i need to move
+  // to the tab to make the agent start".
+  useBackgroundQueueDrain({ sessions, activeTaskId, agentStatuses });
   // "+ Add task" picker open/closed state — owned by App so the
   // modal sits above the layout (not inside TabList) and can fire
   // a ``refresh()`` of the session list once an adoption succeeds.

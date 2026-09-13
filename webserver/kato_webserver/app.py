@@ -99,6 +99,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_SESSION_HISTORY_EVENT,
     SSE_EVENT_SESSION_IDLE,
     SSE_EVENT_SESSION_MISSING,
+    SSE_EVENT_SESSION_TURN_STATE,
     SSE_EVENT_STATUS_DISABLED,
     SSE_EVENT_STATUS_ENTRY,
 )
@@ -108,6 +109,7 @@ from kato_webserver.git_diff_utils import (
     conflicted_paths,
     current_branch,
     detect_default_branch,
+    forget_default_branches,
     diff_against_base,
     diff_for_commit,
     ensure_branch_checked_out,
@@ -3646,7 +3648,14 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
-        return _envelope_response(sync(task_id), 'synced')
+        result = sync(task_id)
+        # A sync can CLONE a repo that was missing, and a fresh clone can land
+        # on a different default branch than the one cached for that path (or
+        # replace a broken clone that had none). The cache is keyed by path
+        # and lives for the process, so without this the Files tree would keep
+        # diffing against a branch the repo no longer has.
+        forget_default_branches()
+        return _envelope_response(result, 'synced')
 
     @app.post('/api/sessions/<task_id>/finish')
     def finish_task(task_id: str):
@@ -5897,6 +5906,7 @@ def _event_stream_generator(
                     task_id=task_id, app=app,
                 ):
                     yield frame
+                yield _session_turn_state_frame(session)
                 yield from _follow_live_session(
                     session, start_index=len(backlog),
                     agent_service=agent_service, task_id=task_id, app=app,
@@ -5928,6 +5938,7 @@ def _event_stream_generator(
         key=lambda pair: pair[0],
     ):
         yield frame
+    yield _session_turn_state_frame(session)
     yield from _follow_live_session(
         session, start_index=len(backlog),
         agent_service=agent_service, task_id=task_id, app=app,
@@ -6093,6 +6104,24 @@ def _session_event_frame(event, session) -> str:
         _annotate_action_guard(raw, session)
         payload = {**payload, 'raw': raw}
     return _sse_message(SSE_EVENT_SESSION_EVENT, {'event': payload})
+
+
+def _session_turn_state_frame(session):
+    """The server's OWN answer to "is this session mid-turn right now?".
+
+    The connect backlog is replayed as ordinary ``session_event`` frames, so
+    the browser's reducer walks it exactly as if it were happening now — and a
+    trailing ``assistant`` whose ``result`` has already scrolled out of the
+    bounded tail leaves the client believing a turn is in flight. Focusing a
+    task then turned its green tab yellow on a session doing nothing.
+
+    Emitted AFTER the replay so it always wins over whatever the replay
+    inferred. The subprocess is the authority; the client stops guessing
+    liveness from history it is merely re-reading.
+    """
+    return _sse_message(SSE_EVENT_SESSION_TURN_STATE, {
+        'working': bool(getattr(session, 'is_working', False)),
+    })
 
 
 def _maybe_auto_resolve_live_event(app, session, task_id: str, event) -> bool:

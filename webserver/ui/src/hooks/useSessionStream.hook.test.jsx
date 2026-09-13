@@ -799,3 +799,160 @@ describe('useSessionStream — waiting on background work', () => {
     expect(hook.current.awaitingBackground).toBe(false);
   });
 });
+
+// "tab look green, i focus on it, he become working. can you make sure that
+// status is always true"
+//
+// The connect backlog arrives as ordinary ``session_event`` frames, so the
+// reducer walks it as if it were happening now. A trailing ``assistant``
+// whose ``result`` has scrolled out of the bounded tail therefore left
+// ``turnInFlight`` true on a session doing nothing — focusing a task turned
+// its green tab yellow. The host now states the truth after the replay.
+describe('useSessionStream — the host corrects a stale replay', () => {
+  function emitLive(raw) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_event', { event: { raw } });
+    });
+  }
+
+  function emitTurnState(working) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_turn_state', { working });
+    });
+  }
+
+  test('a result-less replayed turn does not leave the task "working"', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    // The backlog's tail: the agent spoke, and its ``result`` is no longer in
+    // the buffer.
+    emitLive({
+      type: 'assistant',
+      message: { id: 'm1', content: [{ type: 'text', text: 'done ages ago' }] },
+    });
+    expect(result.current.turnInFlight).toBe(true);
+
+    // ...then the host says what is actually true.
+    emitTurnState(false);
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('a session that IS mid-turn stays working', () => {
+    // The correction runs in both directions — it is the host's answer, not
+    // a "clear it" hack.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitTurnState(true);
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('live events after the correction still win', () => {
+    // The frame is a one-shot reconcile at connect, not a lock.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitTurnState(false);
+    emitLive({
+      type: 'assistant',
+      message: { id: 'm2', content: [{ type: 'text', text: 'working now' }] },
+    });
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('a malformed frame is ignored rather than crashing the stream', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitLive({
+      type: 'assistant',
+      message: { id: 'm3', content: [{ type: 'text', text: 'hi' }] },
+    });
+    act(() => {
+      FakeEventSource.instances[0].emit('session_turn_state', undefined);
+    });
+    // Unchanged, and still usable.
+    expect(result.current.turnInFlight).toBe(true);
+  });
+});
+
+// "moving to the tab only then mark the agent as working. which is not true"
+//
+// The other half of the same replay problem. ``markTurnBusy(false)`` clears
+// ``turnInFlight`` but deliberately PRESERVES ``awaitingBackground`` — a job
+// from an earlier turn must outlive a turn that starts none. Replaying the
+// connect backlog re-reads an old Monitor / Workflow tool_use and re-sticks
+// that flag, so focusing a task painted its tab busy and nothing could clear
+// it: the corrective frame only spoke to half the state.
+//
+// The server's ``is_working`` already covers BOTH cases (an in-flight turn and
+// a closed turn still blocked on background work), so ``working: false`` means
+// idle in every sense.
+describe('useSessionStream — the host correction covers the background wait', () => {
+  function emitLive(raw) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_event', { event: { raw } });
+    });
+  }
+  function emitTurnState(working) {
+    act(() => {
+      FakeEventSource.instances[0].emit('session_turn_state', { working });
+    });
+  }
+  const monitorCall = {
+    type: 'assistant',
+    message: { id: 'm-bg', content: [{ type: 'tool_use', name: 'Monitor', input: {} }] },
+  };
+  const resultEvent = (id) => ({ type: 'result', uuid: id, subtype: 'success' });
+
+  test('a replayed background wait does not leave the tab busy', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    // The backlog replays a long-finished turn that once started a Monitor.
+    emitLive(monitorCall);
+    emitLive(resultEvent('r1'));
+    expect(result.current.awaitingBackground).toBe(true);
+
+    emitTurnState(false);
+    expect(result.current.awaitingBackground).toBe(false);
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('a replayed Workflow is cleared too, not just the generic wait', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitLive({
+      type: 'assistant',
+      message: { id: 'm-wf', content: [{ type: 'tool_use', name: 'Workflow', input: {} }] },
+    });
+    emitLive(resultEvent('r1'));
+    expect(result.current.backgroundIsWorkflow).toBe(true);
+
+    emitTurnState(false);
+    expect(result.current.backgroundIsWorkflow).toBe(false);
+    expect(result.current.awaitingBackground).toBe(false);
+  });
+
+  test('the correction also drops a half-open turn\'s pending wait', () => {
+    // The tool_use replayed but its result did not — so ``turnHasBackgroundWait``
+    // is set and no RESULT has consumed it yet. Left behind, the NEXT result
+    // (a real, unrelated turn) would resurrect the wait from a turn long over.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitLive(monitorCall);
+    emitTurnState(false);
+    expect(result.current.awaitingBackground).toBe(false);
+
+    emitLive({
+      type: 'assistant',
+      message: { id: 'm-new', content: [{ type: 'text', text: 'a new turn' }] },
+    });
+    emitLive(resultEvent('r2'));
+    expect(result.current.awaitingBackground).toBe(false);
+  });
+
+  test('a genuinely busy session is still reported busy', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitTurnState(true);
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('a background wait started AFTER the correction still sticks', () => {
+    // The frame is a one-shot reconcile at connect, not a mute switch.
+    const { result } = renderHook(() => useSessionStream('T1'));
+    emitTurnState(false);
+    emitLive(monitorCall);
+    emitLive(resultEvent('r3'));
+    expect(result.current.awaitingBackground).toBe(true);
+  });
+});

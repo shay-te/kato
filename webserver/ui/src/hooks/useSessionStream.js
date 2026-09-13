@@ -36,6 +36,10 @@ const ACTION_LIFECYCLE = 'lifecycle';
 const ACTION_LOCAL_EVENT = 'local_event';
 const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
 const ACTION_MARK_TURN_BUSY = 'mark_turn_busy';
+// The server's authoritative busy state, distinct from the optimistic
+// ``markTurnBusy`` the composer fires on send. Separate action because it
+// replaces MORE state — see the reducer case.
+const ACTION_SESSION_TURN_STATE = 'session_turn_state';
 
 // Per-task chat state lives in this module-level Map so it survives the
 // SessionDetail unmount/remount cycle that React triggers on tab switch
@@ -596,6 +600,35 @@ export function reducer(state, action) {
         awaitingBackground: action.value ? false : state.awaitingBackground,
         backgroundIsWorkflow: action.value ? false : state.backgroundIsWorkflow,
       };
+    case ACTION_SESSION_TURN_STATE:
+      // The SERVER's answer to "is this session busy right now", emitted once
+      // after the connect backlog. It replaces the whole busy state, because
+      // it is the only fact here that was not inferred from history.
+      //
+      // ``markTurnBusy(false)`` is NOT enough, and that gap is the bug the
+      // operator kept hitting: it clears ``turnInFlight`` but deliberately
+      // preserves ``awaitingBackground`` (a job from an earlier turn must
+      // outlive a turn that starts none). Replaying the backlog re-reads any
+      // old Monitor / Workflow / run_in_background tool_use and re-sticks
+      // that flag, so focusing a task painted its tab busy — "moving to the
+      // tab only then mark the agent as working, which is not true" — and
+      // nothing could clear it, because the corrective frame only spoke to
+      // half the state.
+      //
+      // ``is_working`` on the server already covers BOTH cases: it returns
+      // true for an in-flight turn AND for a closed turn still blocked on
+      // background work (``_turn_scheduled_background_wait``). So
+      // ``working: false`` means idle in every sense, and the transient
+      // ``turnHas*`` flags must go too — otherwise the next RESULT re-derives
+      // the background wait from a turn that is long over.
+      return {
+        ...state,
+        turnInFlight: !!action.working,
+        awaitingBackground: false,
+        backgroundIsWorkflow: false,
+        turnHasBackgroundWait: false,
+        turnHasWorkflow: false,
+      };
     default:
       return state;
   }
@@ -963,6 +996,23 @@ export function useSessionStream(taskId, onIncomingEvent) {
         receivedAtEpoch: unwrapped.envelope?.received_at_epoch,
       });
       scheduleHistoryFlush();
+    });
+    // THE HOST'S OWN ANSWER, emitted once per connect after the backlog.
+    //
+    // The backlog arrives as ordinary ``session_event`` frames, so the
+    // reducer above walks it as if it were happening now — and a trailing
+    // ``assistant`` whose ``result`` has scrolled out of the bounded tail
+    // leaves ``turnInFlight`` true on a session doing nothing. Focusing a
+    // task then turned its green tab yellow: "tab look green, i focus on it,
+    // he become working".
+    //
+    // This lands AFTER the replay, so it corrects whatever the replay
+    // inferred. Liveness now comes from the subprocess, not from history the
+    // client is merely re-reading.
+    stream.addEventListener('session_turn_state', (event) => {
+      const parsed = safeParseJSON(event.data);
+      if (!parsed) { return; }
+      dispatch({ type: ACTION_SESSION_TURN_STATE, working: !!parsed.working });
     });
     stream.addEventListener('session_idle', () => {
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });

@@ -42,6 +42,45 @@ export function buildDiffRenderItems(hunks, sourceLineCount = 0) {
   return items;
 }
 
+// Did an expansion actually reveal anything?
+//
+// ``expandFromRawCode`` returns the hunks UNCHANGED when the base source it
+// was handed does not cover the requested range — no error, no throw. So a
+// stale or wrong base file made the gap expander look like a dead button:
+// "will not expose more rows... it's broken now!". Comparing before/after is
+// the only way to tell "nothing to reveal" from "could not reveal it".
+//
+// Compared by shape, not identity: the library may return a fresh array whose
+// hunks are the same, which is still nothing revealed.
+export function expansionChanged(before, after) {
+  const a = Array.isArray(before) ? before : [];
+  const b = Array.isArray(after) ? after : [];
+  if (a.length !== b.length) { return true; }
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (Number(x?.oldStart) !== Number(y?.oldStart)) { return true; }
+    if (Number(x?.oldLines) !== Number(y?.oldLines)) { return true; }
+    if ((x?.changes || []).length !== (y?.changes || []).length) { return true; }
+  }
+  return false;
+}
+
+// Why an expansion revealed nothing, in words the operator can act on.
+// ``lineCount`` is how many lines the base file actually has.
+export function expansionFailureReason(range, lineCount) {
+  const needed = Math.max(Number(range?.start || 0), Number(range?.end || 0) - 1);
+  const have = Number(lineCount || 0);
+  if (have === 0) {
+    return 'the base version of this file came back empty';
+  }
+  if (needed > have) {
+    return `the base version has ${have} lines but this diff expects line `
+      + `${needed} — the base kato is diffing against looks out of date`;
+  }
+  return 'the base version does not match this diff';
+}
+
 export function expansionRangeForGap(
   gap,
   direction,

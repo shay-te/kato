@@ -56,6 +56,15 @@ PERMISSION_REQUEST_EVENT_TYPES = frozenset({
 # webserver/ui/src/hooks/useStatusFeed.js (global host status feed).
 
 SSE_EVENT_SESSION_EVENT = 'session_event'
+#: The host's OWN answer to "is this session mid-turn right now?", emitted
+#: once per connect AFTER the backlog replay.
+#:
+#: The backlog goes out as ordinary ``session_event`` frames, so the browser
+#: walks it exactly as if it were happening now — and a trailing ``assistant``
+#: whose ``result`` has scrolled out of the bounded tail leaves the client
+#: believing a turn is in flight. This frame is how the host corrects that
+#: instead of the client inferring liveness from history it is re-reading.
+SSE_EVENT_SESSION_TURN_STATE = 'session_turn_state'
 SSE_EVENT_SESSION_HISTORY_EVENT = 'session_history_event'
 SSE_EVENT_SESSION_IDLE = 'session_idle'
 SSE_EVENT_SESSION_MISSING = 'session_missing'

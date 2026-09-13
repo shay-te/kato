@@ -14,6 +14,10 @@ so the UI degrades gracefully (empty pane > stack trace).
 
 from __future__ import annotations
 
+import time
+
+import threading
+
 import re
 import subprocess
 from pathlib import Path
@@ -213,7 +217,71 @@ def detect_default_branch(cwd: str) -> str:
     — the caller surfaces a precise error so the operator can fix
     the config rather than silently picking a wrong base.
     """
-    return _branch_from_local_head(cwd) or _branch_from_ls_remote(cwd)
+    cached = _cached_default_branch(cwd)
+    if cached is not None:
+        return cached
+    resolved = _branch_from_local_head(cwd) or _branch_from_ls_remote(cwd)
+    _remember_default_branch(cwd, resolved)
+    return resolved
+
+
+#: Resolved default branches, keyed by clone path. A repo's default branch
+#: does not change while kato is running, and resolving it is expensive: when
+#: the clone has no ``origin/HEAD`` (a ``--reference`` clone often does not)
+#: the fallback is ``git ls-remote`` — a NETWORK round-trip to the provider.
+#:
+#: The Files tree resolves it PER REPO on every load, so a 25-repo task paid
+#: 25 SSH handshakes each time the pane opened: "on reload the page he reload
+#: all the repos and it taking forever".
+_DEFAULT_BRANCH_CACHE: dict[str, str] = {}
+
+#: Failures are cached too, but only for long enough to collapse ONE burst.
+#:
+#: A cached miss is not a free optimisation: an unresolved default branch means
+#: no diff base, so the Changes tab, the commit list and diff context expansion
+#: all fail closed for as long as it is remembered. A minute of that after a
+#: single blip is the wrong trade — especially right after a clone or a repair,
+#: when ``origin/HEAD`` legitimately does not exist yet and the very next
+#: attempt would have succeeded.
+#:
+#: A few seconds still removes the pathology this cache exists for (a 25-repo
+#: tree walk asking 25 times inside one request) while letting the next page
+#: load recover on its own.
+_DEFAULT_BRANCH_MISS: dict[str, float] = {}
+_DEFAULT_BRANCH_MISS_TTL_SECONDS = 5.0
+
+_DEFAULT_BRANCH_LOCK = threading.Lock()
+
+
+def _cached_default_branch(cwd: str):
+    """The remembered answer, or ``None`` when it must be resolved."""
+    key = str(cwd or '')
+    with _DEFAULT_BRANCH_LOCK:
+        if key in _DEFAULT_BRANCH_CACHE:
+            return _DEFAULT_BRANCH_CACHE[key]
+        missed_at = _DEFAULT_BRANCH_MISS.get(key)
+        if missed_at is not None:
+            if (time.monotonic() - missed_at) < _DEFAULT_BRANCH_MISS_TTL_SECONDS:
+                return ''
+            del _DEFAULT_BRANCH_MISS[key]
+    return None
+
+
+def _remember_default_branch(cwd: str, resolved: str) -> None:
+    key = str(cwd or '')
+    with _DEFAULT_BRANCH_LOCK:
+        if resolved:
+            _DEFAULT_BRANCH_CACHE[key] = resolved
+            _DEFAULT_BRANCH_MISS.pop(key, None)
+        else:
+            _DEFAULT_BRANCH_MISS[key] = time.monotonic()
+
+
+def forget_default_branches() -> None:
+    """Drop every remembered answer — for tests, and for a repo re-clone."""
+    with _DEFAULT_BRANCH_LOCK:
+        _DEFAULT_BRANCH_CACHE.clear()
+        _DEFAULT_BRANCH_MISS.clear()
 
 
 def _branch_from_local_head(cwd: str) -> str:

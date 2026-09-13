@@ -1619,12 +1619,16 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
 
   beforeEach(() => { localStorage.clear(); });
 
-  test('a task never seen before still shows the plain message', () => {
-    // Nothing is remembered, so there is nothing honest to draw.
+  test('a task never seen before shows a PROGRESS BAR, not a dead line', () => {
+    // Nothing is remembered, so there are no repo rows to draw honestly —
+    // but a static "Loading files…" reads as a dead pane on a slow first
+    // load: "just show the repos or show progressbar."
     fetchFileTree.mockReturnValue(new Promise(() => {}));  // never resolves
     fetchDiff.mockResolvedValue({ diffs: [] });
-    render(<FilesTab taskId="NEW" onOpenFile={vi.fn()} />);
-    expect(screen.getByText(/loading files/i)).toBeInTheDocument();
+    const { container } = render(<FilesTab taskId="NEW" onOpenFile={vi.fn()} />);
+    expect(screen.getByRole('progressbar', { name: /loading files/i }))
+      .toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/Loading files…/);
   });
 
   test('a task seen before draws its repo headers immediately, each loading', async () => {
@@ -1656,5 +1660,40 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     // Per repo, not one global spinner.
     expect(screen.getByLabelText('Loading client')).toBeInTheDocument();
     expect(screen.getByLabelText('Loading backend')).toBeInTheDocument();
+  });
+
+  test('the loading row has the SAME shape as a loaded one', async () => {
+    // "when loaded looks different. make them the same just with loader."
+    // A stripped-down skeleton makes the pane re-lay-out the moment the tree
+    // arrives; the operator sees the rows jump rather than fill in.
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    fetchFileTree.mockResolvedValue(TREE);
+    const loaded = render(<FilesTab taskId="T-SHAPE" onOpenFile={vi.fn()} />);
+    // Waited on the SECTION, not on text: the repo name also appears in the
+    // scope picker, so a text query is ambiguous here.
+    await waitFor(() => {
+      expect(
+        loaded.container.querySelector('.files-tab-repo:not(.is-loading) .files-tab-repo-header-inner'),
+      ).toBeTruthy();
+    });
+    const loadedParts = [...loaded.container
+      .querySelector('.files-tab-repo:not(.is-loading) .files-tab-repo-header-inner').children]
+      .map((el) => el.className.split(' ')[0]);
+    cleanup();
+    resetTaskCache();
+
+    fetchFileTree.mockReturnValue(new Promise(() => {}));
+    const loading = render(<FilesTab taskId="T-SHAPE" onOpenFile={vi.fn()} />);
+    const loadingParts = [...loading.container
+      .querySelector('.files-tab-repo.is-loading .files-tab-repo-header-inner').children]
+      .map((el) => el.className.split(' ')[0]);
+
+    // Chevron, name and history button occupy the same slots; only the
+    // stats block is replaced by the spinner.
+    expect(loadingParts[0]).toBe(loadedParts[0]);          // chevron
+    expect(loadingParts[1]).toBe('files-tab-repo-name');
+    expect(loadingParts[loadingParts.length - 1])
+      .toBe(loadedParts[loadedParts.length - 1]);          // history button
+    expect(loadingParts).toContain('files-tab-repo-loading');
   });
 });

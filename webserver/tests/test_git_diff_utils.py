@@ -176,6 +176,14 @@ class EnsureBranchCheckedOutTests(unittest.TestCase):
 
 
 class DetectDefaultBranchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # ``detect_default_branch`` memoizes per clone path — resolving it
+        # can cost a ``git ls-remote`` NETWORK round-trip, and the Files
+        # tree asks once per repo on every load. Module-level state leaks
+        # between cases, so each one starts from a cold cache.
+        git_diff_utils.forget_default_branches()
+        self.addCleanup(git_diff_utils.forget_default_branches)
+
     def test_uses_local_origin_head_when_set(self) -> None:
         # symbolic-ref returns ``origin/develop`` → strip the ``origin/`` prefix.
         with patch.object(git_diff_utils, 'run_git', return_value='origin/develop\n'):

@@ -28,11 +28,13 @@ function hasExtension(path, extensions) {
   return extensions.some((ext) => lower.endsWith(ext));
 }
 
-export function isSvgPath(path) {
+// Internal to this module — the exported vocabulary is ``isImagePath`` and
+// ``canToggleView``. Exporting these too was surface nobody imported.
+function isSvgPath(path) {
   return hasExtension(path, ['.svg']);
 }
 
-export function isRasterImagePath(path) {
+function isRasterImagePath(path) {
   return hasExtension(path, RASTER_EXTENSIONS);
 }
 

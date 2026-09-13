@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import {
   closeTab,
+  pickTabView,
   findTab,
   patchTab,
   sortPinnedFirst,
@@ -305,3 +306,73 @@ test('re-opening the same file at a NEW line updates the line in place', functio
   assert.equal(second.tabs[0].line, 140);
   assert.equal(second.tabs[0].openRequestId, 2);
 });
+
+// ---- The remembered view -------------------------------------------------
+//
+// "i move between files. 1 file show diff. entire show entire file.
+// switching the files. he forget the last state. what is showing."
+//
+// ``upsertTab`` forced ``view: 'file'`` whenever an opener did not restate
+// it — and the file tree, the content search and the reveal button all open
+// without stating one. So coming back to a file dropped it out of diff view.
+
+test('pickTabView: an explicit view always wins', () => {
+  assert.equal(pickTabView('diff', { view: 'file' }), 'diff');
+  assert.equal(pickTabView('file', { view: 'diff' }), 'file');
+});
+
+test('pickTabView: an opener that says nothing inherits the tab', () => {
+  assert.equal(pickTabView(undefined, { view: 'diff' }), 'diff');
+  assert.equal(pickTabView('', { view: 'diff' }), 'diff');
+  assert.equal(pickTabView(null, { view: 'file' }), 'file');
+});
+
+test('pickTabView: a brand-new tab defaults to the whole file', () => {
+  assert.equal(pickTabView(undefined, null), 'file');
+  assert.equal(pickTabView(undefined, {}), 'file');
+  // A junk stored value is not trusted either.
+  assert.equal(pickTabView(undefined, { view: 'sideways' }), 'file');
+});
+
+test('re-opening a diff-view file from the tree KEEPS the diff', () => {
+  const info = { absolutePath: '/ws/a.py', relativePath: 'a.py', repoId: 'r' };
+  let { tabs, activeKey } = upsertTab([], null, { ...info, view: 'diff' }, 'T1');
+  assert.equal(findTab(tabs, activeKey).view, 'diff');
+
+  // The tree opens with no ``view`` — this is what used to reset it.
+  ({ tabs, activeKey } = upsertTab(tabs, activeKey, info, 'T1'));
+  assert.equal(findTab(tabs, activeKey).view, 'diff');
+});
+
+test('the view toggle still flips, because it states the view', () => {
+  const info = { absolutePath: '/ws/a.py', relativePath: 'a.py', repoId: 'r' };
+  let { tabs, activeKey } = upsertTab([], null, { ...info, view: 'diff' }, 'T1');
+  ({ tabs, activeKey } = upsertTab(tabs, activeKey, { ...info, view: 'file' }, 'T1'));
+  assert.equal(findTab(tabs, activeKey).view, 'file');
+});
+
+test('each file keeps its OWN view across switches', () => {
+  const a = { absolutePath: '/ws/a.py', relativePath: 'a.py', repoId: 'r' };
+  const b = { absolutePath: '/ws/b.py', relativePath: 'b.py', repoId: 'r' };
+  let state = upsertTab([], null, { ...a, view: 'diff' }, 'T1');
+  state = upsertTab(state.tabs, state.activeKey, { ...b, view: 'file' }, 'T1');
+  // Back to A, stating nothing.
+  state = upsertTab(state.tabs, state.activeKey, a, 'T1');
+  assert.equal(findTab(state.tabs, tabKeyFor(a)).view, 'diff');
+  assert.equal(findTab(state.tabs, tabKeyFor(b)).view, 'file');
+});
+
+test('the remembered scroll/fold state survives a plain re-open', () => {
+  // Monaco's saved view state carries the folded regions — "what rows
+  // exposed" — so clobbering it would lose the expansion too.
+  const info = { absolutePath: '/ws/a.py', relativePath: 'a.py', repoId: 'r' };
+  let { tabs, activeKey } = upsertTab([], null, { ...info, view: 'diff' }, 'T1');
+  tabs = patchTab(tabs, activeKey, {
+    editorViewState: { folded: [4, 9] }, diffScrollTop: 820,
+  });
+  ({ tabs, activeKey } = upsertTab(tabs, activeKey, info, 'T1'));
+  const tab = findTab(tabs, activeKey);
+  assert.deepEqual(tab.editorViewState, { folded: [4, 9] });
+  assert.equal(tab.diffScrollTop, 820);
+});
+

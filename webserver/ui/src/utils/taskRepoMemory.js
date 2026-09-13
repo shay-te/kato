@@ -79,17 +79,6 @@ export function rememberRepos(taskId, trees) {
   writeAll(all);
 }
 
-// Drop one task's memory — the operator forgetting a task, or a sync that
-// legitimately emptied its workspace.
-export function forgetRepos(taskId) {
-  const key = String(taskId || '').trim();
-  if (!key) { return; }
-  const all = readAll();
-  if (!(key in all)) { return; }
-  delete all[key];
-  writeAll(all);
-}
-
 // Is this repo's local branch worth SHOWING?
 //
 // The branch chip exists to answer one question: "is this repo actually on

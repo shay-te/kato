@@ -58,11 +58,12 @@ test('the search controls are in normal flow, never overlaid', () => {
   // "Search files…" and on each other. A flex group cannot overlap anything.
   const actions = ruleBody('.files-tab-filter-actions {');
   assert.match(actions, /display:\s*inline-flex/);
-  // Scoped under the actions group for SPECIFICITY: ``header
-  // button:not(.header-status)`` (0,1,2) styles every button inside a <header>
-  // as a 28px circle, and a bare class (0,1,0) lost to it — which is how the
-  // two text toggles rendered as big blue circles.
-  const toggle = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle {');
+  // Unscoped, and that is the point. It used to need
+  // ``.files-tab-filter-actions`` in front purely to out-specify ``header
+  // button:not(.header-status)`` (0,1,2), which styled every button inside a
+  // <header> as a 28px circle and rendered these two text toggles as big blue
+  // circles. That rule is gone, so the component states its box once.
+  const toggle = ruleBody('.files-tab-filter-toggle {');
   assert.doesNotMatch(toggle, /position:\s*absolute/);
   // A SOFTENED SQUARE. Both extremes read wrong in place: 4px was too hard
   // against a fully-rounded container, and a pill turned a 20px-tall box into
@@ -158,7 +159,7 @@ test('the on-state reuses the app\'s existing selected-chip colours', () => {
   // Operator: "the round blue is ugly, use gray/blue background color, use
   // existing colors". Same fill + hairline the header status chip already uses
   // for its active state — not a new saturated ring.
-  const on = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-on {');
+  const on = ruleBody('.files-tab-filter-toggle.is-on {');
   assert.match(on, /background:\s*rgba\(10, 132, 255, 0\.18\)/);
   assert.match(on, /border-color:\s*rgba\(10, 132, 255, 0\.4\)/);
 });
@@ -167,7 +168,7 @@ test('the exact toggle carries VS Code\'s underlined "ab" icon', () => {
   // The underline IS the icon in VS Code's Match Whole Word button. Without
   // it the two toggles are just two pairs of letters with nothing telling
   // them apart at a glance.
-  const body = ruleBody('.files-tab-filter-actions .files-tab-filter-toggle.is-word {');
+  const body = ruleBody('.files-tab-filter-toggle.is-word {');
   assert.match(body, /text-decoration:\s*underline/);
 });
 

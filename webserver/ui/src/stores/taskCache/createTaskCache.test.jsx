@@ -41,7 +41,9 @@ function makeManualPoller() {
   };
 }
 
-function makeCache({ retain = 5, ...extra } = {}) {
+// ``persistFor`` (optional) is ``(childName) => adapter`` — one durable store
+// per child, so the two children can't collide on a task id.
+function makeCache({ retain = 5, persistFor = null, ...extra } = {}) {
   // Wall clock the test drives — the idle gate measures elapsed TIME, not
   // ticks, so that hidden stretches (when createPoller skips the tick
   // entirely) still count.
@@ -50,7 +52,10 @@ function makeCache({ retain = 5, ...extra } = {}) {
   function mk(name) {
     const { fetch, s } = makeFetcher({ [name]: 1 });
     fetchers[name] = s;
-    return createDataStore({ fetch, parse: (x) => x, empty: null });
+    return createDataStore({
+      fetch, parse: (x) => x, empty: null,
+      persist: persistFor ? persistFor(name) : null,
+    });
   }
   const children = { diff: mk('diff'), tree: mk('tree') };
   const poller = makeManualPoller();
@@ -114,6 +119,35 @@ describe('createTaskCache — orchestrator', () => {
     expect(cache.getActiveTaskId()).toBe('');
     expect(cache.getOrder()).toEqual([]);
     expect(evicted).toContain('A');
+  });
+
+  // LRU eviction and forget both purge memory, but they mean opposite things
+  // for the DURABLE copy: eviction is reclaiming RAM and must leave the disk
+  // copy that makes the next reload instant, while forget means the task is
+  // gone and must leave nothing behind.
+  test('LRU eviction keeps the durable copy; forgetTask drops it', async () => {
+    const stores = new Map();
+    const persistFor = (name) => {
+      const mem = new Map();
+      stores.set(name, mem);
+      return {
+        read: async (taskId) => mem.get(taskId),
+        write: async (taskId, text) => { mem.set(taskId, text); },
+        forget: async (taskId) => { mem.delete(taskId); },
+      };
+    };
+    const { cache, children } = makeCache({ retain: 2, persistFor });
+
+    cache.setActiveTask('A'); await flush();
+    cache.setActiveTask('B'); await flush();
+    cache.setActiveTask('C'); await flush();               // A evicted (retain 2)
+    expect(children.tree.has('A')).toBe(false);            // memory dropped
+    expect(stores.get('tree').has('A')).toBe(true);        // disk kept
+    expect(stores.get('diff').has('A')).toBe(true);
+
+    cache.forgetTask('A'); await flush();
+    expect(stores.get('tree').has('A')).toBe(false);
+    expect(stores.get('diff').has('A')).toBe(false);
   });
 
   test('the poller revalidates ONLY the active task and only polled types', async () => {

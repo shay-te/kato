@@ -1,8 +1,11 @@
 {
   "//": "Duplicate-code gate for the kato planning UI. Run with `npm run dedup`.",
   "//threshold": "Fails (exit 1) when duplication exceeds 0.3% of lines. The two intentional, annotated clones sit at ~0.1%; a new clone trips the gate.",
+  "//maxLines": "jscpd SILENTLY SKIPS any source over maxLines (default 1000) or maxSize (default 100kb): no warning, no error, the file just is not checked. The gate ran that way for a long time and never saw app.scss (12k lines), FilesTab.jsx, EventLog.jsx, SessionDetail.jsx, useSessionStream.js or api.js, so its clean result hid four real clones. It also dropped one of the two intentional clones out of the count the moment DiffFileWithComments.jsx grew past 1000 lines, which read as an improvement. These are set far above any real file so every source is checked; jscpdCoverage.test.js fails if the largest file ever approaches them.",
   "ignore": ["**/*.test.*"],
   "minTokens": 50,
+  "maxLines": 100000,
+  "maxSize": "10mb",
   "gitignore": true,
   "threshold": 0.3,
   "reporters": ["console"],

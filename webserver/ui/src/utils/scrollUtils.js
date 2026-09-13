@@ -36,6 +36,12 @@ export const NEAR_TOP_THRESHOLD_PX = 50;
 
 export function isNearTop(node, threshold = NEAR_TOP_THRESHOLD_PX) {
   if (!node) { return false; }
+  // A container that does not overflow sits at scrollTop 0 FOREVER, so a bare
+  // ``scrollTop <= threshold`` reads "the operator is reading into the
+  // history" on a log short enough to fit. Every scroll event then pulled
+  // another chunk, which made the log taller, which fired more scroll
+  // events — the endless scroll the operator saw on opening a task.
+  if (node.scrollHeight <= node.clientHeight + threshold) { return false; }
   return node.scrollTop <= threshold;
 }
 

@@ -3,7 +3,7 @@
 
 import { describe, test, expect, beforeEach } from 'vitest';
 import {
-  forgetRepos, rememberRepos, rememberedRepos,
+  rememberRepos, rememberedRepos,
 } from './taskRepoMemory.js';
 
 beforeEach(() => { localStorage.clear(); });
@@ -47,14 +47,6 @@ describe('taskRepoMemory', () => {
     rememberRepos('T2', [{ repo_id: 'other', cwd: '/ws/other' }]);
     expect(rememberedRepos('T1')).toHaveLength(2);
     expect(rememberedRepos('T2').map((r) => r.repo_id)).toEqual(['other']);
-  });
-
-  test('forget drops one task only', () => {
-    rememberRepos('T1', TREES);
-    rememberRepos('T2', TREES);
-    forgetRepos('T1');
-    expect(rememberedRepos('T1')).toEqual([]);
-    expect(rememberedRepos('T2')).toHaveLength(2);
   });
 
   test('entries are capped, oldest first', () => {
