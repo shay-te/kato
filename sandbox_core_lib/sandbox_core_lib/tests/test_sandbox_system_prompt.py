@@ -102,8 +102,15 @@ class WorkspaceScopeAddendumTests(unittest.TestCase):
         for shape in ('find /', 'find ~', 'grep -r /', 'locate', 'mdfind'):
             self.assertIn(shape, WORKSPACE_SCOPE_ADDENDUM)
 
-    def test_directs_agent_to_use_relative_search(self) -> None:
+    def test_directs_agent_to_search_by_absolute_path(self) -> None:
+        # It used to say "use rg / grep / find from ``.``" — a relative search
+        # that the host's scope checks read as leaving the folder, so the
+        # operator was stopped for approvals and had to explain, by hand, not
+        # to use relative paths. The search stays in the working directory,
+        # by absolute path.
         self.assertIn('working directory', WORKSPACE_SCOPE_ADDENDUM)
+        self.assertIn('ABSOLUTE paths', WORKSPACE_SCOPE_ADDENDUM)
+        self.assertNotIn('from ``.`` instead', WORKSPACE_SCOPE_ADDENDUM)
 
     def test_explains_why(self) -> None:
         self.assertIn('stall detector', WORKSPACE_SCOPE_ADDENDUM)

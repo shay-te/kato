@@ -1619,14 +1619,15 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
 
   beforeEach(() => { localStorage.clear(); });
 
-  test('a task never seen before shows a PROGRESS BAR, not a dead line', () => {
+  test('a task never seen before shows a PROGRESS BAR, not a dead line', async () => {
     // Nothing is remembered, so there are no repo rows to draw honestly —
     // but a static "Loading files…" reads as a dead pane on a slow first
-    // load: "just show the repos or show progressbar."
+    // load: "just show the repos or show progressbar." It appears once the
+    // wait outlasts the grace period (see TREE_LOADER_GRACE_MS).
     fetchFileTree.mockReturnValue(new Promise(() => {}));  // never resolves
     fetchDiff.mockResolvedValue({ diffs: [] });
     const { container } = render(<FilesTab taskId="NEW" onOpenFile={vi.fn()} />);
-    expect(screen.getByRole('progressbar', { name: /loading files/i }))
+    expect(await screen.findByRole('progressbar', { name: /loading files/i }))
       .toBeInTheDocument();
     expect(container.textContent).not.toMatch(/Loading files…/);
   });
@@ -1657,9 +1658,9 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     expect(names).toEqual(['client', 'backend']);
     // No single global "Loading files…" line any more.
     expect(container.textContent).not.toMatch(/Loading files/i);
-    // Per repo, not one global spinner.
-    expect(screen.getByLabelText('Loading client')).toBeInTheDocument();
-    expect(screen.getByLabelText('Loading backend')).toBeInTheDocument();
+    // Per repo, not one global spinner — once the wait is real.
+    expect(await screen.findByLabelText('Loading client')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Loading backend')).toBeInTheDocument();
   });
 
   test('the loading row has the SAME shape as a loaded one', async () => {
@@ -1695,5 +1696,72 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     expect(loadingParts[loadingParts.length - 1])
       .toBe(loadedParts[loadedParts.length - 1]);          // history button
     expect(loadingParts).toContain('files-tab-repo-loading');
+  });
+
+  // "refresh/moving between task have a super fast blinking of the tree moving
+  // from loading state to loaded state. super annoying."
+  //
+  // The tree is usually back within a few frames (restored from storage,
+  // retained in memory). A loader drawn at once flashes for exactly those
+  // frames, so every loader waits out a grace period first.
+  test('no loader is painted while the wait is still short', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    fetchFileTree.mockResolvedValue(TREE);
+    const first = render(<FilesTab taskId="T-GRACE" onOpenFile={vi.fn()} />);
+    await waitFor(() => {
+      expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
+    });
+    cleanup();
+    resetTaskCache();
+
+    fetchFileTree.mockReturnValue(new Promise(() => {}));
+    const { container } = render(<FilesTab taskId="T-GRACE" onOpenFile={vi.fn()} />);
+    // The remembered headers draw straight away, identical to loaded ones...
+    expect(container.querySelectorAll('.files-tab-repo.is-loading').length).toBe(2);
+    // ...with no spinner, no progress bar and no "Loading" label yet.
+    expect(container.querySelector('.kato-btn-spinner')).toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect(screen.queryByLabelText(/^Loading /)).toBeNull();
+    expect(container.textContent).not.toMatch(/Loading repos/);
+    // A wait that outlasts the grace period still gets its loaders.
+    expect(await screen.findByLabelText('Loading client')).toBeInTheDocument();
+  });
+
+  test('a load that finishes inside the grace period never shows a loader', async () => {
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    fetchFileTree.mockResolvedValue(TREE);
+    const first = render(<FilesTab taskId="T-FAST" onOpenFile={vi.fn()} />);
+    await waitFor(() => {
+      expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
+    });
+    cleanup();
+    resetTaskCache();
+
+    // Watch EVERY node added to the pane, so a loader that is drawn and
+    // removed again between two assertions still counts.
+    const loaderSeen = { value: false };
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node.nodeType !== 1) { continue; }
+          const el = /** @type {Element} */ (node);
+          if (el.matches?.('.kato-btn-spinner, [role="progressbar"]')
+            || el.querySelector?.('.kato-btn-spinner, [role="progressbar"]')) {
+            loaderSeen.value = true;
+          }
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    fetchFileTree.mockImplementation(() => new Promise((resolve) => {
+      setTimeout(() => resolve(TREE), 40);
+    }));
+    const { container } = render(<FilesTab taskId="T-FAST" onOpenFile={vi.fn()} />);
+    await waitFor(() => {
+      expect(container.querySelectorAll('.files-tab-repo:not(.is-loading)').length).toBe(2);
+    });
+    observer.disconnect();
+    expect(loaderSeen.value).toBe(false);
   });
 });

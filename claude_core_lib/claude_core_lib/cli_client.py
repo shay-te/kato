@@ -558,6 +558,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
                 lessons_path=self._lessons_path,
                 docker_mode_on=self._docker_mode_on,
                 logger=self.logger,
+                cwd=cwd,
             )
             if appended_system_prompt:
                 command.extend(['--append-system-prompt', appended_system_prompt])

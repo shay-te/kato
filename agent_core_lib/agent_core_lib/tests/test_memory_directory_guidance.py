@@ -75,5 +75,43 @@ class MemoryDirectoryGuidanceTests(unittest.TestCase):
                 self.assertNotIn(brand, memory)
 
 
+
+class MemoryDirectoryIsTheTaskFolderNotARepoTests(unittest.TestCase):
+    """Review-comment runs list a REPOSITORY CLONE as the first scope path.
+
+    The memory line used to be built from whatever path came first, so those
+    agents were told "your memory directory is <repo>/memory/" — inside a git
+    repository, one ``git add -A`` away from being committed. It now resolves
+    the task folder through the same helper as the CLI's memory setting.
+    """
+
+    ROOT = os.path.join(os.sep, 'work', 'spaces')
+    TASK = os.path.join(ROOT, 'PROJ-7')
+    REPO = os.path.join(TASK, 'billing-service')
+
+    def _memory_paragraph(self, block: str) -> str:
+        start = block.index('YOUR MEMORY DIRECTORY IS:')
+        return block[start:block.index('\n\n', start)]
+
+    def test_a_repo_first_scope_names_the_task_memory_folder(self) -> None:
+        from unittest.mock import patch
+        from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+            WORKSPACES_ROOT_ENV,
+        )
+        with patch.dict(os.environ, {WORKSPACES_ROOT_ENV: self.ROOT}):
+            line = self._memory_paragraph(workspace_scope_block([self.REPO]))
+        self.assertIn(f'{self.TASK}{os.sep}memory{os.sep}', line)
+        self.assertNotIn(f'{self.REPO}{os.sep}memory', line)
+
+    def test_a_task_first_scope_is_unchanged(self) -> None:
+        from unittest.mock import patch
+        from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+            WORKSPACES_ROOT_ENV,
+        )
+        with patch.dict(os.environ, {WORKSPACES_ROOT_ENV: self.ROOT}):
+            line = self._memory_paragraph(workspace_scope_block([self.TASK, self.REPO]))
+        self.assertIn(f'{self.TASK}{os.sep}memory{os.sep}', line)
+
+
 if __name__ == '__main__':
     unittest.main()

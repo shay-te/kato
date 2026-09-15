@@ -337,11 +337,11 @@ describe('useSessionStream — incoming events drive lifecycle', () => {
         ] } } },
       });
     });
-    // History is COALESCED — buffered and folded in one dispatch on the next
-    // frame — so it lands a tick later than a live event does. See the flush
-    // buffer in useSessionStream: replaying a long transcript one dispatch at
-    // a time re-rendered and re-scrolled the log thousands of times, which
-    // the operator saw as ~15 seconds of the chat scrolling itself.
+    // A replay is BUFFERED and applied in one dispatch — here by the quiet
+    // fallback, since this stream never sends an end marker. See the replay
+    // buffer in useSessionStream: applying a long transcript as it streamed
+    // re-rendered and re-scrolled the log hundreds of times, which the
+    // operator saw as the chat scrolling itself for 10-15 seconds.
     await waitFor(() => {
       expect(result.current.events.length).toBeGreaterThan(0);
     });
@@ -377,6 +377,92 @@ describe('useSessionStream — incoming events drive lifecycle', () => {
     // reducer in sequence rather than merging the frames itself.
     expect(blob.indexOf('line 0')).toBeLessThan(blob.indexOf('line 12'));
     expect(blob.indexOf('line 12')).toBeLessThan(blob.indexOf('line 24'));
+  });
+
+  // "after refresh the chat scroll for 10 seconds to the bottom. just make
+  // sure it's on the bottom." Every render mid-replay re-filters and re-pins
+  // the whole growing transcript; one render at the end lands at the bottom
+  // with nothing to watch.
+  const notice = (text) => ({ event: { raw: { type: 'system', subtype: 'notice', text } } });
+
+  test('a replay is not applied until the server says it has all arrived', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => {
+      for (let i = 0; i < 25; i += 1) {
+        FakeEventSource.instances[0].emit('session_history_event', notice(`notice ${i}`));
+      }
+    });
+    expect(result.current.events).toHaveLength(0);
+    act(() => { FakeEventSource.instances[0].emit('session_idle'); });
+    expect(result.current.events).toHaveLength(25);
+  });
+
+  test('every end marker applies the replay', () => {
+    for (const marker of ['session_turn_state', 'session_closed', 'session_missing', 'session_idle']) {
+      const { result, unmount } = renderHook(() => useSessionStream(`T-${marker}`));
+      const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+      act(() => { source.emit('session_history_event', notice('past')); });
+      expect(result.current.events, marker).toHaveLength(0);
+      act(() => {
+        source.emit(marker, marker === 'session_turn_state' ? { working: false } : undefined);
+      });
+      expect(result.current.events, marker).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  test("the host's turn state lands AFTER the replay it corrects", () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => {
+      const source = FakeEventSource.instances[0];
+      source.emit('session_history_event', notice('past'));
+      // A backlog turn whose result scrolled out of the tail: on its own it
+      // reads as "working".
+      source.emit('session_event', {
+        event: { raw: { type: 'assistant', message: { content: [] } } },
+      });
+      source.emit('session_turn_state', { working: false });
+    });
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('backlog events that arrive mid-replay keep their place in the order', () => {
+    const onIncoming = vi.fn();
+    const { result } = renderHook(() => useSessionStream('T1', onIncoming));
+    act(() => {
+      const source = FakeEventSource.instances[0];
+      source.emit('session_history_event', notice('first-older'));
+      source.emit('session_event', notice('second-backlog'));
+      source.emit('session_history_event', notice('third-newer'));
+    });
+    expect(onIncoming).not.toHaveBeenCalled();
+    act(() => { FakeEventSource.instances[0].emit('session_idle'); });
+    const blob = JSON.stringify(result.current.events);
+    expect(blob.indexOf('first-older')).toBeLessThan(blob.indexOf('second-backlog'));
+    expect(blob.indexOf('second-backlog')).toBeLessThan(blob.indexOf('third-newer'));
+    expect(onIncoming).toHaveBeenCalledTimes(1);
+  });
+
+  test('a replay cut short by a stream error is still shown', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => {
+      FakeEventSource.instances[0].emit('session_history_event', notice('past'));
+      FakeEventSource.instances[0].emitError();
+    });
+    expect(result.current.events).toHaveLength(1);
+  });
+
+  test('a replay that goes quiet with no end marker is shown anyway', async () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => { FakeEventSource.instances[0].emit('session_history_event', notice('past')); });
+    expect(result.current.events).toHaveLength(0);
+    await waitFor(() => { expect(result.current.events).toHaveLength(1); });
+  });
+
+  test('a live event with no replay underway is applied at once', () => {
+    const { result } = renderHook(() => useSessionStream('T1'));
+    act(() => { FakeEventSource.instances[0].emit('session_event', notice('live now')); });
+    expect(JSON.stringify(result.current.events)).toContain('live now');
   });
 
   test('permission_request event sets pendingPermission', () => {

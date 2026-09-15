@@ -25,13 +25,17 @@ export const SESSION_LIFECYCLE = {
 // likely watching a task they just started, then settling to a cheap poll.
 const IDLE_RETRY_MIN_MS = 2000;
 const IDLE_RETRY_MAX_MS = 30000;
+// How long a replay may go quiet, with no end marker, before what arrived is
+// shown anyway. A replay's frames arrive back to back, so a gap this long
+// means the stream stalled rather than that more is on its way.
+const REPLAY_QUIET_FLUSH_MS = 250;
 
 const ACTION_HYDRATE = 'hydrate';
 const ACTION_INCOMING_EVENT = 'incoming_event';
 const ACTION_INCOMING_HISTORY = 'incoming_history';
-// Many replayed history frames folded in ONE dispatch. See the flush buffer
-// in the stream listener below for why.
-const ACTION_INCOMING_HISTORY_BATCH = 'incoming_history_batch';
+// A connect's whole replay — history plus the live session's backlog — folded
+// in ONE dispatch. See the replay buffer in the stream listener below for why.
+const ACTION_REPLAY_BATCH = 'replay_batch';
 const ACTION_LIFECYCLE = 'lifecycle';
 const ACTION_LOCAL_EVENT = 'local_event';
 const ACTION_DISMISS_PERMISSION = 'dismiss_permission';
@@ -553,13 +557,20 @@ export function reducer(state, action) {
     }
     case ACTION_INCOMING_HISTORY:
       return reduceIncomingHistory(state, action.event, action.receivedAtEpoch);
-    case ACTION_INCOMING_HISTORY_BATCH: {
-      // Folded through the SAME per-event reducer, in order — the batch is a
-      // scheduling change, not a second code path. Anything that depends on
-      // the entry before it (echo dedupe, turn pairing) behaves identically.
+    case ACTION_REPLAY_BATCH: {
+      // Folded through the SAME per-event reducer cases, in arrival order —
+      // the batch is a scheduling change, not a second code path. Anything
+      // that depends on the entry before it (echo dedupe, turn pairing)
+      // behaves identically.
       let next = state;
       for (const item of action.items || []) {
-        next = reduceIncomingHistory(next, item.event, item.receivedAtEpoch);
+        next = item.live
+          ? reducer(next, {
+            type: ACTION_INCOMING_EVENT,
+            event: item.event,
+            receivedAtEpoch: item.receivedAtEpoch,
+          })
+          : reduceIncomingHistory(next, item.event, item.receivedAtEpoch);
       }
       return next;
     }
@@ -932,40 +943,57 @@ export function useSessionStream(taskId, onIncomingEvent) {
       `/api/sessions/${encodeURIComponent(taskId)}/events`,
     );
 
-    // Replay coalescing (see the history listener below). One flush per
-    // animation frame — the browser will not paint more often than that, so
-    // dispatching more often only burns renders nobody sees. ``rAF`` does not
-    // fire in a background tab, so a timer backs it up: a transcript replayed
-    // while the operator is elsewhere must still be complete when they
-    // return, not frozen mid-replay.
-    let historyBuffer = [];
-    let historyFlushHandle = 0;
-    let historyFlushTimer = 0;
-    function flushHistory() {
-      historyFlushHandle = 0;
-      if (historyFlushTimer) {
-        clearTimeout(historyFlushTimer);
-        historyFlushTimer = 0;
+    // THE REPLAY IS APPLIED ONCE, WHEN IT HAS ALL ARRIVED.
+    //
+    // Every connect starts with a replay: the whole transcript (history) merged
+    // with the live session's recent backlog, oldest first, then ONE end
+    // marker — ``session_turn_state``, ``session_idle``, ``session_closed`` or
+    // ``session_missing``. Applied as it streamed in, every batch re-rendered
+    // the log (which re-filters the entire, growing transcript) and re-pinned
+    // it to the bottom. On a 5000-event chat that was ten seconds of the chat
+    // scrolling itself after every refresh: "after refresh the chat scroll for
+    // 10 seconds to the bottom. just make sure it's on the bottom." Folding it
+    // per animation frame, the fix before this one, only thinned those renders
+    // out.
+    //
+    // So the replay is buffered IN ARRIVAL ORDER and folded in one dispatch
+    // when the marker lands: one render, already at the bottom. Two fallbacks
+    // mean a replay can never be stranded — a stream that goes quiet without a
+    // marker, and a stream error — each shows what arrived. A live event with
+    // no replay underway (nothing buffered) is applied the instant it arrives,
+    // exactly as before.
+    let replayBuffer = [];
+    let replayQuietTimer = 0;
+    function flushReplay() {
+      if (replayQuietTimer) {
+        clearTimeout(replayQuietTimer);
+        replayQuietTimer = 0;
       }
-      if (historyBuffer.length === 0) { return; }
-      const items = historyBuffer;
-      historyBuffer = [];
-      dispatch({ type: ACTION_INCOMING_HISTORY_BATCH, items });
+      if (replayBuffer.length === 0) { return; }
+      const items = replayBuffer;
+      replayBuffer = [];
+      dispatch({ type: ACTION_REPLAY_BATCH, items });
+      if (typeof onIncomingEvent === 'function') {
+        for (const item of items) {
+          if (item.live) { onIncomingEvent(item.event, taskId); }
+        }
+      }
     }
-    function scheduleHistoryFlush() {
-      if (historyFlushHandle || historyFlushTimer) { return; }
-      if (typeof requestAnimationFrame === 'function') {
-        historyFlushHandle = requestAnimationFrame(flushHistory);
-      }
-      // Always armed, rAF or not: the fallback covers a hidden tab (where rAF
-      // is throttled to never) and any environment without it.
-      historyFlushTimer = setTimeout(flushHistory, 32);
+    function bufferReplay(item) {
+      replayBuffer.push(item);
+      if (replayQuietTimer) { clearTimeout(replayQuietTimer); }
+      replayQuietTimer = setTimeout(flushReplay, REPLAY_QUIET_FLUSH_MS);
     }
 
     stream.addEventListener('session_event', (event) => {
       const unwrapped = unwrapSessionEvent(event);
       if (!unwrapped) { return; }
       const { envelope, raw } = unwrapped;
+      // Part of a replay already underway: it keeps its place in the order.
+      if (replayBuffer.length > 0) {
+        bufferReplay({ live: true, event: raw, receivedAtEpoch: envelope?.received_at_epoch });
+        return;
+      }
       dispatch({
         type: ACTION_INCOMING_EVENT,
         event: raw,
@@ -975,27 +1003,14 @@ export function useSessionStream(taskId, onIncomingEvent) {
         onIncomingEvent(raw, taskId);
       }
     });
-    // HISTORY FRAMES ARE COALESCED.
-    //
-    // On a reload the server replays the whole transcript, one SSE frame per
-    // event. Each frame is its own macrotask, so React cannot auto-batch
-    // them: a 3000-event session dispatched 3000 times, re-rendering the log
-    // and re-pinning it to the bottom on every one. The operator watched
-    // their chat scroll past for ~15 seconds before it settled — "he loading
-    // the chat content by showing me he is scrolling for 15 seconds".
-    //
-    // Buffering to the next frame collapses that into a handful of renders:
-    // the transcript appears essentially at once, already at the bottom.
-    // Live events are deliberately NOT batched — those are one at a time and
-    // want to appear the instant they arrive.
     stream.addEventListener('session_history_event', (event) => {
       const unwrapped = unwrapSessionEvent(event);
       if (!unwrapped) { return; }
-      historyBuffer.push({
+      bufferReplay({
+        live: false,
         event: unwrapped.raw,
         receivedAtEpoch: unwrapped.envelope?.received_at_epoch,
       });
-      scheduleHistoryFlush();
     });
     // THE HOST'S OWN ANSWER, emitted once per connect after the backlog.
     //
@@ -1010,23 +1025,29 @@ export function useSessionStream(taskId, onIncomingEvent) {
     // inferred. Liveness now comes from the subprocess, not from history the
     // client is merely re-reading.
     stream.addEventListener('session_turn_state', (event) => {
+      // After the replay it corrects — never before it.
+      flushReplay();
       const parsed = safeParseJSON(event.data);
       if (!parsed) { return; }
       dispatch({ type: ACTION_SESSION_TURN_STATE, working: !!parsed.working });
     });
     stream.addEventListener('session_idle', () => {
+      flushReplay();
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.IDLE });
       stream.close();
     });
     stream.addEventListener('session_missing', () => {
+      flushReplay();
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.MISSING });
       stream.close();
     });
     stream.addEventListener('session_closed', () => {
+      flushReplay();
       dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.CLOSED });
       stream.close();
     });
     stream.onerror = () => {
+      flushReplay();
       if (stream.readyState === EventSource.CLOSED) {
         dispatch({ type: ACTION_LIFECYCLE, value: SESSION_LIFECYCLE.CLOSED });
       }
@@ -1036,11 +1057,8 @@ export function useSessionStream(taskId, onIncomingEvent) {
       // Drop anything still buffered rather than flushing it: the task is
       // gone (switch / unmount) and this dispatch would land on the next
       // task's state.
-      historyBuffer = [];
-      if (historyFlushHandle && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(historyFlushHandle);
-      }
-      if (historyFlushTimer) { clearTimeout(historyFlushTimer); }
+      replayBuffer = [];
+      if (replayQuietTimer) { clearTimeout(replayQuietTimer); }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, streamGeneration]);

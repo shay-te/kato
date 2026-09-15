@@ -533,5 +533,208 @@ class HeredocBodyScanningTests(unittest.TestCase):
         self.assertTrue(outside)
 
 
+class ShellWalkTests(unittest.TestCase):
+    """Commands taken from real agent sessions (paths anonymised).
+
+    Every CLEAN case here stopped legitimate in-task work for an approval,
+    because the command was read as one flat string instead of the way the
+    shell runs it — the operator: "i am tired of asking for approval or
+    explaining to each task". Every FLAGGED case is an escape that must stay
+    caught, several of which the flat reading missed entirely.
+
+    The session directory is a repository clone, as when the host spawns a
+    session. (Started in the task folder itself, its parent — every task —
+    would count as inside, and these cases would prove nothing.)
+    """
+
+    TASK = '/Users/dev/.agent/workspaces/UNA-1'
+    CWD = TASK + '/admin-backend'
+
+    def assertClean(self, cmd, cwd=None):
+        outside, offending = classify_command_sandbox(cmd, cwd or self.CWD)
+        self.assertFalse(outside, f'expected CLEAN but flagged {offending!r}:\n  {cmd}')
+
+    def assertFlagged(self, cmd, expected_offending, cwd=None):
+        outside, offending = classify_command_sandbox(cmd, cwd or self.CWD)
+        self.assertTrue(outside, f'expected FLAG but was clean:\n  {cmd}')
+        self.assertEqual(offending, expected_offending)
+
+    # ---- a word is not cut in the middle -----------------------------------
+
+    def test_a_relative_folder_named_users_is_not_a_home_path(self) -> None:
+        # The UNA-3095 popup: absolute paths inside the task, and a plain
+        # relative ``Table/Users/…`` read as ``/Users/CustomField/…``.
+        self.assertClean(
+            f'U={self.TASK}; S=$U/admin-client/src; '
+            'grep -rn customFieldId $S/Table/Users/CustomField/CustomField.js; '
+            'for f in store/fields/fieldsStore.js Table/Users/CustomField/CustomField.js; '
+            'do echo "-- $f"; grep -nE "x" $S/$f; done',
+        )
+
+    def test_dots_in_a_regex_are_not_a_parent_directory(self) -> None:
+        self.assertClean(f"cd {self.TASK} && grep -niE 'TODO|\\.\\.\\.$' CHECKLIST.md")
+
+    def test_a_task_id_is_not_cut_at_its_dash(self) -> None:
+        self.assertClean(f'cd /tmp && ls {self.TASK}/admin-backend/target')
+
+    def test_a_path_glued_to_an_option_is_still_seen(self) -> None:
+        self.assertFlagged(
+            'gcc -I/Users/dev/Desktop/other/include main.c',
+            '/Users/dev/Desktop/other/include',
+        )
+
+    def test_a_home_path_behind_a_string_prefix_is_still_seen(self) -> None:
+        self.assertFlagged(
+            "python3 -c \"open(f'/Users/dev/Desktop/other/{name}.env').read()\"",
+            '/Users/dev/Desktop/other/',
+        )
+
+    def test_a_home_path_concatenated_in_code_is_still_seen(self) -> None:
+        self.assertFlagged(
+            "python3 -c \"open(base+'/Users/dev/Desktop/other/key.pem').read()\"",
+            '/Users/dev/Desktop/other/key.pem',
+        )
+
+    def test_a_separator_inside_a_path_name_cannot_hide_a_climb(self) -> None:
+        climb = f'{self.TASK}/a:/../../../../Desktop/secret'
+        self.assertFlagged(f'cat {climb}', climb)
+
+    # ---- the shell's directory is followed ---------------------------------
+
+    def test_a_cd_on_its_own_line_moves_the_shell(self) -> None:
+        self.assertClean(
+            f'cd {self.TASK}/kstreams/src/main/java/com/aggregate\n'
+            'grep -n "class" JoinStreamsApp.java\n'
+            'cd ../../../../../test/java/com/aggregate\n'
+            'ls',
+        )
+
+    def test_a_cd_on_the_line_after_a_heredoc_is_followed(self) -> None:
+        self.assertClean(
+            f"cd {self.TASK} && cat > helper_scripts/override.yaml <<'EOF'\n"
+            'services:\n'
+            '  solr:\n'
+            '    ports: ["8996:8983"]\n'
+            'EOF\n'
+            'cd admin-backend && docker compose -f ../helper_scripts/override.yaml up -d',
+        )
+
+    def test_a_climb_after_a_cd_on_its_own_line_is_caught(self) -> None:
+        # Missed before: judged from the session directory, where
+        # ``../helper_scripts`` happens to exist.
+        self.assertFlagged(
+            f'cd {self.TASK}\n'
+            'python3 -c "print(1)"\n'
+            '../helper_scripts/venv/bin/python /tmp/compare.py',
+            '../helper_scripts/venv/bin/python',
+        )
+
+    def test_a_line_continuation_keeps_one_command_together(self) -> None:
+        self.assertClean('ln -sfn \\\n  ../../../helper_scripts/data \\\n  tests/fixtures/data')
+
+    def test_a_redirection_after_cd_is_not_part_of_the_directory(self) -> None:
+        self.assertClean(f'cd {self.TASK} 2>/dev/null && cat admin-client/pom.xml')
+
+    def test_a_cd_inside_an_if_is_followed(self) -> None:
+        self.assertClean('if [ -d src ]; then cd src/main; fi; cat ../../../admin-client/pom.xml')
+
+    def test_a_redirection_in_the_home_folder_is_not_a_path(self) -> None:
+        # Only the pieces of ``>/dev/null`` are paths, not the whole word.
+        with mock.patch.dict(os.environ, {'HOME': '/Users/dev'}):
+            self.assertClean('cd ~ && echo ok >/dev/null')
+
+    def test_pushd_moves_and_popd_returns(self) -> None:
+        self.assertClean('pushd src/main && cat ../../../admin-client/pom.xml && popd')
+        self.assertFlagged('pushd src && popd && cat ../../UNA-2/secret', '../../UNA-2/secret')
+
+    # ---- subshells ----------------------------------------------------------
+
+    def test_a_cd_inside_a_subshell_is_followed(self) -> None:
+        self.assertClean('(cd src/main && cat ../../../admin-client/pom.xml)')
+
+    def test_a_climb_out_inside_a_subshell_is_caught(self) -> None:
+        # Missed before: ``(cd`` was not recognised as a ``cd`` at all.
+        self.assertFlagged('(cd .. && cd .. && cat OTHER-TASK/secret)', '..')
+
+    def test_a_subshell_cd_ends_with_the_subshell(self) -> None:
+        self.assertClean(f'(cd {self.TASK} && ls) && cat ../admin-client/pom.xml')
+
+    # ---- variables ------------------------------------------------------------
+
+    def test_a_variable_set_to_the_task_folder_is_substituted(self) -> None:
+        self.assertClean(f'R={self.TASK} && cd /tmp && $R/helper_scripts/venv/bin/python -m pytest')
+        self.assertClean(f'export T={self.TASK}; cd /tmp; ls ${{T}}/admin-client')
+
+    def test_pwd_is_the_directory_at_that_point(self) -> None:
+        self.assertClean(f'cd {self.TASK} && R=$PWD; cd /tmp && $R/helper_scripts/venv/bin/pip list')
+        self.assertClean(f'cd {self.TASK} && R=$(pwd) && cd /tmp && ls $R/admin-client')
+        escape = f'{self.TASK}/../UNA-2/secret'
+        self.assertFlagged('cd .. && R=$PWD && cd src && cat $R/../UNA-2/secret', escape)
+        self.assertFlagged('cd .. && R=$(pwd) && cd src && cat $R/../UNA-2/secret', escape)
+
+    def test_an_escape_built_from_variables_is_caught(self) -> None:
+        self.assertFlagged('P=.. && cat $P/$P/UNA-2/repo/.env', '../../UNA-2/repo/.env')
+        self.assertFlagged('export P=..; cat $P/$P/UNA-2/repo/.env', '../../UNA-2/repo/.env')
+
+    def test_a_subshell_variable_ends_with_the_subshell(self) -> None:
+        # Leaked out of the subshell, ``P=..`` would make the last path climb
+        # out of the task.
+        self.assertClean('P=src; (P=.. && ls) ; cat $P/../../UNA-1/x')
+
+    def test_a_relative_word_in_a_system_folder_is_judged_like_its_absolute_path(self) -> None:
+        # ``cd /tmp`` is not an escape (system folders never are), so the MIME
+        # type in ``Content-Type: application/json`` is ``/tmp/application/json``.
+        self.assertClean(
+            "cd /tmp\ncurl -s localhost:8990/schema -H 'Content-Type: application/json'",
+        )
+
+    def test_a_climb_is_caught_wherever_it_lands(self) -> None:
+        self.assertFlagged('cd /tmp && cat ../etc/passwd', '../etc/passwd')
+
+    def test_an_unknown_variable_is_not_guessed_at(self) -> None:
+        self.assertClean('cat $SOME_DIR/Users/CustomField/List.js')
+
+    def test_a_cd_into_an_unknown_folder_does_not_move_the_shell(self) -> None:
+        # Moving into an unresolvable folder would make every later ``..`` land
+        # one level deeper — further inside — and hide a climb. Staying put is
+        # the cautious reading.
+        self.assertFlagged('cd $SOME_DIR && cat ../../UNA-2/secret', '../../UNA-2/secret')
+
+    # ---- URLs -----------------------------------------------------------------
+
+    def test_a_url_is_not_a_path(self) -> None:
+        self.assertClean(
+            'cd /tmp && python3 -c "import urllib.request; urllib.request.urlopen('
+            "'http://localhost:8983/solr/admin/collections?action=LIST&wt=json')\"",
+        )
+        self.assertClean("curl -s 'http://localhost:8080/static/../../../../index.html'")
+
+    def test_a_file_url_is_a_path(self) -> None:
+        # Missed before: ``//Users/…`` never read as a home-tree path.
+        self.assertFlagged('curl file:///Users/dev/.ssh/id_rsa', '/Users/dev/.ssh/id_rsa')
+
+    # ---- symlinks ---------------------------------------------------------------
+
+    def test_a_relative_symlink_target_resolves_from_the_link(self) -> None:
+        self.assertClean('cd lib && ln -sfn ../../../helper_scripts/test_data tests/fixtures/data')
+        self.assertClean(
+            f'R={self.TASK}; ln -sfn ../../helper_scripts/test_data $R/admin-backend/tests/data',
+        )
+
+    def test_a_link_placed_into_a_directory_resolves_from_that_directory(self) -> None:
+        # A trailing ``/`` says the link goes INSIDE ``tests/``.
+        self.assertClean('ln -s ../../helper_scripts/data tests/')
+
+    def test_a_symlink_pointing_out_of_the_task_is_caught(self) -> None:
+        self.assertFlagged(
+            'ln -sfn ../../../UNA-2/repo/.env tests/secret', '../../../UNA-2/repo/.env',
+        )
+
+    def test_a_link_created_outside_the_task_is_caught(self) -> None:
+        self.assertFlagged(
+            f'ln -s {self.CWD}/src/app.py ../../UNA-2/app.py', '../../UNA-2/app.py',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

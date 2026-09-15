@@ -112,5 +112,94 @@ class TaskFolderTreeTests(unittest.TestCase):
         self.assertEqual(task_folder_file_tree(''), [])
 
 
+class TaskFolderTreeStaysFastTests(unittest.TestCase):
+    """Listing a task folder takes a bounded time, whatever it accumulates.
+
+    Reported: "takes forever!" — the Files pane sat on "Loading repos…". The
+    git work for six repos took two seconds; walking the task folder took 110,
+    because one task's helper_scripts held 470,819 files: a node_modules of
+    222,245 and a test-run output folder of 247,069. Nothing the operator reads.
+    """
+
+    def setUp(self) -> None:
+        self._dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._dir.cleanup)
+        self.root = Path(self._dir.name)
+        (self.root / 'pr_description.md').write_text('desc', encoding='utf-8')
+        self.helper = self.root / 'helper_scripts'
+        self.helper.mkdir()
+        (self.helper / 'run_tests.sh').write_text('x', encoding='utf-8')
+
+    def _write(self, relative: str) -> None:
+        path = self.helper / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('x', encoding='utf-8')
+
+    def _paths(self, **kwargs):
+        found = []
+
+        def walk(nodes, prefix=''):
+            for node in nodes:
+                relative = f"{prefix}{node['name']}"
+                if 'children' in node:
+                    walk(node['children'], relative + '/')
+                else:
+                    found.append(relative)
+
+        walk(task_folder_file_tree(str(self.root), (), **kwargs))
+        return found
+
+    def test_installed_and_generated_directories_are_not_walked(self) -> None:
+        for relative in (
+            'node_modules/pkg/index.js',
+            'testbed/node_modules/dep/index.js',
+            'venv/pyvenv.cfg', 'venv/lib/site.py',
+            'pgdata/PG_VERSION', 'pgdata/base/1',
+            '__pycache__/helper.cpython-311.pyc',
+        ):
+            self._write(relative)
+        self.assertEqual(
+            self._paths(), ['helper_scripts/run_tests.sh', 'pr_description.md'],
+        )
+
+    def test_a_folder_is_tooling_by_its_marker_not_its_name(self) -> None:
+        # A ``venv`` with no pyvenv.cfg is the operator's own folder.
+        self._write('venv/notes.md')
+        self.assertIn('helper_scripts/venv/notes.md', self._paths())
+
+    def test_the_walk_is_bounded_and_shallow_files_come_first(self) -> None:
+        for run in range(60):
+            for trace in range(10):
+                self._write(f'testbed/runs/run-{run:03d}/trace-{trace}.json')
+        paths = self._paths(max_entries=100)
+        self.assertLessEqual(len(paths), 100)
+        # Breadth-first: what an agent hands over sits near the top, so it is
+        # listed before the budget runs out on the deep output folders.
+        self.assertIn('pr_description.md', paths)
+        self.assertIn('helper_scripts/run_tests.sh', paths)
+
+    def test_shallow_files_are_listed_whichever_side_of_a_deep_folder_they_sort(self) -> None:
+        # A depth-first walk spends the whole budget inside whichever big
+        # folder it meets first, losing the notes that sort before or after it.
+        for run in range(60):
+            for trace in range(10):
+                self._write(f'm-output/runs/run-{run:03d}/trace-{trace}.json')
+        self._write('a-notes/summary.md')
+        self._write('z-notes/summary.md')
+        paths = self._paths(max_entries=100)
+        self.assertIn('helper_scripts/a-notes/summary.md', paths)
+        self.assertIn('helper_scripts/z-notes/summary.md', paths)
+
+    def test_the_default_budget_lists_everything_in_an_ordinary_folder(self) -> None:
+        for index in range(30):
+            self._write(f'scripts/step-{index:02d}.py')
+        self.assertEqual(len(self._paths()), 32)
+
+    def test_a_zero_budget_lists_nothing(self) -> None:
+        # A file that sorts first, so examining even ONE entry would show.
+        (self.root / '0-first.md').write_text('x', encoding='utf-8')
+        self.assertEqual(task_folder_file_tree(str(self.root), (), max_entries=0), [])
+
+
 if __name__ == '__main__':
     unittest.main()

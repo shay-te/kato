@@ -39,8 +39,10 @@ WORKSPACE_SCOPE_ADDENDUM = (
     'whole-filesystem scans like ``find /``, ``find ~``, ``grep -r /``,\n'
     "``locate``, or ``mdfind`` — they don't find what you need (the relevant\n"
     'code is in the working directory), they take many minutes to run, and\n'
-    "they trigger the kato stall detector. Use ``rg`` / ``grep`` / ``find``\n"
-    "from ``.`` instead. If you genuinely need something outside the working\n"
+    "they trigger the kato stall detector. Point ``rg`` / ``grep`` / ``find``\n"
+    "at ABSOLUTE paths inside the working directory instead — not ``.``, not\n"
+    "a relative path, not a ``cd ..`` hop, which scope checks read as an\n"
+    "attempt to leave it. If you genuinely need something outside the working\n"
     "directory, ask in the reply rather than scanning blindly.\n"
 )
 
@@ -162,6 +164,7 @@ def compose_system_prompt(
     *,
     docker_mode_on: bool,
     lessons: str = '',
+    task_boundary: str = '',
 ) -> str:
     """Combine architecture doc, learned lessons, workspace-scope, and sandbox.
 
@@ -172,7 +175,14 @@ def compose_system_prompt(
     learnings, then always-on guidance, then sandbox boilerplate
     (docker only). Any piece may be empty.
 
+    ``task_boundary`` is the caller's per-session task-folder rule (concrete
+    paths). It goes FIRST: it is the one section that has to be read before
+    anything else — including the architecture doc, which names a file
+    outside the task folder — and the system prompt is the only place that
+    survives a resumed or summarised conversation.
+
     Order:
+      0. Task-folder boundary                    (per session — when given)
       1. Architecture doc                        (operator-authored)
       2. Lessons                                 (kato-curated, learned over time)
       3. Workspace-scope addendum                (always)
@@ -184,6 +194,7 @@ def compose_system_prompt(
     lesson_text = lessons or ''
     parts = [
         p for p in (
+            task_boundary or '',
             arch,
             lesson_text,
             WORKSPACE_SCOPE_ADDENDUM,

@@ -249,6 +249,138 @@ def _collapse_redundant_scope_paths(paths: list[str]) -> list[str]:
     ]
 
 
+def task_folder_for(path, workspaces_root=None) -> str:
+    """The TASK folder ``path`` belongs to, or ``''`` when it cannot be known.
+
+    Tasks live at ``<workspaces_root>/<task>/`` with each repository clone a
+    subfolder, ``<workspaces_root>/<task>/<repo>``. A session can start in
+    either, so "the parent of the working directory" is wrong half the time:
+    for a session already in the task folder it names the shared workspaces
+    root, and every task would end up sharing one memory. The first component
+    under the workspaces root is right in both cases.
+
+    ``''`` — deliberately, never a guess — when the workspaces root is unknown
+    or ``path`` is not inside it. A checkout outside the workspaces root has no
+    task folder, and walking upward from it could name the operator's entire
+    source tree.
+
+    ``workspaces_root=None`` reads ``AGENT_WORKSPACES_ROOT``; an explicit
+    ``''`` means "unknown" and does not fall back to the environment.
+
+    Pure and lexical, no filesystem access, so the prompt builder, the CLI
+    settings builder and the tests all get the same answer.
+    """
+    if workspaces_root is None:
+        workspaces_root = os.environ.get(WORKSPACES_ROOT_ENV, '')
+    root = str(workspaces_root or '').strip()
+    candidate = str(path or '').strip()
+    if not root or not candidate:
+        return ''
+    root = os.path.normpath(os.path.expanduser(root))
+    candidate = os.path.normpath(os.path.expanduser(candidate))
+    if not (os.path.isabs(root) and os.path.isabs(candidate)):
+        return ''
+    try:
+        relative = os.path.relpath(candidate, root)
+    except ValueError:  # a different drive on Windows — not inside
+        return ''
+    if relative == os.curdir or relative == os.pardir or relative.startswith(os.pardir + os.sep):
+        return ''
+    return os.path.join(root, relative.split(os.sep, 1)[0])
+
+
+def task_memory_directory(task_folder: str) -> str:
+    """Where an agent keeps its memory for a task: ``<task folder>/memory``.
+
+    ONE definition, shared by the prompt that tells the agent and the CLI
+    setting that makes the CLI itself use it. They used to be written
+    separately, and an agent told one path while its CLI loaded memory from
+    another is exactly what kept pulling memory out of the task folder.
+    """
+    folder = str(task_folder or '').strip()
+    return os.path.join(os.path.normpath(folder), 'memory') if folder else ''
+
+
+def task_boundary_system_block(task_folder: str, *, outside_files=()) -> str:
+    """The short, persistent task-folder rule for the agent's SYSTEM prompt.
+
+    The full ``workspace_scope_block`` rides in the FIRST user message only —
+    re-sending it every turn made the agent treat each turn as a fresh task.
+    A first message does not last: a resumed session never receives it, and a
+    long conversation is summarised until it is gone. The operator ended up
+    re-explaining the boundary by hand — "make sure i don't need to explain
+    again not to go outside the task folder" — while the one thing the system
+    prompt DID repeat on every launch was an instruction to open a document
+    outside the task folder.
+
+    The system prompt is re-sent on every launch and kept through
+    summarisation, so the rule lives here, short enough to stay unmissable:
+
+    * the task folder is the agent's whole world;
+    * memory is ONLY under ``<task folder>/memory/``;
+    * absolute paths only — a relative path or a ``cd ..`` hop is read by the
+      host's scope checks as an attempt to leave, and stops the work for an
+      approval;
+    * the few files outside it the agent is genuinely given are reached only
+      by their exact path, never by entering their folder.
+
+    ``outside_files`` are exact paths the caller hands the agent on purpose
+    (a shared reference document, a lessons file). One already inside the task
+    folder is not repeated as an exception. ``''`` when no task folder is known
+    — a boundary without a path is not a boundary.
+    """
+    folder = str(task_folder or '').strip()
+    if not folder:
+        return ''
+    folder = os.path.normpath(folder)
+    memory = task_memory_directory(folder)
+    exceptions: list[str] = []
+    for raw in outside_files or ():
+        text = str(raw or '').strip()
+        if not text:
+            continue
+        path = os.path.normpath(os.path.expanduser(text))
+        if path == folder or path.startswith(folder + os.sep):
+            continue
+        if path not in exceptions:
+            exceptions.append(path)
+    lines = [
+        '# Task folder boundary',
+        '',
+        'This applies to every tool call for the whole session, including '
+        'after the conversation is resumed or summarised.',
+        '',
+        f'YOUR TASK FOLDER IS: {folder}',
+        '',
+        '- Work ONLY inside that folder. Do not read, write, list, search, '
+        '``cd`` into, or run anything against a path outside it: not to look, '
+        'not to check, not once.',
+        f'- YOUR MEMORY IS ONLY IN: {memory}{os.sep}',
+        '  Every memory or note file goes there and nowhere else. Never use a '
+        'memory, notes or config directory outside the task folder, even if '
+        'something else names one.',
+        f'- Use ABSOLUTE paths that start with {folder}{os.sep} for every file '
+        'and every command. Do not use relative paths, ``..``, or chains of '
+        '``cd`` to move around: they are checked as attempts to leave the task '
+        'folder and stop your work for an approval.',
+        '  In a long shell command you may name the folder once and build on '
+        f'it: ``T={folder}`` then ``$T/<repo>/...``.',
+    ]
+    if exceptions:
+        lines.append(
+            '- The ONLY files outside the task folder you may touch are listed '
+            'below. Reach each one by its exact absolute path with the Read, '
+            'Edit or Grep tool. Never ``cd`` into its folder, and never run a '
+            'shell command in or against that folder:'
+        )
+        lines.extend(f'  - {path}' for path in exceptions)
+    lines.append(
+        '- If you need anything else outside the task folder, stop and ask in '
+        'the chat. Do not go and look for it.'
+    )
+    return '\n'.join(lines)
+
+
 def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> str:
     """Render the unmissable strict workspace-boundary block.
 
@@ -281,6 +413,14 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
     # root reads as a wall. The first line is the one that survives a long
     # prompt, so the rule goes there rather than four paragraphs down.
     primary = paths[0]
+    # The memory directory hangs off the TASK folder, not whichever path is
+    # listed first. Review-comment runs list a repository clone first, so
+    # "<first path>/memory/" told those agents to keep notes inside a git
+    # repository. Resolved through the same helper as the CLI's own memory
+    # setting, so the prompt and the setting cannot name different places;
+    # when the task folder cannot be identified the first path is still the
+    # best answer available.
+    memory_dir = task_memory_directory(task_folder_for(primary) or primary)
     block = (
         'WORKSPACE SCOPE — STRICT BOUNDARY (read this first):\n'
         f'\nYOUR TASK FOLDER IS: {primary}\n\n'
@@ -341,7 +481,7 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
         # out-of-folder approval, interrupting the operator for something
         # they never needed to see.
         'YOUR MEMORY DIRECTORY IS: '
-        f'{primary}{os.sep}memory{os.sep}\n\n'
+        f'{memory_dir}{os.sep}\n\n'
         'This OVERRIDES any memory or notes directory your CLI told you to '
         'use. If you were given a path under a per-user agent directory '
         '(anything under the home directory, a global sessions or projects '

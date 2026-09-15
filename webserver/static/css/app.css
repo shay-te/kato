@@ -5640,6 +5640,11 @@ body.kato-resizing {
 }
 
 /* Files tab */
+/* The horizontal inset of the whole files pane — the header's search box and
+ * toolbar, and the tree container below them. ONE value, because they used to
+ * be two: the header was inset 6px while the tree ran flush to the pane edge,
+ * so the repo cards stuck out past the toolbar ("for the tree container make
+ * its spacing left right same as the toolbar"). */
 .files-tab,
 .changes-tab {
   display: flex;
@@ -5650,8 +5655,8 @@ body.kato-resizing {
 
 .files-tab-header,
 .changes-tab-header {
-  /* Horizontal inset matches .files-tab-body below, so the search box
-   * and the repo cards under it start on the same vertical line. */
+  /* Horizontal inset shared with .files-tab-body below, so the search box
+   * and the repo cards under it start and end on the same vertical lines. */
   padding: 10px 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-size: 12px;
@@ -7521,6 +7526,13 @@ body.kato-resizing {
    * it used to provide is applied to the sections instead. */
   padding-left: 0;
   padding-right: 0;
+  /* The SAME inset as the header, applied as MARGIN rather than padding.
+   * Padding would move the sections away from this scroller's rounded clip
+   * (see above) and let rows show through the pinned header's corners. Margin
+   * moves the scroller itself, so the sections stay flush with its corners and
+   * the clip keeps working — the cards just line up with the toolbar now. */
+  margin-left: 6px;
+  margin-right: 6px;
 }
 
 .files-tab-context-menu,

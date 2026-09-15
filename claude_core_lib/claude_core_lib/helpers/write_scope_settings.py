@@ -44,6 +44,13 @@ import sys
 from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
     effective_sandbox_roots,
 )
+# The task folder and its memory directory come from the SAME helpers the
+# workspace-scope prompt uses, so the path the agent is told and the path its
+# CLI actually loads memory from cannot drift apart again.
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    task_folder_for,
+    task_memory_directory,
+)
 
 _READ_DEDUPE_MODULE = 'agent_core_lib.agent_core_lib.helpers.read_dedupe'
 _LESSONS_GATE_MODULE = 'agent_core_lib.agent_core_lib.helpers.lessons_gate'
@@ -137,6 +144,28 @@ def lessons_gate_hook_settings() -> dict:
     }]}}
 
 
+def _absolute_rule_path(path: str) -> str:
+    """``path`` in the form a permission rule reads as ABSOLUTE.
+
+    A rule path with ONE leading slash is resolved relative to the settings
+    file, not the filesystem root; ``//`` is what means absolute. The deny
+    rules below used the single-slash form and matched nothing at all.
+
+    Verified against the real CLI (2.1.270), each with a control in the same
+    run proving the operation otherwise succeeds:
+
+    * ``Edit(/Users/me/.claude/**)`` let a write through; ``Edit(//Users/me/
+      .claude/**)`` refused it — even under ``bypassPermissions``;
+    * ``Write(//Users/me/.claude/**)`` ALSO let the write through, so file
+      rules are written against ``Edit``, which covers every writing tool;
+    * ``Read(/Users/me/...)`` let a read through; ``Read(//...)`` refused it.
+
+    POSIX-shaped on every platform (``//C:/Users/me``); the Windows form is
+    not verified.
+    """
+    return '//' + Path(path).as_posix().lstrip('/')
+
+
 def agent_state_dir_write_deny_rules() -> list[str]:
     """Deny-rules for the CLI's OWN state directory (``~/.claude``).
 
@@ -152,12 +181,52 @@ def agent_state_dir_write_deny_rules() -> list[str]:
     names a fixed per-user path and beats prompt guidance. Guidance has now
     failed twice; a deny rule is the only thing that actually holds.
 
-    Denies WRITES only. Reads are untouched — the agent may still consult
-    whatever the CLI put there — and the CLI itself keeps writing its
-    transcripts, because that is not a tool call.
+    Denies WRITES. Reading memory there is refused separately and narrowly
+    (``agent_memory_read_deny_rules``); the rest of the directory stays
+    readable, and the CLI itself keeps writing its transcripts, because that
+    is not a tool call.
     """
-    home = os.path.expanduser('~')
-    return [f'{tool}({home}/.claude/**)' for tool in _WRITE_TOOLS]
+    # ONE ``Edit`` rule in the absolute ``//`` form — see
+    # ``_absolute_rule_path`` for the live verification of both choices. The
+    # per-tool single-slash rules this replaced never matched a single write.
+    home = _absolute_rule_path(os.path.expanduser('~'))
+    return [f'Edit({home}/.claude/**)']
+
+
+def agent_memory_read_deny_rules() -> list[str]:
+    """Deny-rules for READING memory under the CLI's per-user directory.
+
+    Memory belongs to the task folder. Reading
+    ``~/.claude/projects/<any encoded path>/memory/`` would pull notes from a
+    different task — or from before memory moved into the task — straight into
+    this one. Scoped to the memory folders only; everything else the CLI keeps
+    in that directory stays readable.
+    """
+    home = _absolute_rule_path(os.path.expanduser('~'))
+    return [f'Read({home}/.claude/projects/**/memory/**)']
+
+
+def auto_memory_directory_setting(cwd: str = '') -> dict:
+    """Pin the CLI's OWN memory location inside the task folder.
+
+    Prompt guidance lost to the CLI's built-in memory feature twice: the CLI
+    tells the agent its memory lives at ``~/.claude/projects/<cwd>/memory/``,
+    and that specific built-in instruction beats a general one. The write
+    denial then blocked those writes, which left the agent stuck rather than
+    pointed anywhere — so the operator had to step in and redirect it by hand,
+    every task.
+
+    ``autoMemoryDirectory`` changes the answer at the source: the CLI loads and
+    saves memory in the task folder, and its own system prompt names that
+    folder, so nothing is left competing with the workspace-scope prompt.
+    Verified against the real CLI: a ``MEMORY.md`` planted in the configured
+    directory was known to the agent, and unknown without the setting.
+
+    Empty when no task folder can be identified. Never a guess, and never a
+    repository clone — that would put memory one ``git add`` from a commit.
+    """
+    memory = task_memory_directory(task_folder_for(cwd))
+    return {'autoMemoryDirectory': memory} if memory else {}
 
 
 def out_of_workspace_write_settings(
@@ -179,9 +248,14 @@ def out_of_workspace_write_settings(
         'ask': out_of_workspace_write_ask_rules(),
         # Deny beats allow and ask: the CLI auto-accepts writes to its own
         # state directory, so nothing softer than a denial keeps the agent's
-        # memory out of the global agent folder and inside the task.
-        'deny': agent_state_dir_write_deny_rules(),
+        # memory out of the global agent folder; and memory there is not read
+        # back into this task either.
+        'deny': agent_state_dir_write_deny_rules() + agent_memory_read_deny_rules(),
     }}
+    # The positive half: tell the CLI where memory DOES go. The denials above
+    # only stop the wrong place; this is what stops the agent needing to be
+    # told, by hand, on every new task.
+    settings.update(auto_memory_directory_setting(cwd))
     hooks: list = []
     if dedupe_reads:
         hooks.extend(read_dedupe_hook_settings()['hooks']['PreToolUse'])

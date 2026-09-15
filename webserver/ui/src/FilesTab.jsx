@@ -10,6 +10,7 @@ import {
   syncTaskRepositories,
 } from './api.js';
 import { useTaskDiff, useTaskComments, useTaskTree, revalidate } from './stores/taskCache/index.js';
+import { useDelayedFlag } from './hooks/useDelayedFlag.js';
 import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
@@ -93,6 +94,13 @@ export function buildFilesCommentMeta(comments) {
   }
   return byRepo;
 }
+// How long the tree may be loading before any loader is drawn. On a reload or a
+// first open the server hands back its cached tree, and on a switch it is
+// usually already in memory, so it lands within a few frames; drawing spinners and a progress
+// bar for those frames and removing them again was the "super fast blinking of
+// the tree" the operator reported. A genuinely slow load still shows them.
+const TREE_LOADER_GRACE_MS = 300;
+
 export default function FilesTab({
   taskId,
   taskSummary = '',
@@ -108,6 +116,7 @@ export default function FilesTab({
   // instantly instead of blanking + refetching. Deduped + polled by the cache;
   // this component keeps only its own view state (scroll / filter / focus).
   const { trees, status, error } = useTaskTree(taskId);
+  const showLoader = useDelayedFlag(status === 'loading', TREE_LOADER_GRACE_MS);
   // Record the repo list whenever a fetch lands, so the NEXT switch to this
   // task can draw its headers before the tree walk returns.
   useEffect(() => {
@@ -535,9 +544,10 @@ export default function FilesTab({
           cwd={repo.cwd}
           branch={repo.branch}
           taskId={taskId}
+          busy={showLoader}
         />
       ))
-      : (
+      : showLoader && (
         /* No remembered repos — a task never opened in this browser, or one
            whose memory was cleared. A bare "Loading files…" line reads as a
            dead pane on a slow first load, so this is a real indeterminate
@@ -681,15 +691,16 @@ export default function FilesTab({
   const scopePicker = status === 'loading' ? (
     // A disabled placeholder rather than nothing: the picker used to be absent
     // until the trees arrived and then appear, shifting the row under the
-    // operator's cursor. Reserving it — and saying it is loading — keeps the
-    // header still and explains the wait.
+    // operator's cursor. Reserving it keeps the header still. It only SAYS it
+    // is loading once the wait is real — a label that flips to "Loading…" and
+    // straight back on a fast load is flicker, not information.
     <select
       className="files-tab-filter-scope"
       disabled
-      aria-label="Loading repositories…"
-      title="Loading repositories…"
+      aria-label={showLoader ? 'Loading repositories…' : 'Repositories'}
+      title={showLoader ? 'Loading repositories…' : undefined}
     >
-      <option>Loading repos…</option>
+      <option>{showLoader ? 'Loading repos…' : 'All repos'}</option>
     </select>
   ) : trees.length > 1 && (
     <select
@@ -942,7 +953,7 @@ function collectFileRelativePaths(nodes, out = []) {
 // chrome) so nothing shifts when the real tree replaces it — the pane fills
 // in, it does not re-lay-out. See ``taskRepoMemory`` for where the names come
 // from and why they are trusted for display only.
-function RepoTreeSkeleton({ repoId, cwd, branch, taskId }) {
+function RepoTreeSkeleton({ repoId, cwd, branch, taskId, busy = true }) {
   const heading = repoId || cwd || 'repository';
   return (
     <section className="files-tab-repo is-loading">
@@ -966,12 +977,13 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId }) {
           )}
           {/* Where the +N/-N stats land. The shared button spinner — the same
               rotating ring every in-flight action in the app uses. */}
+          {/* The slot is always there, so the spinner appearing after the grace
+              period cannot push the history button along the row. */}
           <span
             className="files-tab-repo-loading"
-            role="status"
-            aria-label={`Loading ${heading}`}
+            {...(busy ? { role: 'status', 'aria-label': `Loading ${heading}` } : {})}
           >
-            <BusyIcon busy idle="" />
+            {busy ? <BusyIcon busy idle="" /> : null}
           </span>
           <button
             type="button"

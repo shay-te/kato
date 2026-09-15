@@ -1133,6 +1133,7 @@ def _start_planning_webserver_if_enabled(app) -> None:
             host,
         )
     scheme, ssl_context = _resolve_webserver_tls(app.logger)
+    from kato_core_lib.helpers.kato_paths_utils import kato_home_path
     flask_app = _create_webserver_app(
         session_manager=session_manager,
         workspace_manager=workspace_manager,
@@ -1143,6 +1144,15 @@ def _start_planning_webserver_if_enabled(app) -> None:
         scan_in_progress_event=_SCAN_IN_PROGRESS,
         hook_runner=getattr(app, 'hook_runner', None),
         needs_config=getattr(app, 'needs_config', False),
+        # The Files pane's cached trees survive a kato restart here, so the
+        # first open after one paints immediately (file_tree_cache.py).
+        # ``file-trees``, not the first ``files``: trees cached before the
+        # task-folder walk was bounded listed every file of a node_modules or
+        # virtualenv — one task's copy was 612 MB — and a fresh directory
+        # means none of those is ever served.
+        file_tree_cache_dir=str(kato_home_path(
+            'cache/file-trees', env_key='KATO_FILE_TREE_CACHE_DIR',
+        )),
     )
 
     # Keep a handle to the live Flask app: the setup-mode transition

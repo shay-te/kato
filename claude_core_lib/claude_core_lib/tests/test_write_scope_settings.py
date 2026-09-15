@@ -17,6 +17,7 @@ from pathlib import Path
 
 from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
     in_workspace_write_allow_rules,
+    agent_memory_read_deny_rules,
     agent_state_dir_write_deny_rules,
     out_of_workspace_write_ask_rules,
     out_of_workspace_write_settings,
@@ -70,7 +71,12 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
         # CLI's own state directory: it auto-accepts writes there, so the
         # agent's memory kept landing in the global agent folder and the
         # operator only learned about it from an after-the-fact warning.
-        settings = out_of_workspace_write_settings(_CWD)
+        # Without a known workspaces root there is no task folder, so no
+        # ``autoMemoryDirectory`` key — cleared here so an environment that
+        # happens to export the root cannot change this test's answer.
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('AGENT_WORKSPACES_ROOT', None)
+            settings = out_of_workspace_write_settings(_CWD)
         self.assertEqual(list(settings.keys()), ['permissions'])
         self.assertEqual(
             sorted(settings['permissions'].keys()), ['allow', 'ask', 'deny'])
@@ -80,7 +86,8 @@ class OutOfWorkspaceWriteSettingsTests(unittest.TestCase):
         self.assertEqual(
             settings['permissions']['ask'], out_of_workspace_write_ask_rules())
         self.assertEqual(
-            settings['permissions']['deny'], agent_state_dir_write_deny_rules())
+            settings['permissions']['deny'],
+            agent_state_dir_write_deny_rules() + agent_memory_read_deny_rules())
 
     def test_json_is_valid_and_compact(self) -> None:
         raw = out_of_workspace_write_settings_json(_CWD)

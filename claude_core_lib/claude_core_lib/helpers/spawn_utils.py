@@ -66,14 +66,26 @@ def build_appended_system_prompt(
     lessons_path: str,
     docker_mode_on: bool,
     logger,
+    cwd: str = '',
 ) -> str:
     """Compose the single ``--append-system-prompt`` value.
 
-    Joins the architecture doc, learned lessons, and (when docker mode
-    is on) the sandbox addendum into one string — the Claude CLI takes
-    a single ``--append-system-prompt``. Returns ``''`` when the
-    composer produces nothing. Identical wiring for both spawn paths.
+    Joins the task-folder boundary, the architecture doc, learned lessons,
+    and (when docker mode is on) the sandbox addendum into one string — the
+    Claude CLI takes a single ``--append-system-prompt``. Returns ``''`` when
+    the composer produces nothing. Identical wiring for both spawn paths.
+
+    ``cwd`` is the session's working directory. When it sits inside a known
+    task folder, the system prompt carries the persistent boundary for that
+    folder — every launch, new or resumed, one-shot or streaming. That rule
+    used to ride only in the first user message, which a resumed session never
+    receives and a long conversation summarises away, so the operator had to
+    keep re-explaining it by hand.
     """
+    from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+        task_boundary_system_block,
+        task_folder_for,
+    )
     from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import (
         read_architecture_doc,
     )
@@ -84,10 +96,25 @@ def build_appended_system_prompt(
 
     architecture_doc = read_architecture_doc(architecture_doc_path, logger=logger)
     lessons_text = read_lessons_file(lessons_path, logger=logger)
+    # Named as exceptions only when their directive was actually emitted, so
+    # the boundary never lists a file the agent was not told to open. These
+    # live OUTSIDE the task folder by design (the architecture doc is shared
+    # and edited across tasks), and exact-path tool access to them is exactly
+    # what the host's scope checks exempt — entering their folder is not.
+    outside_files = [
+        path for path, emitted in (
+            (architecture_doc_path, architecture_doc),
+            (lessons_path, lessons_text),
+        ) if emitted
+    ]
+    task_boundary = task_boundary_system_block(
+        task_folder_for(cwd), outside_files=outside_files,
+    )
     return compose_system_prompt(
         architecture_doc,
         docker_mode_on=docker_mode_on,
         lessons=lessons_text,
+        task_boundary=task_boundary,
     )
 
 

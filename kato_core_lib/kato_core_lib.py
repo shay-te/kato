@@ -149,6 +149,31 @@ def _export_agent_env_from_kato_config() -> None:
     )
 
 
+def _export_agent_workspaces_root(workspace_manager) -> None:
+    """Publish the REAL workspaces root under the generic ``AGENT_WORKSPACES_ROOT``.
+
+    The agent libs read it to tell a task folder from an arbitrary checkout
+    (``agent_prompt_utils.task_folder_for``). That is what pins the CLI's own
+    memory directory inside ``<task>/memory`` instead of the per-user
+    ``~/.claude/projects/...`` path the operator kept having to steer the agent
+    away from by hand, on every new task.
+
+    Taken from the BUILT workspace manager, not re-derived from
+    ``KATO_WORKSPACES_ROOT``: the ``~/.kato/workspaces`` default is applied
+    inside the manager and never written back to the environment, and
+    settings.json can reach the environment after this process started. The
+    manager's root is where clones actually go, so this value cannot disagree
+    with it. ``setdefault`` like the rest of the bridge — an explicitly set
+    ``AGENT_*`` value still wins.
+    """
+    from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+        WORKSPACES_ROOT_ENV,
+    )
+    root = str(getattr(workspace_manager, 'root', '') or '').strip()
+    if root:
+        os.environ.setdefault(WORKSPACES_ROOT_ENV, root)
+
+
 # Budget for the lessons compaction one-shot. Deliberately far above the
 # shared interactive default: nothing waits on this call, and the prompt grows
 # with the operator's lesson history, so a too-small budget makes it fail
@@ -345,6 +370,9 @@ class KatoCoreLib(CoreLib):
         self.workspace_manager = WorkspaceManager.from_config(
             open_cfg, agent_backend,
         )
+        # Before anything can spawn an agent: every session's memory setting
+        # and scope prompt resolve the task folder against this root.
+        _export_agent_workspaces_root(self.workspace_manager)
         # Lessons subsystem: per-task capture + periodic compact. Claude clients
         # re-read ``lessons_path`` per spawn so fresh lessons apply next turn.
         self.lessons_service = self._build_lessons_service(open_cfg)

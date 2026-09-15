@@ -103,6 +103,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_STATUS_DISABLED,
     SSE_EVENT_STATUS_ENTRY,
 )
+from kato_webserver.file_tree_cache import FileTreeCache
 from kato_webserver.git_diff_utils import (
     blob_size_at_ref,
     changed_paths,
@@ -760,6 +761,134 @@ def _finalize_resolved_merges(agent_service, task_id: str) -> None:
         )
 
 
+def _build_files_payload(session_manager, workspace_manager, agent_service, task_id: str) -> dict:
+    """The Files pane's payload for ``task_id``, read from the workspace now.
+
+    Read-only — it never finalises a merge or otherwise changes git state; the
+    route decides separately whether to do that first. Returned as a dict so
+    the route can cache it (``file_tree_cache.py``) before it is serialised.
+    """
+    # Repos kato can't push to (read-only / reference) — badge them in the
+    # tree so the operator knows edits there won't be published.
+    from kato_core_lib.helpers.read_only_repos_store import read_only_repos
+    read_only_ids = read_only_repos(task_id)
+    repository_ids = _task_repository_ids(workspace_manager, task_id)
+    # Multi-repo task: enumerate every clone so the UI can render
+    # one tree per repo. Single-repo / legacy: fall back to the
+    # session record cwd so the response shape is unchanged.
+    if repository_ids:
+        trees = []
+        # PARALLEL across repos. Each one costs four git/disk passes
+        # (branch, tracked tree, conflicts, changed set), so a 25-repo
+        # workspace ran ~100 subprocesses strictly in series and the Files
+        # pane sat empty for seconds — "it loaded now but took lots of
+        # time". Git spends that time in subprocesses, which release the
+        # GIL, so threads convert the sum into roughly the max.
+        #
+        # Bounded, and ORDER-PRESERVING: the pane renders repos in the
+        # order the task lists them, so results are placed by index rather
+        # than appended as they finish. Same shape as the clone fan-out in
+        # workspace_provisioning_service.
+        def _tree_for(repo_id: str):
+            cwd = _repository_cwd(workspace_manager, task_id, repo_id)
+            if cwd is None:
+                return None
+            return {
+                'repo_id': repo_id,
+                'cwd': cwd,
+                'read_only': repo_id in read_only_ids,
+                # Which branch this clone is actually ON. The operator
+                # could see a repo's files and its diff but nothing said
+                # what they were relative to — and a clone stranded on the
+                # default branch (a failed branch prep) looks exactly like
+                # a healthy one until its work fails to push.
+                'branch': current_branch(cwd) or '',
+                'tree': tracked_file_tree(cwd),
+                # Conflict markers — same source as the Changes
+                # tab. UI marks each path with a warning icon so
+                # the operator spots merge conflicts at a glance.
+                'conflicted_files': conflicted_paths(cwd),
+                # Files that differ from the destination branch —
+                # same base + coverage as the Changes-tab diff so
+                # the tree can colour what kato has touched.
+                'changed_files': _changed_files_for_repo(
+                    repo_id, cwd, agent_service,
+                ),
+            }
+
+        trees.extend(build_in_parallel(repository_ids, _tree_for))
+        # The task folder's OWN files, after the repo clones. The agent
+        # writes real deliverables here (a scratch page to open in a
+        # browser, pr_description.md) and nothing listed them, so the
+        # operator could not reach a file kato had just told them about.
+        task_root = task_workspace_root(workspace_manager, task_id)
+        if task_root:
+            own_files = task_folder_file_tree(
+                task_root, [t['cwd'] for t in trees],
+            )
+            if own_files:
+                trees.append({
+                    'repo_id': TASK_FOLDER_TREE_ID,
+                    'cwd': task_root,
+                    'read_only': True,
+                    'tree': own_files,
+                    # Not a git repo — no diff base, so nothing to
+                    # colour and no conflicts to mark.
+                    'conflicted_files': [],
+                    'changed_files': [],
+                    # ...and therefore nothing can ever be "changed" here.
+                    # Without this the section rendered the default
+                    # changed-files view, which for an empty changed set
+                    # says "Nothing changed yet" — so plan.md and
+                    # pr_description.md, real deliverables the agent had
+                    # just told the operator about, were listed by this
+                    # endpoint and never shown.
+                    'has_diff': False,
+                })
+        if trees:
+            return {
+                'repository_ids': [
+                    t['repo_id'] for t in trees
+                    if t['repo_id'] != TASK_FOLDER_TREE_ID
+                ],
+                'trees': trees,
+                # Back-compat: first repo doubles as the legacy
+                # ``cwd``/``tree`` pair so older clients still work.
+                'cwd': trees[0]['cwd'],
+                'tree': trees[0]['tree'],
+            }
+    cwd = _record_cwd_or_none(session_manager, task_id)
+    if cwd is None:
+        # Workspace clones already gone (task forgotten / never
+        # provisioned). Return an empty payload with 200 instead
+        # of 404 so the Files tab shows "no repositories" rather
+        # than the scary "Error: session not found" the operator
+        # sees right after kato finishes a publish.
+        return {
+            'repository_ids': [],
+            'trees': [],
+            'cwd': '',
+            'tree': [],
+            'conflicted_files': [],
+            'changed_files': [],
+        }
+    legacy_tree = tracked_file_tree(cwd)
+    legacy_conflicts = conflicted_paths(cwd)
+    legacy_changed = _changed_files_for_repo('', cwd, agent_service)
+    return {
+        'repository_ids': [],
+        'trees': [{
+            'repo_id': '', 'cwd': cwd, 'tree': legacy_tree,
+            'conflicted_files': legacy_conflicts,
+            'changed_files': legacy_changed,
+        }],
+        'cwd': cwd,
+        'tree': legacy_tree,
+        'conflicted_files': legacy_conflicts,
+        'changed_files': legacy_changed,
+    }
+
+
 def _no_base_error_message(repo_id: str) -> str:
     """Operator-facing message when no diff base can be resolved."""
     if repo_id:
@@ -1139,6 +1268,7 @@ def create_app(
     scan_in_progress_event=None,
     hook_runner=None,
     needs_config=False,
+    file_tree_cache_dir: str = '',
 ) -> Flask:
     app = Flask(
         __name__,
@@ -1156,6 +1286,10 @@ def create_app(
     app.config['FORCE_SCAN_EVENT'] = force_scan_event
     app.config['SCAN_IN_PROGRESS_EVENT'] = scan_in_progress_event
     app.config['HOOK_RUNNER'] = hook_runner
+    # The Files pane's last-built tree per task (file_tree_cache.py). On disk
+    # only when the caller names a directory, which kato's own boot does; a
+    # bare app (tests, the dev server) keeps it in memory for its lifetime.
+    app.config['FILE_TREE_CACHE'] = FileTreeCache(file_tree_cache_dir or None)
     # True when kato booted UNCONFIGURED (setup mode): the webserver is up so
     # the operator can configure from the UI, but there's no ticket service
     # and no scan loop. The onboarding gate reads this via /api/config-status.
@@ -2723,8 +2857,15 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/sessions/<task_id>/files')
     def list_session_files(task_id: str):
-        manager = app.config['SESSION_MANAGER']
-        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        cache = app.config['FILE_TREE_CACHE']
+        # ``?cached=1`` is a client with nothing on screen for this task yet —
+        # a reload, a first open. It gets the last tree the server built at
+        # once and follows up with a plain request (see file_tree_cache.py).
+        # With no copy to give, it falls through to a build like any read.
+        if _truthy_arg(request.args.get('cached')):
+            body = cache.cached_body(task_id)
+            if body is not None:
+                return app.response_class(body, mimetype='application/json')
         agent_service = app.config.get('AGENT_SERVICE')
         # A merge the agent has just resolved is still uncommitted (the agent
         # can't run git), so the tree would show every merged-in file as a
@@ -2732,125 +2873,15 @@ def _register_http_routes(app: Flask) -> None:
         # is pending AND its markers are gone — so the tree reflects only the
         # branch's work.
         _finalize_resolved_merges(agent_service, task_id)
-        # Repos kato can't push to (read-only / reference) — badge them in the
-        # tree so the operator knows edits there won't be published.
-        from kato_core_lib.helpers.read_only_repos_store import read_only_repos
-        read_only_ids = read_only_repos(task_id)
-        repository_ids = _task_repository_ids(workspace_manager, task_id)
-        # Multi-repo task: enumerate every clone so the UI can render
-        # one tree per repo. Single-repo / legacy: fall back to the
-        # session record cwd so the response shape is unchanged.
-        if repository_ids:
-            trees = []
-            # PARALLEL across repos. Each one costs four git/disk passes
-            # (branch, tracked tree, conflicts, changed set), so a 25-repo
-            # workspace ran ~100 subprocesses strictly in series and the Files
-            # pane sat empty for seconds — "it loaded now but took lots of
-            # time". Git spends that time in subprocesses, which release the
-            # GIL, so threads convert the sum into roughly the max.
-            #
-            # Bounded, and ORDER-PRESERVING: the pane renders repos in the
-            # order the task lists them, so results are placed by index rather
-            # than appended as they finish. Same shape as the clone fan-out in
-            # workspace_provisioning_service.
-            def _tree_for(repo_id: str):
-                cwd = _repository_cwd(workspace_manager, task_id, repo_id)
-                if cwd is None:
-                    return None
-                return {
-                    'repo_id': repo_id,
-                    'cwd': cwd,
-                    'read_only': repo_id in read_only_ids,
-                    # Which branch this clone is actually ON. The operator
-                    # could see a repo's files and its diff but nothing said
-                    # what they were relative to — and a clone stranded on the
-                    # default branch (a failed branch prep) looks exactly like
-                    # a healthy one until its work fails to push.
-                    'branch': current_branch(cwd) or '',
-                    'tree': tracked_file_tree(cwd),
-                    # Conflict markers — same source as the Changes
-                    # tab. UI marks each path with a warning icon so
-                    # the operator spots merge conflicts at a glance.
-                    'conflicted_files': conflicted_paths(cwd),
-                    # Files that differ from the destination branch —
-                    # same base + coverage as the Changes-tab diff so
-                    # the tree can colour what kato has touched.
-                    'changed_files': _changed_files_for_repo(
-                        repo_id, cwd, agent_service,
-                    ),
-                }
-
-            trees.extend(build_in_parallel(repository_ids, _tree_for))
-            # The task folder's OWN files, after the repo clones. The agent
-            # writes real deliverables here (a scratch page to open in a
-            # browser, pr_description.md) and nothing listed them, so the
-            # operator could not reach a file kato had just told them about.
-            task_root = task_workspace_root(workspace_manager, task_id)
-            if task_root:
-                own_files = task_folder_file_tree(
-                    task_root, [t['cwd'] for t in trees],
-                )
-                if own_files:
-                    trees.append({
-                        'repo_id': TASK_FOLDER_TREE_ID,
-                        'cwd': task_root,
-                        'read_only': True,
-                        'tree': own_files,
-                        # Not a git repo — no diff base, so nothing to
-                        # colour and no conflicts to mark.
-                        'conflicted_files': [],
-                        'changed_files': [],
-                        # ...and therefore nothing can ever be "changed" here.
-                        # Without this the section rendered the default
-                        # changed-files view, which for an empty changed set
-                        # says "Nothing changed yet" — so plan.md and
-                        # pr_description.md, real deliverables the agent had
-                        # just told the operator about, were listed by this
-                        # endpoint and never shown.
-                        'has_diff': False,
-                    })
-            if trees:
-                return jsonify({
-                    'repository_ids': [
-                        t['repo_id'] for t in trees
-                        if t['repo_id'] != TASK_FOLDER_TREE_ID
-                    ],
-                    'trees': trees,
-                    # Back-compat: first repo doubles as the legacy
-                    # ``cwd``/``tree`` pair so older clients still work.
-                    'cwd': trees[0]['cwd'],
-                    'tree': trees[0]['tree'],
-                })
-        cwd = _record_cwd_or_none(manager, task_id)
-        if cwd is None:
-            # Workspace clones already gone (task forgotten / never
-            # provisioned). Return an empty payload with 200 instead
-            # of 404 so the Files tab shows "no repositories" rather
-            # than the scary "Error: session not found" the operator
-            # sees right after kato finishes a publish.
-            return jsonify({
-                'repository_ids': [],
-                'trees': [],
-                'cwd': '',
-                'tree': [],
-                'conflicted_files': [],
-                'changed_files': [],
-            })
-        legacy_tree = tracked_file_tree(cwd)
-        legacy_conflicts = conflicted_paths(cwd)
-        legacy_changed = _changed_files_for_repo('', cwd, agent_service)
-        return jsonify({
-            'repository_ids': [],
-            'trees': [{
-                'repo_id': '', 'cwd': cwd, 'tree': legacy_tree,
-                'conflicted_files': legacy_conflicts,
-                'changed_files': legacy_changed,
-            }],
-            'cwd': cwd,
-            'tree': legacy_tree,
-            'conflicted_files': legacy_conflicts,
-            'changed_files': legacy_changed,
-        })
+        payload = _build_files_payload(
+            app.config['SESSION_MANAGER'],
+            app.config.get('WORKSPACE_MANAGER'),
+            agent_service,
+            task_id,
+        )
+        return app.response_class(
+            cache.store(task_id, payload), mimetype='application/json',
+        )
 
     @app.get('/api/sessions/<task_id>/diff')
     def get_session_diff(task_id: str):
@@ -3788,6 +3819,8 @@ def _register_http_routes(app: Flask) -> None:
         # fails on a file lock. Cleared when the operator re-adopts the task.
         from kato_core_lib.helpers.forgotten_tasks_store import forget as _mark_forgotten
         _mark_forgotten(task_id)
+        # ...and its cached Files tree, so nothing of it is served again.
+        app.config['FILE_TREE_CACHE'].forget(task_id)
         # Drop any persisted plan-mode lock + its live override so a
         # forgotten task doesn't reappear plan-locked after a restart.
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode

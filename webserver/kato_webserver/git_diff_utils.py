@@ -333,6 +333,24 @@ def _branch_from_ls_remote(cwd: str) -> str:
 _TASK_FOLDER_HIDDEN_PREFIX = '.'
 
 
+#: Directories that hold installed or generated content, never files written
+#: for the operator: a dependency tree, a virtualenv, a database's data folder.
+#: Walking them is what made listing a task folder take minutes — one task's
+#: helper_scripts held 470,819 files (a node_modules, test-run output), and the
+#: Files pane waited 110 seconds for a tree it had no use for.
+_TASK_FOLDER_SKIPPED_DIR_NAMES = frozenset({'node_modules', '__pycache__'})
+#: A file whose presence marks its whole directory as tooling, whatever the
+#: directory is called: ``pyvenv.cfg`` (a Python virtualenv), ``PG_VERSION`` (a
+#: Postgres data directory).
+_TASK_FOLDER_TOOLING_MARKERS = ('pyvenv.cfg', 'PG_VERSION')
+#: Upper bound on entries examined in a task folder. The skip rules cover the
+#: heavy directories that announce themselves; this covers the ones that do not
+#: (a test-run output folder of a quarter of a million files has no marker).
+#: The walk is breadth-first, so the shallow files an agent actually hands over
+#: — a plan, a PR description, a script — are listed before the budget runs out.
+TASK_FOLDER_MAX_ENTRIES = 5000
+
+
 def _looks_like_git_repo(path: Path) -> bool:
     """Is ``path`` a git repository — working copy OR bare mirror?"""
     try:
@@ -344,7 +362,32 @@ def _looks_like_git_repo(path: Path) -> bool:
         return False
 
 
-def task_folder_file_tree(task_root: str, repo_dirs=()) -> list[dict[str, Any]]:
+def _is_tooling_dir(path: Path) -> bool:
+    """Installed or generated content — see ``_TASK_FOLDER_SKIPPED_DIR_NAMES``."""
+    if path.name in _TASK_FOLDER_SKIPPED_DIR_NAMES:
+        return True
+    try:
+        return any((path / marker).is_file() for marker in _TASK_FOLDER_TOOLING_MARKERS)
+    except OSError:
+        return False
+
+
+def _without_empty_dirs(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop directory nodes that ended up with nothing to show."""
+    kept: list[dict[str, Any]] = []
+    for node in nodes:
+        if 'children' in node:
+            children = _without_empty_dirs(node['children'])
+            if not children:
+                continue
+            node = {**node, 'children': children}
+        kept.append(node)
+    return kept
+
+
+def task_folder_file_tree(
+    task_root: str, repo_dirs=(), *, max_entries: int = TASK_FOLDER_MAX_ENTRIES,
+) -> list[dict[str, Any]]:
     """Files the agent wrote in the TASK folder itself, as a tree.
 
     Not a git repo, so ``git ls-files`` cannot see it — and nothing did:
@@ -355,7 +398,10 @@ def task_folder_file_tree(task_root: str, repo_dirs=()) -> list[dict[str, Any]]:
 
     Repo clones are excluded because each already renders as its own tree;
     listing them again would duplicate every file in the task. Dot-prefixed
-    entries are kato's own plumbing and are hidden.
+    entries are kato's own plumbing and are hidden. Installed or generated
+    directories are skipped, and at most ``max_entries`` entries are examined,
+    breadth-first — so the listing takes a bounded time however much a task
+    folder accumulates.
     """
     # Blank guard FIRST: ``Path('')`` is the current directory, so an empty
     # task root would happily walk whatever kato was started from and list
@@ -377,40 +423,54 @@ def task_folder_file_tree(task_root: str, repo_dirs=()) -> list[dict[str, Any]]:
             skip.add(str(Path(str(entry)).resolve()))
         except OSError:
             continue
-    nodes: list[dict[str, Any]] = []
-    try:
-        entries = sorted(root.iterdir(), key=lambda item: item.name.lower())
-    except OSError:
-        return []
-    for entry in entries:
-        name = entry.name
-        if name.startswith(_TASK_FOLDER_HIDDEN_PREFIX):
-            continue
+    top: list[dict[str, Any]] = []
+    # Breadth-first over (directory, the list its entries go into): every
+    # folder's own entries are listed before anything deeper is opened, so a
+    # spent budget costs the deepest folders first.
+    pending: list[tuple[Path, list[dict[str, Any]]]] = [(root, top)]
+    remaining = max(0, int(max_entries))
+    cursor = 0
+    while cursor < len(pending) and remaining > 0:
+        directory, siblings = pending[cursor]
+        cursor += 1
         try:
-            if entry.is_dir() and str(entry.resolve()) in skip:
-                continue
+            entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
         except OSError:
             continue
-        if entry.is_dir():
-            # Never walk into a git repository. A clone the caller did not
-            # list, or a bare ``*.git`` mirror sitting in the task folder,
-            # would otherwise unfold its entire object store into the Files
-            # tab — thousands of SHA-named directories the operator has no
-            # use for. (It also made the payload non-deterministic, since
-            # those names change with every commit.)
-            if _looks_like_git_repo(entry):
+        for entry in entries:
+            if remaining <= 0:
+                break
+            remaining -= 1
+            name = entry.name
+            if name.startswith(_TASK_FOLDER_HIDDEN_PREFIX):
                 continue
-            children = task_folder_file_tree(str(entry), repo_dirs)
-            if children:
-                nodes.append({
+            try:
+                is_dir = entry.is_dir()
+                if is_dir and str(entry.resolve()) in skip:
+                    continue
+            except OSError:
+                continue
+            if is_dir:
+                # Never walk into a git repository. A clone the caller did not
+                # list, or a bare ``*.git`` mirror sitting in the task folder,
+                # would otherwise unfold its entire object store into the Files
+                # tab — thousands of SHA-named directories the operator has no
+                # use for. (It also made the payload non-deterministic, since
+                # those names change with every commit.) Nor into installed or
+                # generated content, which is where the minutes went.
+                if _looks_like_git_repo(entry) or _is_tooling_dir(entry):
+                    continue
+                node = {
                     'name': name, 'relativePath': name, 'path': str(entry),
-                    'children': children,
-                })
-            continue
-        nodes.append({
-            'name': name, 'relativePath': name, 'path': str(entry),
-        })
-    return nodes
+                    'children': [],
+                }
+                siblings.append(node)
+                pending.append((entry, node['children']))
+                continue
+            siblings.append({
+                'name': name, 'relativePath': name, 'path': str(entry),
+            })
+    return _without_empty_dirs(top)
 
 
 def tracked_file_tree(cwd: str) -> list[dict[str, Any]]:

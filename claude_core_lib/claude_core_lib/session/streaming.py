@@ -1565,6 +1565,9 @@ class StreamingClaudeSession(object):
             lessons_path=self._lessons_path,
             docker_mode_on=self._docker_mode_on,
             logger=self.logger,
+            # Resolves the task folder for the persistent boundary — this
+            # spawn may be a resume, which never sees the first message.
+            cwd=self._cwd,
         )
         if appended_system_prompt:
             # The one multiline, unbounded-length value — deliberately

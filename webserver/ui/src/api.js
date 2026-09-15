@@ -713,8 +713,11 @@ export function forgetTaskWorkspace(taskId, { markDone = false } = {}) {
   );
 }
 
-export function fetchFileTree(taskId) {
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files`);
+// ``cached``: take the tree the server last built, immediately — for a first
+// load with nothing on screen. The default builds it fresh.
+export function fetchFileTree(taskId, { cached = false } = {}) {
+  const query = cached ? '?cached=1' : '';
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files${query}`);
 }
 
 // Re-test push access for a read-only repo (the tree's "try again"). The

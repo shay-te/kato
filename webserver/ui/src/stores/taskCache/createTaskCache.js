@@ -44,13 +44,8 @@ export function createTaskCache({
 
   // One eviction authority for ALL data types: drop the task from every child
   // + notify registered purgers (the satellite caches — file content, stream).
-  //
-  // ``persisted`` distinguishes the two callers, which want opposite things
-  // from durable storage: LRU eviction is reclaiming MEMORY and must leave the
-  // on-disk copy alone (it is what makes the next reload instant), while
-  // ``forgetTask`` means the task is gone and must leave nothing behind.
-  function purgeEverywhere(taskId, { persisted = false } = {}) {
-    for (const child of childList) { child.purge(taskId, { persisted }); }
+  function purgeEverywhere(taskId) {
+    for (const child of childList) { child.purge(taskId); }
     for (const fn of onEvictFns) {
       try { fn(taskId); } catch (_) { /* one purger must not break others */ }
     }
@@ -74,8 +69,6 @@ export function createTaskCache({
     }
     if (victims.length) {
       parent.setState({ order: next });
-      // Memory only — the durable copies stay, so switching back after a
-      // reload is still instant.
       victims.forEach((victim) => purgeEverywhere(victim));
     }
   }
@@ -141,7 +134,7 @@ export function createTaskCache({
       order: s.order.filter((t) => t !== taskId),
       activeTaskId: s.activeTaskId === taskId ? '' : s.activeTaskId,
     }));
-    purgeEverywhere(taskId, { persisted: true });
+    purgeEverywhere(taskId);
   }
 
   // Register a satellite-cache purger (file-content / stream). Governs their

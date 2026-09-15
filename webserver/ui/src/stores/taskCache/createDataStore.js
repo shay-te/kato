@@ -16,18 +16,18 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-// ``persist`` (optional) is a durable payload adapter —
-// ``{ read(taskId), write(taskId, text), forget(taskId) }``, see
-// ./persistedPayloads.js. Injected rather than imported so this engine stays
-// testable with a plain in-memory fake, the same way the parent injects its
-// children and poller.
-export function createDataStore({ fetch: fetchFn, parse, empty, persist = null }) {
+// ``fetch(taskId, { revalidating })`` — ``revalidating`` is false for a FIRST
+// load (nothing held for the task yet) and true for a refresh over data already
+// on screen, so a fetcher can answer the two differently: the file tree takes
+// the server's cached copy for a first load.
+//
+// ``followUp(taskId)`` (optional) is asked once a first load has landed. True
+// means what arrived was only a stand-in, and the store fetches again at once —
+// as a revalidate, so the stand-in stays on screen until the real answer
+// replaces it.
+export function createDataStore({ fetch: fetchFn, parse, empty, followUp = null }) {
   const store = createStore(() => ({ tasks: {} }));
   const meta = new Map(); // taskId -> { inFlight, sig }
-  // Tasks whose durable copy has already been asked for. One attempt per task
-  // per lifetime — a second read would always lose to the data it would
-  // overwrite, and re-reading on every poll tick would be pure I/O.
-  const hydrated = new Set();
   // The stable slice a task-with-no-entry reads as. Frozen + shared so
   // selectors over a missing task stay referentially stable.
   const EMPTY_SLICE = Object.freeze({
@@ -55,46 +55,6 @@ export function createDataStore({ fetch: fetchFn, parse, empty, persist = null }
     return String(err && err.message ? err.message : err) || 'failed to load';
   }
 
-  // Fire-and-forget a persistence op. The adapter is injected, so this engine
-  // cannot assume it swallows its own failures — and a rejected background
-  // write must never surface as an unhandled rejection in a session that is
-  // otherwise working fine. Losing the durable copy costs one slow reload.
-  function persistQuietly(run) {
-    if (!persist) { return; }
-    try {
-      Promise.resolve(run(persist)).catch(() => undefined);
-    } catch (_err) { /* a synchronous throw is just as non-fatal */ }
-  }
-
-  // Restore the task's last-known payload from durable storage.
-  //
-  // Started alongside the network fetch and RACES it: an IndexedDB read beats
-  // a multi-repo git walk by orders of magnitude, so the pane paints real
-  // content on the frame after mount instead of after the round-trip. If the
-  // fetch somehow wins, the restore is DROPPED — stale data never overwrites
-  // fresh.
-  function hydrate(taskId) {
-    if (!persist || hydrated.has(taskId)) { return; }
-    hydrated.add(taskId);
-    const m = metaFor(taskId);
-    Promise.resolve()
-      .then(() => persist.read(taskId))
-      .then((text) => {
-        if (!text) { return; }
-        // Purged mid-read (LRU eviction / forget), or a real payload already
-        // landed — ``sig`` is set only by a completed fetch or a prior restore.
-        if (meta.get(taskId) !== m || m.sig) { return; }
-        let payload;
-        try { payload = JSON.parse(text); } catch (_err) { return; }
-        // Adopt the stored text as the dedupe signature: when the in-flight
-        // fetch returns identical bytes it re-commits nothing, so the restore
-        // costs zero re-renders rather than flashing restored → refetched.
-        m.sig = text;
-        commit(taskId, { data: parse(payload), status: 'ready', error: '' });
-      })
-      .catch(() => { /* best-effort: no restore, the fetch still runs */ });
-  }
-
   // Single-flight fetch+parse+SWR. A second call while one is in flight
   // (a poll tick racing a workspace-bump revalidate) returns the SAME
   // Promise — one request, not two.
@@ -102,13 +62,14 @@ export function createDataStore({ fetch: fetchFn, parse, empty, persist = null }
     if (!taskId) { return Promise.resolve(); }
     const m = metaFor(taskId);
     if (m.inFlight) { return m.inFlight; }
-    hydrate(taskId);
     const cur = sliceOf(taskId);
     // First load shows the spinner; a revalidate over existing data does NOT
     // blank it (SWR) — keep status 'ready'/'error' and the last data.
-    if (!cur || cur.status === 'idle') { commit(taskId, { status: 'loading' }); }
+    const firstLoad = !cur || cur.status === 'idle';
+    if (firstLoad) { commit(taskId, { status: 'loading' }); }
+    let fetchAgain = false;
     m.inFlight = Promise.resolve()
-      .then(() => fetchFn(taskId))
+      .then(() => fetchFn(taskId, { revalidating: !firstLoad }))
       .then((payload) => {
         // Purged mid-flight (LRU eviction / forget)? Drop the result — never
         // resurrect an evicted task. `meta` no longer holds our `m` once the
@@ -117,36 +78,32 @@ export function createDataStore({ fetch: fetchFn, parse, empty, persist = null }
         const sig = JSON.stringify(payload);
         const patch = { status: 'ready', error: '', lastFetched: Date.now() };
         // Unchanged bytes → keep the SAME parsed `data` reference so memoized
-        // consumers bail (no re-locate / no re-render), and nothing is
-        // re-persisted: the durable copy already holds these exact bytes.
+        // consumers bail (no re-locate / no re-render).
         if (sig !== m.sig) {
           m.sig = sig;
           patch.data = parse(payload);
-          persistQuietly((p) => p.write(taskId, sig));
         }
         commit(taskId, patch);
+        fetchAgain = firstLoad && !!followUp && followUp(taskId);
       })
       .catch((err) => {
         if (meta.get(taskId) !== m) { return; }
         // Keep the last-known data on error; just surface the message.
         commit(taskId, { status: 'error', error: errorMessage(err) });
       })
-      .finally(() => { m.inFlight = null; });
+      .finally(() => {
+        m.inFlight = null;
+        // Started only once this flight has cleared — the single-flight guard
+        // above would otherwise hand back the very promise that is finishing.
+        if (fetchAgain && meta.get(taskId) === m) { load(taskId); }
+      });
     return m.inFlight;
   }
 
   // Drop a task's data + bookkeeping entirely (the parent's LRU/forget calls
   // this — retention means we do NOT purge on React unsubscribe).
-  //
-  // ``persisted`` says whether the DURABLE copy goes too. LRU eviction passes
-  // false: it is a memory decision, and dropping the disk copy with it would
-  // silently undo the reload-is-instant behaviour for exactly the tasks the
-  // operator visits most. Only ``forgetTask`` — the operator deleting the task
-  // — passes true.
-  function purge(taskId, { persisted = false } = {}) {
+  function purge(taskId) {
     meta.delete(taskId);
-    hydrated.delete(taskId);
-    if (persisted) { persistQuietly((p) => p.forget(taskId)); }
     store.setState((s) => {
       if (!(taskId in s.tasks)) { return s; }
       const tasks = { ...s.tasks };
@@ -177,7 +134,6 @@ export function createDataStore({ fetch: fetchFn, parse, empty, persist = null }
   // test cases.
   function clear() {
     meta.clear();
-    hydrated.clear();
     store.setState({ tasks: {} });
   }
 
