@@ -30,6 +30,13 @@ from workspace_core_lib.workspace_core_lib import (
     WorkspaceService,
 )
 
+from kato_core_lib.helpers.preflight_log_utils import (
+    clone_failed_message,
+    cloned_message,
+    cloning_message,
+    preparing_message,
+    ready_message,
+)
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 
 
@@ -103,31 +110,33 @@ def provision_task_workspace_clones(
     )
     total = len(repositories)
     task_id = str(task.id)
-    workspace_service.append_preflight_log(
-        task_id,
-        f'preparing workspace ({total} repository(ies))',
-    )
-
-    # Announce all repos up front so the operator can see the queue,
-    # then kick off all clones in parallel.
-    clone_paths = []
-    for index, repository in enumerate(repositories, start=1):
-        clone_path = workspace_service.repository_path(task_id, repository.id)
-        clone_paths.append(clone_path)
-        already_cloned = (clone_path / '.git').is_dir()
-        if already_cloned:
-            workspace_service.append_preflight_log(
-                task_id,
-                f'cloning {index}/{total}: {repository.id} (already on disk, reusing)',
-            )
-        else:
-            log_mission_step(
-                _logger, task_id,
-                'cloning repository: %s (%d/%d)', repository.id, index, total,
-            )
-            workspace_service.append_preflight_log(
-                task_id, f'cloning {index}/{total}: {repository.id}',
-            )
+    clone_paths = [
+        workspace_service.repository_path(task_id, repository.id)
+        for repository in repositories
+    ]
+    # Only the repositories NOT on disk yet are announced, numbered among
+    # themselves. Reusing a clone is not an event: a line per repository on
+    # every preparation put fifty lines of "already on disk, reusing" into the
+    # chat of every task reopened after a restart (see preflight_log_utils).
+    # Nothing to clone means nothing is written.
+    to_clone = [
+        index for index, clone_path in enumerate(clone_paths)
+        if not (clone_path / '.git').is_dir()
+    ]
+    positions = {index: position for position, index in enumerate(to_clone, start=1)}
+    if to_clone:
+        workspace_service.append_preflight_log(
+            task_id, preparing_message(len(to_clone), total),
+        )
+    for index in to_clone:
+        repository = repositories[index]
+        log_mission_step(
+            _logger, task_id,
+            'cloning repository: %s (%d/%d)', repository.id, index + 1, total,
+        )
+        workspace_service.append_preflight_log(
+            task_id, cloning_message(positions[index], len(to_clone), repository.id),
+        )
 
     provisioned: list = [None] * total
     # PER-REPO ISOLATION, the same rule ``prepare_task_branches`` already
@@ -165,13 +174,15 @@ def provision_task_workspace_clones(
                         'other repositories', repository.id, task_id,
                     )
                     failures.append(f'{repository.id}: {exc}')
+                    # Always shown — a failure matters even for a reused clone.
                     workspace_service.append_preflight_log(
-                        task_id, f'✗ clone failed {i + 1}/{total}: {repository.id}: {exc}',
+                        task_id, clone_failed_message(repository.id, exc),
                     )
                     continue
-                workspace_service.append_preflight_log(
-                    task_id, f'✓ cloned {i + 1}/{total}: {repository.id}',
-                )
+                if i in positions:
+                    workspace_service.append_preflight_log(
+                        task_id, cloned_message(positions[i], len(to_clone), repository.id),
+                    )
                 rewritten = copy.copy(repository)
                 rewritten.local_path = str(clone_path)
                 provisioned[i] = rewritten
@@ -197,8 +208,7 @@ def provision_task_workspace_clones(
         )
         raise
 
-    workspace_service.append_preflight_log(
-        task_id, f'✓ all {total} repository(ies) cloned — starting agent',
-    )
+    if to_clone:
+        workspace_service.append_preflight_log(task_id, ready_message(len(to_clone)))
     workspace_service.update_status(task_id, WORKSPACE_STATUS_ACTIVE)
     return provisioned

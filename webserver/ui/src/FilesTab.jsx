@@ -1067,8 +1067,15 @@ function RepoTree({
     () => countVisibleTreeRows(treeData, isFiltering ? searchTerm : '', searchPrefs),
     [treeData, isFiltering, searchTerm, searchPrefs],
   );
+  // Rows the tree is drawing RIGHT NOW, read back from react-arborist (see
+  // ``syncDrawnRowCount``). ``visibleRowCount`` is only the starting value: it
+  // comes from the data, and folders open and close inside the tree, which
+  // keeps that state to itself — so opening one left the section sized for its
+  // top level, rows cut off above empty space: "its height shorter than the
+  // content height and there is place to grow".
+  const [drawnRowCount, setDrawnRowCount] = useState(null);
   const treeHeight = Math.max(
-    28, Math.min(visibleRowCount * 28 + 8, 800),
+    28, Math.min((drawnRowCount ?? visibleRowCount) * 28 + 8, 800),
   );
   const chevronName = collapsed ? 'chevron-right' : 'chevron-down';
   const [closedChangedFolders, setClosedChangedFolders] = useState(() => new Set());
@@ -1088,6 +1095,17 @@ function RepoTree({
   // reveal effect below does NOT re-fire on background tree polls —
   // per the no-UI-shift rule, it only acts on operator intent.
   const allTreeRef = useRef(null);
+  const syncDrawnRowCount = useCallback(() => {
+    const count = allTreeRef.current?.visibleNodes?.length;
+    setDrawnRowCount(typeof count === 'number' ? count : null);
+  }, []);
+  // After any commit that can change what the tree draws: new data, a search,
+  // the section collapsing, the view switching. An unchanged count re-renders
+  // nothing.
+  useEffect(() => {
+    const raf = window.requestAnimationFrame(syncDrawnRowCount);
+    return () => window.cancelAnimationFrame(raf);
+  }, [treeData, searchTerm, searchPrefs, collapsed, showAllFiles, syncDrawnRowCount]);
   const selectedAllFileId = useMemo(
     () => (openFile
       ? findTreeNodeIdByRelativePath(treeData, openFile.relativePath)
@@ -1102,6 +1120,8 @@ function RepoTree({
       try {
         tree.openParents?.(selectedAllFileId);
         tree.scrollTo?.(selectedAllFileId, 'auto');
+        // Opening the parents adds rows; the section must grow to show them.
+        window.requestAnimationFrame(syncDrawnRowCount);
       } catch (_) {
         // The node can vanish between polls (file deleted); never let the
         // reveal take the tree down.
@@ -1311,6 +1331,7 @@ function RepoTree({
       <Tree
         ref={allTreeRef}
         data={treeData}
+        onToggle={() => window.requestAnimationFrame(syncDrawnRowCount)}
         width={width}
         height={treeHeight}
         rowHeight={28}

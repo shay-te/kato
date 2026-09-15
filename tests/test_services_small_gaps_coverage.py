@@ -446,12 +446,13 @@ class WorkspaceManagerCoerceTests(unittest.TestCase):
 
 
 class WorkspaceProvisioningServiceTests(unittest.TestCase):
-    """Lines 88, 118-121: ``.git`` already on disk → reuse log line;
-    clone failure → update status to ERRORED + re-raise."""
+    """``.git`` already on disk → reused silently; clone failure → update
+    status to ERRORED + re-raise."""
 
-    def test_already_cloned_emits_reuse_log_line(self) -> None:
-        # Line 88: workspace already has the clone — append the
-        # "already on disk, reusing" preflight log line.
+    def test_already_cloned_writes_no_log_line(self) -> None:
+        # Reusing a clone is not an event. One line per reused repository on
+        # every preparation filled the chat of every task reopened after a
+        # restart — "i dont need to see this redundant".
         from kato_core_lib.data_layers.service.workspace_provisioning_service import (
             provision_task_workspace_clones,
         )
@@ -472,15 +473,11 @@ class WorkspaceProvisioningServiceTests(unittest.TestCase):
                 task,
                 [SimpleNamespace(id='repo-a', local_path='')],
             )
-        # Reuse line emitted.
         log_calls = [
             call.args[1] for call in
             workspace_service.append_preflight_log.call_args_list
         ]
-        self.assertTrue(
-            any('already on disk' in m for m in log_calls),
-            f'expected reuse log line, got {log_calls!r}',
-        )
+        self.assertEqual(log_calls, [])
 
     def test_clone_failure_marks_workspace_errored_and_reraises(self) -> None:
         # Lines 118-121: ``except Exception as exc: ... update_status(

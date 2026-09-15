@@ -517,6 +517,38 @@ describe('FilesTab — render shell', () => {
     });
   });
 
+  test('opening a folder grows the section to fit, closing it shrinks it back', async () => {
+    // "its height shorter than the content height and there is place to
+    // grow": the section was sized from the ROOT count, because folders open
+    // inside react-arborist where the data cannot see them. Opening one left
+    // its rows cut off above empty space.
+    const files = ['a.mjs', 'b.mjs', 'c.mjs', 'd.mjs', 'e.mjs'];
+    fetchFileTree.mockResolvedValue({
+      trees: [{
+        repo_id: 'client', cwd: '/tmp/client',
+        tree: [
+          {
+            name: 'helper_scripts', path: '/tmp/client/helper_scripts',
+            children: files.map((name) => ({ name, path: `/tmp/client/helper_scripts/${name}` })),
+          },
+          { name: 'resume_prompt.md', path: '/tmp/client/resume_prompt.md' },
+        ],
+        changed_files: [], conflicted_files: [],
+      }],
+    });
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all files' }));
+    const heightFor = (rows) => `${rows * 28 + 8}px`;
+    const treeHeight = () => screen.getByRole('tree').style.height;
+
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+    fireEvent.click(await screen.findByText('helper_scripts'));
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(7)); });
+    fireEvent.click(screen.getByText('helper_scripts'));
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+  });
+
   test('the All toggle is offered even when NOTHING has changed yet', async () => {
     // Regression ("the 'All' button is missing"): the toggle used to hide when
     // no files were changed — exactly when switching to the all-files view is

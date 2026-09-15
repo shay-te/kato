@@ -6001,7 +6001,10 @@ def _replay_preflight_log(workspace_manager, task_id: str):
         entries = read(task_id)
     except Exception:
         return
-    for epoch, message in entries:
+    # Logs written before the preparation stopped announcing reused clones
+    # still hold a line per repository per restart; those never reach the chat.
+    from kato_core_lib.helpers.preflight_log_utils import visible_preflight_entries
+    for epoch, message in visible_preflight_entries(entries):
         # ``subtype: 'preflight'`` is what the SSE-history reducer in
         # ``useSessionStream.js`` keys on to render these as system
         # bubbles. The epoch is the line's REAL time: replay is merged

@@ -24,6 +24,12 @@ canonical command is `kato <target>` on every platform:
 
 Outputs `kato.exe` at the repo root (~8 MB, gitignored).
 
+Safe to run while kato is running. Windows refuses to delete or overwrite a
+running `.exe` but allows renaming one, so the build writes into `build\` first,
+then moves the running binary aside to `kato.exe.old` and puts the new one in
+its place. The running kato carries on; restart it to use the new build. The
+next build deletes the `.old` copy once nothing runs from it.
+
 ## Targets
 
 ```
