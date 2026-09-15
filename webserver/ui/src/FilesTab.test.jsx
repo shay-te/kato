@@ -547,6 +547,17 @@ describe('FilesTab — render shell', () => {
     await waitFor(() => { expect(treeHeight()).toBe(heightFor(7)); });
     fireEvent.click(screen.getByText('helper_scripts'));
     await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+
+    // Collapsing the section throws the tree away; re-opening it builds a
+    // fresh one with every folder closed, so the height must not remember the
+    // rows the old tree was drawing.
+    fireEvent.click(screen.getByText('helper_scripts'));
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(7)); });
+    const sectionName = () => screen.getByText('client', { selector: '.files-tab-repo-name' });
+    fireEvent.click(sectionName());
+    await waitFor(() => { expect(screen.queryByRole('tree')).toBeNull(); });
+    fireEvent.click(sectionName());
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
   });
 
   test('the All toggle is offered even when NOTHING has changed yet', async () => {

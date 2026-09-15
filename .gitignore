@@ -34,6 +34,8 @@ mount_docker_data
 # not a build artifact). Excluding only the .exe and the PyInstaller
 # work folder keeps both visible.
 /kato.exe
+# The previous binary, moved aside when a rebuild found kato running from it.
+/kato.exe.old*
 build/kato/
 
 node_modules/
