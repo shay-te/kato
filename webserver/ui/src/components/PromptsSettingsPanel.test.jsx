@@ -91,6 +91,15 @@ describe('PromptsSettingsPanel', () => {
     expect(review()).toMatchObject({ label: 'Review' });
   });
 
+  test('the icon field reads as a choice and names the current pick', () => {
+    // A bare row of glyphs beside a labelled text box was read as decoration.
+    render(<PromptsSettingsPanel />);
+    openPrompt('code review');
+    expect(screen.getByText(/icon — pick one \(now: diff\)/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'eye' }));
+    expect(screen.getByText(/icon — pick one \(now: eye\)/i)).toBeInTheDocument();
+  });
+
   test('a blank name cannot be saved', () => {
     render(<PromptsSettingsPanel />);
     openPrompt('code review');
@@ -138,6 +147,22 @@ describe('PromptsSettingsPanel — adding prompts', () => {
     expect(added).toMatchObject({ label: 'Explain the diff', icon: 'eye', text: 'Explain what changed.' });
     expect(screen.getByRole('button', { name: /^explain the diff/i, expanded: false })).toHaveTextContent('added');
     expect(screen.getByRole('button', { name: /^add prompt$/i })).toBeInTheDocument();
+  });
+
+  test('the icon picked while adding is the one that gets saved', () => {
+    // Reported twice ("make sure i can change the icon when adding a new
+    // prompt"): the choice has to survive the Add, not fall back to the
+    // default send glyph.
+    render(<PromptsSettingsPanel />);
+    fillNewPrompt({ name: 'Explain', text: 'Explain it.' });
+    fireEvent.click(screen.getByRole('radio', { name: 'crosshair' }));
+    expect(screen.getByRole('radio', { name: 'crosshair' }))
+      .toHaveAttribute('aria-checked', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+
+    expect(promptStore.list().find((p) => !p.builtin))
+      .toMatchObject({ label: 'Explain', icon: 'crosshair' });
   });
 
   test('Add is disabled until the name and the text are both filled', () => {

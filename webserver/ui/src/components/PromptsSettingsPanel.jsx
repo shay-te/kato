@@ -169,10 +169,12 @@ function PromptEditor({ prompt, open, onToggle = null, onClose = null }) {
             onChange={(ev) => update('label', ev.target.value)}
             aria-label={`${name} name`}
           />
+          {/* Named as a CHOICE, with the current pick spelled out. A bare row
+              of glyphs next to a labelled text box reads as decoration —
+              asked twice for an icon chooser that was already there. */}
           <span className="settings-drawer-field-label">
-            {isNew
-              ? 'Icon — shown on the session toolbar'
-              : 'Icon — shown on the session toolbar, applied as you pick it'}
+            {`Icon — pick one (now: ${draft.icon})`}
+            {isNew ? ' — saved with the prompt' : ' — applied as you pick it'}
           </span>
           <div
             className="settings-prompt-icon-picker"
@@ -187,9 +189,13 @@ function PromptEditor({ prompt, open, onToggle = null, onClose = null }) {
                 aria-checked={draft.icon === icon}
                 aria-label={icon}
                 className={`settings-prompt-icon-option${draft.icon === icon ? ' is-active' : ''}`}
+                title={icon}
                 onClick={() => chooseIcon(icon)}
               >
                 <Icon name={icon} />
+                {draft.icon === icon && (
+                  <span className="settings-prompt-icon-check" aria-hidden="true">✓</span>
+                )}
               </button>
             ))}
           </div>

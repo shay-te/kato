@@ -1690,12 +1690,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-left: auto;
 }
 
-/* Between the operator's fast prompts and the task / git actions beside them. */
+/* Between the operator's fast prompts and EVERYTHING else — search included.
+ * A hairline at 10% opacity between icon buttons was invisible in practice
+ * ("still there is no seperator"), so it is a real divider: full glyph height,
+ * a tone you can see, and air on both sides. */
 .session-header-separator {
   flex-shrink: 0;
   width: 1px;
-  height: calc(28px * 0.6);
-  background: rgba(255, 255, 255, 0.1);
+  height: 28px;
+  margin: 0 4px;
+  background: rgba(245, 245, 247, 0.28);
 }
 
 /* ───── chats menu (session header) ──────────────────────────────────
@@ -10080,6 +10084,7 @@ button.settings-prompt-editor-head {
 }
 
 .settings-prompt-icon-option {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -10099,6 +10104,16 @@ button.settings-prompt-editor-head {
 
 .settings-prompt-icon-option.is-active {
   background: rgba(10, 132, 255, 0.18);
+  color: #93c5fd;
+}
+
+/* The picked tile says so in its own right, not only by a tint. */
+.settings-prompt-icon-check {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  font-size: 10px;
+  line-height: 1;
   color: #93c5fd;
 }
 
