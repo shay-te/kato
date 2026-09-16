@@ -42,6 +42,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
     resolve_explain_spawn,
 )
 from kato_core_lib.helpers.plan_mode_store import task_permission_mode
+from kato_core_lib.helpers.planning_hold_store import held_permission_mode
 from kato_core_lib.helpers.remote_control_store import (
     schedule_remote_control_for_spawn,
 )
@@ -309,6 +310,11 @@ class PlanningSessionRunner(object):
         # message gets an answer-only instruction. Resolved here so BOTH chat
         # entry points (the send route and the comment-driven respawn) get it
         # from one place. Empty overrides for every other mode.
+        #
+        # A task held by ``kato:wait-planning`` runs Plan whatever the composer
+        # says. Resolved before Explain, so a pick the hold overrides cannot
+        # still reframe the message as an answer-only turn.
+        permission_mode = held_permission_mode(normalized_task_id, permission_mode)
         explain_spawn = resolve_explain_spawn(permission_mode)
         if explain_spawn['permission_mode']:
             # Re-sent on EVERY explain turn, resumed or not: the tool denial is
@@ -737,6 +743,13 @@ class PlanningSessionRunner(object):
         # already resolved the same lock, and Explain's read-only tool set is
         # threaded through the same call), then the persisted lock, then the
         # configured default.
+        #
+        # The ``kato:wait-planning`` hold outranks all of it, the caller's
+        # argument included: while the tag is on the ticket the task is being
+        # discussed, not built. The tag used to hold only the first spawn —
+        # every respawn after it came back as acceptEdits and edited files in
+        # the middle of the discussion.
+        permission_mode = held_permission_mode(task_id, permission_mode)
         locked = _task_mode_spawn(task_id) if not permission_mode else {}
         # The CLI this task's chat is actually on. Resolved per spawn, not
         # captured at boot: the operator picks it with the agent tabs.

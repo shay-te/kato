@@ -620,6 +620,7 @@ class KatoCoreLib(CoreLib):
                 task_state_service=task_state_service,
                 workspace_manager=self.workspace_manager,
                 planning_session_runner=self.planning_session_runner,
+                track_planning_holds=True,
             ),
             triage_service=TriageService(
                 task_service=task_service,

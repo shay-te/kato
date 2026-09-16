@@ -139,3 +139,30 @@ describe('ComposerModeMenu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 });
+
+describe('ComposerModeMenu — held by a ticket tag', () => {
+  // kato:wait-planning keeps the task in Plan whatever was picked. The picker
+  // has to say so, or it reads as an ordinary choice the operator made.
+  test('the trigger names the tag holding the mode', () => {
+    render(<ComposerModeMenu mode="plan" onChange={vi.fn()} heldBy="kato:wait-planning" />);
+    const trigger = screen.getByRole('button', {
+      name: /agent mode: plan \(held by kato:wait-planning\)/i,
+    });
+    expect(trigger.getAttribute('data-tooltip')).toMatch(/remove the tag/i);
+  });
+
+  test('the menu explains the hold, and a pick still goes to the server to re-check', () => {
+    const onChange = open({ mode: 'plan', heldBy: 'kato:wait-planning' });
+    expect(screen.getByRole('menu')).toHaveTextContent(
+      /held in plan by kato:wait-planning on the ticket/i,
+    );
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /edit automatically/i }));
+    expect(onChange).toHaveBeenCalledWith('');
+  });
+
+  test('an unheld picker carries no hold note', () => {
+    open({ mode: 'plan' });
+    expect(screen.getByRole('menu')).not.toHaveTextContent(/held in/i);
+    expect(screen.getByRole('button', { name: /^agent mode: plan$/i })).toBeInTheDocument();
+  });
+});

@@ -8,7 +8,7 @@ import {
   updateTaskSource,
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
-import { promptStore } from '../stores/promptStore.js';
+import FastPromptButtons from './FastPromptButtons.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
@@ -222,35 +222,6 @@ export default function SessionHeader({
             ? 'success'
             : 'warning';
         toastResult({ ...formatFinishResult(result, session.task_id), kind });
-      },
-    },
-  );
-
-  // "Code review" — routes the detailed PR-review prompt through the SAME
-  // composer send path (onSendPrompt → SessionDetail.onSendMessage) as
-  // typing it: it shows in the chat, wakes a sleeping session (reconnects
-  // the stream on respawn), and queues if Claude is mid-turn. A raw
-  // postChatMessage skipped all of that, so on a sleeping session nothing
-  // appeared.
-  const [reviewing, onCodeReview] = useBusyAction(
-    () => (typeof onSendPrompt === 'function'
-      ? onSendPrompt(promptStore.get('codeReview'))
-      : Promise.resolve(false)),
-    {
-      onDone: (delivered) => {
-        toast.show(delivered
-          ? {
-            kind: 'success',
-            title: 'Code review requested',
-            message: `Sent the review prompt to ${agentName} (queued if it’s mid-turn).`,
-            durationMs: 5000,
-          }
-          : {
-            kind: 'error',
-            title: 'Couldn’t request review',
-            message: 'The chat didn’t accept the prompt — try again.',
-            durationMs: 6000,
-          });
       },
     },
   );
@@ -494,19 +465,9 @@ export default function SessionHeader({
           {/* No status chip here. It lives ON each agent tab now, beside the
               name it describes — a chip up here could only ever describe one
               agent, and duplicated what the tab already says. */}
+          <FastPromptButtons agentName={agentName} onSendPrompt={onSendPrompt} />
           {searchSlot}
           {approvePushButton}
-          <button
-            id="session-code-review"
-            type="button"
-            className="session-action"
-            data-tooltip={`Code review — ask ${agentName} to strictly review this task's changes (correctness, security, tests, redundancy, comment cleanup) and fix blockers before the PR.`}
-            onClick={onCodeReview}
-            disabled={reviewing}
-            aria-label={reviewing ? 'Requesting review…' : 'Code review'}
-          >
-            <BusyIcon busy={reviewing} idle="diff" />
-          </button>
           <button
             id="session-push"
             type="button"
@@ -608,6 +569,21 @@ export default function SessionHeader({
 // title on the left, and render the full action row on the right but
 // inert (disabled + not focusable). No layout jump when a task is
 // then selected and the real SessionHeader takes over.
+function placeholderButton(b) {
+  return (
+    <button
+      key={b.icon}
+      type="button"
+      className={cx('session-action', b.primary && 'is-primary')}
+      disabled
+      tabIndex={-1}
+      aria-label={b.label}
+    >
+      <Icon name={b.icon} />
+    </button>
+  );
+}
+
 export function SessionHeaderPlaceholder() {
   const buttons = [
     { icon: 'search', label: 'Search' },
@@ -631,18 +607,8 @@ export function SessionHeaderPlaceholder() {
         </span>
       </div>
       <div className="session-header-actions" aria-hidden="true">
-        {buttons.map((b) => (
-          <button
-            key={b.icon}
-            type="button"
-            className={cx('session-action', b.primary && 'is-primary')}
-            disabled
-            tabIndex={-1}
-            aria-label={b.label}
-          >
-            <Icon name={b.icon} />
-          </button>
-        ))}
+        <FastPromptButtons disabled />
+        {buttons.map(placeholderButton)}
       </div>
     </header>
   );

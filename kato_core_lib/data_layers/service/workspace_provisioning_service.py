@@ -45,6 +45,21 @@ _logger = logging.getLogger(__name__)
 _MAX_PARALLEL_CLONES = 4
 
 
+class WorkspaceCloneError(RuntimeError):
+    """Some repositories failed to clone; ``failures`` says which, and why.
+
+    A plain RuntimeError carried only the joined message, so every caller that
+    wanted to report per repository had to blame ALL of them — the Files-tab
+    sync did exactly that, and named a repository that had cloned fine
+    (UNA-2417: "ob-love-ui: failed to clone …" describing
+    objective_love_core_lib's failure).
+    """
+
+    def __init__(self, message: str, failures: dict[str, str]) -> None:
+        super().__init__(message)
+        self.failures = dict(failures)
+
+
 def provision_task_workspace_clones(
     workspace_service: 'WorkspaceService | None',
     repository_service,
@@ -157,6 +172,7 @@ def provision_task_workspace_clones(
     # operator gets the full list instead of whichever one happened to fail
     # first, and the clones that succeeded are on disk for the retry.
     failures: list[str] = []
+    failures_by_repository: dict[str, str] = {}
     try:
         workers = min(total, _MAX_PARALLEL_CLONES)
         with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -174,6 +190,7 @@ def provision_task_workspace_clones(
                         'other repositories', repository.id, task_id,
                     )
                     failures.append(f'{repository.id}: {exc}')
+                    failures_by_repository[str(repository.id)] = str(exc)
                     # Always shown — a failure matters even for a reused clone.
                     workspace_service.append_preflight_log(
                         task_id, clone_failed_message(repository.id, exc),
@@ -187,10 +204,11 @@ def provision_task_workspace_clones(
                 rewritten.local_path = str(clone_path)
                 provisioned[i] = rewritten
         if failures:
-            raise RuntimeError(
+            raise WorkspaceCloneError(
                 f'failed to clone {len(failures)} of {total} repositor'
                 f'{"y" if len(failures) == 1 else "ies"} — the rest were '
-                f'cloned: {"; ".join(failures)}'
+                f'cloned: {"; ".join(failures)}',
+                failures_by_repository,
             )
     except Exception as exc:
         workspace_service.append_preflight_log(task_id, f'✗ clone failed: {exc}')

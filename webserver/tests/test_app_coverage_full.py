@@ -360,11 +360,10 @@ class FilesAndDiffMultiRepoTests(unittest.TestCase):
                     patch.object(app_module, 'conflicted_paths', return_value=[]), \
                     patch.object(app_module, '_changed_files_for_repo', return_value=[]):
                 body = app.test_client().get('/api/sessions/T-1/files').get_json()
-        # Only ``client`` survived (1394 continue skipped ``ghost``); the
-        # non-empty trees branch (1410->1419) returned the legacy mirror.
+        # Only ``client`` survived (``ghost``'s missing clone was skipped).
         self.assertEqual(body['repository_ids'], ['client'])
-        self.assertEqual(body['cwd'], str(_under(body)))
         self.assertEqual(len(body['trees']), 1)
+        self.assertNotIn('cwd', body)
 
     def test_diff_route_skips_missing_repo_and_returns_present_one(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -376,10 +375,10 @@ class FilesAndDiffMultiRepoTests(unittest.TestCase):
             with patch.object(app_module, '_compute_repo_diff', return_value=fake_diff), \
                     patch.object(app_module, '_workspace_status', return_value='active'):
                 body = app.test_client().get('/api/sessions/T-1/diff').get_json()
-        # 1465 continue skipped ``ghost``; 1469->1481 returned the first diff.
+        # ``ghost``'s missing clone was skipped; ``client``'s diff returned.
         self.assertEqual(body['repository_ids'], ['client'])
-        self.assertEqual(body['repo_id'], 'client')
-        self.assertEqual(body['diff'], 'D')
+        self.assertEqual(body['diffs'][0]['repo_id'], 'client')
+        self.assertEqual(body['diffs'][0]['diff'], 'D')
         self.assertEqual(body['workspace_status'], 'active')
 
 
@@ -1300,8 +1299,8 @@ class MultiRepoAllMissingFallbackTests(unittest.TestCase):
                 body = app.test_client().get('/api/sessions/T-1/files').get_json()
         # Legacy single-tree shape (repository_ids empty).
         self.assertEqual(body['repository_ids'], [])
-        self.assertEqual(body['cwd'], str(legacy))
-        self.assertEqual(body['tree'], [{'x': 1}])
+        self.assertEqual(body['trees'][0]['cwd'], str(legacy))
+        self.assertEqual(body['trees'][0]['tree'], [{'x': 1}])
 
     def test_diff_falls_back_to_legacy_cwd(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1316,7 +1315,7 @@ class MultiRepoAllMissingFallbackTests(unittest.TestCase):
                     patch.object(app_module, '_workspace_status', return_value=''):
                 body = app.test_client().get('/api/sessions/T-1/diff').get_json()
         self.assertEqual(body['repository_ids'], [])
-        self.assertEqual(body['diff'], 'D')
+        self.assertEqual(body['diffs'][0]['diff'], 'D')
 
     def test_missing_file_in_an_existing_task_folder_is_file_not_found(self):
         # The TASK FOLDER is a root now, even when every repo clone is

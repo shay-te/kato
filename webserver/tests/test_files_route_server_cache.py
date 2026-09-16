@@ -113,7 +113,7 @@ class FilesRouteServerCacheTests(unittest.TestCase):
 
     @staticmethod
     def _names(payload):
-        return [entry['name'] for entry in payload['tree']]
+        return [entry['name'] for entry in payload['trees'][0]['tree']]
 
     def test_with_nothing_cached_a_cached_request_builds_like_any_read(self) -> None:
         payload = self._get(self._app(), '?cached=1')

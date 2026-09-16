@@ -158,6 +158,15 @@ export default function GlobalPermissionContainer({
     if (currentRequestId) { permissionStore.resolve(currentRequestId); }
   }, [currentRequestId]);
 
+  // Stop the asking task's subprocess. The plan dialog's third decision:
+  // "Keep planning" is the agent carrying on, and until this existed there was
+  // no way to end a planning session from the one surface that was on screen.
+  const stopAgent = useCallback(async () => {
+    if (!currentTaskId) { return false; }
+    const result = await postSession(currentTaskId, 'stop');
+    return !!(result && result.ok);
+  }, [currentTaskId]);
+
   const auditBubble = useCallback((bubble) => {
     // Route the "✓ approved / ✗ denied" bubble into the asking task's chat
     // if it's mounted (focused task); a no-op otherwise (background task).
@@ -271,6 +280,7 @@ export default function GlobalPermissionContainer({
       pending={current}
       onDismiss={dismiss}
       onSubmit={submit}
+      onStop={stopAgent}
       onAuditBubble={auditBubble}
       taskCode={currentTaskId}
       taskSummary={unpackPermissionEnvelope(current).taskSummary}

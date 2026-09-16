@@ -19,6 +19,7 @@ that would need HTTP credentials are mocked.
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,14 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         materialize_workspace(
             self.workspace_service, self.task_id, repository_ids=['repo-a'],
         )
+        # ``repo-a`` is RECORDED and actually CLONED. The two are not the same
+        # thing, and sync now checks both: a repo whose clone is gone from disk
+        # is re-cloned rather than reported as "already present" forever (see
+        # ``_clone_is_on_disk``). Without a real ``.git`` here these tests
+        # would be describing a workspace whose clone does not exist.
+        (
+            self.workspace_service.repository_path(self.task_id, 'repo-a') / '.git'
+        ).mkdir(parents=True, exist_ok=True)
         # The ticket now names a second repo — the one the operator added
         # mid-task after the agent asked for it.
         self.service._repository_service.resolve_task_repositories.return_value = [
@@ -103,6 +112,58 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         result = self.service.repositories.reconcile_task_repositories(self.task_id, task=task)
         self.assertEqual(result.get('added_repositories'), [])
         self.assertEqual(self._metadata_on_disk()['repository_ids'], ['repo-a'])
+
+    def test_a_recorded_repo_whose_clone_is_GONE_is_cloned_again(self) -> None:
+        """UNA-2417: recorded in the metadata, missing on disk, stuck forever.
+
+        The operator's clone of ``objective_love_core_lib`` was destroyed by an
+        interrupted clone. Sync compared the ticket's repos against the
+        workspace METADATA only, so it answered "7 already in the workspace,
+        0 to add" and took the nothing-to-clone path — whose recovery step can
+        only move an EXISTING clone onto the task branch. Every scan then
+        repeated "not on the task branch: workspace clone is missing or its
+        branch is unreadable", and clicking Sync changed nothing.
+        """
+        self.service._repository_service.resolve_task_repositories.return_value = [
+            _repo('repo-a'),
+        ]
+        shutil.rmtree(self.workspace_service.repository_path(self.task_id, 'repo-a'))
+        task = SimpleNamespace(id=self.task_id, summary='s', description='')
+
+        result = self.service.repositories.sync_task_repositories(
+            self.task_id, task=task,
+        )
+
+        # It is re-provisioned, NOT reported as already present.
+        self.assertEqual(result.get('added_repositories'), ['repo-a'])
+        self.assertEqual(result.get('already_present'), [])
+        cloned = [
+            call.args[0].id
+            for call in self.service._repository_service.ensure_clone.call_args_list
+        ]
+        self.assertIn('repo-a', cloned)
+
+    def test_a_folder_with_no_git_inside_is_not_a_clone(self) -> None:
+        """A failed clone often leaves the FOLDER and nothing else.
+
+        ``.git`` is the test, not the directory entry: counting the leftover
+        folder as "present" leaves the repo unusable while sync keeps
+        answering "already in the workspace, 0 to add".
+        """
+        self.service._repository_service.resolve_task_repositories.return_value = [
+            _repo('repo-a'),
+        ]
+        shutil.rmtree(
+            self.workspace_service.repository_path(self.task_id, 'repo-a') / '.git',
+        )
+        task = SimpleNamespace(id=self.task_id, summary='s', description='')
+
+        result = self.service.repositories.sync_task_repositories(
+            self.task_id, task=task,
+        )
+
+        self.assertEqual(result.get('added_repositories'), ['repo-a'])
+        self.assertEqual(result.get('already_present'), [])
 
     def test_a_task_with_no_workspace_is_a_no_op(self) -> None:
         task = SimpleNamespace(id='PROJ-NONE', summary='s', description='')

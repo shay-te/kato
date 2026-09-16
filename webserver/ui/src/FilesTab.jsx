@@ -1,5 +1,6 @@
 import {
-  useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useDeferredValue, useEffect, useLayoutEffect,
+  useMemo, useRef, useState,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { Tree } from 'react-arborist';
@@ -1099,6 +1100,21 @@ function RepoTree({
     const count = allTreeRef.current?.visibleNodes?.length;
     setDrawnRowCount(typeof count === 'number' ? count : null);
   }, []);
+  // What every row of this repo's tree needs — handed to the stable
+  // ``RepoTreeNode`` through context (see there for why not a closure).
+  const nodeContext = useMemo(() => ({
+    onPickFile,
+    onOpenFile,
+    onOpenPathMenu,
+    conflictedFiles,
+    changedFiles,
+    diffMeta,
+    commentMeta,
+    repoId,
+  }), [
+    onPickFile, onOpenFile, onOpenPathMenu, conflictedFiles, changedFiles,
+    diffMeta, commentMeta, repoId,
+  ]);
   // After any commit that can change what the tree draws: new data, a search,
   // the section collapsing, the view switching. An unchanged count re-renders
   // nothing.
@@ -1328,36 +1344,26 @@ function RepoTree({
     body = <p className="files-tab-message">No tracked files in this repo.</p>;
   } else {
     body = (
-      <Tree
-        ref={allTreeRef}
-        data={treeData}
-        onToggle={() => window.requestAnimationFrame(syncDrawnRowCount)}
-        width={width}
-        height={treeHeight}
-        rowHeight={28}
-        indent={14}
-        selection={selectedAllFileId || undefined}
-        openByDefault={isFiltering}
-        searchTerm={searchTerm}
-        searchMatch={searchMatch}
-        disableDrag
-        disableDrop
-        disableEdit
-      >
-        {(props) => (
-          <Node
-            {...props}
-            onPickFile={onPickFile}
-            onOpenFile={onOpenFile}
-            onOpenPathMenu={onOpenPathMenu}
-            conflictedFiles={conflictedFiles}
-            changedFiles={changedFiles}
-            diffMeta={diffMeta}
-            commentMeta={commentMeta}
-            repoId={repoId}
-          />
-        )}
-      </Tree>
+      <RepoTreeNodeContext.Provider value={nodeContext}>
+        <Tree
+          ref={allTreeRef}
+          data={treeData}
+          onToggle={() => window.requestAnimationFrame(syncDrawnRowCount)}
+          width={width}
+          height={treeHeight}
+          rowHeight={28}
+          indent={14}
+          selection={selectedAllFileId || undefined}
+          openByDefault={isFiltering}
+          searchTerm={searchTerm}
+          searchMatch={searchMatch}
+          disableDrag
+          disableDrop
+          disableEdit
+        >
+          {RepoTreeNode}
+        </Tree>
+      </RepoTreeNodeContext.Provider>
     );
   }
   return (
@@ -1650,6 +1656,19 @@ function ChangedFilesTreeNode({
       <FilesLineStats stats={node.stats} />
     </button>
   );
+}
+
+// react-arborist renders the Tree's child as a component TYPE
+// (``tree.renderNode``), so it must be ONE stable component. It was an inline
+// function — a new type on every render of the section — so each re-render
+// threw every row away and drew new ones, and a click landing in between hit
+// a detached row and did nothing ("opening a folder" failed intermittently).
+// The per-repo values reach the rows through context instead of a closure.
+const RepoTreeNodeContext = createContext(null);
+
+function RepoTreeNode(props) {
+  const shared = useContext(RepoTreeNodeContext);
+  return <Node {...props} {...shared} />;
 }
 
 function Node({

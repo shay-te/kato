@@ -39,6 +39,8 @@ from kato_core_lib.data_layers.service.workspace_provisioning_service import (
 )
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.plan_mode_store import PLAN_MODE
+from kato_core_lib.helpers.planning_hold_store import set_planning_hold
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from kato_core_lib.helpers.workspace_refusal_guidance import KATO_AGENT_GUIDANCE
@@ -88,6 +90,7 @@ class WaitPlanningService(object):
         task_state_service,
         workspace_manager=None,
         planning_session_runner=None,
+        track_planning_holds: bool = False,
         logger: logging.Logger | None = None,
     ) -> None:
         self._session_manager = session_manager
@@ -95,9 +98,17 @@ class WaitPlanningService(object):
         self._task_state_service = task_state_service
         self._workspace_manager = workspace_manager
         self._planning_session_runner = planning_session_runner
+        # Off unless the app turns it on: the holds live in ONE file under
+        # ~/.kato, and a service built for a unit test must not write holds
+        # that a later test's spawn then reads as real.
+        self._track_planning_holds = bool(track_planning_holds)
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     # ----- public API -----
+
+    @property
+    def tracks_planning_holds(self) -> bool:
+        return self._track_planning_holds
 
     @staticmethod
     def _task_has_tag(task: Task, wanted: str) -> bool:
@@ -140,6 +151,9 @@ class WaitPlanningService(object):
         result when a hold short-circuit took the wheel.
         """
         mode = self._hold_mode(task)
+        # Before the no-tag return: a task back in the queue WITHOUT the tag is
+        # exactly the sighting that releases its hold.
+        self.observe_planning_hold(task)
         if not mode:
             return None
         tag = (
@@ -166,7 +180,78 @@ class WaitPlanningService(object):
         self._move_to_in_progress(task)
         return skip_task_result(task.id, [])
 
+    def observe_planning_hold(self, task: Task) -> None:
+        """Hold ``task`` in Plan exactly while its ticket carries the planning tag.
+
+        Called for every task kato reads off the tracker — the queue scan
+        (``handle_task``) and the started-task sweep
+        (:meth:`sync_planning_holds`) — so a tag added to, or removed from, a
+        task that is already In Progress lands too.
+
+        Engaging the hold also stops a live session that can still edit. The
+        CLI bakes ``--permission-mode`` in at spawn, so that session would keep
+        editing until it happened to exit; the next message resumes the same
+        conversation in Plan. The composer's own switch to Plan does the same.
+        """
+        if not self._track_planning_holds:
+            return
+        task_id = str(getattr(task, 'id', '') or '').strip()
+        held = self.task_has_wait_planning_tag(task)
+        try:
+            changed = set_planning_hold(task_id, held)
+        except Exception:
+            self.logger.exception(
+                'failed to record the planning hold for task %s', task_id,
+            )
+            return
+        if not changed:
+            return
+        if not held:
+            self.logger.info(
+                'task %s: %s is off the ticket — the agent mode is the '
+                "operator's again",
+                task_id,
+                TaskTags.WAIT_PLANNING,
+            )
+            return
+        self.logger.info(
+            'task %s: %s is on the ticket — every agent spawn runs in Plan '
+            'until the tag is removed',
+            task_id,
+            TaskTags.WAIT_PLANNING,
+        )
+        self._stop_live_editing_session(task_id)
+
+    def sync_planning_holds(self, tasks) -> None:
+        """:meth:`observe_planning_hold` for each of ``tasks``."""
+        for task in tasks or []:
+            self.observe_planning_hold(task)
+
     # ----- internals -----
+
+    def _stop_live_editing_session(self, task_id: str) -> None:
+        if self._session_manager is None:
+            return
+        try:
+            session = self._session_manager.get_session(task_id)
+            if session is None or not getattr(session, 'is_alive', False):
+                return
+            if str(getattr(session, 'permission_mode', '') or '') == PLAN_MODE:
+                return
+            # Keep the record: the chat history and the resume id survive.
+            self._session_manager.terminate_session(task_id, remove_record=False)
+        except Exception:
+            self.logger.exception(
+                'failed to stop the live session of planning-held task %s; '
+                'it keeps its edit rights until it exits',
+                task_id,
+            )
+            return
+        self.logger.info(
+            'task %s: stopped the live session that could still edit; the '
+            'next message resumes it in Plan',
+            task_id,
+        )
 
     def _is_chat_already_alive(self, task: Task) -> bool:
         existing = self._session_manager.get_session(str(task.id))
@@ -180,8 +265,9 @@ class WaitPlanningService(object):
     ) -> None:
         # Belt-and-suspenders for wait-planning: the prompt explicitly forbids
         # tool use, AND the CLI runs in ``--permission-mode plan`` so Claude
-        # can't execute even if it tries. Removing the tag flips back to the
-        # configured permission mode via the autonomous path.
+        # can't execute even if it tries. That covers THIS spawn; every later
+        # one is held in Plan by ``observe_planning_hold`` until the tag is
+        # removed.
         #
         # wait-editing deliberately does NOT pin a mode: it inherits the
         # runner's configured one so the agent can start editing the instant

@@ -27,6 +27,7 @@ from kato_core_lib.helpers.push_approval_gate_utils import (
     auto_push_enabled,
 )
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
+from kato_core_lib.helpers.planning_hold_store import task_is_planning_held
 from kato_core_lib.helpers.task_lookup_utils import find_assigned_or_review_task
 from kato_core_lib.data_layers.service.notification_service import NotificationService
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
@@ -469,11 +470,17 @@ class AgentService(MissionStepLoggerMixin, Service):
                 # completing: Ctrl+C took ~9 seconds and looked like it had
                 # done nothing.
                 #
-                # Nothing is lost by not waiting. Queued tasks are cancelled
-                # (they never started), running ones are daemon threads the
-                # process exits out from under, and a task interrupted
-                # mid-flight is picked up again on the next scan — that is
-                # what the scan loop is for.
+                # Nothing is lost by not waiting: queued tasks are cancelled
+                # (they never started) and a task interrupted mid-flight is
+                # picked up again on the next scan — that is what the scan
+                # loop is for.
+                #
+                # Not waiting is NOT the same as the process being able to
+                # leave. ``ThreadPoolExecutor`` workers are non-daemon (Python
+                # 3.9+) and ``concurrent.futures`` joins them at interpreter
+                # exit, so a running task still holds the process open after
+                # this returns. ``main._exit_now`` is what actually ends it.
+
                 self._parallel_task_runner.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 self.logger.exception('error during parallel-runner shutdown')
@@ -493,6 +500,53 @@ class AgentService(MissionStepLoggerMixin, Service):
 
     def get_assigned_tasks(self) -> list[Task]:
         return self._task_service.get_assigned_tasks()
+
+    def sync_planning_holds(self) -> None:
+        """Hold or release the tasks kato already started, by their planning tag.
+
+        The queue scan reads only open tasks, and a planning hold moves its
+        task to In Progress — so a ``kato:wait-planning`` tag removed there, or
+        added to a task already running, was never seen. One tracker read per
+        scan cycle. When it fails every hold stays as it is: Plan is the side
+        to err on.
+        """
+        planning = self._wait_planning_service
+        if planning is None or not getattr(planning, 'tracks_planning_holds', False):
+            return
+        try:
+            tasks = self._task_service.get_started_tasks()
+        except Exception:
+            self.logger.exception(
+                'could not read started tasks; every planning hold stays as it is',
+            )
+            return
+        planning.sync_planning_holds(tasks)
+
+    def refresh_planning_hold(self, task_id: str) -> bool:
+        """Re-read ``task_id``'s tags now; whether it is still held in Plan.
+
+        Asked when the operator picks another mode on a held task. They have
+        usually just removed the tag, and the next scan can be three minutes
+        away. A task that cannot be read stays held.
+        """
+        normalized = str(task_id or '').strip()
+        planning = self._wait_planning_service
+        if (
+            normalized
+            and planning is not None
+            and getattr(planning, 'tracks_planning_holds', False)
+        ):
+            task = find_assigned_or_review_task(
+                self._task_service,
+                normalized,
+                on_error=lambda queue: self.logger.warning(
+                    'could not read %s to re-check the planning hold of task %s',
+                    queue, normalized,
+                ),
+            )
+            if task is not None:
+                planning.observe_planning_hold(task)
+        return task_is_planning_held(normalized)
 
 
     @property

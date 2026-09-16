@@ -12,6 +12,8 @@ from omegaconf import DictConfig
 
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.deadline import run_with_deadline
+import logging
+
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
@@ -1305,6 +1307,47 @@ def _open_browser_when_ready(url: str, logger) -> None:
 SHUTDOWN_GRACE_SECONDS = 8.0
 
 
+def _exit_now(code: int) -> None:
+    """Leave the process without waiting for interpreter teardown.
+
+    ``raise SystemExit`` is not enough, and this is the whole reason Ctrl+C
+    still looked ignored after the graceful path was already bounded:
+    ``ThreadPoolExecutor`` workers have been NON-daemon since Python 3.9, and
+    ``concurrent.futures`` registers an exit hook that JOINS them. So a scan
+    task in flight — a git clone, a provider call, a whole agent run — holds
+    the interpreter open after the main thread has unwound, silently, for as
+    long as that task takes. Measured: handler done at 0.5s, process alive
+    until 12.1s for a 12s worker.
+
+    Nothing is lost by skipping teardown. Cleanup has already stopped the
+    watchers and the agent subprocesses, kato's state is written with atomic
+    writes as it goes, and the log handlers are flushed just below.
+
+    A seam, not a bare ``os._exit``: the shutdown handler is called directly
+    by tests, and a real exit there would take the test runner with it.
+    """
+    _flush_log_handlers()
+    os._exit(code)
+
+
+def _flush_log_handlers() -> None:
+    """Push buffered log records out before the process leaves abruptly.
+
+    ``os._exit`` skips ``logging.shutdown()``, so without this the last lines
+    of a shutdown — including anything cleanup complained about — could be
+    lost in a handler's buffer.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    try:
+        logging.shutdown()
+    except Exception:
+        pass
+
+
 def _register_shutdown_hook(app) -> None:
     #: Set by the first signal. A second one means the operator is still
     #: pressing Ctrl+C at a process that has not died — they get an immediate
@@ -1382,7 +1425,11 @@ def _register_shutdown_hook(app) -> None:
                 SHUTDOWN_GRACE_SECONDS,
             ),
         )
-        raise SystemExit(0)
+        # NOT ``raise SystemExit`` — see ``_exit_now``. Unwinding the main
+        # thread is not the same as ending the process while a pool worker is
+        # still running, and that difference is what the operator experiences
+        # as "I still can't kill kato up with Ctrl+C".
+        _exit_now(0)
 
     # SIGINT works on every supported platform. SIGTERM works on POSIX
     # but Windows refuses to install a Python handler for it (and

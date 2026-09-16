@@ -357,6 +357,70 @@ class CloneCheckoutFailedTests(unittest.TestCase):
         )
 
 
+class KatoMovesItsOwnCloneOntoTheTaskBranchTests(unittest.TestCase):
+    """A workspace clone on the wrong branch is kato's to fix.
+
+    UNA-2417, once the destroyed clone had been restored: every repo action
+    answered "objective_love_core_lib: workspace is on 'master', expected
+    'UNA-2417' — checkout first". Nobody chose that branch — a fresh clone
+    lands on the remote's default — so the operator was being told to do git
+    surgery inside kato's own workspace to unblock a button.
+
+    Real git throughout: the whole question is what happens to the working
+    tree, and a mock cannot answer it.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.service = _make_service()
+        self.clone, self.repo = _build_repo_with_diverged_default(self.tmp)
+        _git(self.clone, 'checkout', '-q', 'main')  # where a re-clone lands
+
+    def _branch(self) -> str:
+        return subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=str(self.clone),
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    def test_merge_moves_the_clone_onto_the_task_branch_and_runs(self) -> None:
+        out = self.service.merge_default_branch_into_clone(self.repo, 'feat/x')
+        self.assertTrue(out['merged'], out)
+        self.assertEqual(self._branch(), 'feat/x')
+
+    def test_uncommitted_work_survives_the_move(self) -> None:
+        # The recovery carries a dirty tree across; the merge then saves it as
+        # a WIP commit. Either way the operator's file is still on disk.
+        (self.clone / 'agent_work.py').write_text('AGENT OUTPUT\n', encoding='utf-8')
+        self.service.merge_default_branch_into_clone(self.repo, 'feat/x')
+        self.assertEqual(
+            (self.clone / 'agent_work.py').read_text(encoding='utf-8'),
+            'AGENT OUTPUT\n',
+        )
+        self.assertEqual(self._branch(), 'feat/x')
+
+    def test_a_clone_with_its_own_commits_there_is_still_refused(self) -> None:
+        # Moving commits between branches is a rebase decision, not kato's to
+        # make silently. The refusal stays — but it now says WHY.
+        (self.clone / 'local.txt').write_text('local\n', encoding='utf-8')
+        _git(self.clone, 'add', '-A')
+        _git(self.clone, 'commit', '-q', '-m', 'work on the wrong branch')
+
+        out = self.service.merge_default_branch_into_clone(self.repo, 'feat/x')
+
+        self.assertFalse(out['merged'])
+        self.assertEqual(out['reason'], 'wrong_branch_checked_out')
+        self.assertIn('rebase or cherry-pick', out['detail'])
+        self.assertNotIn('checkout first', out['detail'])
+        self.assertEqual(self._branch(), 'main', 'the clone was moved anyway')
+
+    def test_pull_moves_it_too(self) -> None:
+        # Same dead end, same fix: Pull refused instead of checking out.
+        self.service.pull_workspace_clone(self.repo, 'feat/x')
+        self.assertEqual(self._branch(), 'feat/x')
+
+
 class MergePreflightTests(unittest.TestCase):
     """Mocked refusals — never reach a real git repo."""
 

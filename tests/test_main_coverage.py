@@ -491,8 +491,12 @@ class ShutdownHookWatcherTests(unittest.TestCase):
         try:
             main_module._register_shutdown_hook(app)
             handler = signal.getsignal(signal.SIGINT)
-            with self.assertRaises(SystemExit):
+            # The graceful path ends at ``_exit_now`` (a pool worker still
+            # running keeps a merely-unwound process alive), so patch the
+            # exit rather than expecting SystemExit.
+            with patch.object(main_module, '_exit_now') as exit_now:
                 handler(signal.SIGINT, None)
+            exit_now.assert_called_once_with(0)
             watcher.stop.assert_called_once()
         finally:
             signal.signal(signal.SIGINT, original_sigint)
@@ -512,7 +516,7 @@ class ShutdownHookWatcherTests(unittest.TestCase):
         try:
             main_module._register_shutdown_hook(app)
             handler = signal.getsignal(signal.SIGINT)
-            with self.assertRaises(SystemExit):
+            with patch.object(main_module, '_exit_now'):
                 handler(signal.SIGINT, None)
             # The watcher.stop failure was logged. The hook loops over the
             # watcher attribute names and logs with a ``%s`` placeholder, so
@@ -1090,8 +1094,9 @@ class RegisterShutdownHookFiringTests(unittest.TestCase):
             main_module._register_shutdown_hook(app)
             handler = signal.getsignal(signal.SIGINT)
             self.assertTrue(callable(handler))
-            with self.assertRaises(SystemExit):
+            with patch.object(main_module, '_exit_now') as exit_now:
                 handler(signal.SIGINT, None)
+            exit_now.assert_called_once_with(0)
             app.logger.info.assert_called()
             app.service.shutdown.assert_called()
         finally:
@@ -1106,7 +1111,7 @@ class RegisterShutdownHookFiringTests(unittest.TestCase):
         try:
             main_module._register_shutdown_hook(app)
             handler = signal.getsignal(signal.SIGINT)
-            with self.assertRaises(SystemExit):
+            with patch.object(main_module, '_exit_now'):
                 handler(signal.SIGINT, None)
             app.logger.exception.assert_called()
         finally:

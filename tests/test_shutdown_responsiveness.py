@@ -46,6 +46,20 @@ def _install(app):
     return handlers[signal.SIGINT]
 
 
+def _run_handler(handler, signum=signal.SIGINT, *, expect_code=0):
+    """Call the handler and assert the exit it asked for.
+
+    The graceful path ends at ``main._exit_now`` rather than ``raise
+    SystemExit``: a ThreadPoolExecutor worker still running (non-daemon since
+    Python 3.9, and joined at interpreter exit) keeps the process alive long
+    after the main thread unwinds. Patched so calling the handler in-process
+    does not end the test runner.
+    """
+    with patch('kato_core_lib.main._exit_now') as exit_now:
+        handler(signum, None)
+    exit_now.assert_called_once_with(expect_code)
+
+
 class ShutdownFeedbackTests(unittest.TestCase):
     def test_the_first_ctrl_c_says_so_on_the_terminal_immediately(self) -> None:
         app = _app()
@@ -60,8 +74,7 @@ class ShutdownFeedbackTests(unittest.TestCase):
 
         with patch('kato_core_lib.main.sys.stderr', buffer), \
                 patch('kato_core_lib.main.supports_inline_status', return_value=False):
-            with self.assertRaises(SystemExit):
-                handler(signal.SIGINT, None)
+            _run_handler(handler)
 
         self.assertIn('stopping kato', seen_before_cleanup.get('text', ''))
         self.assertIn('Ctrl+C again', buffer.getvalue())
@@ -74,8 +87,7 @@ class ShutdownFeedbackTests(unittest.TestCase):
         buffer = io.StringIO()
         with patch('kato_core_lib.main.sys.stderr', buffer), \
                 patch('kato_core_lib.main.supports_inline_status', return_value=True):
-            with self.assertRaises(SystemExit):
-                handler(signal.SIGINT, None)
+            _run_handler(handler)
         # A carriage return + blanking run precedes the message.
         self.assertTrue(buffer.getvalue().startswith('\r'))
         self.assertIn('stopping kato', buffer.getvalue())
@@ -87,8 +99,7 @@ class ShutdownFeedbackTests(unittest.TestCase):
         broken.write.side_effect = ValueError('I/O operation on closed file')
         with patch('kato_core_lib.main.sys.stderr', broken), \
                 patch('kato_core_lib.main.supports_inline_status', return_value=False):
-            with self.assertRaises(SystemExit):
-                handler(signal.SIGINT, None)
+            _run_handler(handler)
         # ...and the shutdown still ran.
         app.service.shutdown.assert_called_once()
 
@@ -98,8 +109,7 @@ class ShutdownFeedbackTests(unittest.TestCase):
         buffer = io.StringIO()
         with patch('kato_core_lib.main.sys.stderr', buffer), \
                 patch('kato_core_lib.main.supports_inline_status', return_value=False):
-            with self.assertRaises(SystemExit):
-                handler(signal.SIGINT, None)
+            _run_handler(handler)
             app.service.shutdown.reset_mock()
             with patch('kato_core_lib.main.os._exit') as forced:
                 handler(signal.SIGINT, None)
@@ -115,8 +125,12 @@ class ShutdownDoesNotWaitForThePoolTests(unittest.TestCase):
         """The unbounded wait, pinned.
 
         ``wait=True`` blocks until every in-flight scan task finishes. Nothing
-        is lost by not waiting: queued tasks never started, running ones are
-        daemon threads, and an interrupted task is picked up by the next scan.
+        is lost by not waiting: queued tasks never started, and an interrupted
+        task is picked up by the next scan.
+
+        Not waiting is not the same as being able to LEAVE, though — the pool's
+        workers are non-daemon and get joined at interpreter exit, which is why
+        the handler ends at ``main._exit_now``.
         """
         from kato_core_lib.data_layers.service.agent_service import AgentService
 

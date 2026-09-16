@@ -23,9 +23,27 @@ def collect_processing_results(service) -> list[dict]:
     its task id, so cross-task fixes run concurrently while same-task
     fixes serialize via the runner's per-task dedup lock.
     """
+    _sync_planning_holds(service)
     results = _dispatch_assigned_tasks(service)
     results.extend(_dispatch_review_comments(service))
     return results
+
+
+def _sync_planning_holds(service) -> None:
+    """Hold or release started tasks by their planning tag, before dispatching.
+
+    Best-effort: a failure here must not cost the cycle its tasks, and the
+    service already keeps every hold as it is when the tracker read fails.
+    """
+    sync = getattr(service, 'sync_planning_holds', None)
+    if not callable(sync):
+        return
+    try:
+        sync()
+    except Exception:
+        configure_logger(__name__).exception(
+            'planning-hold sync failed; continuing the scan cycle',
+        )
 
 
 def _dispatch_assigned_tasks(service) -> list[dict]:

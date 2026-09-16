@@ -20,6 +20,9 @@ export default function PermissionDecisionContainer({
   queuedCount = 0,
   inline = false,
   timedGrantOutsideWorkspace = false,
+  // Stops the agent's subprocess. Wired through from the container that owns
+  // the task id; the plan dialog offers it as the third decision.
+  onStop = null,
 }) {
   const [submittingRequestId, setSubmittingRequestId] = useState('');
 
@@ -52,10 +55,32 @@ export default function PermissionDecisionContainer({
     });
   }
 
+  // Answer the ask FIRST, then stop. The agent is blocked on this request, and
+  // an unanswered ask left behind by a stop reads in the transcript as a
+  // decision nobody made.
+  async function handleStop(decision) {
+    await handleDecide({
+      ...decision,
+      allow: false,
+      remember: false,
+      rationale: 'The user stopped the agent instead of approving the plan.',
+    });
+    if (typeof onStop !== 'function') { return; }
+    const stopped = await onStop();
+    onAuditBubble({
+      kind: 'system',
+      tone: 'is-denied',
+      text: stopped
+        ? '■ stopped the agent — your next message resumes the session'
+        : '✗ stop failed — the agent may still be running',
+    });
+  }
+
   return (
     <PermissionModal
       raw={pending}
       onDecide={handleDecide}
+      onStop={onStop ? handleStop : null}
       taskCode={taskCode}
       taskSummary={taskSummary}
       queuedCount={queuedCount}

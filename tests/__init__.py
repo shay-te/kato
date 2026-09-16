@@ -21,6 +21,7 @@ for _key, _name in (
     ('KATO_FORGOTTEN_TASKS_PATH', 'forgotten_tasks.json'),
     ('KATO_READ_ONLY_REPOS_PATH', 'read_only_repos.json'),
     ('KATO_PLAN_MODE_PATH', 'plan_mode.json'),
+    ('KATO_PLANNING_HOLD_PATH', 'planning_holds.json'),
     ('KATO_APPROVED_REPOSITORIES_PATH', 'approved-repositories.json'),
     ('KATO_ACTION_GUARD_AUDIT_PATH', 'action-guard-audit.log'),
     ('KATO_AUDIT_LOG_PATH', 'audit.log.jsonl'),

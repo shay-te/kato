@@ -104,9 +104,12 @@ const MessageForm = forwardRef(function MessageForm({
   onOpenPlan,
   agentMode = '',
   onAgentModeChange,
+  agentModeHeldBy = '',
   remoteControl = null,
   onRemoteControlChange,
   contextUsage = null,
+  onStartChatFromSummary = null,
+  chatHandoffBusy = false,
   onStop,
 }, ref) {
   // Lazy initializer reads the persisted draft once on mount.
@@ -763,10 +766,16 @@ const MessageForm = forwardRef(function MessageForm({
         </div>
         <div className="composer-toolbar-right">
           <ChatCostDot usage={contextUsage} />
-          <ContextMeter usage={contextUsage} />
+          <ContextMeter
+            usage={contextUsage}
+            onStartChatFromSummary={onStartChatFromSummary}
+            handoffBusy={chatHandoffBusy}
+            turnInFlight={turnInFlight}
+          />
           <ComposerModeMenu
             mode={agentMode}
             onChange={onAgentModeChange}
+            heldBy={agentModeHeldBy}
             disabled={disabled}
             ultracode={ultracode}
             onUltracodeChange={setUltracode}

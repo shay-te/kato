@@ -29,10 +29,20 @@ export default function ComposerModeMenu({
   supportsWorkflows = false,
   planAvailable = false,
   onOpenPlan,
+  // The ticket tag holding the task in its mode ('' when none). The server
+  // decides the mode while held; the picker says why, and any other pick is
+  // re-checked against the ticket before it is accepted.
+  heldBy = '',
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const active = agentModeEntry(mode);
+  const tooltip = heldBy
+    ? `Agent mode: ${active.label} — held by the ${heldBy} tag on the ticket. `
+      + 'Remove the tag to pick another mode.'
+    : `Agent mode: ${active.label} — ${active.description}. `
+      + 'Applies on your next message (kato re-spawns the subprocess and '
+      + 'resumes the same session).';
 
   useDismissOnOutsidePointerOrEscape(open, () => setOpen(false), rootRef);
 
@@ -48,12 +58,8 @@ export default function ComposerModeMenu({
       <button
         type="button"
         className={`composer-mode-trigger tooltip-above tooltip-start ${open ? 'is-open' : ''}`}
-        data-tooltip={
-          `Agent mode: ${active.label} — ${active.description}. `
-          + 'Applies on your next message (kato re-spawns the subprocess and '
-          + 'resumes the same session).'
-        }
-        aria-label={`Agent mode: ${active.label}`}
+        data-tooltip={tooltip}
+        aria-label={`Agent mode: ${active.label}${heldBy ? ` (held by ${heldBy})` : ''}`}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
@@ -61,10 +67,17 @@ export default function ComposerModeMenu({
       >
         <span className="composer-mode-icon" aria-hidden="true">{active.icon}</span>
         <span className="composer-mode-label">{active.label}</span>
+        {heldBy && <span className="composer-mode-held-icon" aria-hidden="true">🔒</span>}
       </button>
       {open && (
         <div className="composer-mode-popover" role="menu">
           <div className="composer-mode-popover-title">Modes</div>
+          {heldBy && (
+            <div className="composer-mode-popover-note">
+              Held in {active.label} by <code>{heldBy}</code> on the ticket.
+              Remove the tag to pick another mode.
+            </div>
+          )}
           {AGENT_MODES.map((entry) => (
             <button
               key={entry.label}

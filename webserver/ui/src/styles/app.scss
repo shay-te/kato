@@ -1734,6 +1734,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   margin-left: auto;
 }
 
+/* Between the operator's fast prompts and the task / git actions beside them. */
+.session-header-separator {
+  flex-shrink: 0;
+  width: 1px;
+  height: calc(#{$ICON-BOX-LG} * 0.6);
+  background: $C-NEUTRAL-100-A10;
+}
+
 /* ───── chats menu (session header) ──────────────────────────────────
  * Dropdown under the header's Chats button: "New chat" action on top,
  * then the task's conversations (active first, then detached ones the
@@ -4545,6 +4553,21 @@ code {
 .exit-plan-empty {
   margin: 0;
   color: $C-NEUTRAL-64;
+}
+
+/* Where the shown plan came from, when it was not in the request itself. */
+.exit-plan-source {
+  margin: 0;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+}
+
+/* Stop sits with the other decisions but is not one of the two the agent is
+ * asking about — it ends the session, so it reads as the exit, not a choice
+ * between planning and building. */
+.exit-plan-stop {
+  margin-right: auto;
+  color: $C-RED-82;
 }
 
 .exit-plan-feedback {
@@ -10212,13 +10235,55 @@ $FILES-PANE-INSET: $SPACE-6;
   display: flex;
   flex-direction: column;
   gap: $SPACE-8;
-  padding-bottom: $SPACE-16;
+  padding-bottom: $SPACE-8;
+  border-bottom: 1px solid $C-NEUTRAL-100-A06;
 }
 
+/* One row per prompt; a button when it opens and closes the editor. */
 .settings-prompt-editor-head {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
+  width: 100%;
+  padding: $SPACE-6 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.settings-prompt-editor-head {
+  cursor: pointer;
+}
+
+.settings-prompt-icon-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $SPACE-4;
+}
+
+.settings-prompt-icon-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: $ICON-BOX-LG;
+  height: $ICON-BOX-LG;
+  border: 1px solid transparent;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  cursor: pointer;
+}
+
+.settings-prompt-icon-option:hover {
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+}
+
+.settings-prompt-icon-option.is-active {
+  background: $C-CYAN-52-A18;
+  color: $C-CYAN-78;
 }
 
 .settings-prompt-textarea {
@@ -11344,6 +11409,14 @@ $FILES-PANE-INSET: $SPACE-6;
   text-transform: uppercase;
 }
 
+/* Why the mode is not the operator's to change right now: a ticket tag holds it. */
+.composer-mode-popover-note {
+  padding: 0 $SPACE-8 $SPACE-6;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  line-height: 1.4;
+}
+
 .composer-mode-item,
 .composer-actions-item {
   display: flex;
@@ -11496,6 +11569,29 @@ $FILES-PANE-INSET: $SPACE-6;
   font: 500 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
   cursor: default;
+}
+
+/* With a new-chat offer the meter is a button, and its menu opens above it. */
+.context-meter-wrap {
+  position: relative;
+  display: flex;
+}
+
+.context-meter.is-actionable {
+  padding: 0 $SPACE-4;
+  border: 0;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  cursor: pointer;
+}
+
+.context-meter.is-actionable:hover {
+  background: $C-NEUTRAL-100-A06;
+}
+
+.context-meter-wrap .composer-mode-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .context-meter-track {

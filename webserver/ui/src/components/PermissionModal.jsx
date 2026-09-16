@@ -17,6 +17,10 @@ import MarkdownContent from './MarkdownContent.jsx';
 export default function PermissionModal({
   raw, onDecide, taskCode = '', taskSummary = '', queuedCount = 0,
   inline = false,
+  // Answer this ask and stop the agent. Offered on the PLAN dialog, where
+  // the alternative to approving used to be "Keep planning" — which is the
+  // agent carrying on, not stopping.
+  onStop = null,
   // Server-reported opt-in (KATO_TIMED_GRANT_OUTSIDE_WORKSPACE). Default
   // false, so a modal with no answer from the server offers nothing the
   // server would refuse to honour.
@@ -289,7 +293,11 @@ export default function PermissionModal({
         <ExitPlanModeForm
           key={requestId}
           plan={typeof toolInput?.plan === 'string' ? toolInput.plan : ''}
+          // So the form can read the captured plan (``plan.md``) when the
+          // envelope carries none — which is the usual case.
+          taskId={taskId}
           agentName={agentName}
+          onStop={onStop ? () => onStop({ requestId, toolName, command }) : null}
           onApprove={() => onDecide({
             allow: true, rationale: '', remember: false,
             requestId, toolName, command,

@@ -27,8 +27,12 @@ asymmetry is what these tests exist to prevent.
 """
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -150,6 +154,135 @@ class HalfFinishedCloneTests(unittest.TestCase):
         self.assertTrue((self.clone / 'service.py').is_file())
 
 
+class ALiveCloneIsNeverDeletedTests(unittest.TestCase):
+    """Two provisioning runs for one task must not destroy each other's clone.
+
+    Reported on UNA-2417, from the Files-tab Sync button::
+
+        error: unable to write file …/.git/objects/pack/pack-<sha>.pack:
+               No such file or directory
+        fatal: unable to rename temporary '*.pack' file to …
+
+    The directory vanished mid-clone, and kato deleted it. A clone that is
+    still downloading is indistinguishable on disk from an abandoned one —
+    empty working tree, no refs, nothing under ``objects/pack`` but the
+    ``tmp_pack_*`` stream — so the interrupted-clone repair treated a LIVE
+    clone as garbage. The Sync button and the scan tick's reconcile share no
+    lock, so both were cloning the same path at once.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.service = _Service()
+        self.origin = self.root / 'origin'
+        self.origin.mkdir()
+        _git(self.origin, 'init', '-q')
+        _git(self.origin, 'config', 'user.email', 't@example.com')
+        _git(self.origin, 'config', 'user.name', 'test')
+        (self.origin / 'service.py').write_text('x = 1\n', encoding='utf-8')
+        _git(self.origin, 'add', '-A')
+        _git(self.origin, 'commit', '-qm', 'first')
+        self.clone = self.root / 'objective_love_core_lib'
+        self.repository = SimpleNamespace(
+            id='objective_love_core_lib', local_path='',
+            remote_url=str(self.origin),
+        )
+
+    def _downloading_clone(self, *, age_seconds: float = 0.0) -> Path:
+        """A directory in the exact state git leaves while fetching a pack."""
+        pack = self.clone / '.git' / 'objects' / 'pack'
+        pack.mkdir(parents=True)
+        (self.clone / '.git' / 'objects' / 'info').mkdir()
+        stream = pack / 'tmp_pack_9f3c1a'
+        stream.write_bytes(b'PACK partial')
+        if age_seconds:
+            old = time.time() - age_seconds
+            os.utime(stream, (old, old))
+        return stream
+
+    def test_a_clone_that_is_still_downloading_is_never_deleted(self) -> None:
+        # THE REPORT. The other thread's git dies the moment this directory
+        # goes away, with the pack-file error above.
+        stream = self._downloading_clone()
+        self.service.ensure_clone(self.repository, self.clone)
+        self.assertTrue(
+            self.clone.is_dir(), 'the live clone directory was deleted',
+        )
+        self.assertTrue(stream.is_file(), 'the in-flight pack was deleted')
+
+    def test_an_empty_scratch_file_is_a_dead_clone_not_a_live_one(self) -> None:
+        # The documented shape of a clone killed mid-fetch: a 0-byte
+        # tmp_pack, written moments ago. It must still be repaired — this is
+        # what the merge-repair path depends on.
+        pack = self.clone / '.git' / 'objects' / 'pack'
+        pack.mkdir(parents=True)
+        (self.clone / '.git' / 'objects' / 'info').mkdir()
+        (pack / 'tmp_pack_HJydSJ').write_bytes(b'')
+        self.service.ensure_clone(self.repository, self.clone)
+        self.assertTrue(
+            (self.clone / 'service.py').is_file(),
+            'the killed clone was not replaced with a real one',
+        )
+
+    def test_an_abandoned_download_is_still_removed_and_re_cloned(self) -> None:
+        # The repair this guard narrows must keep working: a clone whose temp
+        # pack has not been touched for minutes is genuinely dead.
+        self._downloading_clone(age_seconds=600)
+        self.service.ensure_clone(self.repository, self.clone)
+        self.assertTrue(
+            (self.clone / 'service.py').is_file(),
+            'the abandoned clone was not replaced with a real one',
+        )
+
+    def test_two_clones_of_the_same_path_are_serialised(self) -> None:
+        """The lock: the reuse check and the clone are ONE decision.
+
+        Without it the second caller inspects the first one's half-written
+        directory — which is how the repair got the chance to delete it.
+        """
+        started = threading.Event()
+        order: list[str] = []
+        real_run_git = self.service._run_git
+
+        def slow_clone(cwd, args, message, repository=None, **kwargs):
+            if args and args[0] == 'clone':
+                order.append('clone-start')
+                # The state the second caller used to walk in on.
+                self._downloading_clone()
+                started.set()
+                time.sleep(0.4)
+                shutil.rmtree(self.clone, ignore_errors=True)
+                result = real_run_git(cwd, args, message, repository, **kwargs)
+                order.append('clone-end')
+                return result
+            return real_run_git(cwd, args, message, repository, **kwargs)
+
+        self.service._run_git = slow_clone
+        failures: list[Exception] = []
+
+        def second_caller():
+            started.wait(timeout=5)
+            try:
+                self.service.ensure_clone(self.repository, self.clone)
+                order.append('second-done')
+            except Exception as exc:  # noqa: BLE001 - reported below
+                failures.append(exc)
+
+        other = threading.Thread(target=second_caller)
+        other.start()
+        self.service.ensure_clone(self.repository, self.clone)
+        other.join(timeout=10)
+
+        self.assertEqual(failures, [], f'the second clone failed: {failures}')
+        self.assertEqual(
+            order, ['clone-start', 'clone-end', 'second-done'],
+            'the second caller ran while the first was still cloning',
+        )
+        self.assertTrue((self.clone / 'service.py').is_file())
+
+
 class FreshCloneMustHaveAWorkingTreeTests(unittest.TestCase):
     """A clone exiting 0 is not proof of a usable checkout.
 
@@ -250,6 +383,44 @@ class CloneFailureReachesTheUiTests(unittest.TestCase):
                 for line in logs.output),
             f'no UI-classifiable clone-failure line was emitted: {logs.output}',
         )
+
+    def test_the_error_says_WHICH_repository_failed(self) -> None:
+        """UNA-2417: one repo's git error was reported under another's name.
+
+        Provisioning handed back a single joined message, so every caller that
+        reports per repository had to blame all of them — the Files-tab sync
+        listed ``ob-love-ui`` as having failed with
+        ``objective_love_core_lib``'s pack error. The failures are carried per
+        repository, and only the repo that failed is in them.
+        """
+        from kato_core_lib.data_layers.service import (
+            workspace_provisioning_service as module,
+        )
+        workspace = self._workspace()
+
+        def ensure_clone(repository, path):  # noqa: ARG001 - fake
+            if repository.id == 'objective_love_core_lib':
+                raise RuntimeError('unable to write file …pack-7c97.pack')
+
+        with self.assertRaises(module.WorkspaceCloneError) as caught:
+            module.provision_task_workspace_clones(
+                workspace,
+                SimpleNamespace(ensure_clone=ensure_clone),
+                SimpleNamespace(id='UNA-2417', summary='s', description='d'),
+                [
+                    SimpleNamespace(id='ob-love-ui', local_path='/src/ob-love-ui'),
+                    SimpleNamespace(
+                        id='objective_love_core_lib',
+                        local_path='/src/objective_love_core_lib',
+                    ),
+                ],
+            )
+        self.assertEqual(
+            caught.exception.failures,
+            {'objective_love_core_lib': 'unable to write file …pack-7c97.pack'},
+        )
+        # The joined message stays — it is what the log and the chat show.
+        self.assertIn('failed to clone 1 of 2', str(caught.exception))
 
     def test_the_workspace_is_still_marked_errored(self) -> None:
         # The notification is ADDITIONAL to the existing signals, not a

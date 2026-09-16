@@ -28,8 +28,9 @@ import { useSessionOption } from '../hooks/useSessionOption.js';
 import { permissionStore } from '../stores/permissionStore.js';
 import { usePendingPermissions } from '../hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
-import { toast } from '../stores/toastStore.js';
-import { fetchEffortLevels, fetchModels, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionRemoteControl,
+import { toast, toastResult } from '../stores/toastStore.js';
+import { PREDEFINED_PROMPTS } from '../predefined_prompts/index.js';
+import { fetchEffortLevels, fetchModels, startChatFromHandoff, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionRemoteControl,
   refreshAgentBackends,
 } from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
@@ -285,12 +286,24 @@ export default function SessionDetail({
   const contextUsage = useContextUsage(taskId, stream.turnInFlight);
 
   const [agentMode, setAgentMode] = useState('');
-  useEffect(() => {
-    if (!taskId) { setAgentMode(''); return; }
+  // The ticket tag holding the task in its mode ('' when none) — today only
+  // ``kato:wait-planning``, which holds it in Plan. The server decides.
+  const [agentModeHeldBy, setAgentModeHeldBy] = useState('');
+  const refreshAgentMode = useCallback(() => {
+    if (!taskId) { setAgentMode(''); setAgentModeHeldBy(''); return undefined; }
+    let current = true;
     fetchSessionAgentMode(taskId)
-      .then((result) => setAgentMode(String((result && result.mode) || '')))
+      .then((result) => {
+        if (!current) { return; }
+        setAgentMode(String((result && result.mode) || ''));
+        setAgentModeHeldBy(String((result && result.held_by_tag) || ''));
+      })
       .catch(() => {});
+    return () => { current = false; };
   }, [taskId]);
+  // Re-read at every turn boundary as well as on a task switch: the hold is
+  // kato's reading of the ticket, and the tag can change while this tab is open.
+  useEffect(() => refreshAgentMode(), [refreshAgentMode, stream.turnInFlight]);
   // Remote Control — the composer's ``/`` menu toggle that hands this task's
   // live Claude session to claude.ai / the Claude app. Server-owned state
   // (whether the CLI supports it, whether a subprocess is bridged right now),
@@ -360,11 +373,21 @@ export default function SessionDetail({
     }));
   }, [taskId]);
 
-  const handleAgentModeChange = useCallback((mode) => {
+  const handleAgentModeChange = useCallback(async (mode) => {
     const next = String(mode ?? '');
     setAgentMode(next);
-    setSessionAgentMode(taskId, next);
-  }, [taskId]);
+    const result = await setSessionAgentMode(taskId, next);
+    if (!result || result.ok !== false) { return; }
+    // Refused — above all while the planning tag holds the task. Put the
+    // picker back where the server left it, and say why.
+    refreshAgentMode();
+    toastResult({
+      kind: 'error',
+      title: 'Agent mode not changed',
+      message: (result.body && result.body.error) || result.error || 'could not reach kato',
+      taskId,
+    });
+  }, [taskId, refreshAgentMode]);
   useEffect(() => {
     if (typeof onPendingPermissionChange !== 'function') { return; }
     onPendingPermissionChange(taskId, hasPendingPermission);
@@ -591,6 +614,59 @@ export default function SessionDetail({
   const onChatSwitchPending = useCallback((pending) => {
     chatSwitchPendingRef.current = !!pending;
   }, []);
+
+  // "New chat from a summary" (the context meter). Two steps, because the
+  // summary is the agent's own: send the handoff prompt, and when THAT turn
+  // completes, ask kato to lift the summary out and open a fresh chat whose
+  // first message is the summary.
+  //
+  // Declared BEFORE the queue flush below, so a finished summary turn arms
+  // ``chatSwitchPendingRef`` first: a queued message was written for the chat
+  // being left and must not be delivered into it (onChatChanged discards it
+  // with a toast, like any other chat switch).
+  const [chatHandoffBusy, setChatHandoffBusy] = useState(false);
+  // ``turnsCompleted`` when the handoff prompt went out; null = none pending.
+  const handoffSentAtRef = useRef(null);
+  async function onStartChatFromSummary() {
+    // A pending handoff whose turn is no longer running ended without a
+    // result (stopped, crashed) — asking again starts over rather than
+    // leaving the offer stuck on "Writing the summary…".
+    if (stream.turnInFlight) { return; }
+    handoffSentAtRef.current = Number(stream.turnsCompleted) || 0;
+    setChatHandoffBusy(true);
+    const sent = await deliverMessage(
+      PREDEFINED_PROMPTS.handoffSummary, [], { fromKato: true },
+    );
+    if (!sent) {
+      handoffSentAtRef.current = null;
+      setChatHandoffBusy(false);
+    }
+  }
+  useEffect(() => {
+    const sentAt = handoffSentAtRef.current;
+    if (sentAt === null || (Number(stream.turnsCompleted) || 0) <= sentAt) { return; }
+    handoffSentAtRef.current = null;
+    chatSwitchPendingRef.current = true;
+    (async () => {
+      const result = await startChatFromHandoff(taskId);
+      if (!result || !result.ok) {
+        chatSwitchPendingRef.current = false;
+        setChatHandoffBusy(false);
+        toastResult({
+          kind: 'error',
+          title: 'New chat not started',
+          message: (result && result.body && result.body.error)
+            || (result && result.error) || 'could not reach kato',
+          taskId,
+        });
+        return;
+      }
+      onChatChanged(result.body || {});
+      await deliverMessage(result.body.opening_message, [], { fromKato: true });
+      setChatHandoffBusy(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream.turnsCompleted]);
 
   // Flush the queue one message at a time as each turn ends.
   // Delivering a queued message re-enters the busy state, so the
@@ -914,6 +990,9 @@ export default function SessionDetail({
           onEffortChange={handleEffortChange}
           agentMode={agentMode}
           onAgentModeChange={handleAgentModeChange}
+          agentModeHeldBy={agentModeHeldBy}
+          onStartChatFromSummary={onStartChatFromSummary}
+          chatHandoffBusy={chatHandoffBusy}
           remoteControl={remoteControl}
           onRemoteControlChange={handleRemoteControlChange}
           contextUsage={contextUsage}

@@ -200,8 +200,9 @@ class FilesEndpointTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload['repository_ids'], [])
         self.assertEqual(payload['trees'], [])
-        self.assertEqual(payload['cwd'], '')
-        self.assertEqual(payload['tree'], [])
+        # No top-level copy of a tree — the client reads ``trees``.
+        self.assertNotIn('cwd', payload)
+        self.assertNotIn('tree', payload)
 
     def test_legacy_single_repo_uses_record_cwd(self):
         # Single-repo task: no workspace metadata, but the session
@@ -226,13 +227,14 @@ class FilesEndpointTests(unittest.TestCase):
                 response = app.test_client().get('/api/sessions/PROJ-1/files')
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        # Legacy clients still get the flat ``cwd``/``tree`` fields.
-        self.assertEqual(payload['cwd'], tmp)
-        self.assertEqual(payload['tree'], [{'name': 'README.md', 'kind': 'file'}])
+        self.assertEqual(payload['trees'][0]['cwd'], tmp)
+        self.assertEqual(payload['trees'][0]['tree'], [{'name': 'README.md', 'kind': 'file'}])
         self.assertEqual(payload['trees'][0]['repo_id'], '')
-        # New: change-colouring input flows through the legacy path too.
-        self.assertEqual(payload['changed_files'], ['README.md'])
+        # Change-colouring input flows through the legacy path too.
         self.assertEqual(payload['trees'][0]['changed_files'], ['README.md'])
+        # ...and is not repeated at the top level.
+        for duplicate in ('cwd', 'tree', 'changed_files', 'conflicted_files'):
+            self.assertNotIn(duplicate, payload)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +293,9 @@ class DiffRepoScopeTests(unittest.TestCase):
         with self._patched(app, seen):
             response = app.test_client().get('/api/sessions/PROJ-1/diff')
         self.assertEqual(self._computed(response), ['backend', 'client'])
-        self.assertEqual(seen, ['backend', 'client'])
+        # Every repo is computed; in no particular order — the route builds
+        # them concurrently, and only the RESPONSE keeps the task's order.
+        self.assertCountEqual(seen, ['backend', 'client'])
 
     def test_a_scoped_request_computes_ONLY_that_repo(self):
         # The point of the fix: the other repo's git work never happens.
@@ -304,14 +308,14 @@ class DiffRepoScopeTests(unittest.TestCase):
         self.assertEqual(self._computed(response), ['client'])
         self.assertEqual(seen, ['client'])
 
-    def test_the_scoped_response_carries_that_repo_in_the_scalar_fields(self):
+    def test_the_scoped_response_carries_only_that_repo(self):
         app = self._app()
         with self._patched(app, []):
             payload = app.test_client().get(
                 '/api/sessions/PROJ-1/diff?repo=client',
             ).get_json()
-        self.assertEqual(payload['repo_id'], 'client')
-        self.assertEqual(payload['diff'], 'diff for client')
+        self.assertEqual([d['repo_id'] for d in payload['diffs']], ['client'])
+        self.assertEqual(payload['diffs'][0]['diff'], 'diff for client')
 
     def test_an_unknown_repo_returns_EMPTY_not_everything(self):
         # Silently widening a scoped request is how a filter becomes a no-op
@@ -324,7 +328,7 @@ class DiffRepoScopeTests(unittest.TestCase):
                 '/api/sessions/PROJ-1/diff?repo=not-a-repo',
             ).get_json()
         self.assertEqual(payload['diffs'], [])
-        self.assertEqual(payload['diff'], '')
+        self.assertNotIn('diff', payload)
         self.assertEqual(seen, [])
 
     def test_a_LEGACY_task_still_serves_a_scoped_request(self):
@@ -353,7 +357,7 @@ class DiffRepoScopeTests(unittest.TestCase):
                 payload = app.test_client().get(
                     f'/api/sessions/PROJ-1/diff?full=x&repo={Path(tmp).name}',
                 ).get_json()
-        self.assertEqual(payload['diff'], 'diff --git a/x b/x')
+        self.assertEqual(payload['diffs'][0]['diff'], 'diff --git a/x b/x')
 
     def test_an_unknown_repo_does_not_fall_back_to_the_record_cwd(self):
         # The legacy single-repo path keys off the session record, which is a
@@ -369,7 +373,7 @@ class DiffRepoScopeTests(unittest.TestCase):
                 '/api/sessions/PROJ-1/diff?repo=nope',
             ).get_json()
         self.assertEqual(payload['diffs'], [])
-        self.assertEqual(payload['diff'], '')
+        self.assertNotIn('diff', payload)
 
 
 class DiffEndpointTests(unittest.TestCase):
@@ -380,8 +384,8 @@ class DiffEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload['diffs'], [])
-        self.assertEqual(payload['repo_id'], '')
-        self.assertEqual(payload['diff'], '')
+        self.assertNotIn('repo_id', payload)
+        self.assertNotIn('diff', payload)
 
     def test_legacy_single_repo_diff_uses_record_cwd(self):
         # Single-repo: no workspace manager, session record cwd is the
@@ -416,11 +420,12 @@ class DiffEndpointTests(unittest.TestCase):
                 response = app.test_client().get('/api/sessions/PROJ-1/diff')
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertEqual(payload['base'], 'master')
-        self.assertEqual(payload['head'], 'PROJ-1')
-        self.assertEqual(payload['diff'], 'diff --git a/x b/x')
-        # Single-repo, legacy payload still includes one entry in diffs.
+        # Single-repo, legacy payload: one entry in diffs, nothing repeated.
         self.assertEqual(len(payload['diffs']), 1)
+        self.assertEqual(payload['diffs'][0]['base'], 'master')
+        self.assertEqual(payload['diffs'][0]['head'], 'PROJ-1')
+        self.assertEqual(payload['diffs'][0]['diff'], 'diff --git a/x b/x')
+        self.assertNotIn('diff', payload)
 
 
 # ---------------------------------------------------------------------------

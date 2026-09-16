@@ -94,6 +94,16 @@ class StreamingClaudeSessionTests(unittest.TestCase):
         ):
             session = StreamingClaudeSession(task_id='PROJ-1', cwd='/tmp')
             session.start()
+            # ``start()`` returns as soon as the reader threads are spawned —
+            # the init event is parsed on one of THEM, and adopting its id is
+            # that thread's work. Reading the attribute straight after
+            # ``start()`` therefore raced the reader and read the pinned UUID
+            # instead, which failed only when the machine was loaded enough to
+            # delay the thread. Same wait the events test above uses.
+            for _ in range(40):
+                if session.agent_session_id == 'live-123':
+                    break
+                time.sleep(0.05)
 
         cmd = mock_popen.call_args.args[0]
         self.assertIn('-p', cmd)

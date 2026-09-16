@@ -1062,8 +1062,10 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         for entry in payload['trees']:
             self.assertIsInstance(entry['conflicted_files'], list)
             self.assertIsInstance(entry['changed_files'], list)
-        # Legacy fields are still populated for old clients.
-        self.assertEqual(payload['cwd'], str(self.repo_a))
+        # The first repo is not repeated at the top level.
+        self.assertEqual(payload['trees'][0]['cwd'], str(self.repo_a))
+        self.assertNotIn('cwd', payload)
+        self.assertNotIn('tree', payload)
 
     def test_session_list_endpoint_marks_inactive_workspace_pending_permission(self):
         live_session = MagicMock()
@@ -1104,9 +1106,10 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         self.assertEqual(payload['repository_ids'], ['client', 'backend'])
         repo_ids_in_diffs = [entry['repo_id'] for entry in payload['diffs']]
         self.assertEqual(repo_ids_in_diffs, ['client', 'backend'])
-        self.assertEqual(payload['repo_id'], 'client')  # legacy scalar
-        self.assertEqual(payload['base'], 'master')
-        self.assertEqual(payload['head'], 'UNA-1')
+        self.assertEqual(payload['diffs'][0]['base'], 'master')
+        self.assertEqual(payload['diffs'][0]['head'], 'UNA-1')
+        for duplicate in ('repo_id', 'base', 'head', 'diff'):
+            self.assertNotIn(duplicate, payload)
 
     def test_diff_endpoint_records_error_when_default_branch_unknown(self):
         # ``detect_default_branch`` returning empty must not crash the

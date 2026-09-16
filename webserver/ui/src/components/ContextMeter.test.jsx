@@ -3,8 +3,8 @@
 // on its own, so acting in time is entirely on them — which makes a wrong
 // number worse than no number.
 
-import { describe, test, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import ContextMeter from './ContextMeter.jsx';
 
@@ -91,5 +91,66 @@ describe('ContextMeter', () => {
       <ContextMeter usage={{ used_tokens: 'lots', limit_tokens: null }} />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+
+// "when this is very close to finishing or maybe when I click on this I want
+// him to show me an option to launch a new chat with the summary of the
+// previous chat".
+describe('ContextMeter — new chat from a summary', () => {
+  const LOW = { used_tokens: 813_000, limit_tokens: 1_000_000 };
+  const HEALTHY = { used_tokens: 100_000, limit_tokens: 1_000_000 };
+  const trigger = () => screen.getByRole('button', { name: /start a new chat from a summary/i });
+  const offer = () => screen.getByRole('menuitem', { name: /new chat from a summary|writing the summary/i });
+
+  test('clicking the meter offers the new chat', () => {
+    render(<ContextMeter usage={HEALTHY} onStartChatFromSummary={vi.fn()} />);
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(trigger());
+    expect(trigger()).toHaveAttribute('aria-expanded', 'true');
+    expect(offer()).toHaveTextContent(/stays in the chats menu/i);
+  });
+
+  test('a low window says the offer is there before it is clicked', () => {
+    const { unmount } = render(
+      <ContextMeter usage={HEALTHY} onStartChatFromSummary={vi.fn()} />,
+    );
+    expect(trigger()).not.toHaveTextContent(/new chat/i);
+    unmount();
+    render(<ContextMeter usage={LOW} onStartChatFromSummary={vi.fn()} />);
+    expect(trigger()).toHaveTextContent(/19% left\s*· new chat/);
+    expect(trigger().getAttribute('data-tooltip')).toMatch(/new chat from a summary/i);
+  });
+
+  test('picking the offer starts it and closes the menu', () => {
+    const onStart = vi.fn();
+    render(<ContextMeter usage={LOW} onStartChatFromSummary={onStart} />);
+    fireEvent.click(trigger());
+    fireEvent.click(offer());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  test('the offer waits while a turn is running, and says so', () => {
+    const onStart = vi.fn();
+    render(<ContextMeter usage={LOW} onStartChatFromSummary={onStart} turnInFlight />);
+    fireEvent.click(trigger());
+    expect(offer()).toBeDisabled();
+    expect(screen.getByRole('menu')).toHaveTextContent(/once the current turn finishes/i);
+  });
+
+  test('while the summary is being written it cannot be asked for twice', () => {
+    render(<ContextMeter usage={LOW} onStartChatFromSummary={vi.fn()} handoffBusy />);
+    fireEvent.click(trigger());
+    expect(offer()).toBeDisabled();
+    expect(offer()).toHaveTextContent(/writing the summary/i);
+  });
+
+  test('Escape closes the menu', () => {
+    render(<ContextMeter usage={LOW} onStartChatFromSummary={vi.fn()} />);
+    fireEvent.click(trigger());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

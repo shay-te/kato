@@ -11,6 +11,8 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 vi.mock('../api.js', () => ({
   fetchPendingPermissions: vi.fn(),
   postSession: vi.fn(),
+  // The plan dialog reads the captured plan when the ask carries none.
+  fetchSessionPlan: vi.fn(async () => ({ exists: false, content: '', mtime: 0 })),
 }));
 
 import { fetchPendingPermissions, postSession } from '../api.js';
@@ -52,6 +54,23 @@ afterEach(() => {
 
 
 describe('GlobalPermissionContainer', () => {
+
+  test('Stop on a plan ask answers it first, then stops that task', async () => {
+    // Reported: the plan dialog offered only "Keep planning" (the agent
+    // carries on) and "Start implementing". Stopping had to be possible from
+    // the dialog itself — and the ask must be answered, not abandoned.
+    fetchPendingPermissions.mockResolvedValue({
+      pending: [_ask('POJ-3', 'r9', 'ExitPlanMode')],
+    });
+    render(<GlobalPermissionContainer activeTaskId="POJ-3" />);
+    fireEvent.click(await screen.findByRole('button', { name: /^stop$/i }));
+    await waitFor(() => expect(postSession).toHaveBeenCalledTimes(2));
+    const [answer, stop] = postSession.mock.calls;
+    expect(answer[0]).toBe('POJ-3');
+    expect(answer[1]).toBe('permission');
+    expect(answer[2]).toMatchObject({ request_id: 'r9', allow: false });
+    expect(stop).toEqual(['POJ-3', 'stop']);
+  });
 
   test('pops a titled modal for a pending ask', async () => {
     fetchPendingPermissions.mockResolvedValue({ pending: [_ask('POJ-2')] });

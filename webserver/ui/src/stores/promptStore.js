@@ -1,96 +1,208 @@
-// Operator overrides for the predefined chat prompts. The DEFAULT text
-// ships as a .md file (predefined_prompts/); this store lets the operator
-// edit it from Settings → Prompts and persists the override to
-// localStorage. The code-review button resolves the EFFECTIVE text
-// (override if set, else default) in the browser at click time, so an
-// override applies immediately with no backend round-trip.
+// The operator's fast prompts — one-click prompts on the session toolbar.
 //
-// Shared pub/sub (same shape as toolDecisionsStore) so the Settings panel
-// and the button always read one source.
+// Code review ships with kato (its text is predefined_prompts/code_review.md).
+// The operator can change any prompt's name, icon and text, and add prompts of
+// their own. Everything is saved in this browser (localStorage) and read at
+// click time, so an edit applies to the very next click with no backend
+// round-trip.
+//
+// Shared pub/sub (same shape as toolDecisionsStore) so the Settings panel and
+// the toolbar always read one source.
 
+import { useSyncExternalStore } from 'react';
 import { readStorageString, writeStorageItem } from '../utils/storage.js';
 import { parseJsonOr } from '../utils/json.js';
 import { createPubSub } from './pubsub.js';
 import { PREDEFINED_PROMPTS } from '../predefined_prompts/index.js';
 
-export const PROMPT_OVERRIDES_STORAGE_KEY = 'kato.promptOverrides.v1';
+export const FAST_PROMPTS_STORAGE_KEY = 'kato.fastPrompts.v1';
+// Before prompts could be added, only Code review's TEXT could be changed, and
+// it was saved here. Read when nothing is saved under the new key, so an
+// upgrade keeps the operator's review prompt.
+export const LEGACY_PROMPT_OVERRIDES_STORAGE_KEY = 'kato.promptOverrides.v1';
 
-// The prompts the operator may override, in display order. ``id`` is the
-// stable key (also the PREDEFINED_PROMPTS key); ``default`` is the shipped
-// .md text. Add a row here + a .md in predefined_prompts/ to expose more.
-export const EDITABLE_PROMPTS = Object.freeze([
-  {
-    id: 'codeReview',
-    label: 'Code review',
-    description: 'Sent by the "Code review" toolbar button (the diff icon).',
-    default: PREDEFINED_PROMPTS.codeReview,
-  },
+// The icons a prompt may use: the line icons that read as an action on a
+// toolbar (no chevrons, spinners or aliases).
+export const FAST_PROMPT_ICONS = Object.freeze([
+  'diff', 'code', 'search', 'eye', 'check', 'check-double', 'edit', 'comment',
+  'send', 'file', 'warning', 'bell', 'pin', 'history', 'refresh', 'merge',
+  'pull-request', 'commit', 'gear', 'crosshair',
 ]);
 
-function _defaultFor(id) {
-  const meta = EDITABLE_PROMPTS.find((p) => p.id === id);
-  return meta ? meta.default : '';
+const NEW_PROMPT_ICON = 'send';
+
+// The prompts kato ships. The operator's changes are saved against ``id``, so
+// "Reset to default" brings these values back.
+export const BUILTIN_PROMPTS = Object.freeze([
+  Object.freeze({
+    id: 'codeReview',
+    label: 'Code review',
+    icon: 'diff',
+    text: PREDEFINED_PROMPTS.codeReview,
+  }),
+]);
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readOverrides() {
-  const parsed = parseJsonOr(
-    readStorageString(PROMPT_OVERRIDES_STORAGE_KEY, null), null,
+// ``{label, icon, text}`` a prompt may be saved with, or null when the name or
+// the text is blank — a toolbar button that sends nothing is not a prompt.
+function validFields(fields, fallbackIcon) {
+  const label = String(fields?.label ?? '').trim();
+  const text = String(fields?.text ?? '');
+  if (!label || !text.trim()) { return null; }
+  const icon = FAST_PROMPT_ICONS.includes(fields?.icon) ? fields.icon : fallbackIcon;
+  return { label, icon, text };
+}
+
+function readState() {
+  const saved = parseJsonOr(readStorageString(FAST_PROMPTS_STORAGE_KEY, null), null);
+  if (isPlainObject(saved)) {
+    return {
+      builtins: isPlainObject(saved.builtins) ? saved.builtins : {},
+      custom: (Array.isArray(saved.custom) ? saved.custom : [])
+        .map((prompt) => {
+          const fields = validFields(prompt, NEW_PROMPT_ICON);
+          return fields && typeof prompt.id === 'string' && prompt.id
+            ? { id: prompt.id, ...fields }
+            : null;
+        })
+        .filter(Boolean),
+    };
+  }
+  const legacy = parseJsonOr(
+    readStorageString(LEGACY_PROMPT_OVERRIDES_STORAGE_KEY, null), null,
   );
-  if (!parsed || typeof parsed !== 'object') { return {}; }
-  return parsed;
+  const builtins = {};
+  for (const { id } of BUILTIN_PROMPTS) {
+    if (isPlainObject(legacy) && String(legacy[id] || '').trim()) {
+      builtins[id] = { text: String(legacy[id]) };
+    }
+  }
+  return { builtins, custom: [] };
 }
 
-function writeOverrides(overrides) {
-  writeStorageItem(PROMPT_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides), undefined);
+function buildList(state) {
+  const builtins = BUILTIN_PROMPTS.map((base) => {
+    const saved = state.builtins[base.id] || {};
+    const label = String(saved.label || '').trim() || base.label;
+    const icon = FAST_PROMPT_ICONS.includes(saved.icon) ? saved.icon : base.icon;
+    const text = String(saved.text || '').trim() ? String(saved.text) : base.text;
+    return Object.freeze({
+      id: base.id,
+      label,
+      icon,
+      text,
+      builtin: true,
+      changed: label !== base.label || icon !== base.icon || text !== base.text,
+    });
+  });
+  const custom = state.custom.map((prompt) => Object.freeze({
+    ...prompt, builtin: false, changed: false,
+  }));
+  return Object.freeze([...builtins, ...custom]);
 }
 
-let _overrides = readOverrides();
-const _pubsub = createPubSub(() => _overrides);
+let _state = readState();
+let _list = buildList(_state);
+const _pubsub = createPubSub(() => _state);
 
 function _commit(next) {
-  _overrides = next;
-  writeOverrides(next);
+  if (JSON.stringify(next) === JSON.stringify(_state)) { return; }
+  _state = next;
+  _list = buildList(next);
+  writeStorageItem(FAST_PROMPTS_STORAGE_KEY, JSON.stringify(next), undefined);
   _pubsub.emit();
+}
+
+function _newId() {
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 export const promptStore = {
   subscribe: _pubsub.subscribe,
 
-  // Effective text for ``id``: a non-blank override, else the shipped default.
+  // Every prompt in toolbar order — the shipped ones first, then the
+  // operator's in the order they were added. Each is
+  // ``{id, label, icon, text, builtin, changed}``; the array is stable between
+  // changes, so it can be a ``useSyncExternalStore`` snapshot.
+  list() {
+    return _list;
+  },
+
+  // The text a prompt sends ('' for an unknown id).
   get(id) {
-    const override = String(_overrides[id] || '').trim();
-    return override || _defaultFor(id);
+    const prompt = _list.find((entry) => entry.id === id);
+    return prompt ? prompt.text : '';
   },
 
-  // The raw saved override ('' when none) — what the editor textarea shows.
-  override(id) {
-    return String(_overrides[id] || '');
+  // Save a prompt's name, icon and text. A shipped prompt stores only what
+  // differs from its default, so saving the default back is a reset. Returns
+  // false when nothing was saved (unknown id, blank name or text).
+  save(id, fields) {
+    const base = BUILTIN_PROMPTS.find((prompt) => prompt.id === id);
+    if (base) {
+      const valid = validFields(fields, base.icon);
+      if (!valid) { return false; }
+      const changes = {};
+      for (const key of ['label', 'icon', 'text']) {
+        if (valid[key] !== base[key]) { changes[key] = valid[key]; }
+      }
+      const builtins = { ..._state.builtins };
+      if (Object.keys(changes).length > 0) { builtins[id] = changes; } else { delete builtins[id]; }
+      _commit({ ..._state, builtins });
+      return true;
+    }
+    const current = _state.custom.find((prompt) => prompt.id === id);
+    const valid = current && validFields(fields, current.icon);
+    if (!valid) { return false; }
+    _commit({
+      ..._state,
+      custom: _state.custom.map((prompt) => (prompt.id === id ? { id, ...valid } : prompt)),
+    });
+    return true;
   },
 
-  isCustom(id) {
-    return !!String(_overrides[id] || '').trim();
+  // Change ONLY a prompt's icon, and save it there and then.
+  //
+  // Picking an icon is a single click with a visible result, so making it wait
+  // behind Save read as a picker that does not work ("still i can't change the
+  // prompt icon"). The name and the text stay save-on-submit: those are edits
+  // in progress, and a half-typed name must not reach the toolbar.
+  setIcon(id, icon) {
+    if (!FAST_PROMPT_ICONS.includes(icon)) { return false; }
+    const prompt = _list.find((entry) => entry.id === id);
+    if (!prompt) { return false; }
+    return this.save(id, { label: prompt.label, icon, text: prompt.text });
   },
 
-  // Save an override. A blank/whitespace value resets to the default
-  // (so "clear the box + save" reverts cleanly).
-  setOverride(id, text) {
-    if (!id) { return; }
-    const value = String(text || '');
-    if (!value.trim()) { this.reset(id); return; }
-    if (_overrides[id] === value) { return; }
-    _commit({ ..._overrides, [id]: value });
+  // Add an operator prompt; its new id, or '' when the name or text is blank.
+  add(fields) {
+    const valid = validFields(fields, NEW_PROMPT_ICON);
+    if (!valid) { return ''; }
+    const id = _newId();
+    _commit({ ..._state, custom: [..._state.custom, { id, ...valid }] });
+    return id;
   },
 
+  // Delete an operator prompt. The shipped ones cannot be deleted, only reset.
+  remove(id) {
+    if (!_state.custom.some((prompt) => prompt.id === id)) { return false; }
+    _commit({ ..._state, custom: _state.custom.filter((prompt) => prompt.id !== id) });
+    return true;
+  },
+
+  // Put a shipped prompt back to its default name, icon and text.
   reset(id) {
-    if (!id || !(id in _overrides)) { return; }
-    const next = { ..._overrides };
-    delete next[id];
-    _commit(next);
-  },
-
-  // Cross-tab sync.
-  syncFromStorage() {
-    _overrides = readOverrides();
-    _pubsub.emit();
+    if (!(id in _state.builtins)) { return; }
+    const builtins = { ..._state.builtins };
+    delete builtins[id];
+    _commit({ ..._state, builtins });
   },
 };
+
+// The prompt list, re-rendering on every change.
+export function useFastPrompts() {
+  return useSyncExternalStore(promptStore.subscribe, promptStore.list, promptStore.list);
+}

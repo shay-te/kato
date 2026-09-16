@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -40,6 +41,82 @@ class _NothingToCommit(Exception):
     Distinct from a git failure: an empty index here is the correct outcome
     (the only dirty file was a validation report), not an error to report.
     """
+
+
+# ONE CLONE PER TARGET PATH, process-wide.
+#
+# Two provisioning runs for the same task overlap routinely — the Files-tab
+# Sync button and the scan tick's reconcile share no lock — and each submits
+# ``ensure_clone`` for the FULL repo set across four workers. Without this, the
+# second call inspects a directory the first is still downloading into: the
+# working tree is empty, no refs exist yet, and the only thing under
+# ``objects/pack`` is the ``tmp_pack_*`` stream — which is exactly the
+# signature of an INTERRUPTED clone, so the repair deleted a live clone out
+# from under the other thread. git then died with "unable to write file
+# …/objects/pack/pack-<sha>.pack: No such file or directory" and the sync
+# reported a repository that had been cloning perfectly well (UNA-2417).
+#
+# Serialising per path makes "is this clone reusable?" and "clone it" one
+# atomic decision, which is the only way the question can be answered
+# correctly: any gap between them is the race.
+_clone_locks_guard = threading.Lock()
+_clone_locks: dict[str, threading.Lock] = {}
+
+# A live download has BYTES on disk and was touched moments ago. Freshness
+# alone is not enough: a clone killed a second before kato looks has an
+# equally fresh scratch file — and it is EMPTY, which is the documented shape
+# of a clone killed mid-fetch (see ``_is_partial_pack_download``). Both halves
+# are load-bearing, and together they keep the repair working on a dead clone
+# while never touching one that is still arriving.
+_LIVE_DOWNLOAD_SECONDS = 10.0
+
+
+def _clone_lock_for(target: Path) -> threading.Lock:
+    """The process-wide lock for one clone directory."""
+    try:
+        key = str(Path(target).resolve())
+    except OSError:
+        key = str(target)
+    with _clone_locks_guard:
+        lock = _clone_locks.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _clone_locks[key] = lock
+        return lock
+
+
+def _temp_pack_stats(target: Path) -> dict[str, tuple[int, float]]:
+    """``{name: (size, mtime)}`` for the scratch packs a fetch streams into."""
+    pack = Path(target) / '.git' / 'objects' / 'pack'
+    stats: dict[str, tuple[int, float]] = {}
+    try:
+        for child in pack.iterdir():
+            if not _is_partial_pack_download(child.name):
+                continue
+            info = child.stat()
+            stats[child.name] = (info.st_size, info.st_mtime)
+    except OSError:
+        return {}
+    return stats
+
+
+def _clone_download_is_live(target: Path) -> bool:
+    """True when a pack is still arriving into this clone.
+
+    The lock above serialises kato's OWN clones; this is the second line of
+    defence for a clone it cannot see — a second kato, or the operator's own
+    ``git clone`` into the same folder. A download in flight is
+    indistinguishable on disk from an abandoned one apart from this: it has
+    received bytes, and it received them just now.
+
+    Unreadable answers False, so a permissions problem never blocks the
+    repair.
+    """
+    now = time.time()
+    return any(
+        size > 0 and now - mtime < _LIVE_DOWNLOAD_SECONDS
+        for size, mtime in _temp_pack_stats(target).values()
+    )
 
 
 def _is_partial_pack_download(name: str) -> bool:
@@ -139,6 +216,12 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         """
         self._validate_git_executable()
         target = Path(str(target_path))
+        # Held across the reuse check AND the clone — see ``_clone_lock_for``.
+        with _clone_lock_for(target):
+            self._ensure_clone_locked(repository, target)
+
+    def _ensure_clone_locked(self, repository, target: Path) -> None:
+        """``ensure_clone``'s body, with this path's clone lock held."""
         if (target / '.git').is_dir():
             self._restore_unchecked_out_clone(repository, target)
             if (target / '.git').is_dir():
@@ -283,6 +366,16 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             # guesswork when the clone provably holds nothing — there is
             # nothing to lose by fetching it again.
             if self._clone_is_empty_of_objects(target):
+                if _clone_download_is_live(target):
+                    # A clone is streaming into this directory right now, and
+                    # a download in flight looks exactly like an abandoned
+                    # one. Deleting it here is what killed the other clone
+                    # mid-pack; leave it alone and let it finish.
+                    self.logger.info(
+                        'workspace clone for %s at %s is still downloading — '
+                        'leaving it to finish', repository.id, target,
+                    )
+                    return
                 self.logger.warning(
                     'workspace clone for %s at %s holds no git objects — an '
                     'interrupted clone; removing it so it can be cloned again',
@@ -1008,6 +1101,37 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             return f'could not move the clone onto {normalized_branch!r}: {exc}'
         return ''
 
+    def _moved_onto_task_branch(
+        self, repository, current: str, branch_name: str,
+    ) -> str:
+        """Put kato's OWN clone back on its task branch. '' when it is there.
+
+        A workspace clone on the wrong branch is kato's to fix: it created the
+        folder, and nobody chose that branch — a re-clone simply lands on the
+        remote's default branch. Refusing with "checkout first" made the
+        operator do git surgery on kato's workspace to unblock a button
+        (UNA-2417: "objective_love_core_lib: workspace is on 'master',
+        expected 'UNA-2417' — checkout first", on every repo action, forever).
+
+        Uses the safe recovery, so uncommitted work is carried across and a
+        clone holding its OWN commits on the wrong branch is still refused —
+        moving those is a rebase decision, not kato's to make. The returned
+        reason says that, which is actionable; "checkout first" was not.
+        """
+        if current == branch_name:
+            return ''
+        reason = self.recover_clone_onto_task_branch(repository, branch_name)
+        if reason:
+            return (
+                f'workspace is on {current!r}, expected {branch_name!r} — '
+                f'{reason}'
+            )
+        self.logger.info(
+            'moved the %s workspace clone onto its task branch %s before '
+            'continuing', getattr(repository, 'id', '<unknown>'), branch_name,
+        )
+        return ''
+
     def _checkout_task_branch_preserving_worktree(
         self,
         repository,
@@ -1222,15 +1346,17 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'pulled': False, 'reason': 'branch_lookup_failed',
                 'detail': str(exc),
             }
-        # The branch the workspace is on must be the task branch we
-        # are pulling into; otherwise a fast-forward would land in
-        # the wrong place. Operator-fixable (checkout the task
-        # branch first), so we surface a clear reason.
-        if current != normalized_branch:
+        # The branch the workspace is on must be the task branch we are
+        # pulling into; otherwise a fast-forward would land in the wrong
+        # place. Kato moves its own clone there rather than refusing — see
+        # ``_moved_onto_task_branch`` — and reports only what it cannot fix.
+        blocked = self._moved_onto_task_branch(
+            repository, current, normalized_branch,
+        )
+        if blocked:
             return {
                 'pulled': False, 'reason': 'wrong_branch_checked_out',
-                'detail': f'workspace is on {current!r}, expected '
-                          f'{normalized_branch!r} — checkout first',
+                'detail': blocked,
             }
         try:
             dirty = bool(self._working_tree_status(local_path).strip())
@@ -1326,12 +1452,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         )
         if reason:
             return fail(reason, detail)
-        if current != normalized_branch:
-            return fail(
-                'wrong_branch_checked_out',
-                f'workspace is on {current!r}, expected '
-                f'{normalized_branch!r} — checkout first',
-            )
+        blocked = self._moved_onto_task_branch(
+            repository, current, normalized_branch,
+        )
+        if blocked:
+            return fail('wrong_branch_checked_out', blocked)
         try:
             return {'default_branch': self.destination_branch(repository)}
         except ValueError as exc:

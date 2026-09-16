@@ -158,6 +158,44 @@ class RepositoryScanLoggingTests(unittest.TestCase):
         self.assertIn('adding repository server to task PROJ-1 failed', logged)
         self.assertIn('permission denied (publickey)', logged)
 
+    def test_only_the_repository_that_failed_is_reported_as_failed(self) -> None:
+        """UNA-2417: the sync blamed a repository that had cloned fine.
+
+        Provisioning raises ONE aggregate error for the whole run, and this
+        mapped it onto every repo it was adding — so the operator read
+        "ob-love-ui: failed to clone …" describing another repo's git error,
+        while the repo that really failed was buried in the same text. The
+        exception carries the per-repository failures; only those are reported.
+        """
+        from kato_core_lib.data_layers.service.workspace_provisioning_service import (
+            WorkspaceCloneError,
+        )
+        self.repository_service.resolve_task_repositories.return_value = [
+            _repo('client'), _repo('server'), _repo('api'),
+        ]
+        with patch(
+            'kato_core_lib.data_layers.service.workspace_provisioning_service'
+            '.provision_task_workspace_clones',
+            side_effect=WorkspaceCloneError(
+                'failed to clone 1 of 3 repository — the rest were cloned: '
+                'server: unable to write file …pack-abc.pack',
+                {'server': 'unable to write file …pack-abc.pack'},
+            ),
+        ):
+            result = self.service.sync_task_repositories('PROJ-1')
+        self.assertFalse(result['synced'])
+        failed = {
+            row['repository_id']: row['error']
+            for row in result['failed_repositories']
+        }
+        self.assertEqual(failed.get('server'), 'unable to write file …pack-abc.pack')
+        # THE SYMPTOM: another repository wearing server's git error. ``api``
+        # is reported too — it never got cloned, so it cannot be branch-prepped
+        # — but with its OWN reason, not this one.
+        self.assertNotIn('pack-abc.pack', failed.get('api', ''))
+        # ``client`` was already in the workspace and never failed at all.
+        self.assertNotIn('client', failed)
+
     # ---- add_task_repository --------------------------------------------
 
     def test_add_announces_itself(self) -> None:

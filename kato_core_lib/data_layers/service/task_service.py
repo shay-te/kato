@@ -57,6 +57,23 @@ class TaskService(Service):
             states=[self._configured_state_value('review')],
         )
 
+    def get_started_tasks(self, assignee: str | None = None) -> list[Task]:
+        """Assigned tasks past the queue: In Progress and In Review.
+
+        ``get_assigned_tasks`` leaves both out by design — it decides what to
+        START. This is for reading tags on work that is already running.
+        """
+        states = [
+            state for state in (
+                self._configured_state_value('progress'),
+                self._configured_state_value('review'),
+            ) if state
+        ]
+        if not states:
+            # An empty list would fall back to the queue states above.
+            return []
+        return self.get_assigned_tasks(assignee=assignee, states=states)
+
     def list_all_assigned_tasks(
         self,
         assignee: str | None = None,

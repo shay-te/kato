@@ -863,6 +863,17 @@ export function startTaskChat(taskId, agentSessionId = '', agentBackend = '') {
   );
 }
 
+// Start a fresh chat that opens with the current chat's handoff summary — the
+// second step of the context meter's "New chat from a summary", sent once the
+// agent's summary turn has ended. ``body`` carries ``summary`` and the
+// ``opening_message`` to send into the new chat; a 409 means nothing changed.
+export function startChatFromHandoff(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/chats/handoff`, {},
+  );
+}
+
 // Liveness of EVERY backend's chat for one task — both subprocesses can run
 // at once, so one chip could only ever describe the tab in front of you.
 export function fetchTaskAgentStatus(taskId) {

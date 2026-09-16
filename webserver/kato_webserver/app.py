@@ -851,11 +851,9 @@ def _build_files_payload(session_manager, workspace_manager, agent_service, task
                     t['repo_id'] for t in trees
                     if t['repo_id'] != TASK_FOLDER_TREE_ID
                 ],
+                # No top-level copy of the first repo's tree: the client reads
+                # ``trees``, and the copy only added its size to every fetch.
                 'trees': trees,
-                # Back-compat: first repo doubles as the legacy
-                # ``cwd``/``tree`` pair so older clients still work.
-                'cwd': trees[0]['cwd'],
-                'tree': trees[0]['tree'],
             }
     cwd = _record_cwd_or_none(session_manager, task_id)
     if cwd is None:
@@ -867,10 +865,6 @@ def _build_files_payload(session_manager, workspace_manager, agent_service, task
         return {
             'repository_ids': [],
             'trees': [],
-            'cwd': '',
-            'tree': [],
-            'conflicted_files': [],
-            'changed_files': [],
         }
     legacy_tree = tracked_file_tree(cwd)
     legacy_conflicts = conflicted_paths(cwd)
@@ -882,10 +876,6 @@ def _build_files_payload(session_manager, workspace_manager, agent_service, task
             'conflicted_files': legacy_conflicts,
             'changed_files': legacy_changed,
         }],
-        'cwd': cwd,
-        'tree': legacy_tree,
-        'conflicted_files': legacy_conflicts,
-        'changed_files': legacy_changed,
     }
 
 
@@ -1064,11 +1054,36 @@ def _override_key(app: Flask, task_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _task_mode_of(app: Flask, task_id: str) -> str:
-    """The task's persisted agent mode ('' when none)."""
-    return str(
+    """The mode the task's next spawn runs with ('' = kato's configured default).
+
+    Plan while the ``kato:wait-planning`` tag holds the task, whatever the
+    operator picked; otherwise the operator's pick.
+    """
+    from kato_core_lib.helpers.planning_hold_store import held_permission_mode
+    return held_permission_mode(
+        task_id,
         (app.config.get('TASK_PLAN_MODE_OVERRIDES') or {}).get(str(task_id), '')
-        or ''
+        or '',
     )
+
+
+def _still_held_in_plan(app: Flask, task_id: str) -> bool:
+    """Whether ``kato:wait-planning`` still holds the task, re-read from the ticket.
+
+    Only a held task is re-read, so an ordinary mode change never waits on the
+    tracker. With no agent service to ask, the recorded hold stands.
+    """
+    from kato_core_lib.helpers.planning_hold_store import task_is_planning_held
+    if not task_is_planning_held(task_id):
+        return False
+    refresh = _agent_method(app.config.get('AGENT_SERVICE'), 'refresh_planning_hold')
+    if not callable(refresh):
+        return True
+    try:
+        return bool(refresh(task_id))
+    except Exception:
+        app.logger.exception('could not re-check the planning hold of task %s', task_id)
+        return True
 
 
 def _set_task_mode_of(app: Flask, task_id: str, mode: str = '') -> bool:
@@ -1666,9 +1681,17 @@ def _register_http_routes(app: Flask) -> None:
 
         Empty string means "kato's configured default" (acceptEdits), which is
         what the composer shows as "Edit automatically".
+
+        ``held_by_tag`` names the ticket tag deciding the mode ('' when none),
+        so the composer can say why it shows Plan.
         """
+        from kato_core_lib.data_layers.data.fields import TaskTags
+        from kato_core_lib.helpers.planning_hold_store import task_is_planning_held
         return jsonify({
             'mode': _task_mode_of(app, task_id),
+            'held_by_tag': (
+                TaskTags.WAIT_PLANNING if task_is_planning_held(task_id) else ''
+            ),
         })
 
     @app.post('/api/sessions/<task_id>/agent-mode')
@@ -1687,6 +1710,19 @@ def _register_http_routes(app: Flask) -> None:
                 'error': f'unknown mode {mode!r}',
                 'allowed': sorted(AGENT_PERMISSION_MODES),
             }), 400
+        # While the planning tag is on the ticket the mode is not the
+        # operator's to change — refused rather than stored, because a stored
+        # pick the spawn then ignores is a picker that lies.
+        if mode != PLAN_PERMISSION_MODE and _still_held_in_plan(app, task_id):
+            from kato_core_lib.data_layers.data.fields import TaskTags
+            return jsonify({
+                'error': (
+                    f'{TaskTags.WAIT_PLANNING} is on this ticket, so the task '
+                    'stays in Plan. Remove the tag to pick another mode.'
+                ),
+                'mode': PLAN_PERMISSION_MODE,
+                'held_by_tag': TaskTags.WAIT_PLANNING,
+            }), 409
         if not _set_task_mode_of(app, task_id, mode):
             return jsonify({'error': 'not available'}), 503
         # Best-effort persistence — a write failure must not fail the choice
@@ -2133,13 +2169,7 @@ def _register_http_routes(app: Flask) -> None:
         # (Note: stopping the session does NOT cancel a comment-run — the
         # watcher respawns it — so the message doesn't suggest that.)
         if _task_has_active_comment_run(app, task_id):
-            return jsonify({
-                'error': (
-                    'kato is working on (or has queued) a review comment '
-                    'for this task; wait for it to finish before switching '
-                    'chats'
-                ),
-            }), 409
+            return jsonify({'error': _COMMENT_RUN_BLOCKS_CHAT_SWITCH}), 409
         if agent_session_id:
             known = {read_session_id_from(record)}
             known.update(getattr(record, 'previous_session_ids', []) or [])
@@ -2171,6 +2201,52 @@ def _register_http_routes(app: Flask) -> None:
             AGENT_SESSION_ID: record.agent_session_id,
             'agent_backend': str(getattr(record, 'agent_backend', '') or ''),
             'previous_session_ids': list(record.previous_session_ids),
+        })
+
+    @app.post('/api/sessions/<task_id>/chats/handoff')
+    def start_chat_from_handoff(task_id: str):
+        """Start a fresh chat that opens with the current chat's handoff summary.
+
+        The second step of the context meter's "New chat from a summary": the
+        composer has asked the agent for a summary between the handoff markers,
+        and that turn has ended. The summary is read back from the live
+        session — or from the transcript on disk when the subprocess already
+        exited — and the current chat is then detached exactly as "New chat"
+        does. The response carries the opening message for the composer to
+        send, so the new chat's first turn IS the summary.
+
+        Nothing is detached when there is no summary to carry over: a new
+        chat without its context is the one outcome this must not produce.
+        """
+        from kato_core_lib.helpers.chat_handoff_utils import (
+            handoff_summary_from_events,
+            new_chat_opening_message,
+        )
+        manager = app.config['SESSION_MANAGER']
+        record = manager.get_record(task_id)
+        if record is None:
+            return jsonify({'error': f'no session record for task {task_id}'}), 404
+        if _task_has_active_comment_run(app, task_id):
+            return jsonify({'error': _COMMENT_RUN_BLOCKS_CHAT_SWITCH}), 409
+        summary = handoff_summary_from_events(_current_chat_events(app, task_id))
+        if not summary:
+            return jsonify({
+                'error': (
+                    'the agent has not written a handoff summary in this chat, '
+                    'so no new chat was started — ask again once it has'
+                ),
+            }), 409
+        try:
+            record = manager.start_new_chat(task_id)
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 404
+        return jsonify({
+            'task_id': record.task_id,
+            AGENT_SESSION_ID: record.agent_session_id,
+            'agent_backend': str(getattr(record, 'agent_backend', '') or ''),
+            'previous_session_ids': list(record.previous_session_ids),
+            'summary': summary,
+            'opening_message': new_chat_opening_message(summary),
         })
 
     @app.post('/api/sessions/<task_id>/backend')
@@ -2924,26 +3000,27 @@ def _register_http_routes(app: Flask) -> None:
         # render accordions side by side. Single-repo / legacy path:
         # fall back to the session record cwd, same shape as before.
         if repository_ids:
-            diffs = []
-            for repo_id in repository_ids:
+            # PARALLEL across repos, order preserved — the Files tree's helper
+            # and reasoning. Each repo is several git subprocesses and this
+            # runs on every 5-second poll: one repo at a time, a six-repo task
+            # spent 1.5 s per poll here.
+            def _diff_for(repo_id: str):
                 cwd = _repository_cwd(workspace_manager, task_id, repo_id)
                 if cwd is None:
-                    continue
-                diffs.append(_compute_repo_diff(
+                    return None
+                return _compute_repo_diff(
                     repo_id, cwd, task_id=task_id, agent_service=agent_service,
                     full_paths=full_paths,
-                ))
+                )
+
+            diffs = build_in_parallel(repository_ids, _diff_for)
+            # No top-level copy of the first repo's diff: the client reads
+            # ``diffs``, and that copy was half of every poll's bytes.
             if diffs:
-                first = diffs[0]
                 return jsonify({
                     'repository_ids': [d['repo_id'] for d in diffs],
                     'diffs': diffs,
                     'workspace_status': workspace_status,
-                    # Back-compat scalar fields mirror the first repo.
-                    'repo_id': first['repo_id'],
-                    'base': first['base'],
-                    'head': first['head'],
-                    'diff': first['diff'],
                 })
         cwd = _record_cwd_or_none(manager, task_id)
         # Did a scoped request miss?
@@ -2972,10 +3049,6 @@ def _register_http_routes(app: Flask) -> None:
                 'repository_ids': [],
                 'diffs': [],
                 'workspace_status': workspace_status,
-                'repo_id': '',
-                'base': '',
-                'head': '',
-                'diff': '',
             })
         single = _compute_repo_diff(
             '', cwd, task_id=task_id, agent_service=agent_service,
@@ -2985,10 +3058,6 @@ def _register_http_routes(app: Flask) -> None:
             'repository_ids': [],
             'diffs': [single],
             'workspace_status': workspace_status,
-            'repo_id': '',
-            'base': single['base'],
-            'head': single['head'],
-            'diff': single['diff'],
         })
 
     @app.post('/api/sessions/<task_id>/files/discard-changes')
@@ -3826,6 +3895,10 @@ def _register_http_routes(app: Flask) -> None:
         from kato_core_lib.helpers.plan_mode_store import set_plan_mode
         set_plan_mode(task_id, False)
         _set_task_mode_of(app, task_id, '')
+        # ...and its planning hold. Re-adopting a still-tagged task holds it
+        # again on the next scan.
+        from kato_core_lib.helpers.planning_hold_store import set_planning_hold
+        set_planning_hold(task_id, False)
         # Same for Remote Control: a forgotten task must not come back
         # bridged to the Claude app the next time it is adopted.
         _store_remote_control(app, task_id, False)
@@ -5520,7 +5593,7 @@ def _plan_mode_change_needs_respawn(app: Flask, manager, task_id: str, images) -
     session = manager.get_session(task_id) if manager is not None else None
     if session is None or not getattr(session, 'is_alive', False):
         return False  # no live session — the spawn path applies the mode
-    requested = str(overrides.get(task_id, '') or '')
+    requested = _task_mode_of(app, task_id)
     # Compare RESTRICTION, not the raw mode string. There are two independent
     # ways a session can be locked down and they are baked at spawn time:
     # ``--permission-mode plan``, and Explain's read-only tool denial. A
@@ -5684,11 +5757,10 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
         _get_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id)
         or _configured_chat_effort(app)
     )
-    # Plan-mode lock: when set, force ``--permission-mode plan`` so the
-    # spawned agent can only plan. Empty → '' so the runner falls back to
-    # its configured default mode (the normal can-implement chat session).
-    plan_overrides = app.config.get('TASK_PLAN_MODE_OVERRIDES') or {}
-    permission_mode = plan_overrides.get(task_id, '')
+    # Mode lock: the operator's pick, or Plan while the planning tag holds the
+    # task. Empty → '' so the runner falls back to its configured default mode
+    # (the normal can-implement chat session).
+    permission_mode = _task_mode_of(app, task_id)
     try:
         runner.resume_session_for_chat(
             task_id=task_id,
@@ -5709,6 +5781,12 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
     return jsonify({'status': 'spawned', 'text': text})
+
+
+_COMMENT_RUN_BLOCKS_CHAT_SWITCH = (
+    'kato is working on (or has queued) a review comment for this task; wait '
+    'for it to finish before switching chats'
+)
 
 
 def _task_has_active_comment_run(app, task_id: str) -> bool:
@@ -6080,6 +6158,74 @@ def _replay_codex_history_from_disk(record):
         )
 
 
+#: Fields of a replayed transcript record the chat never reads. A long chat's
+#: replay was 14.6 MB on every connect, and more than half of it was these: the
+#: CLI's second copy of every tool's output (``toolUseResult``, 22%), per-message
+#: token counts (``message.usage``, 14%), tool-result bodies the chat never
+#: displays (12%) and bookkeeping ids. Identity (``uuid``, ``message.id``,
+#: ``tool_use_id``), timestamps, text and tool calls are kept.
+#: ``webserver/ui/src/ChatReplayTrimmedFields.test.js`` fails if the UI starts
+#: reading one of these — take it off this list first.
+_HISTORY_FIELDS_THE_CHAT_NEVER_READS = frozenset({
+    'toolUseResult', 'cwd', 'parentUuid', 'gitBranch', 'userType', 'slug',
+    'promptId', 'sourceToolAssistantUUID', 'isSidechain',
+})
+_HISTORY_MESSAGE_FIELDS_THE_CHAT_NEVER_READS = frozenset({'usage'})
+
+
+def _history_raw_for_chat(raw: dict) -> dict:
+    """A copy of one transcript record with only what the chat reads."""
+    trimmed = {
+        key: value for key, value in raw.items()
+        if key not in _HISTORY_FIELDS_THE_CHAT_NEVER_READS
+    }
+    message = raw.get('message')
+    if isinstance(message, dict):
+        message = {
+            key: value for key, value in message.items()
+            if key not in _HISTORY_MESSAGE_FIELDS_THE_CHAT_NEVER_READS
+        }
+        content = message.get('content')
+        if isinstance(content, list):
+            # A tool result's body is never rendered; its type and id are what
+            # the chat pairs and counts on.
+            message['content'] = [
+                {key: value for key, value in block.items() if key != 'content'}
+                if isinstance(block, dict) and block.get('type') == 'tool_result'
+                else block
+                for block in content
+            ]
+        trimmed['message'] = message
+    return trimmed
+
+
+def _current_chat_events(app: Flask, task_id: str) -> list:
+    """The active chat's events: the live session's, else its transcript on disk.
+
+    The disk read covers the Claude transcript only — the resolver answers ''
+    for a Codex chat on purpose — so a Codex chat is read while it is live.
+    """
+    manager = app.config.get('SESSION_MANAGER')
+    session = manager.get_session(task_id) if manager is not None else None
+    if session is not None:
+        try:
+            events = list(session.recent_events())
+        except Exception:
+            events = []
+        if events:
+            return events
+    agent_session_id = _resolve_agent_session_id(
+        manager, app.config.get('WORKSPACE_MANAGER'), task_id,
+    )
+    if not agent_session_id:
+        return []
+    try:
+        from claude_core_lib.claude_core_lib.session.history import load_history_events
+        return list(load_history_events(agent_session_id))
+    except Exception:
+        return []
+
+
 def _replay_history_from_disk(agent_session_id: str):
     if not agent_session_id:
         return
@@ -6102,7 +6248,7 @@ def _replay_history_from_disk(agent_session_id: str):
         epoch = _epoch_from_iso(raw.get('timestamp'))
         yield epoch, _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,
-            {'event': {'received_at_epoch': epoch, 'raw': raw}},
+            {'event': {'received_at_epoch': epoch, 'raw': _history_raw_for_chat(raw)}},
         )
 
 

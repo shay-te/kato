@@ -218,9 +218,10 @@ class FilesDiffContractTests(unittest.TestCase):
         self.assertIn('src/app.py', changed)
         self.assertIn('src/helper.py', changed)
 
-        # Back-compat scalars at the top level.
+        # The first repo is not repeated at the top level — the UI reads
+        # ``trees``.
         for key in ('cwd', 'tree'):
-            self.assertIn(key, payload)
+            self.assertNotIn(key, payload)
 
     def test_diff_payload_has_the_shape_the_ui_consumes(self) -> None:
         """``/diff`` payload matches what FilesTab/ChangesTab expect."""
@@ -243,9 +244,10 @@ class FilesDiffContractTests(unittest.TestCase):
         self.assertIn('src/helper.py', diff_text)
         self.assertIn('hello, fixed', diff_text)
 
-        # Back-compat scalars at the top level.
+        # The first repo is not repeated at the top level — the UI reads
+        # ``diffs``, and the copy doubled the payload.
         for key in ('repo_id', 'base', 'head', 'diff'):
-            self.assertIn(key, payload)
+            self.assertNotIn(key, payload)
 
     def test_commits_payload_has_the_shape_the_ui_consumes(self) -> None:
         """``/commits`` payload matches what the Files-tab commits dropdown reads."""

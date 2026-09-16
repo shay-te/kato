@@ -4,7 +4,7 @@
 // dispatch, modal opening.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
   // The header now shows a status chip per agent, polled from here.
@@ -57,6 +57,7 @@ import {
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
 import { toast } from '../stores/toastStore.js';
+import { promptStore } from '../stores/promptStore.js';
 import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
@@ -657,6 +658,101 @@ describe('SessionHeader — Code review button', () => {
     fireEvent.click(screen.getByRole('button', { name: /code review/i }));
     await waitFor(() => expect(onSendPrompt).toHaveBeenCalledTimes(1));
     expect(onSendPrompt.mock.calls[0][0]).toMatch(/CODE REVIEW/);
+  });
+});
+
+
+// Fast prompts: every prompt in Settings → Prompts is a toolbar button, and a
+// separator keeps them apart from the task and git actions.
+describe('SessionHeader — fast prompts', () => {
+
+  beforeEach(() => {
+    promptStore.reset('codeReview');
+    for (const prompt of promptStore.list()) {
+      if (!prompt.builtin) { promptStore.remove(prompt.id); }
+    }
+    toast.show.mockClear();
+  });
+
+  function renderHeader(onSendPrompt = vi.fn().mockResolvedValue(true)) {
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.IDLE}
+        onSendPrompt={onSendPrompt}
+      />,
+    );
+    return onSendPrompt;
+  }
+
+  test('an added prompt gets its own button, icon and text', async () => {
+    promptStore.add({ label: 'Explain the diff', icon: 'eye', text: 'Explain what changed.' });
+    const onSendPrompt = renderHeader();
+    const button = screen.getByRole('button', { name: 'Explain the diff' });
+    expect(button.querySelector('[data-icon="eye"]')).not.toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(onSendPrompt).toHaveBeenCalledWith('Explain what changed.'));
+  });
+
+  test('a change saved in Settings reaches the toolbar without a reload', async () => {
+    const onSendPrompt = renderHeader();
+    act(() => {
+      promptStore.save('codeReview', { label: 'Review', icon: 'eye', text: 'Review it.' });
+    });
+    const button = await screen.findByRole('button', { name: 'Review' });
+    expect(button.querySelector('[data-icon="eye"]')).not.toBeNull();
+    fireEvent.click(button);
+    await waitFor(() => expect(onSendPrompt).toHaveBeenCalledWith('Review it.'));
+  });
+
+  test('a separator sits between the prompts and the other actions', () => {
+    promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
+    renderHeader();
+    const actions = [...document.querySelector('.session-header-actions').children];
+    const separator = actions.findIndex((el) => el.getAttribute('role') === 'separator');
+    const labels = actions.map((el) => el.getAttribute('aria-label') || '');
+    expect(separator).toBeGreaterThan(-1);
+    expect(labels.indexOf('Code review')).toBeLessThan(separator);
+    expect(labels.indexOf('Go')).toBeLessThan(separator);
+    expect(labels.indexOf('Code review')).toBeGreaterThan(-1);
+    expect(labels.slice(separator + 1).some((label) => /^push$/i.test(label))).toBe(true);
+  });
+
+  test('the separator divides the prompts from search and everything after', () => {
+    // Asked for twice: "move the search icon right to the seperator", then
+    // "still there is no seperator between the search and the prompts icons".
+    // The prompts are the group; search starts the rest.
+    promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
+    render(
+      <SessionHeader
+        session={_session()}
+        streamLifecycle={SESSION_LIFECYCLE.IDLE}
+        onSendPrompt={vi.fn()}
+        searchSlot={<button type="button" aria-label="Search chat">s</button>}
+      />,
+    );
+    const actions = [...document.querySelector('.session-header-actions').children];
+    const labels = actions.map((el) => el.getAttribute('aria-label') || '');
+    const separator = actions.findIndex((el) => el.getAttribute('role') === 'separator');
+    expect(labels[separator + 1]).toBe('Search chat');
+    expect(labels.indexOf('Code review')).toBeLessThan(separator);
+    expect(labels.indexOf('Go')).toBeLessThan(separator);
+  });
+
+  test('a prompt the chat did not accept is reported', async () => {
+    renderHeader(vi.fn().mockResolvedValue(false));
+    fireEvent.click(screen.getByRole('button', { name: 'Code review' }));
+    await waitFor(() => expect(toast.show).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'error', title: 'Couldn’t send Code review',
+    })));
+  });
+
+  test('the empty header shows the same prompts, inert, so the bar does not jump', () => {
+    promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
+    render(<SessionHeaderPlaceholder />);
+    expect(screen.getByRole('button', { name: 'Go', hidden: true })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Code review', hidden: true })).toBeDisabled();
+    expect(document.querySelector('#session-header [role="separator"]')).not.toBeNull();
   });
 });
 

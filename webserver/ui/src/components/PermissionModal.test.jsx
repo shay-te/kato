@@ -4,8 +4,15 @@
 // wiring.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
+// The plan dialog reads the captured plan (``plan.md``) when the ask itself
+// carries none — which is the usual shape of an ExitPlanMode envelope.
+vi.mock('../api.js', () => ({
+  fetchSessionPlan: vi.fn(async () => ({ exists: false, content: '', mtime: 0 })),
+}));
+
+import { fetchSessionPlan } from '../api.js';
 import PermissionModal from './PermissionModal.jsx';
 
 
@@ -502,13 +509,50 @@ describe('PermissionModal — permission-changing tools are never remembered', (
     });
   });
 
-  test('with no plan in the envelope it points at the centre pane', () => {
-    // kato writes plan.md from the ExitPlanMode event and renders it there;
-    // the envelope's ``input`` is often empty. Saying where the plan is beats
-    // the generic body's "(no arguments)".
-    render(<PermissionModal raw={envelopeFor('ExitPlanMode')} onDecide={vi.fn()} />);
+  // The envelope's ``input`` is usually empty — the CLI leaves the plan in the
+  // turn's message. The dialog used to answer that by pointing at the centre
+  // pane, which it covers: "there is no way to check his plan". It now shows
+  // the plan kato captured into plan.md.
+  function planAsk() {
+    return _raw({
+      task_id: 'POJ-1',
+      request: { request_id: 'req-1', tool_name: 'ExitPlanMode', input: {} },
+    });
+  }
+
+  test('with no plan in the envelope it shows the one kato captured', async () => {
+    fetchSessionPlan.mockResolvedValue({
+      exists: true, content: '## Step one\nDo the thing', mtime: 5,
+    });
+    render(<PermissionModal raw={planAsk()} onDecide={vi.fn()} />);
+    expect(await screen.findByText('Step one')).toBeInTheDocument();
     expect(screen.queryByText(/\(no arguments\)/)).toBeNull();
+    expect(fetchSessionPlan).toHaveBeenCalledWith('POJ-1');
+  });
+
+  test('before the plan lands it says so, and where it will be', async () => {
+    fetchSessionPlan.mockResolvedValue({ exists: false, content: '', mtime: 0 });
+    render(<PermissionModal raw={planAsk()} onDecide={vi.fn()} />);
+    await waitFor(() => expect(fetchSessionPlan).toHaveBeenCalled());
+    expect(screen.getByText(/sent no plan text/i)).toBeInTheDocument();
     expect(screen.getByText(/plan\.md/)).toBeInTheDocument();
+    expect(screen.queryByText(/\(no arguments\)/)).toBeNull();
+  });
+
+  test('Stop is offered on the plan dialog and reports the ask it ends', () => {
+    // "Keep planning" is the agent carrying ON. Stopping it was impossible
+    // from the one surface on screen.
+    const onStop = vi.fn();
+    render(<PermissionModal raw={planAsk()} onDecide={vi.fn()} onStop={onStop} />);
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }));
+    expect(onStop).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'req-1', toolName: 'ExitPlanMode',
+    }));
+  });
+
+  test('no Stop button when nothing can stop the agent', () => {
+    render(<PermissionModal raw={planAsk()} onDecide={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^stop$/i })).toBeNull();
   });
 
   test('an ordinary tool still offers "Allow always"', () => {

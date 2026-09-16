@@ -8,7 +8,7 @@
 //   - hasVisibleBubbles: decides whether at least one event should
 //     render in EventLog (used to suppress the "waiting" banner).
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { activeBackendStore } from '../stores/activeBackendStore.js';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
@@ -47,6 +47,8 @@ vi.mock('./EventLog.jsx', () => ({
 vi.mock('./MessageForm.jsx', () => ({
   default: ({
     onSubmit, remoteControl, onRemoteControlChange,
+    agentMode, agentModeHeldBy, onAgentModeChange,
+    onStartChatFromSummary, chatHandoffBusy,
   }) => (
     <form id="message-form">
       <button type="button" onClick={() => onSubmit('hello', [])}>
@@ -60,6 +62,16 @@ vi.mock('./MessageForm.jsx', () => ({
         mock-remote-control-toggle
       </button>
       <output data-testid="remote-control">{JSON.stringify(remoteControl)}</output>
+      <button type="button" onClick={() => onAgentModeChange && onAgentModeChange('')}>
+        mock-pick-edit-automatically
+      </button>
+      <output data-testid="agent-mode">
+        {JSON.stringify({ agentMode, agentModeHeldBy })}
+      </output>
+      <button type="button" onClick={() => onStartChatFromSummary && onStartChatFromSummary()}>
+        mock-start-chat-from-summary
+      </button>
+      <output data-testid="chat-handoff-busy">{String(!!chatHandoffBusy)}</output>
     </form>
   ),
 }));
@@ -88,6 +100,8 @@ vi.mock('../api.js', () => ({
   // The composer's Modes picker and context meter both read on mount.
   fetchSessionAgentMode: vi.fn().mockResolvedValue({ mode: '' }),
   setSessionAgentMode: vi.fn().mockResolvedValue({ ok: true }),
+  // The context meter's "New chat from a summary", second step.
+  startChatFromHandoff: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   fetchSessionContextUsage: vi.fn().mockResolvedValue(
     { used_tokens: 0, limit_tokens: 0, model: '' },
   ),
@@ -116,13 +130,16 @@ import SessionDetail, {
   lifecycleBanner,
 } from './SessionDetail.jsx';
 import { SESSION_LIFECYCLE, useSessionStream } from '../hooks/useSessionStream.js';
-import { postChatMessage, fetchSessionRemoteControl, setSessionRemoteControl } from '../api.js';
+import {
+  postChatMessage, fetchSessionRemoteControl, setSessionRemoteControl,
+  fetchSessionAgentMode, setSessionAgentMode, startChatFromHandoff,
+} from '../api.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { CLAUDE_EVENT, CLAUDE_SYSTEM_SUBTYPE } from '../constants/claudeEvent.js';
 import { BUBBLE_KIND } from '../constants/bubbleKind.js';
 import { _resetQueuedMessagesStore, forgetQueuedMessages, readQueuedMessages } from '../utils/queuedMessagesStore.js';
 import { writeSteerWhileWorking, _resetSteerWhileWorkingPref } from '../utils/composerSteerPref.js';
-import { toast } from '../stores/toastStore.js';
+import { toast, toastResult } from '../stores/toastStore.js';
 
 
 describe('lifecycleBanner', () => {
@@ -1033,6 +1050,255 @@ describe('SessionDetail — the send carries the selected tab', () => {
   });
 });
 
+
+// "New chat from a summary": the agent writes the summary in the CURRENT chat,
+// and only when that turn ends does kato open the new chat and send it there.
+describe('SessionDetail — new chat from a summary', () => {
+  const idleStream = (overrides = {}) => ({
+    events: [],
+    lifecycle: SESSION_LIFECYCLE.STREAMING,
+    turnInFlight: false,
+    turnsCompleted: 3,
+    pendingPermission: null,
+    lastEventAt: 0,
+    appendLocalEvent: vi.fn(),
+    markTurnBusy: vi.fn(),
+    reconnect: vi.fn(),
+    resetChat: vi.fn(),
+    dismissPermission: vi.fn(),
+    ...overrides,
+  });
+  const SESSION = { task_id: 'T1', agent_backend: 'claude' };
+  const busy = () => screen.getByTestId('chat-handoff-busy').textContent;
+  const ask = () => fireEvent.click(
+    screen.getByRole('button', { name: 'mock-start-chat-from-summary' }),
+  );
+
+  beforeEach(() => {
+    postChatMessage.mockClear();
+    startChatFromHandoff.mockClear();
+    toastResult.mockClear();
+    // The queue store is module-level; start every case with it empty and the
+    // "steer while working" pref back on (a mid-turn send queues).
+    _resetQueuedMessagesStore();
+    _idbMem.clear();
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetSteerWhileWorkingPref();
+  });
+
+  afterEach(() => {
+    startChatFromHandoff.mockResolvedValue({ ok: true, body: {} });
+  });
+
+  // Renders, asks for the summary, then ends that turn.
+  async function askAndFinishTheSummaryTurn(stream) {
+    useSessionStream.mockReturnValue(stream);
+    const view = render(<SessionDetail session={SESSION} />);
+    ask();
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalledTimes(1));
+    useSessionStream.mockReturnValue({ ...stream, turnsCompleted: stream.turnsCompleted + 1 });
+    view.rerender(<SessionDetail session={SESSION} />);
+    return view;
+  }
+
+  test('the agent is asked for the summary first — no chat switch yet', async () => {
+    useSessionStream.mockReturnValue(idleStream());
+    render(<SessionDetail session={SESSION} />);
+    ask();
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalledTimes(1));
+    expect(postChatMessage.mock.calls[0][1]).toContain('<kato-handoff>');
+    expect(postChatMessage.mock.calls[0][1]).toContain('</kato-handoff>');
+    expect(startChatFromHandoff).not.toHaveBeenCalled();
+    await waitFor(() => expect(busy()).toBe('true'));
+  });
+
+  test('when the summary turn ends, the new chat opens with the summary', async () => {
+    startChatFromHandoff.mockResolvedValue({
+      ok: true,
+      body: { agent_session_id: '', opening_message: 'This chat continues… SUMMARY' },
+    });
+    const stream = idleStream();
+    const view = await askAndFinishTheSummaryTurn(stream);
+    await waitFor(() => expect(startChatFromHandoff).toHaveBeenCalledWith('T1'));
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalledTimes(2));
+    expect(postChatMessage.mock.calls[1][1]).toBe('This chat continues… SUMMARY');
+    expect(stream.resetChat).toHaveBeenCalled();
+    await waitFor(() => expect(busy()).toBe('false'));
+
+    // One ask, one switch: the new chat's own turns ending must not start yet
+    // another chat.
+    useSessionStream.mockReturnValue({ ...stream, turnsCompleted: stream.turnsCompleted + 2 });
+    view.rerender(<SessionDetail session={SESSION} />);
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(startChatFromHandoff).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused handoff leaves the chat as it was, and says why', async () => {
+    startChatFromHandoff.mockResolvedValue({
+      ok: false,
+      status: 409,
+      body: { error: 'the agent has not written a handoff summary in this chat' },
+    });
+    const stream = idleStream();
+    await askAndFinishTheSummaryTurn(stream);
+    await waitFor(() => expect(toastResult).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'error', message: expect.stringMatching(/handoff summary/),
+    })));
+    expect(stream.resetChat).not.toHaveBeenCalled();
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(busy()).toBe('false'));
+  });
+
+  test('a message queued during the summary turn is not sent into the chat being left', async () => {
+    // The summary turn's end is ALSO the edge the queue flushes on. Whichever
+    // runs first decides where the queued message lands; it must not be the
+    // old chat, and it must not become the new chat's opener either.
+    startChatFromHandoff.mockResolvedValue({
+      ok: true, body: { agent_session_id: '', opening_message: 'OPENING' },
+    });
+    const stream = idleStream();
+    useSessionStream.mockReturnValue(stream);
+    const view = render(<SessionDetail session={SESSION} />);
+    ask();
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalledTimes(1));
+
+    useSessionStream.mockReturnValue({ ...stream, turnInFlight: true });
+    view.rerender(<SessionDetail session={SESSION} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-send' }));
+
+    useSessionStream.mockReturnValue({
+      ...stream, turnInFlight: false, turnsCompleted: stream.turnsCompleted + 1,
+    });
+    view.rerender(<SessionDetail session={SESSION} />);
+
+    await waitFor(() => expect(postChatMessage).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    const sent = postChatMessage.mock.calls.map((call) => call[1]);
+    expect(sent).not.toContain('hello');
+    expect(sent[1]).toBe('OPENING');
+    expect(toast.show).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Discarded 1 queued message(s)',
+    }));
+  });
+
+  test('it is not offered into a turn that is still running', async () => {
+    useSessionStream.mockReturnValue(idleStream({ turnInFlight: true }));
+    render(<SessionDetail session={SESSION} />);
+    ask();
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(postChatMessage).not.toHaveBeenCalled();
+    expect(busy()).toBe('false');
+  });
+
+  test('an unrelated turn ending before the ask does not start a new chat', async () => {
+    const stream = idleStream();
+    useSessionStream.mockReturnValue(stream);
+    const view = render(<SessionDetail session={SESSION} />);
+    useSessionStream.mockReturnValue({ ...stream, turnsCompleted: 4 });
+    view.rerender(<SessionDetail session={SESSION} />);
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(startChatFromHandoff).not.toHaveBeenCalled();
+  });
+});
+
+// kato:wait-planning holds the task in Plan. The composer shows the server's
+// answer — the mode AND the tag holding it — and a refused pick is put back and
+// reported, instead of leaving the picker on a mode that will not run.
+describe('SessionDetail — agent mode held by a ticket tag', () => {
+  const HELD = { mode: 'plan', held_by_tag: 'kato:wait-planning' };
+  const idleStream = () => ({
+    events: [],
+    lifecycle: SESSION_LIFECYCLE.STREAMING,
+    turnInFlight: false,
+    pendingPermission: null,
+    lastEventAt: 0,
+    appendLocalEvent: vi.fn(),
+    markTurnBusy: vi.fn(),
+    reconnect: vi.fn(),
+    resetChat: vi.fn(),
+    dismissPermission: vi.fn(),
+  });
+
+  function composerMode() {
+    return JSON.parse(screen.getByTestId('agent-mode').textContent || 'null');
+  }
+
+  function renderTask() {
+    return render(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+  }
+
+  beforeEach(() => {
+    useSessionStream.mockReturnValue(idleStream());
+    fetchSessionAgentMode.mockClear();
+    setSessionAgentMode.mockClear();
+    toastResult.mockClear();
+  });
+
+  afterEach(() => {
+    // The module-level defaults every other describe renders against.
+    fetchSessionAgentMode.mockResolvedValue({ mode: '' });
+    setSessionAgentMode.mockResolvedValue({ ok: true });
+  });
+
+  test('the composer gets the held mode and the tag holding it', async () => {
+    fetchSessionAgentMode.mockResolvedValue({ ...HELD });
+    renderTask();
+    await waitFor(() => expect(composerMode()).toEqual({
+      agentMode: 'plan', agentModeHeldBy: 'kato:wait-planning',
+    }));
+  });
+
+  test('a refused pick goes back to what the server says, and says why', async () => {
+    fetchSessionAgentMode.mockResolvedValue({ ...HELD });
+    setSessionAgentMode.mockResolvedValue({
+      ok: false,
+      status: 409,
+      body: { error: 'kato:wait-planning is on this ticket, so the task stays in Plan.' },
+    });
+    renderTask();
+    await waitFor(() => expect(composerMode().agentModeHeldBy).toBe('kato:wait-planning'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-pick-edit-automatically' }));
+
+    await waitFor(() => expect(toastResult).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'error', message: expect.stringMatching(/kato:wait-planning/),
+    })));
+    await waitFor(() => expect(composerMode()).toEqual({
+      agentMode: 'plan', agentModeHeldBy: 'kato:wait-planning',
+    }));
+    expect(setSessionAgentMode).toHaveBeenCalledWith('T1', '');
+  });
+
+  test('an accepted pick sticks and raises nothing', async () => {
+    fetchSessionAgentMode.mockResolvedValue({ mode: 'plan', held_by_tag: '' });
+    setSessionAgentMode.mockResolvedValue({ ok: true, status: 200, body: { mode: '' } });
+    renderTask();
+    await waitFor(() => expect(composerMode().agentMode).toBe('plan'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'mock-pick-edit-automatically' }));
+
+    await waitFor(() => expect(composerMode().agentMode).toBe(''));
+    expect(toastResult).not.toHaveBeenCalled();
+  });
+
+  test('the hold is re-read when a turn ends, not only on a task switch', async () => {
+    // The tag can be added while the tab is open; the scan engages the hold
+    // and the next turn boundary has to show it.
+    fetchSessionAgentMode.mockResolvedValue({ mode: '', held_by_tag: '' });
+    useSessionStream.mockReturnValue({ ...idleStream(), turnInFlight: true });
+    const { rerender } = renderTask();
+    await waitFor(() => expect(fetchSessionAgentMode).toHaveBeenCalled());
+    await waitFor(() => expect(composerMode().agentMode).toBe(''));
+
+    fetchSessionAgentMode.mockResolvedValue({ ...HELD });
+    useSessionStream.mockReturnValue(idleStream());
+    rerender(<SessionDetail session={{ task_id: 'T1', agent_backend: 'claude' }} />);
+
+    await waitFor(() => expect(composerMode()).toEqual({
+      agentMode: 'plan', agentModeHeldBy: 'kato:wait-planning',
+    }));
+  });
+});
 
 // Remote Control hands the task's live Claude session to claude.ai / the
 // Claude app. The state is the SERVER's — whether the CLI supports it, and

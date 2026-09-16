@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from pathlib import Path
 
 from kato_core_lib.helpers.deadline import run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
@@ -298,14 +299,27 @@ class TaskRepositoryService(object):
                 task_id=normalized,
             )
         existing_ids = {str(rid).lower() for rid in (workspace.repository_ids or [])}
+        # RECORDED IS NOT THE SAME AS PRESENT.
+        #
+        # This compared the task's repos against the workspace METADATA only,
+        # so a repo whose clone had gone from disk — an interrupted clone that
+        # was removed, a folder deleted by hand — counted as "already present"
+        # and was never re-cloned. Sync then took the nothing-to-clone return,
+        # whose recovery step can only move an EXISTING clone onto the task
+        # branch, and reported the same line on every scan forever:
+        # "objective_love_core_lib … not on the task branch: workspace clone is
+        # missing or its branch is unreadable" (UNA-2417). Clicking Sync again
+        # changed nothing, because nothing in that path clones.
         missing_repos = [
             r for r in task_repos
             if str(getattr(r, 'id', '') or '').lower() not in existing_ids
+            or not self._clone_is_on_disk(normalized, getattr(r, 'id', ''))
         ]
+        missing_ids = {id(r) for r in missing_repos}
         already_present = [
             str(getattr(r, 'id', '') or '')
             for r in task_repos
-            if str(getattr(r, 'id', '') or '').lower() in existing_ids
+            if id(r) not in missing_ids
         ]
         self.logger.info(
             'repository scan for task %s found %d repositor%s (%d already '
@@ -367,6 +381,37 @@ class TaskRepositoryService(object):
             ),
         }
 
+    def _clone_is_on_disk(self, task_id: str, repository_id) -> bool:
+        """Whether this task's clone of ``repository_id`` is really there.
+
+        ``.git`` is the test, not the folder: an empty directory left behind by
+        a removed clone is not a repository.
+
+        EVIDENCE, not assumption. "Missing" is only concluded when kato can see
+        the workspace folder the clone belongs in — an absolute path whose
+        parent directory exists. Anything else (no manager, an unresolvable or
+        relative path, a workspace folder that is not there at all) answers
+        True, because re-cloning on a guess would mean cloning on every scan
+        forever without ever fixing anything.
+        """
+        manager = self._workspace_manager
+        repo_id = str(repository_id or '').strip()
+        if manager is None or not repo_id:
+            return True
+        try:
+            clone_path = manager.repository_path(task_id, repo_id)
+        except Exception:
+            return True
+        if not clone_path:
+            return True
+        try:
+            path = Path(str(clone_path))
+            if not path.is_absolute() or not path.parent.is_dir():
+                return True
+            return (path / '.git').is_dir()
+        except OSError:
+            return True
+
     def _sync_failed(self, task_id: str, error: str) -> dict[str, object]:
         """Log the reason, then return the standard failure envelope.
 
@@ -413,6 +458,17 @@ class TaskRepositoryService(object):
             self.logger.exception(
                 'failed to sync repositories for task %s', task_id,
             )
+            # Blame the repositories that ACTUALLY failed. Provisioning knows
+            # which ones (``WorkspaceCloneError.failures``); without that this
+            # reported the whole joined message under every missing repo, so a
+            # repo that cloned perfectly well was listed as having failed with
+            # another repo's git error (UNA-2417).
+            per_repository = dict(getattr(exc, 'failures', {}) or {})
+            if per_repository:
+                return [], [
+                    {'repository_id': repository_id, 'error': message}
+                    for repository_id, message in per_repository.items()
+                ], []
             return [], [
                 {'repository_id': str(getattr(r, 'id', '') or ''), 'error': str(exc)}
                 for r in missing_repos

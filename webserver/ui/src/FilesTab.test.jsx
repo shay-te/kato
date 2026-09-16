@@ -560,6 +560,38 @@ describe('FilesTab — render shell', () => {
     await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
   });
 
+  test('a re-render keeps the rows the tree already drew', async () => {
+    // react-arborist renders the Tree's child as a component TYPE. An inline
+    // function is a new type on every render, so each re-render of the
+    // section threw every row away and drew new ones — and a click landing in
+    // between hit a detached row and did nothing. That is why opening a folder
+    // failed intermittently under load.
+    fetchFileTree.mockResolvedValue({
+      trees: [{
+        repo_id: 'client', cwd: '/tmp/client',
+        tree: [{
+          name: 'helper_scripts', path: '/tmp/client/helper_scripts',
+          children: [{ name: 'a.mjs', path: '/tmp/client/helper_scripts/a.mjs' }],
+        }],
+        changed_files: [], conflicted_files: [],
+      }],
+    });
+    fetchDiff.mockResolvedValue({ diffs: [] });
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all files' }));
+    const label = await screen.findByText('helper_scripts');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Match case' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Match case' }))
+        .toHaveAttribute('aria-pressed', 'true');
+    });
+
+    expect(label.isConnected).toBe(true);
+    fireEvent.click(label);
+    expect(await screen.findByText('a.mjs')).toBeInTheDocument();
+  });
+
   test('the All toggle is offered even when NOTHING has changed yet', async () => {
     // Regression ("the 'All' button is missing"): the toggle used to hide when
     // no files were changed — exactly when switching to the all-files view is
