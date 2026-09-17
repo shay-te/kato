@@ -1,6 +1,7 @@
 import { promptStore, useFastPrompts } from '../stores/promptStore.js';
 import { toast } from '../stores/toastStore.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
+import HeaderSeparator from './HeaderSeparator.jsx';
 import { BusyIcon } from './Icon.jsx';
 
 // The operator's fast prompts on the session toolbar: one button each, then a
@@ -27,13 +28,9 @@ export default function FastPromptButtons({
           disabled={disabled}
         />
       ))}
-      {/* The prompts are one group; everything after this line — search, the
-          git actions, Done — is another. */}
-      <span
-        className="session-header-separator"
-        role="separator"
-        aria-orientation="vertical"
-      />
+      {/* The prompts are one group; search and the git actions that follow
+          are their own. */}
+      <HeaderSeparator />
     </>
   );
 }

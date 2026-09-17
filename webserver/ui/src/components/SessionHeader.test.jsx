@@ -718,10 +718,10 @@ describe('SessionHeader — fast prompts', () => {
     expect(labels.slice(separator + 1).some((label) => /^push$/i.test(label))).toBe(true);
   });
 
-  test('the separator divides the prompts from search and everything after', () => {
-    // Asked for twice: "move the search icon right to the seperator", then
-    // "still there is no seperator between the search and the prompts icons".
-    // The prompts are the group; search starts the rest.
+  test('the toolbar is fenced into prompts, search, git, and task actions', () => {
+    // Asked for across three messages: search moved next to the separator,
+    // then a separator between search and the prompts, then "add seperator
+    // to [sur]rounding git operations". Three groups, two fences around git.
     promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
     render(
       <SessionHeader
@@ -733,10 +733,40 @@ describe('SessionHeader — fast prompts', () => {
     );
     const actions = [...document.querySelector('.session-header-actions').children];
     const labels = actions.map((el) => el.getAttribute('aria-label') || '');
-    const separator = actions.findIndex((el) => el.getAttribute('role') === 'separator');
-    expect(labels[separator + 1]).toBe('Search chat');
-    expect(labels.indexOf('Code review')).toBeLessThan(separator);
-    expect(labels.indexOf('Go')).toBeLessThan(separator);
+    const fences = actions
+      .map((el, index) => (el.getAttribute('role') === 'separator' ? index : -1))
+      .filter((index) => index > -1);
+    expect(fences).toHaveLength(3);
+    const [afterPrompts, beforeGit, afterGit] = fences;
+
+    // Prompts, then search, then the git block, then the task actions.
+    expect(labels.indexOf('Code review')).toBeLessThan(afterPrompts);
+    expect(labels.indexOf('Go')).toBeLessThan(afterPrompts);
+    expect(labels[afterPrompts + 1]).toBe('Search chat');
+    expect(labels.indexOf('Search chat')).toBeLessThan(beforeGit);
+    for (const gitAction of ['Push', 'Pull', 'Merge default branch']) {
+      const at = labels.findIndex((label) => label === gitAction);
+      expect(at).toBeGreaterThan(beforeGit);
+      expect(at).toBeLessThan(afterGit);
+    }
+    expect(labels.findIndex((label) => /^(Done|Finishing…)$/.test(label)))
+      .toBeGreaterThan(afterGit);
+    expect(labels.findIndex((label) => /^(Sync now|Syncing…)$/.test(label)))
+      .toBeGreaterThan(afterGit);
+  });
+
+  test('the empty header carries the same fences, so the bar never jumps', () => {
+    promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
+    render(<SessionHeaderPlaceholder />);
+    const actions = [...document.querySelector('.session-header-actions').children];
+    const labels = actions.map((el) => el.getAttribute('aria-label') || '');
+    const fences = actions
+      .map((el, index) => (el.getAttribute('role') === 'separator' ? index : -1))
+      .filter((index) => index > -1);
+    expect(fences).toHaveLength(3);
+    expect(labels[fences[0] + 1]).toBe('Search');
+    expect(labels.indexOf('Push')).toBeGreaterThan(fences[1]);
+    expect(labels.indexOf('Finish')).toBeGreaterThan(fences[2]);
   });
 
   test('a prompt the chat did not accept is reported', async () => {

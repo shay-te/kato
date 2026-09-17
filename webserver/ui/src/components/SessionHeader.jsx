@@ -9,6 +9,7 @@ import {
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import FastPromptButtons from './FastPromptButtons.jsx';
+import HeaderSeparator from './HeaderSeparator.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
@@ -467,6 +468,11 @@ export default function SessionHeader({
               agent, and duplicated what the tab already says. */}
           <FastPromptButtons agentName={agentName} onSendPrompt={onSendPrompt} />
           {searchSlot}
+          {/* Git operations, fenced on both sides: push / merge / pull / PR /
+              open-PR / update-source act on the REPOS, and reading them as
+              part of the chat controls beside them is how a Push gets clicked
+              for a Search. */}
+          <HeaderSeparator />
           {approvePushButton}
           <button
             id="session-push"
@@ -534,6 +540,9 @@ export default function SessionHeader({
           >
             <BusyIcon busy={updatingSource} idle="refresh" />
           </button>
+          {/* ...and closed here: Done / Sync / Stop are task-lifecycle
+              actions, not git ones. */}
+          <HeaderSeparator />
           <button
             id="session-finish"
             type="button"
@@ -606,9 +615,15 @@ export function SessionHeaderPlaceholder() {
           Select a task
         </span>
       </div>
+      {/* Same three groups as the live header, or the bar rearranges itself
+          the moment a task is picked. */}
       <div className="session-header-actions" aria-hidden="true">
         <FastPromptButtons disabled />
-        {buttons.map(placeholderButton)}
+        {buttons.slice(0, 1).map(placeholderButton)}
+        <HeaderSeparator />
+        {buttons.slice(1, 7).map(placeholderButton)}
+        <HeaderSeparator />
+        {buttons.slice(7).map(placeholderButton)}
       </div>
     </header>
   );
