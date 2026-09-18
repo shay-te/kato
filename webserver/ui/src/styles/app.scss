@@ -11432,6 +11432,25 @@ button.settings-prompt-editor-head {
   line-height: 1.4;
 }
 
+// The way out of a planning hold, offered where the hold is explained.
+.composer-mode-release {
+  display: block;
+  margin-top: $SPACE-6;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: $TEXT-11;
+  text-decoration: underline;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+}
+
 .composer-mode-item,
 .composer-actions-item {
   display: flex;

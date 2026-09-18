@@ -680,6 +680,16 @@ export function setSessionAgentMode(taskId, mode) {
   );
 }
 
+// Drop the ``kato:wait-planning`` hold without leaving kato for the tracker.
+// The server removes the TAG and then clears the hold — clearing only the
+// local record would re-hold the task on the next scan.
+export function releasePlanningHold(taskId) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/planning-hold/release`, {},
+  );
+}
+
 // The agent's captured plan (``<workspace>/plan.md``), written whenever
 // the agent presents a plan via ExitPlanMode while in plan mode. Returns
 // ``{ exists, content, mtime }``; ``mtime`` lets the caller detect a NEW

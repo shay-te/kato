@@ -332,6 +332,47 @@ class AgentServiceHoldTests(_HoldServiceMixin, unittest.TestCase):
     def test_refresh_keeps_the_hold_when_the_ticket_is_not_found(self) -> None:
         self.assertTrue(self._refresh(None))
 
+    # ----- leaving Plan without opening the tracker -----
+    #
+    # The operator: "i want to go out of planing mode without going to
+    # youtrack." The tag has to come OFF the ticket: the hold is kato's
+    # reading of it, and the next scan re-reads it, so clearing only the local
+    # record would put the task back in Plan within a scan cycle.
+
+    def test_release_takes_the_tag_off_the_ticket_and_drops_the_hold(self) -> None:
+        planning, _manager = self._service()
+        set_planning_hold('UNA-7', True)
+        task_service = MagicMock()
+
+        result = _agent_service(task_service, planning).release_planning_hold('UNA-7')
+
+        task_service.remove_tag.assert_called_once_with('UNA-7', TaskTags.WAIT_PLANNING)
+        self.assertTrue(result['ok'])
+        self.assertFalse(task_is_planning_held('UNA-7'))
+
+    def test_release_leaves_the_hold_when_the_ticket_cannot_be_written(self) -> None:
+        # An unlocked picker over a spawn that still runs Plan is the failure
+        # this whole mechanism exists to prevent — so the hold stands.
+        planning, _manager = self._service()
+        set_planning_hold('UNA-7', True)
+        task_service = MagicMock()
+        task_service.remove_tag.side_effect = RuntimeError('token rejected')
+
+        result = _agent_service(task_service, planning).release_planning_hold('UNA-7')
+
+        self.assertFalse(result['ok'])
+        self.assertIn('token rejected', result['error'])
+        self.assertTrue(task_is_planning_held('UNA-7'))
+
+    def test_release_needs_a_task_id_before_it_writes_anything(self) -> None:
+        planning, _manager = self._service()
+        task_service = MagicMock()
+
+        result = _agent_service(task_service, planning).release_planning_hold('')
+
+        self.assertFalse(result['ok'])
+        task_service.remove_tag.assert_not_called()
+
 
 class TaskServiceStartedTasksTests(unittest.TestCase):
     def test_reads_in_progress_and_in_review(self) -> None:

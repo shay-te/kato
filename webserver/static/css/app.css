@@ -11213,6 +11213,23 @@ button.settings-prompt-editor-head {
   line-height: 1.4;
 }
 
+.composer-mode-release {
+  display: block;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.composer-mode-release:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .composer-mode-item,
 .composer-actions-item {
   display: flex;

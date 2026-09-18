@@ -105,6 +105,9 @@ const MessageForm = forwardRef(function MessageForm({
   agentMode = '',
   onAgentModeChange,
   agentModeHeldBy = '',
+  // Drop the ticket tag holding the mode, from the composer itself.
+  onReleasePlanningHold,
+  releasingPlanningHold = false,
   remoteControl = null,
   onRemoteControlChange,
   contextUsage = null,
@@ -776,6 +779,8 @@ const MessageForm = forwardRef(function MessageForm({
             mode={agentMode}
             onChange={onAgentModeChange}
             heldBy={agentModeHeldBy}
+            onReleaseHold={onReleasePlanningHold}
+            releasingHold={releasingPlanningHold}
             disabled={disabled}
             ultracode={ultracode}
             onUltracodeChange={setUltracode}

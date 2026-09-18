@@ -165,4 +165,44 @@ describe('ComposerModeMenu — held by a ticket tag', () => {
     expect(screen.getByRole('menu')).not.toHaveTextContent(/held in/i);
     expect(screen.getByRole('button', { name: /^agent mode: plan$/i })).toBeInTheDocument();
   });
+
+  // The operator: "i want to go out of planing mode without going to youtrack."
+  // The way out belongs where the hold is explained.
+  test('offers a way out of the hold without leaving kato', () => {
+    const onReleaseHold = vi.fn();
+    open({ mode: 'plan', heldBy: 'kato:wait-planning', onReleaseHold });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /remove the tag and unlock/i }),
+    );
+
+    expect(onReleaseHold).toHaveBeenCalledTimes(1);
+  });
+
+  test('says what it is doing while the tag is being removed', () => {
+    // The release writes to the tracker, which is slow enough to click twice.
+    const onReleaseHold = vi.fn();
+    open({
+      mode: 'plan',
+      heldBy: 'kato:wait-planning',
+      onReleaseHold,
+      releasingHold: true,
+    });
+
+    const button = screen.getByRole('button', { name: /removing the tag/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(onReleaseHold).not.toHaveBeenCalled();
+  });
+
+  test('with no release wired, the note still says what to do', () => {
+    open({ mode: 'plan', heldBy: 'kato:wait-planning' });
+
+    expect(screen.getByRole('menu')).toHaveTextContent(
+      /remove the tag to pick another mode/i,
+    );
+    expect(
+      screen.queryByRole('button', { name: /remove the tag and unlock/i }),
+    ).toBeNull();
+  });
 });

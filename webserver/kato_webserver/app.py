@@ -1737,6 +1737,36 @@ def _register_http_routes(app: Flask) -> None:
         stopped = _stop_live_session_on_restriction_change(app, task_id, mode)
         return jsonify({'mode': mode, 'session_stopped': stopped})
 
+    @app.post('/api/sessions/<task_id>/planning-hold/release')
+    def release_session_planning_hold(task_id: str):
+        """Drop the planning hold from HERE, without opening the tracker.
+
+        Removes ``kato:wait-planning`` from the ticket and then clears the
+        hold. The tag is what the next scan reads, so clearing only the local
+        record would re-hold the task within a scan cycle — the operator would
+        pick a mode, watch it stick, and find themselves back in Plan.
+
+        The ticket write can fail (token, permissions, tracker down). It
+        answers ``502`` and the task stays held, because a picker that unlocks
+        while every spawn still runs Plan is the failure this whole mechanism
+        exists to prevent.
+        """
+        release = _agent_method(
+            app.config.get('AGENT_SERVICE'), 'release_planning_hold',
+        )
+        if not callable(release):
+            return jsonify({'error': 'not available'}), 503
+        try:
+            result = release(task_id) or {}
+        except Exception as exc:
+            app.logger.exception('could not release the planning hold of %s', task_id)
+            return jsonify({'error': str(exc) or 'could not update the ticket'}), 502
+        if not result.get('ok'):
+            return jsonify({
+                'error': result.get('error') or 'could not update the ticket',
+            }), 502
+        return jsonify(result)
+
     @app.get('/api/sessions/<task_id>/remote-control')
     def get_session_remote_control(task_id: str):
         """Remote Control status for a task's chat session.

@@ -31,7 +31,7 @@ import { unpackPermissionEnvelope } from '../utils/permissionEnvelope.js';
 import { toast, toastResult } from '../stores/toastStore.js';
 import { PREDEFINED_PROMPTS } from '../predefined_prompts/index.js';
 import { fetchEffortLevels, fetchModels, startChatFromHandoff, fetchSessionAgentMode, fetchSessionEffort, fetchSessionModel, fetchSessionRemoteControl, postChatMessage, postSession, setSessionAgentMode, setSessionEffort, setSessionModel, setSessionRemoteControl,
-  refreshAgentBackends,
+  refreshAgentBackends, releasePlanningHold,
 } from '../api.js';
 import { useContextUsage } from '../hooks/useContextUsage.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
@@ -385,6 +385,39 @@ export default function SessionDetail({
       kind: 'error',
       title: 'Agent mode not changed',
       message: (result.body && result.body.error) || result.error || 'could not reach kato',
+      taskId,
+    });
+  }, [taskId, refreshAgentMode]);
+
+  // Leaving Plan without opening the tracker. The server takes the tag OFF
+  // the ticket and then drops the hold — a local-only unlock would be undone
+  // by the next scan, so a failure here leaves the picker honestly locked.
+  const [releasingPlanningHold, setReleasingPlanningHold] = useState(false);
+  const handleReleasePlanningHold = useCallback(async () => {
+    setReleasingPlanningHold(true);
+    let result;
+    try {
+      result = await releasePlanningHold(taskId);
+    } finally {
+      setReleasingPlanningHold(false);
+    }
+    if (result && result.ok !== false) {
+      // The picker unlocks as soon as the server stops reporting the hold.
+      refreshAgentMode();
+      toastResult({
+        kind: 'success',
+        title: 'Planning hold released',
+        message: 'The tag is off the ticket. You can pick any agent mode now.',
+        taskId,
+      });
+      return;
+    }
+    toastResult({
+      kind: 'error',
+      title: 'Tag not removed',
+      message: (result && result.body && result.body.error)
+        || (result && result.error)
+        || 'could not reach kato',
       taskId,
     });
   }, [taskId, refreshAgentMode]);
@@ -991,6 +1024,8 @@ export default function SessionDetail({
           agentMode={agentMode}
           onAgentModeChange={handleAgentModeChange}
           agentModeHeldBy={agentModeHeldBy}
+          onReleasePlanningHold={handleReleasePlanningHold}
+          releasingPlanningHold={releasingPlanningHold}
           onStartChatFromSummary={onStartChatFromSummary}
           chatHandoffBusy={chatHandoffBusy}
           remoteControl={remoteControl}

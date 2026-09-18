@@ -33,6 +33,12 @@ export default function ComposerModeMenu({
   // decides the mode while held; the picker says why, and any other pick is
   // re-checked against the ticket before it is accepted.
   heldBy = '',
+  // Drop that hold from HERE. Wired, the held note offers it as an action, so
+  // leaving Plan no longer means opening the tracker to delete a tag by hand.
+  // It takes the tag OFF the ticket — see the release route for why a
+  // local-only unlock would be undone by the next scan.
+  onReleaseHold,
+  releasingHold = false,
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
@@ -75,7 +81,18 @@ export default function ComposerModeMenu({
           {heldBy && (
             <div className="composer-mode-popover-note">
               Held in {active.label} by <code>{heldBy}</code> on the ticket.
-              Remove the tag to pick another mode.
+              {typeof onReleaseHold === 'function' ? (
+                <button
+                  type="button"
+                  className="composer-mode-release"
+                  disabled={releasingHold}
+                  onClick={() => { if (!releasingHold) { onReleaseHold(); } }}
+                >
+                  {releasingHold
+                    ? 'Removing the tag…'
+                    : 'Remove the tag and unlock'}
+                </button>
+              ) : ' Remove the tag to pick another mode.'}
             </div>
           )}
           {AGENT_MODES.map((entry) => (

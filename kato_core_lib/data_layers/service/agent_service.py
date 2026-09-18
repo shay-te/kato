@@ -27,7 +27,10 @@ from kato_core_lib.helpers.push_approval_gate_utils import (
     auto_push_enabled,
 )
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
-from kato_core_lib.helpers.planning_hold_store import task_is_planning_held
+from kato_core_lib.helpers.planning_hold_store import (
+    set_planning_hold,
+    task_is_planning_held,
+)
 from kato_core_lib.helpers.task_lookup_utils import find_assigned_or_review_task
 from kato_core_lib.data_layers.service.notification_service import NotificationService
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
@@ -547,6 +550,41 @@ class AgentService(MissionStepLoggerMixin, Service):
             if task is not None:
                 planning.observe_planning_hold(task)
         return task_is_planning_held(normalized)
+
+    def release_planning_hold(self, task_id: str) -> dict:
+        """Take ``kato:wait-planning`` off the TICKET, then drop the hold.
+
+        The operator's way out of Plan without leaving kato for the tracker.
+
+        The tag has to go, not just the local hold: the hold is kato's reading
+        of the ticket, and the next scan re-reads it. Clearing only the local
+        record would put the task back in Plan within one scan cycle — a mode
+        picker that lies, which is exactly what the hold was built to stop.
+
+        So the ticket is written FIRST and the hold is dropped only once that
+        succeeded. A tracker that refuses the edit leaves the task held, and
+        says so, rather than showing an unlocked picker every spawn ignores.
+        """
+        normalized = str(task_id or '').strip()
+        if not normalized:
+            return {'ok': False, 'error': 'no task id'}
+        try:
+            self._task_service.remove_tag(normalized, TaskTags.WAIT_PLANNING)
+        except Exception as exc:
+            self.logger.exception(
+                'could not remove %s from task %s', TaskTags.WAIT_PLANNING, normalized,
+            )
+            return {
+                'ok': False,
+                'error': str(exc) or 'could not update the ticket',
+            }
+        set_planning_hold(normalized, False)
+        self.logger.info(
+            'task %s: %s removed by the operator — the agent mode is theirs again',
+            normalized,
+            TaskTags.WAIT_PLANNING,
+        )
+        return {'ok': True, 'released': True, 'tag': TaskTags.WAIT_PLANNING}
 
 
     @property

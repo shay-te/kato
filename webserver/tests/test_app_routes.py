@@ -1588,6 +1588,57 @@ class PlanFileRouteTests(unittest.TestCase):
         self.assertEqual(body['content'], '# Plan')
 
 
+class PlanningHoldReleaseRouteTests(unittest.TestCase):
+    """``POST /api/sessions/<id>/planning-hold/release`` — leaving Plan from kato.
+
+    The operator: "i want to go out of planing mode without going to youtrack."
+    The route removes the tag from the TICKET and only then drops the hold,
+    because the next scan re-reads the ticket: a local-only unlock would put
+    the task back in Plan within a scan cycle.
+    """
+
+    @staticmethod
+    def _post(agent_service):
+        app = create_app(session_manager=_FakeManager(), agent_service=agent_service)
+        return app.test_client().post('/api/sessions/PROJ-1/planning-hold/release')
+
+    def test_a_released_hold_reports_the_tag_it_removed(self):
+        service = SimpleNamespace(release_planning_hold=lambda task_id: {
+            'ok': True, 'released': True, 'tag': 'kato:wait-planning',
+        })
+
+        response = self._post(service)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertTrue(body['released'])
+        self.assertEqual(body['tag'], 'kato:wait-planning')
+
+    def test_a_tracker_refusal_leaves_the_task_held(self):
+        # A picker that unlocks while every spawn still runs Plan is exactly
+        # the failure the hold exists to prevent.
+        service = SimpleNamespace(release_planning_hold=lambda task_id: {
+            'ok': False, 'error': 'token rejected',
+        })
+
+        response = self._post(service)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('token rejected', response.get_json()['error'])
+
+    def test_a_raising_service_is_reported_rather_than_crashing(self):
+        def boom(task_id):
+            raise RuntimeError('tracker down')
+
+        response = self._post(SimpleNamespace(release_planning_hold=boom))
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('tracker down', response.get_json()['error'])
+
+    def test_without_an_agent_service_it_says_so(self):
+        self.assertEqual(self._post(None).status_code, 503)
+
+
 class PlanModeRespawnTests(unittest.TestCase):
     """``_plan_mode_change_needs_respawn`` — the CLI bakes the mode at spawn."""
 
