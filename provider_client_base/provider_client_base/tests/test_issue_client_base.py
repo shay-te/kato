@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from provider_client_base.provider_client_base.client.issue_client_base import (
@@ -494,6 +496,196 @@ class GetAttachmentWithRetryTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=response) as mock_get:
             client._get_attachment_with_retry('/relative/path')
         mock_get.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# image attachments
+#
+# A ticket's screenshots reach the agent only if something downloads them: the
+# tracker hands out a URL needing the provider's credentials (and, on YouTrack,
+# one with no host at all). Naming that URL in the prompt told the agent a
+# screenshot existed while giving it no way to look, so the operator had to
+# supply every image by hand.
+# ---------------------------------------------------------------------------
+
+class ImageMimeTypeTests(unittest.TestCase):
+    def test_image_prefix(self) -> None:
+        self.assertTrue(IssueClientBase._is_image_attachment_mime_type('image/png'))
+        self.assertTrue(IssueClientBase._is_image_attachment_mime_type('image/jpeg'))
+
+    def test_case_is_ignored(self) -> None:
+        # Whatever the tracker stored; a screenshot is still a screenshot.
+        self.assertTrue(IssueClientBase._is_image_attachment_mime_type('IMAGE/PNG'))
+
+    def test_text_is_not_an_image(self) -> None:
+        self.assertFalse(IssueClientBase._is_image_attachment_mime_type('text/plain'))
+
+    def test_blank_is_not_an_image(self) -> None:
+        self.assertFalse(IssueClientBase._is_image_attachment_mime_type(''))
+        self.assertFalse(IssueClientBase._is_image_attachment_mime_type(None))
+
+
+class DownloadBinaryAttachmentTests(unittest.TestCase):
+    def test_blank_url_returns_none(self) -> None:
+        client = _make_client()
+        self.assertIsNone(client._download_binary_attachment(
+            '', attachment_name='a.png', max_bytes=100,
+        ))
+
+    def test_returns_the_raw_bytes(self) -> None:
+        client = _make_client()
+        response = mock_response(content=b'\x89PNG-data')
+        with patch.object(client, '_get_attachment_with_retry', return_value=response):
+            result = client._download_binary_attachment(
+                'https://e.com/a.png', attachment_name='a.png', max_bytes=100,
+            )
+        self.assertEqual(result, b'\x89PNG-data')
+
+    def test_empty_content_is_none(self) -> None:
+        client = _make_client()
+        response = mock_response(content=b'')
+        with patch.object(client, '_get_attachment_with_retry', return_value=response):
+            result = client._download_binary_attachment(
+                'https://e.com/a.png', attachment_name='a.png', max_bytes=100,
+            )
+        self.assertIsNone(result)
+
+    def test_oversized_is_refused_rather_than_truncated(self) -> None:
+        # Half a PNG is not an image; handing one over silently is worse than
+        # reporting that the download did not happen.
+        client = _make_client()
+        response = mock_response(content=b'x' * 50)
+        with patch.object(client, '_get_attachment_with_retry', return_value=response), \
+                patch.object(client.logger, 'warning') as mock_log:
+            result = client._download_binary_attachment(
+                'https://e.com/a.png', attachment_name='a.png', max_bytes=10,
+            )
+        self.assertIsNone(result)
+        mock_log.assert_called_once()
+
+    def test_returns_none_and_logs_on_exception(self) -> None:
+        client = _make_client()
+        with patch.object(
+            client, '_get_attachment_with_retry', side_effect=RuntimeError('boom'),
+        ), patch.object(client.logger, 'exception') as mock_log:
+            result = client._download_binary_attachment(
+                'https://e.com/a.png',
+                attachment_name='a.png',
+                max_bytes=100,
+                log_label='test image attachment',
+            )
+        self.assertIsNone(result)
+        mock_log.assert_called_once_with(
+            'failed to read %s %s', 'test image attachment', 'a.png',
+        )
+
+
+class DownloadImageAttachmentsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.directory = Path(self._tmp.name) / 'attachments'
+
+    @staticmethod
+    def _client_with(sources, content=b'PNG'):
+        client = _make_client()
+        client._image_attachment_sources = lambda issue_id: sources
+        client._download_binary_attachment = (
+            lambda url, **kwargs: content if url else None
+        )
+        return client
+
+    def test_no_provider_sources_downloads_nothing(self) -> None:
+        # The default hook: a provider that has not implemented it must simply
+        # download nothing, never break task pickup.
+        client = _make_client()
+        self.assertEqual(client._image_attachment_sources('PROJ-1'), [])
+        self.assertEqual(
+            client.download_image_attachments('PROJ-1', self.directory), [],
+        )
+
+    def test_writes_each_image_and_returns_its_path(self) -> None:
+        client = self._client_with([
+            {'name': 'bug.png', 'url': '/api/files/bug.png'},
+            {'name': 'trace.png', 'url': '/api/files/trace.png'},
+        ])
+        written = client.download_image_attachments('PROJ-1', self.directory)
+
+        self.assertEqual(
+            [Path(path).name for path in written], ['bug.png', 'trace.png'],
+        )
+        for path in written:
+            self.assertEqual(Path(path).read_bytes(), b'PNG')
+
+    def test_a_blank_destination_writes_nothing(self) -> None:
+        client = self._client_with([{'name': 'bug.png', 'url': '/f/bug.png'}])
+        self.assertEqual(client.download_image_attachments('PROJ-1', ''), [])
+        self.assertEqual(client.download_image_attachments('PROJ-1', None), [])
+
+    def test_a_failed_download_is_skipped_and_the_rest_still_land(self) -> None:
+        # One unreachable screenshot must not cost the task its other images.
+        client = self._client_with([
+            {'name': 'gone.png', 'url': ''},
+            {'name': 'bug.png', 'url': '/api/files/bug.png'},
+        ])
+        written = client.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual([Path(path).name for path in written], ['bug.png'])
+
+    def test_a_failing_source_listing_is_not_fatal(self) -> None:
+        client = _make_client()
+
+        def _raise(issue_id):
+            raise RuntimeError('tracker down')
+
+        client._image_attachment_sources = _raise
+        with patch.object(client.logger, 'exception') as mock_log:
+            self.assertEqual(
+                client.download_image_attachments('PROJ-1', self.directory), [],
+            )
+        mock_log.assert_called_once()
+
+    def test_non_dict_entries_are_ignored(self) -> None:
+        client = self._client_with([None, 'nope', {'name': 'b.png', 'url': '/f/b.png'}])
+        written = client.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual([Path(path).name for path in written], ['b.png'])
+
+    def test_a_traversing_name_cannot_escape_the_destination(self) -> None:
+        client = self._client_with([{'name': '../../evil.png', 'url': '/f/e.png'}])
+        written = client.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual(Path(written[0]).parent, self.directory)
+        self.assertEqual(Path(written[0]).name, 'evil.png')
+
+    def test_two_images_of_the_same_name_do_not_overwrite(self) -> None:
+        client = self._client_with([
+            {'name': 'bug.png', 'url': '/f/1.png'},
+            {'name': 'bug.png', 'url': '/f/2.png'},
+        ])
+        written = client.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual(
+            [Path(path).name for path in written], ['bug.png', 'bug-2.png'],
+        )
+
+    def test_the_image_count_is_capped(self) -> None:
+        client = self._client_with([
+            {'name': f'shot-{index}.png', 'url': f'/f/{index}.png'}
+            for index in range(10)
+        ])
+        written = client.download_image_attachments(
+            'PROJ-1', self.directory, max_images=3,
+        )
+        self.assertEqual(len(written), 3)
+
+    def test_an_unwritable_destination_reports_instead_of_raising(self) -> None:
+        # A file where the directory should go. A screenshot that cannot be
+        # saved must not take the task down with it.
+        self.directory.parent.mkdir(parents=True, exist_ok=True)
+        self.directory.write_text('x', encoding='utf-8')
+        client = self._client_with([{'name': 'bug.png', 'url': '/f/bug.png'}])
+        with patch.object(client.logger, 'exception') as mock_log:
+            self.assertEqual(
+                client.download_image_attachments('PROJ-1', self.directory), [],
+            )
+        mock_log.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

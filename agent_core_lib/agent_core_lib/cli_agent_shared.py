@@ -465,11 +465,20 @@ class CliAgentSharedBehaviour(object):
         pr_description_label = (
             pr_description_path or agent_prompt_utils.PR_DESCRIPTION_FILENAME
         )
+        # Screenshots the orchestrator downloaded off the ticket into the task
+        # folder. Named here because the tracker's own URL needs the tracker's
+        # credentials: without local files the agent was told a screenshot
+        # existed and had no way to open it.
+        attachments = agent_prompt_utils.task_attachments_block(
+            getattr(prepared_task, 'attachment_paths', ()) or (),
+        )
+        attachments_block = f'{attachments}\n\n' if attachments else ''
         return (
             f'{addendum_prefix}'
             f'{scope_prefix}'
             f'Implement task {task.id}.\n\n'
             f'{self._untrusted_task_body(task)}\n\n'
+            f'{attachments_block}'
             f'{agent_prompt_utils.repository_scope_text(task, prepared_task)}\n\n'
             f'{agent_prompt_utils.agents_instructions_text(prepared_task)}\n\n'
             f'{self._execution_guardrails_text()}\n\n'

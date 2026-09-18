@@ -6,7 +6,7 @@
 import { describe, test, expect } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
-import { createDataStore } from './createDataStore.js';
+import { createDataStore, signed } from './createDataStore.js';
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -238,5 +238,96 @@ describe('createDataStore — first load vs revalidate', () => {
     await flush(); await flush();
     expect(s.calls).toBe(1);
     expect(child.get('T1')).toBe(null);
+  });
+});
+
+
+// A fetcher that already knows whether anything changed — the file tree, whose
+// server answers a poll with an ETag or a bare 304 — labels its answer instead
+// of leaving the store to serialize a megabyte of tree to find out.
+describe('createDataStore — signed payloads', () => {
+  test('the fetcher is told the signature of the data currently held', async () => {
+    const seen = [];
+    const child = createDataStore({
+      fetch: async (_taskId, { signature }) => {
+        seen.push(signature);
+        return signed({ v: 1 }, 'etag-1');
+      },
+      parse: clone, empty: null,
+    });
+    await child.load('T1');
+    await child.load('T1');
+    // Nothing held on the first call; the second offers what is on screen.
+    expect(seen).toEqual(['', 'etag-1']);
+  });
+
+  test('the same signature keeps the data and parses NOTHING', async () => {
+    let parses = 0;
+    const answers = [signed({ v: 1 }, 'etag-1'), signed(null, 'etag-1')];
+    const child = createDataStore({
+      fetch: async () => answers.shift(),
+      parse: (payload) => { parses += 1; return { ...payload }; },
+      empty: null,
+    });
+    await child.load('T1');
+    const first = child.get('T1').data;
+    await child.load('T1');
+    expect(child.get('T1').data).toBe(first);
+    expect(child.get('T1').status).toBe('ready');
+    expect(parses).toBe(1);
+  });
+
+  test('a new signature re-parses and replaces the data', async () => {
+    const answers = [signed({ v: 1 }, 'etag-1'), signed({ v: 2 }, 'etag-2')];
+    const child = createDataStore({
+      fetch: async () => answers.shift(), parse: clone, empty: null,
+    });
+    await child.load('T1');
+    const first = child.get('T1').data;
+    await child.load('T1');
+    expect(child.get('T1').data).not.toBe(first);
+    expect(child.get('T1').data).toEqual({ v: 2 });
+  });
+
+  test('a purged task offers no signature — it holds nothing to confirm', async () => {
+    // The signature comes from the STORE, never a fetcher's own bookkeeping:
+    // one that outlived its data would claim an evicted task was unchanged,
+    // and the task would sit empty for as long as nothing else changed.
+    const seen = [];
+    const child = createDataStore({
+      fetch: async (_taskId, { signature }) => {
+        seen.push(signature);
+        return signed({ v: 1 }, 'etag-1');
+      },
+      parse: clone, empty: null,
+    });
+    await child.load('T1');
+    child.purge('T1');
+    await child.load('T1');
+    expect(seen).toEqual(['', '']);
+    expect(child.get('T1').data).toEqual({ v: 1 });
+  });
+
+  test('an unsigned answer still works, by comparing the payload itself', async () => {
+    const answers = [signed({ v: 1 }, ''), { v: 1 }];
+    const child = createDataStore({
+      fetch: async () => answers.shift(), parse: clone, empty: null,
+    });
+    await child.load('T1');
+    const first = child.get('T1').data;
+    await child.load('T1');
+    expect(child.get('T1').data).toBe(first);
+  });
+
+  test('an unchanged answer to a FIRST load still leaves the task ready', async () => {
+    // Defensive: a server should never answer a first load "unchanged" (the
+    // store offered no signature), but a task stuck on a spinner forever is a
+    // far worse failure than one extra fetch.
+    const child = createDataStore({
+      fetch: async () => signed(null, ''), parse: clone, empty: null,
+    });
+    await child.load('T1');
+    expect(child.get('T1').status).toBe('ready');
+    expect(child.get('T1').data).toBe(null);
   });
 });

@@ -78,6 +78,9 @@ class ContractIssueProvider(object):
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Issue]:
         return [Issue(id='ISSUE-1', title='Example')]
 
+    def download_image_attachments(self, issue_id: str, destination_dir: str) -> list[str]:
+        return []
+
     def add_comment(self, issue_id: str, comment: str) -> None:
         return None
 

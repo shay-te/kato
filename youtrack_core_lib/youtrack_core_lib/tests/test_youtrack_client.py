@@ -1,5 +1,7 @@
 """Full coverage for YouTrackClient — all public methods, all permutations."""
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client import YouTrackClient
@@ -1176,6 +1178,73 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
                 self._raw('@kato_bot fix typo'),
             ])
         self.assertEqual(len(entries), 3)
+
+
+class ImageAttachmentSourceTests(unittest.TestCase):
+    """Where the downloadable screenshots come from.
+
+    YouTrack's attachment ``url`` is HOST-LESS (``/api/files/bug.png``), so it
+    is useful only to a caller that resolves it against the configured base URL
+    and sends the token. Handing that string to the agent, as the screenshot
+    section does, names a file nothing can open — which is why screenshots had
+    to be supplied by hand.
+    """
+
+    @staticmethod
+    def _client() -> YouTrackClient:
+        return YouTrackClient('https://youtrack.example', 'token')
+
+    def test_lists_only_image_attachments(self) -> None:
+        client = self._client()
+        response = mock_response(json_data=[
+            {
+                YouTrackAttachmentFields.NAME: 'bug.png',
+                YouTrackAttachmentFields.MIME_TYPE: 'image/png',
+                YouTrackAttachmentFields.URL: '/api/files/bug.png',
+            },
+            {
+                YouTrackAttachmentFields.NAME: 'notes.txt',
+                YouTrackAttachmentFields.MIME_TYPE: 'text/plain',
+                YouTrackAttachmentFields.URL: '/api/files/notes.txt',
+            },
+        ])
+
+        with patch.object(client, '_get', return_value=response):
+            sources = client._image_attachment_sources('PROJ-1')
+
+        self.assertEqual(sources, [
+            {'name': 'bug.png', 'url': '/api/files/bug.png'},
+        ])
+
+    def test_an_issue_with_no_attachments_is_empty(self) -> None:
+        client = self._client()
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])):
+            self.assertEqual(client._image_attachment_sources('PROJ-1'), [])
+
+    def test_an_unreachable_tracker_is_empty_not_a_crash(self) -> None:
+        # ``_get_issue_attachments`` is best-effort by design; a screenshot
+        # listing that fails must not stop the task being picked up.
+        client = self._client()
+        with patch.object(client, '_get', side_effect=ClientTimeout('timeout')):
+            self.assertEqual(client._image_attachment_sources('PROJ-1'), [])
+
+    def test_the_downloaded_image_lands_in_the_destination(self) -> None:
+        # End to end through the shared downloader: the host-less URL resolves
+        # against the client's base URL and carries its token.
+        client = self._client()
+        listing = mock_response(json_data=[{
+            YouTrackAttachmentFields.NAME: 'bug.png',
+            YouTrackAttachmentFields.MIME_TYPE: 'image/png',
+            YouTrackAttachmentFields.URL: '/api/files/bug.png',
+        }])
+        image = mock_response(content=b'\x89PNG')
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(client, '_get', side_effect=[listing, image]):
+                written = client.download_image_attachments('PROJ-1', directory)
+
+            self.assertEqual(len(written), 1)
+            self.assertEqual(Path(written[0]).name, 'bug.png')
+            self.assertEqual(Path(written[0]).read_bytes(), b'\x89PNG')
 
 
 if __name__ == '__main__':

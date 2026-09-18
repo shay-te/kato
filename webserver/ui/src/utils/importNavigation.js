@@ -291,9 +291,9 @@ export function reposFromTrees(trees) {
 
 function _collect(nodes, prefix, out) {
   for (const node of Array.isArray(nodes) ? nodes : []) {
-    // Server trees carry repo-relative ``path`` on every node; fall back to
-    // building it from names for any caller that only has ``name``.
-    const path = String(node?.path || (prefix ? `${prefix}/${node?.name}` : node?.name) || '');
+    // A tree node is ``{name, children?}``: its repo-relative path is the
+    // names of the folders above it, which is why the walk carries a prefix.
+    const path = String(prefix ? `${prefix}/${node?.name}` : node?.name || '');
     if (Array.isArray(node?.children)) {
       _collect(node.children, path, out);
     } else if (path) {

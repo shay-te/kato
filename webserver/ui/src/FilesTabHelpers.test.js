@@ -114,12 +114,7 @@ test('groupContentMatchesByFile tolerates empty / malformed input', () => {
 
 
 test('file activation is a no-op — left-click only opens, never pastes to chat', function () {
-  const tree = attachIds([
-    {
-      name: 'Source.js',
-      path: '/workspace/client/src/Table/OrganizationPhoneNumbers/Source.js',
-    },
-  ], '/workspace/client');
+  const tree = attachIds([{ name: 'Source.js' }], '/workspace/client');
   let toggled = false;
   const fileNode = {
     isInternal: false,
@@ -157,14 +152,16 @@ test('multi-repository payload normalization keeps repo cwd for relative paths',
       {
         repo_id: 'client',
         cwd: '/workspace/client',
-        tree: [{ name: 'App.jsx', path: '/workspace/client/src/App.jsx' }],
+        tree: [{ name: 'src', children: [{ name: 'App.jsx' }] }],
       },
     ],
   });
   const tree = attachIds(normalized[0].tree, normalized[0].cwd);
 
   assert.equal(normalized[0].repo_id, 'client');
-  assert.equal(tree[0].relativePath, 'src/App.jsx');
+  // Derived from the nesting: the server sends names, not paths.
+  assert.equal(tree[0].children[0].relativePath, 'src/App.jsx');
+  assert.equal(tree[0].children[0].absolutePath, '/workspace/client/src/App.jsx');
 });
 
 
@@ -394,31 +391,24 @@ test('findTreeNodeIdByRelativePath resolves a nested file to its tree id', () =>
   const nodes = attachIds([
     {
       name: 'src',
-      path: '/tmp/client/src',
       children: [
-        { name: 'App.jsx', path: '/tmp/client/src/App.jsx' },
-        {
-          name: 'utils',
-          path: '/tmp/client/src/utils',
-          children: [{ name: 'dom.js', path: '/tmp/client/src/utils/dom.js' }],
-        },
+        { name: 'App.jsx' },
+        { name: 'utils', children: [{ name: 'dom.js' }] },
       ],
     },
   ], '/tmp/client');
   assert.equal(
     findTreeNodeIdByRelativePath(nodes, 'src/utils/dom.js'),
-    '/tmp/client/src/utils/dom.js',
+    'src/utils/dom.js',
   );
   assert.equal(
     findTreeNodeIdByRelativePath(nodes, 'src/App.jsx'),
-    '/tmp/client/src/App.jsx',
+    'src/App.jsx',
   );
 });
 
 test('findTreeNodeIdByRelativePath returns null for unknown / blank paths', () => {
-  const nodes = attachIds(
-    [{ name: 'a.js', path: '/tmp/client/a.js' }], '/tmp/client',
-  );
+  const nodes = attachIds([{ name: 'a.js' }], '/tmp/client');
   assert.equal(findTreeNodeIdByRelativePath(nodes, 'missing.js'), null);
   assert.equal(findTreeNodeIdByRelativePath(nodes, ''), null);
   assert.equal(findTreeNodeIdByRelativePath(null, 'a.js'), null);
@@ -487,37 +477,52 @@ test('countVisibleTreeRows: a filtered count never exceeds the whole tree', func
 // ---------------------------------------------------------------------------
 
 test('attachIds resolves repo-relative git paths against the repo cwd', function () {
-  // The git trees come from ``git ls-files``, so a node's ``path`` is
-  // "Dockerfile" — identical in every repo of the task. Openers used it as
-  // the absolutePath, which is both the editor tab key AND the file-content
-  // cache key, so the SECOND repo's Dockerfile focused the FIRST one and
-  // served its cached content: the operator was shown a different repo's file
-  // under the right file's name, and closing the tab did not help because the
-  // cache entry outlived it.
+  // A tree node's path is repo-relative — "Dockerfile", identical in every
+  // repo of the task. Openers used it as the absolutePath, which is both the
+  // editor tab key AND the file-content cache key, so the SECOND repo's
+  // Dockerfile focused the FIRST one and served its cached content: the
+  // operator was shown a different repo's file under the right file's name,
+  // and closing the tab did not help because the cache entry outlived it.
   const backend = attachIds(
-    [{ name: 'Dockerfile', path: 'Dockerfile' }],
-    '/wk/UNA-1/ob-love-admin-backend',
+    [{ name: 'Dockerfile' }], '/wk/UNA-1/ob-love-admin-backend',
   );
-  const email = attachIds(
-    [{ name: 'Dockerfile', path: 'Dockerfile' }],
-    '/wk/UNA-1/email-core-lib',
-  );
+  const email = attachIds([{ name: 'Dockerfile' }], '/wk/UNA-1/email-core-lib');
 
   assert.equal(backend[0].absolutePath, '/wk/UNA-1/ob-love-admin-backend/Dockerfile');
   assert.equal(email[0].absolutePath, '/wk/UNA-1/email-core-lib/Dockerfile');
   assert.notEqual(backend[0].absolutePath, email[0].absolutePath);
-  // The raw id is untouched — react-arborist rows and
-  // findTreeNodeIdByRelativePath key on it.
+  // The id is the repo-relative path — unique within the repo's own tree,
+  // which is what react-arborist rows and findTreeNodeIdByRelativePath key on.
   assert.equal(backend[0].id, 'Dockerfile');
   assert.equal(backend[0].relativePath, 'Dockerfile');
 });
 
-test('attachIds keeps an already-absolute path (the task-folder tree)', function () {
-  const nodes = attachIds(
-    [{ name: 'plan.md', path: '/wk/UNA-1/plan.md' }],
-    '/wk/UNA-1',
+test('attachIds derives every path from the nesting, at any depth', function () {
+  // The server sends ``{name, children?}`` and nothing else: spelling each
+  // node's path out again was over half the payload on a many-repo task.
+  const nodes = attachIds([{
+    name: 'build',
+    children: [{ name: 'assets', children: [{ name: 'help', children: [
+      { name: 'index.md' },
+    ] }] }],
+  }], '/wk/UNA-1/client');
+  const help = nodes[0].children[0].children[0];
+
+  assert.equal(nodes[0].relativePath, 'build');
+  assert.equal(help.relativePath, 'build/assets/help');
+  assert.equal(help.children[0].relativePath, 'build/assets/help/index.md');
+  assert.equal(help.children[0].id, 'build/assets/help/index.md');
+  assert.equal(
+    help.children[0].absolutePath,
+    '/wk/UNA-1/client/build/assets/help/index.md',
   );
+});
+
+test('attachIds resolves the task-folder tree against the task root', function () {
+  // Not a git repo, but the same shape: names nested under a cwd.
+  const nodes = attachIds([{ name: 'plan.md' }], '/wk/UNA-1');
   assert.equal(nodes[0].absolutePath, '/wk/UNA-1/plan.md');
+  assert.equal(nodes[0].relativePath, 'plan.md');
 });
 
 test('absolutePathForRepo never joins twice or invents a path', function () {

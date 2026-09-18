@@ -2,6 +2,16 @@ import { refreshCache, REFRESH_TARGET } from './utils/refreshCache.js';
 
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
 
+// The message a failed response should raise: the server's own ``error`` when
+// it sent one, else the bare status line.
+async function errorFromResponse(response) {
+  try {
+    const body = await response.json();
+    if (body && body.error) { return String(body.error); }
+  } catch (_) { /* fall through with status text */ }
+  return `${response.status} ${response.statusText}`;
+}
+
 async function fetchJson(url, { timeoutMs = 0 } = {}) {
   // Optional hard timeout: without it a hung endpoint keeps the promise
   // pending forever, and any caller keyed on "have I loaded yet?" (e.g. the
@@ -17,12 +27,7 @@ async function fetchJson(url, { timeoutMs = 0 } = {}) {
       ...(controller ? { signal: controller.signal } : {}),
     });
     if (!response.ok) {
-      let message = `${response.status} ${response.statusText}`;
-      try {
-        const body = await response.json();
-        if (body && body.error) { message = body.error; }
-      } catch (_) { /* fall through with status text */ }
-      throw new Error(message);
+      throw new Error(await errorFromResponse(response));
     }
     return await response.json();
   } finally {
@@ -713,11 +718,45 @@ export function forgetTaskWorkspace(taskId, { markDone = false } = {}) {
   );
 }
 
+// Set by the server on a tree served from its cache (file_tree_cache.py), so
+// the caller knows to follow up with a fresh build.
+const TREE_CACHE_HEADER = 'X-Tree-Cache';
+
+// The task's file tree.
+//
 // ``cached``: take the tree the server last built, immediately — for a first
 // load with nothing on screen. The default builds it fresh.
-export function fetchFileTree(taskId, { cached = false } = {}) {
+//
+// ``signature``: the ETag of the tree the caller is ALREADY showing. The tree
+// is re-read every few seconds while a task is open and is almost always
+// byte-identical — the agent edits a few files, it does not reshape the
+// repository — so the server confirms it with an empty 304 rather than
+// re-sending it. On a 27-repository task that is 1.4 MB per poll neither sent
+// nor parsed.
+//
+// Returns ``{unchanged}`` for that 304, else ``{payload, etag, cacheHit}``.
+export async function fetchFileTree(taskId, { cached = false, signature = '' } = {}) {
   const query = cached ? '?cached=1' : '';
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/files${query}`);
+  const response = await fetch(
+    `/api/sessions/${encodeURIComponent(taskId)}/files${query}`,
+    {
+      cache: 'no-store',
+      ...(signature ? { headers: { 'If-None-Match': signature } } : {}),
+    },
+  );
+  if (response.status === 304) {
+    return { unchanged: true, etag: signature, cacheHit: false };
+  }
+  if (!response.ok) {
+    throw new Error(await errorFromResponse(response));
+  }
+  return {
+    payload: await response.json(),
+    // Absent if something between here and the server strips it; the caller
+    // then falls back to comparing the payload itself.
+    etag: response.headers.get('etag') || '',
+    cacheHit: !!response.headers.get(TREE_CACHE_HEADER),
+  };
 }
 
 // Re-test push access for a read-only repo (the tree's "try again"). The

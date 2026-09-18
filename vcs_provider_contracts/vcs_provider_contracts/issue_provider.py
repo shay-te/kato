@@ -13,6 +13,16 @@ class IssueProvider(Protocol):
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Issue]:
         raise NotImplementedError
 
+    def download_image_attachments(self, issue_id: str, destination_dir: str) -> list[str]:
+        """Save the issue's image attachments; return the paths written.
+
+        An issue's screenshots are reachable only with the provider's own
+        credentials (and, on some providers, only against its base URL), so
+        the client that already holds them is the only thing that can fetch
+        them. Best-effort by contract: returns the files it managed to write.
+        """
+        raise NotImplementedError
+
     def add_comment(self, issue_id: str, comment: str) -> None:
         raise NotImplementedError
 

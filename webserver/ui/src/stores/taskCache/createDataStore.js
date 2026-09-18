@@ -16,10 +16,29 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
-// ``fetch(taskId, { revalidating })`` — ``revalidating`` is false for a FIRST
-// load (nothing held for the task yet) and true for a refresh over data already
-// on screen, so a fetcher can answer the two differently: the file tree takes
-// the server's cached copy for a first load.
+// A payload the fetcher has labelled with a cheap, exact signature — an ETag,
+// say — instead of leaving the store to derive one by serializing the whole
+// payload. Signatures are what the store compares to decide whether anything
+// changed, so a fetcher that ALREADY knows nothing did (the server answered
+// 304) returns the same signature with no payload at all, and the store parses
+// nothing and keeps the data it holds. Without this the file tree was
+// re-serialized to a megabyte-scale string every five seconds to conclude it
+// was identical.
+const SIGNED = Symbol('signed payload');
+
+export function signed(payload, signature) {
+  return { [SIGNED]: true, payload, signature: String(signature || '') };
+}
+
+// ``fetch(taskId, { revalidating, signature })``:
+//   ``revalidating`` is false for a FIRST load (nothing held for the task yet)
+//   and true for a refresh over data already on screen, so a fetcher can answer
+//   the two differently: the file tree takes the server's cached copy for a
+//   first load.
+//   ``signature`` is the signature of the data currently held ('' when none),
+//   so a fetcher can ask the server to confirm it rather than re-send it. It
+//   comes from the store, never a fetcher's own bookkeeping — a signature that
+//   outlived the data it describes would claim an evicted task was unchanged.
 //
 // ``followUp(taskId)`` (optional) is asked once a first load has landed. True
 // means what arrived was only a stand-in, and the store fetches again at once —
@@ -69,17 +88,24 @@ export function createDataStore({ fetch: fetchFn, parse, empty, followUp = null 
     if (firstLoad) { commit(taskId, { status: 'loading' }); }
     let fetchAgain = false;
     m.inFlight = Promise.resolve()
-      .then(() => fetchFn(taskId, { revalidating: !firstLoad }))
-      .then((payload) => {
+      .then(() => fetchFn(taskId, { revalidating: !firstLoad, signature: m.sig }))
+      .then((result) => {
         // Purged mid-flight (LRU eviction / forget)? Drop the result — never
         // resurrect an evicted task. `meta` no longer holds our `m` once the
         // task was purged.
         if (meta.get(taskId) !== m) { return; }
-        const sig = JSON.stringify(payload);
+        const isSigned = !!result && result[SIGNED] === true;
+        const payload = isSigned ? result.payload : result;
+        // The fetcher's own signature when it supplied one; else the payload's
+        // own bytes.
+        const sig = isSigned && result.signature
+          ? result.signature
+          : JSON.stringify(payload);
         const patch = { status: 'ready', error: '', lastFetched: Date.now() };
-        // Unchanged bytes → keep the SAME parsed `data` reference so memoized
-        // consumers bail (no re-locate / no re-render).
-        if (sig !== m.sig) {
+        // Unchanged → keep the SAME parsed `data` reference so memoized
+        // consumers bail (no re-locate / no re-render). A signed result that
+        // carries no payload is exactly that case: there is nothing to parse.
+        if (sig !== m.sig && payload != null) {
           m.sig = sig;
           patch.data = parse(payload);
         }

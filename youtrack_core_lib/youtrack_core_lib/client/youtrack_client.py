@@ -480,6 +480,27 @@ class YouTrackClient(YouTrackClientBase):
             )
         return lines
 
+    def _image_attachment_sources(self, issue_id: str) -> list[dict[str, str]]:
+        """``[{'name', 'url'}]`` for the issue's image attachments.
+
+        YouTrack's attachment ``url`` is HOST-LESS (``/api/files/bug.png``), so
+        it is useful only to a caller that resolves it against the configured
+        base URL and sends the token — which is exactly what the shared
+        downloader does. Handing that string to the agent, as the screenshot
+        section used to, named a file nothing could open.
+        """
+        return [
+            {
+                'name': self._attachment_name(attachment),
+                'url': str(attachment.get(YouTrackAttachmentFields.URL) or ''),
+            }
+            for attachment in self._get_issue_attachments(issue_id)
+            if isinstance(attachment, dict)
+            and self._is_image_attachment_mime_type(
+                attachment.get(YouTrackAttachmentFields.MIME_TYPE)
+            )
+        ]
+
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:
         return self._download_text_attachment(
             attachment.get(YouTrackAttachmentFields.URL),

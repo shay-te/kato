@@ -437,12 +437,14 @@ class FilesDiffContractTests(unittest.TestCase):
 def _stabilize_cwd_payload(
     payload: dict, *, repo_id: str, tmp_prefix: str = '',
 ) -> dict:
-    """Rewrite tempdir ``cwd`` fields + tree paths to the stable token.
+    """Rewrite tempdir ``cwd`` fields to the stable token.
 
-    ``tmp_prefix`` covers trees whose paths do NOT sit under the repo id —
+    Only ``cwd`` needs it. Tree NODES are ``{name, children?}`` — they carry no
+    path of their own, so nothing inside a tree is machine-specific.
+
+    ``tmp_prefix`` covers a tree whose root does NOT sit under the repo id —
     notably the TASK FOLDER pseudo-tree, whose files live beside the clones
-    rather than inside one. Without it those paths stayed absolute and the
-    fixture differed on every run and every machine.
+    rather than inside one.
     """
     token = f'/__fixture__/{repo_id}'
     for tree in payload.get('trees', []):
@@ -452,17 +454,11 @@ def _stabilize_cwd_payload(
                 _stabilize_path(tree['cwd'], tmp_prefix)
                 if tree.get('repo_id') != repo_id else token
             )
-        _stabilize_tree_paths(
-            tree.get('tree', []), repo_id=repo_id, tmp_prefix=tmp_prefix,
-        )
     for diff in payload.get('diffs', []):
         if diff.get('cwd'):
             diff['cwd'] = token
     if payload.get('cwd'):
         payload['cwd'] = token
-    _stabilize_tree_paths(
-        payload.get('tree', []), repo_id=repo_id, tmp_prefix=tmp_prefix,
-    )
     return payload
 
 
@@ -479,30 +475,6 @@ def _stabilize_diff_text(payload: dict, *, tmp_prefix: str) -> None:
     if isinstance(payload.get('diff'), str):
         payload['diff'] = payload['diff'].replace(tmp_prefix, '/__fixture__')
 
-
-def _stabilize_tree_paths(
-    nodes: list, *, repo_id: str, tmp_prefix: str = '',
-) -> None:
-    """Recursively rewrite absolute ``path`` fields to the stable token."""
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        path = node.get('path', '')
-        if isinstance(path, str) and tmp_prefix and path.startswith(tmp_prefix):
-            node['path'] = _stabilize_path(path, tmp_prefix)
-        elif isinstance(path, str) and '/' in path:
-            # Keep only the portion after the repo_id segment so the
-            # path is stable across machines.
-            idx = path.find('/' + repo_id + '/')
-            if idx != -1:
-                tail = path[idx + len(repo_id) + 2:]
-                node['path'] = f'/__fixture__/{repo_id}/{tail}'
-            elif path.endswith('/' + repo_id):
-                node['path'] = f'/__fixture__/{repo_id}'
-        if isinstance(node.get('children'), list):
-            _stabilize_tree_paths(
-                node['children'], repo_id=repo_id, tmp_prefix=tmp_prefix,
-            )
 
 class TaskFolderTreeIdMirrorTests(unittest.TestCase):
     """The UI mirrors ``TASK_FOLDER_TREE_ID`` — they must not drift.

@@ -24,13 +24,21 @@ input, and ``../`` in a name would otherwise write anywhere on disk.
 """
 from __future__ import annotations
 
-import os
-import re
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    TASK_ATTACHMENTS_DIRNAME,
+    task_attachments_directory,
+)
 from kato_core_lib.helpers.logging_utils import configure_logger
+from utils_core_lib.utils_core_lib.filename_utils import (
+    safe_attachment_name,
+    unique_file_path,
+)
 
-ATTACHMENTS_DIRNAME = 'attachments'
+#: The task-folder convention, defined once in ``agent_prompt_utils`` because
+#: ticket attachments land in the same folder and the agent's prompt names it.
+ATTACHMENTS_DIRNAME = TASK_ATTACHMENTS_DIRNAME
 
 # Enough for the logs and dumps operators actually hand over, while still
 # refusing something that would fill the disk.
@@ -38,52 +46,8 @@ MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024
 
 _logger = configure_logger('PromptAttachmentStore')
 
-# Anything outside this set becomes '-'. Deliberately strict: the result is
-# used as a path segment and is echoed back into the prompt.
-_UNSAFE_CHARS = re.compile(r'[^A-Za-z0-9._-]+')
-
-
-def safe_attachment_name(name: str) -> str:
-    """A bare, filesystem-safe filename — never a path.
-
-    ``os.path.basename`` alone is not enough on a POSIX server receiving a
-    Windows-style ``..\\..\\etc\\passwd``: the backslashes are ordinary
-    characters there, so basename returns the whole string. Both separators
-    are stripped first, then everything outside the allowlist collapses.
-    """
-    raw = str(name or '').replace('\\', '/')
-    base = os.path.basename(raw).strip()
-    # A name of dots only ('.', '..') resolves to a directory, not a file.
-    if not base or set(base) <= {'.'}:
-        return 'attachment.txt'
-    cleaned = _UNSAFE_CHARS.sub('-', base).strip('-')
-    if not cleaned or set(cleaned) <= {'.'}:
-        return 'attachment.txt'
-    # Long names are a filesystem problem, not a security one; keep the tail
-    # so the extension survives.
-    return cleaned[-120:]
-
-
 def attachments_dir(workspace_dir) -> Path:
-    return Path(workspace_dir) / ATTACHMENTS_DIRNAME
-
-
-def _unique_path(directory: Path, name: str) -> Path:
-    """``name``, or ``name-2``/``name-3``… when it is already taken.
-
-    Attaching two files called ``logs.txt`` in one session must not have the
-    second silently replace the first — the prompt would then reference a
-    path whose contents are not what the operator attached.
-    """
-    candidate = directory / name
-    if not candidate.exists():
-        return candidate
-    stem, extension = os.path.splitext(name)
-    for index in range(2, 1000):
-        candidate = directory / f'{stem}-{index}{extension}'
-        if not candidate.exists():
-            return candidate
-    return directory / f'{stem}-{os.getpid()}{extension}'
+    return Path(task_attachments_directory(workspace_dir))
 
 
 def save_attachment(workspace_dir, name: str, data: bytes) -> dict:
@@ -104,7 +68,7 @@ def save_attachment(workspace_dir, name: str, data: bytes) -> dict:
     directory = attachments_dir(workspace_dir)
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        target = _unique_path(directory, safe_attachment_name(name))
+        target = unique_file_path(directory, safe_attachment_name(name))
         target.write_bytes(payload)
     except Exception as error:  # noqa: BLE001 - surfaced to the operator
         _logger.exception('failed to save attachment %s', name)

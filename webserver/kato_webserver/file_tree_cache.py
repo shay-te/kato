@@ -20,6 +20,17 @@ The browser used to hold this copy itself (IndexedDB, up to 16 MB a task,
 parsed back into memory on every reload). One copy on the server serves every
 browser and costs the page nothing.
 
+Each entry also carries the two derived forms the route serves, computed once
+per distinct tree rather than per request:
+
+* an **ETag** (a hash of the bytes). The active task's tree is rebuilt on every
+  poll and is almost always byte-identical to the last one; a client that
+  sends the tag back gets a bodiless 304 instead of the whole tree again. On
+  a 27-repository task that was 1.4 MB every five seconds, downloaded and
+  parsed to be thrown away as unchanged.
+* a **gzipped body**, for a client that accepts it. A tree is mostly repeated
+  directory names, so it compresses roughly seven to one.
+
 Best-effort throughout: an unreadable or unwritable copy degrades to "no copy",
 which is the old behaviour — never an error on the read the operator is waiting
 for.
@@ -27,22 +38,32 @@ for.
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import logging
 import re
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 
-#: Added to a response served from the cache, so the client knows to follow up
-#: with a fresh build. Never stored.
-CACHE_HIT_KEY = 'cache_hit'
+#: Response header set (to ``hit``) on a tree served from the cache, so the
+#: client knows to follow up with a fresh build. A header rather than a key
+#: spliced into the body: the body stays byte-identical to the fresh build of
+#: the same tree, so its ETag matches and the follow-up can be a 304.
+CACHE_HIT_HEADER = 'X-Tree-Cache'
+CACHE_HIT_VALUE = 'hit'
 
 #: Trees kept in memory. Matches the browser's own retention of recently viewed
 #: tasks; an older one is still answered from disk.
 DEFAULT_MAX_IN_MEMORY = 16
+
+#: Fast rather than smallest: level 6 halves the time for a few percent more
+#: bytes, and this runs on the request path whenever a tree changes.
+_GZIP_LEVEL = 4
 
 _UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._-]')
 
@@ -51,20 +72,30 @@ def serialize_payload(payload: dict) -> bytes:
     """Compact JSON with sorted keys.
 
     Sorted so a tree restored from disk serializes byte-for-byte like the fresh
-    build of the same tree: the client compares bytes to decide whether to
-    re-render, and a key-order difference would repaint an unchanged tree.
+    build of the same tree: the ETag is a hash of these bytes, and a key-order
+    difference would make an unchanged tree look new to the client.
     """
     return json.dumps(
         payload, separators=(',', ':'), sort_keys=True, ensure_ascii=False,
     ).encode('utf-8')
 
 
-def _marked_as_cache_hit(body: bytes) -> bytes:
-    # Spliced rather than re-serialized: a many-repo tree runs to megabytes, and
-    # the whole point of this path is to answer without redoing work.
-    marker = b'{"' + CACHE_HIT_KEY.encode('ascii') + b'":true'
-    rest = body.strip()[1:]
-    return marker + (rest if rest.startswith(b'}') else b',' + rest)
+@dataclass(frozen=True)
+class CachedTree:
+    """One task's last-built tree in every form the route serves."""
+
+    body: bytes
+    #: Unquoted, as werkzeug's ``If-None-Match`` parsing hands it back.
+    etag: str
+    gzipped: bytes
+
+    @classmethod
+    def from_body(cls, body: bytes) -> CachedTree:
+        return cls(
+            body=body,
+            etag=hashlib.sha1(body).hexdigest(),
+            gzipped=gzip.compress(body, compresslevel=_GZIP_LEVEL),
+        )
 
 
 class FileTreeCache:
@@ -79,35 +110,38 @@ class FileTreeCache:
     ) -> None:
         self._directory = Path(directory).expanduser() if directory else None
         self._max_in_memory = max(1, int(max_in_memory))
-        self._bodies: OrderedDict[str, bytes] = OrderedDict()
+        self._entries: OrderedDict[str, CachedTree] = OrderedDict()
         self._lock = threading.Lock()
         self._logger = logger or logging.getLogger(__name__)
 
-    def cached_body(self, task_id: str) -> bytes | None:
-        """The last tree stored for ``task_id``, marked as a cache hit, or ``None``."""
-        body = self._from_memory(task_id)
-        if body is None:
+    def cached(self, task_id: str) -> CachedTree | None:
+        """The last tree stored for ``task_id``, or ``None``."""
+        entry = self._from_memory(task_id)
+        if entry is None:
             body = self._from_disk(task_id)
             if body is None:
                 return None
-            self._keep(task_id, body)
-        return _marked_as_cache_hit(body)
+            entry = CachedTree.from_body(body)
+            self._keep(task_id, entry)
+        return entry
 
-    def store(self, task_id: str, payload: dict) -> bytes:
-        """Record a freshly built payload; return its serialized body."""
+    def store(self, task_id: str, payload: dict) -> CachedTree:
+        """Record a freshly built payload; return it in its servable forms."""
         body = serialize_payload(payload)
-        unchanged = self._from_memory(task_id) == body
-        self._keep(task_id, body)
-        # The active task is rebuilt on every poll. Rewriting identical
-        # megabytes each time would be pure disk churn.
-        if not unchanged:
-            self._to_disk(task_id, payload)
-        return body
+        previous = self._from_memory(task_id)
+        # The active task is rebuilt on every poll. Rehashing, recompressing
+        # and rewriting identical megabytes each time would be pure churn.
+        if previous is not None and previous.body == body:
+            return previous
+        entry = CachedTree.from_body(body)
+        self._keep(task_id, entry)
+        self._to_disk(task_id, payload)
+        return entry
 
     def forget(self, task_id: str) -> None:
         """Drop the task's copy everywhere — the task itself is gone."""
         with self._lock:
-            self._bodies.pop(task_id, None)
+            self._entries.pop(task_id, None)
         path = self._path(task_id)
         if path is None:
             return
@@ -116,19 +150,19 @@ class FileTreeCache:
         except OSError as exc:
             self._logger.warning('could not remove cached file tree %s: %s', path, exc)
 
-    def _from_memory(self, task_id: str) -> bytes | None:
+    def _from_memory(self, task_id: str) -> CachedTree | None:
         with self._lock:
-            body = self._bodies.get(task_id)
-            if body is not None:
-                self._bodies.move_to_end(task_id)
-            return body
+            entry = self._entries.get(task_id)
+            if entry is not None:
+                self._entries.move_to_end(task_id)
+            return entry
 
-    def _keep(self, task_id: str, body: bytes) -> None:
+    def _keep(self, task_id: str, entry: CachedTree) -> None:
         with self._lock:
-            self._bodies[task_id] = body
-            self._bodies.move_to_end(task_id)
-            while len(self._bodies) > self._max_in_memory:
-                self._bodies.popitem(last=False)
+            self._entries[task_id] = entry
+            self._entries.move_to_end(task_id)
+            while len(self._entries) > self._max_in_memory:
+                self._entries.popitem(last=False)
 
     def _path(self, task_id: str) -> Path | None:
         # A task id is not trusted as a path: anything but a plain name

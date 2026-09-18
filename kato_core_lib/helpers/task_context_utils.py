@@ -30,6 +30,13 @@ class PreparedTaskContext(object):
     # AFTER the prompt was built is still in scope (it clones into this same
     # folder) instead of the agent staying blind to it.
     workspace_root: str = ''
+    # Screenshots attached to the ticket, downloaded into the task folder once
+    # the workspace exists. The tracker only ever gave out a URL needing the
+    # provider's credentials, so naming one in the prompt told the agent a
+    # screenshot existed while giving it no way to look — the operator had to
+    # hand the image over by hand every time. These are real local files, in
+    # the agent's own scope, so it can open them.
+    attachment_paths: list[str] = field(default_factory=list)
 
 
 def task_has_actionable_definition(task: Task) -> bool:

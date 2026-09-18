@@ -29,6 +29,16 @@ import FilesTab, {
   listVisibleChangedFiles,
 } from './FilesTab.jsx';
 import { fetchDiff, fetchFileTree, fetchRepoCommits, fetchTaskComments } from './api.js';
+
+// ``fetchFileTree`` answers with the tree PLUS the ETag the server tagged it
+// with and whether it came from the server's cache (see api.js) — the store
+// needs those to ask "still this one?" on the next poll instead of downloading
+// the tree again. These tests only care about the tree itself, so they set it
+// through here rather than restating the envelope at every call site.
+const fileTreeAnswer = (payload) => ({ payload, etag: '', cacheHit: false });
+const mockFileTree = (payload) => fetchFileTree.mockResolvedValue(
+  fileTreeAnswer(payload),
+);
 import { resetTaskCache } from './stores/taskCache/index.js';
 
 const FILE_TREE_PAYLOAD = {
@@ -37,14 +47,7 @@ const FILE_TREE_PAYLOAD = {
     cwd: '/tmp/client',
     tree: [{
       name: 'src',
-      path: '/tmp/client/src',
-      children: [{
-        name: 'Changed.js',
-        path: '/tmp/client/src/Changed.js',
-      }, {
-        name: 'Unchanged.js',
-        path: '/tmp/client/src/Unchanged.js',
-      }],
+      children: [{ name: 'Changed.js' }, { name: 'Unchanged.js' }],
     }],
     changed_files: ['src/Changed.js'],
     conflicted_files: [],
@@ -72,7 +75,7 @@ const DIFF_PAYLOAD = {
 
 beforeEach(() => {
   fetchDiff.mockResolvedValue({ diffs: [] });
-  fetchFileTree.mockResolvedValue({ trees: [] });
+  mockFileTree({ trees: [] });
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
     configurable: true,
@@ -501,7 +504,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('defaults to changed files and All toggles the full tree', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     expect(await screen.findByText('Changed.js')).toBeInTheDocument();
@@ -523,15 +526,15 @@ describe('FilesTab — render shell', () => {
     // inside react-arborist where the data cannot see them. Opening one left
     // its rows cut off above empty space.
     const files = ['a.mjs', 'b.mjs', 'c.mjs', 'd.mjs', 'e.mjs'];
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [{
         repo_id: 'client', cwd: '/tmp/client',
         tree: [
           {
-            name: 'helper_scripts', path: '/tmp/client/helper_scripts',
-            children: files.map((name) => ({ name, path: `/tmp/client/helper_scripts/${name}` })),
+            name: 'helper_scripts',
+            children: files.map((name) => ({ name })),
           },
-          { name: 'resume_prompt.md', path: '/tmp/client/resume_prompt.md' },
+          { name: 'resume_prompt.md' },
         ],
         changed_files: [], conflicted_files: [],
       }],
@@ -566,12 +569,12 @@ describe('FilesTab — render shell', () => {
     // section threw every row away and drew new ones — and a click landing in
     // between hit a detached row and did nothing. That is why opening a folder
     // failed intermittently under load.
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [{
         repo_id: 'client', cwd: '/tmp/client',
         tree: [{
-          name: 'helper_scripts', path: '/tmp/client/helper_scripts',
-          children: [{ name: 'a.mjs', path: '/tmp/client/helper_scripts/a.mjs' }],
+          name: 'helper_scripts',
+          children: [{ name: 'a.mjs' }],
         }],
         changed_files: [], conflicted_files: [],
       }],
@@ -597,12 +600,12 @@ describe('FilesTab — render shell', () => {
     // no files were changed — exactly when switching to the all-files view is
     // the only way to browse the workspace, trapping the operator on the
     // "Nothing changed yet." view with no button to leave it.
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [{
         repo_id: 'client', cwd: '/tmp/client',
         tree: [{
-          name: 'src', path: '/tmp/client/src',
-          children: [{ name: 'Unchanged.js', path: '/tmp/client/src/Unchanged.js' }],
+          name: 'src',
+          children: [{ name: 'Unchanged.js' }],
         }],
         changed_files: [], conflicted_files: [],
       }],
@@ -623,7 +626,7 @@ describe('FilesTab — render shell', () => {
   test('file-title focus signal selects and scrolls the changed file row', async () => {
     const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(
       <FilesTab
@@ -666,8 +669,7 @@ describe('FilesTab — render shell', () => {
         cwd: `/tmp/${repo}`,
         tree: [{
           name: 'src',
-          path: `/tmp/${repo}/src`,
-          children: [{ name: 'Changed.js', path: `/tmp/${repo}/src/Changed.js` }],
+          children: [{ name: 'Changed.js' }],
         }],
         changed_files: ['src/Changed.js'],
         conflicted_files: [],
@@ -683,7 +685,7 @@ describe('FilesTab — render shell', () => {
       `+new-${repo}`,
       '',
     ].join('\n');
-    fetchFileTree.mockResolvedValue(samePathTwoRepos);
+    mockFileTree(samePathTwoRepos);
     fetchDiff.mockResolvedValue({
       diffs: [
         { repo_id: 'client', cwd: '/tmp/client', diff: diffFor('client'), conflicted_files: [] },
@@ -719,8 +721,7 @@ describe('FilesTab — render shell', () => {
         cwd: `/tmp/${repo}`,
         tree: [{
           name: 'src',
-          path: `/tmp/${repo}/src`,
-          children: [{ name: 'Changed.js', path: `/tmp/${repo}/src/Changed.js` }],
+          children: [{ name: 'Changed.js' }],
         }],
         changed_files: ['src/Changed.js'],
         conflicted_files: [],
@@ -736,7 +737,7 @@ describe('FilesTab — render shell', () => {
       `+new-${repo}`,
       '',
     ].join('\n');
-    fetchFileTree.mockResolvedValue(samePathTwoRepos);
+    mockFileTree(samePathTwoRepos);
     fetchDiff.mockResolvedValue({
       diffs: [
         { repo_id: 'client', cwd: '/tmp/client', diff: diffFor('client'), conflicted_files: [] },
@@ -767,11 +768,7 @@ describe('FilesTab — render shell', () => {
         ...FILE_TREE_PAYLOAD.trees[0],
         tree: [{
           name: 'src',
-          path: '/tmp/client/src',
-          children: [
-            { name: 'Changed.js', path: '/tmp/client/src/Changed.js' },
-            { name: 'Other.js', path: '/tmp/client/src/Other.js' },
-          ],
+          children: [{ name: 'Changed.js' }, { name: 'Other.js' }],
         }],
         changed_files: ['src/Changed.js', 'src/Other.js'],
       }],
@@ -800,7 +797,7 @@ describe('FilesTab — render shell', () => {
         conflicted_files: [],
       }],
     };
-    fetchFileTree.mockResolvedValue(twoFileTree);
+    mockFileTree(twoFileTree);
     fetchDiff.mockResolvedValue(twoFileDiff);
     const calls = [];
     // Selection DERIVES from the openFile round-trip through App state —
@@ -858,7 +855,7 @@ describe('FilesTab — render shell', () => {
     // brings real changes and forces a full re-render.
     const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [] } });
     // App keeps the same focus object between clicks — only requestId
@@ -905,7 +902,7 @@ describe('FilesTab — render shell', () => {
         conflicted_files: ['src/Changed.js'],
       }],
     };
-    fetchFileTree.mockResolvedValue(fileTreePayload);
+    mockFileTree(fileTreePayload);
     fetchDiff.mockResolvedValue(diffPayload);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     expect(await screen.findByText('Changed.js')).toBeInTheDocument();
@@ -919,7 +916,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('shows a comment-count badge on a file with open threads', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     fetchTaskComments.mockResolvedValue({
       ok: true,
@@ -943,7 +940,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('clicking the comment badge opens the diff and focuses the comment', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     fetchTaskComments.mockResolvedValue({
       ok: true,
@@ -970,7 +967,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('right-clicking a changed file copies repo-prefixed path', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     const label = await screen.findByText('Changed.js');
@@ -984,7 +981,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('right-clicking a changed folder copies repo-prefixed path', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     const folder = await screen.findByText('src');
@@ -998,7 +995,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('right-clicking a changed file copies just the file name', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     const label = await screen.findByText('Changed.js');
@@ -1013,7 +1010,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('right-clicking a changed folder copies just the folder name', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
     const folder = await screen.findByText('src');
@@ -1027,7 +1024,7 @@ describe('FilesTab — render shell', () => {
   });
 
   test('no comment badge on files without threads', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [] } });
     render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
@@ -1039,7 +1036,7 @@ describe('FilesTab — render shell', () => {
 
 describe('FilesTab — open file follows into the All view', () => {
   test('clicking "All" while a diff is open reveals + highlights the file in the tree', async () => {
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     fetchDiff.mockResolvedValue(DIFF_PAYLOAD);
     // The centre pane has the diff for src/Changed.js open.
     const openFile = {
@@ -1106,11 +1103,10 @@ const CHAOS_FILE_TREE = {
       cwd: '/tmp/client',
       tree: [{
         name: 'src',
-        path: '/tmp/client/src',
         children: [
-          { name: 'Changed.js', path: '/tmp/client/src/Changed.js' },
-          { name: 'Unchanged.js', path: '/tmp/client/src/Unchanged.js' },
-          { name: 'AlsoChanged.js', path: '/tmp/client/src/AlsoChanged.js' },
+          { name: 'Changed.js' },
+          { name: 'Unchanged.js' },
+          { name: 'AlsoChanged.js' },
         ],
       }],
       changed_files: ['src/Changed.js', 'src/AlsoChanged.js'],
@@ -1121,10 +1117,7 @@ const CHAOS_FILE_TREE = {
       cwd: '/tmp/backend',
       tree: [{
         name: 'api',
-        path: '/tmp/backend/api',
-        children: [
-          { name: 'handler.py', path: '/tmp/backend/api/handler.py' },
-        ],
+        children: [{ name: 'handler.py' }],
       }],
       changed_files: ['api/handler.py'],
       conflicted_files: [],
@@ -1278,7 +1271,7 @@ function chaosActions(container) {
 describe('FilesTab — chaos / random button mashing', () => {
 
   beforeEach(() => {
-    fetchFileTree.mockResolvedValue(CHAOS_FILE_TREE);
+    mockFileTree(CHAOS_FILE_TREE);
     fetchDiff.mockResolvedValue(CHAOS_DIFFS);
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [] } });
   });
@@ -1414,7 +1407,7 @@ describe('FilesTab — chaos / random button mashing', () => {
   });
 
   test('survives chaos on a single-repo task', async () => {
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [CHAOS_FILE_TREE.trees[0]],
     });
     fetchDiff.mockResolvedValue({
@@ -1503,7 +1496,7 @@ describe('FilesTab — chaos / random button mashing', () => {
     // so the changed-files view could only ever claim it was empty — hiding
     // plan.md and pr_description.md, deliverables the agent had just told the
     // operator about.
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [{
         repo_id: 'task files',
         cwd: '/wks/PROJ-1',
@@ -1511,11 +1504,7 @@ describe('FilesTab — chaos / random button mashing', () => {
         has_diff: false,
         changed_files: [],
         conflicted_files: [],
-        tree: [
-          { name: 'plan.md', relativePath: 'plan.md', path: '/wks/PROJ-1/plan.md' },
-          { name: 'resume_prompt.md', relativePath: 'resume_prompt.md',
-            path: '/wks/PROJ-1/resume_prompt.md' },
-        ],
+        tree: [{ name: 'plan.md' }, { name: 'resume_prompt.md' }],
       }],
     });
 
@@ -1529,13 +1518,13 @@ describe('FilesTab — chaos / random button mashing', () => {
   it('still says "Nothing changed yet" for a real repo with no changes', async () => {
     // The placeholder is right for a git repo — it distinguishes "no changes"
     // from "All files mode is on", which is why it exists.
-    fetchFileTree.mockResolvedValue({
+    mockFileTree({
       trees: [{
         repo_id: 'api',
         cwd: '/wks/PROJ-1/api',
         changed_files: [],
         conflicted_files: [],
-        tree: [{ name: 'app.py', relativePath: 'app.py', path: '/wks/PROJ-1/api/app.py' }],
+        tree: [{ name: 'app.py' }],
       }],
     });
 
@@ -1572,7 +1561,7 @@ describe('FilesTab — search control order', () => {
     // Reading order inside the capsule: text, then clear, then the two
     // narrowing toggles. The clear used to be last, tucked into the tightest
     // part of the pill's curve.
-    fetchFileTree.mockResolvedValue(FILE_TREE_PAYLOAD);
+    mockFileTree(FILE_TREE_PAYLOAD);
     render(<FilesTab taskId="T-clear-order" />);
 
     const input = await screen.findByRole('searchbox', { name: /search files/i });
@@ -1601,14 +1590,14 @@ describe('commit history dropdown', () => {
     trees: [{
       repo_id: 'client',
       cwd: '/tmp/client',
-      tree: [{ name: 'a.js', path: '/tmp/client/a.js' }],
+      tree: [{ name: 'a.js' }],
       changed_files: ['a.js'],
       conflicted_files: [],
     }],
   };
 
   beforeEach(() => {
-    fetchFileTree.mockResolvedValue(TREE);
+    mockFileTree(TREE);
     fetchDiff.mockResolvedValue({ diffs: [] });
   });
 
@@ -1681,12 +1670,12 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     trees: [
       {
         repo_id: 'client', cwd: '/tmp/client', branch: 'UNA-1',
-        tree: [{ name: 'a.js', path: '/tmp/client/a.js' }],
+        tree: [{ name: 'a.js' }],
         changed_files: ['a.js'], conflicted_files: [],
       },
       {
         repo_id: 'backend', cwd: '/tmp/backend', branch: 'UNA-1',
-        tree: [{ name: 'b.js', path: '/tmp/backend/b.js' }],
+        tree: [{ name: 'b.js' }],
         changed_files: ['b.js'], conflicted_files: [],
       },
     ],
@@ -1710,7 +1699,7 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
   test('a task seen before draws its repo headers immediately, each loading', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
     // First visit populates the memory...
-    fetchFileTree.mockResolvedValue(TREE);
+    mockFileTree(TREE);
     const first = render(<FilesTab taskId="T9" onOpenFile={vi.fn()} />);
     await waitFor(() => {
       expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
@@ -1743,7 +1732,7 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     // A stripped-down skeleton makes the pane re-lay-out the moment the tree
     // arrives; the operator sees the rows jump rather than fill in.
     fetchDiff.mockResolvedValue({ diffs: [] });
-    fetchFileTree.mockResolvedValue(TREE);
+    mockFileTree(TREE);
     const loaded = render(<FilesTab taskId="T-SHAPE" onOpenFile={vi.fn()} />);
     // Waited on the SECTION, not on text: the repo name also appears in the
     // scope picker, so a text query is ambiguous here.
@@ -1781,7 +1770,7 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
   // frames, so every loader waits out a grace period first.
   test('no loader is painted while the wait is still short', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
-    fetchFileTree.mockResolvedValue(TREE);
+    mockFileTree(TREE);
     const first = render(<FilesTab taskId="T-GRACE" onOpenFile={vi.fn()} />);
     await waitFor(() => {
       expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
@@ -1804,7 +1793,7 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
 
   test('a load that finishes inside the grace period never shows a loader', async () => {
     fetchDiff.mockResolvedValue({ diffs: [] });
-    fetchFileTree.mockResolvedValue(TREE);
+    mockFileTree(TREE);
     const first = render(<FilesTab taskId="T-FAST" onOpenFile={vi.fn()} />);
     await waitFor(() => {
       expect(first.container.querySelectorAll('.files-tab-repo').length).toBe(2);
@@ -1830,7 +1819,7 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     observer.observe(document.body, { childList: true, subtree: true });
 
     fetchFileTree.mockImplementation(() => new Promise((resolve) => {
-      setTimeout(() => resolve(TREE), 40);
+      setTimeout(() => resolve(fileTreeAnswer(TREE)), 40);
     }));
     const { container } = render(<FilesTab taskId="T-FAST" onOpenFile={vi.fn()} />);
     await waitFor(() => {

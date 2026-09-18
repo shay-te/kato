@@ -18,47 +18,12 @@ from kato_webserver.prompt_attachment_store import (
     ATTACHMENTS_DIRNAME,
     MAX_ATTACHMENT_BYTES,
     attachments_dir,
-    safe_attachment_name,
     save_attachment,
 )
 
-
-class SafeAttachmentNameTests(unittest.TestCase):
-
-    def test_keeps_an_ordinary_name(self) -> None:
-        self.assertEqual(safe_attachment_name('messaging_js_logs.txt'),
-                         'messaging_js_logs.txt')
-
-    def test_strips_a_posix_path(self) -> None:
-        self.assertEqual(safe_attachment_name('/etc/passwd'), 'passwd')
-
-    def test_strips_posix_traversal(self) -> None:
-        self.assertEqual(safe_attachment_name('../../etc/passwd'), 'passwd')
-
-    def test_strips_windows_traversal(self) -> None:
-        # basename() alone does NOT save us here: on POSIX a backslash is an
-        # ordinary character, so it would return the whole string untouched.
-        self.assertEqual(
-            safe_attachment_name(r'..\..\windows\system32\config'), 'config',
-        )
-
-    def test_dot_only_names_become_a_placeholder(self) -> None:
-        # '.' and '..' resolve to directories, not files.
-        for name in ('.', '..', '...'):
-            self.assertEqual(safe_attachment_name(name), 'attachment.txt')
-
-    def test_blank_becomes_a_placeholder(self) -> None:
-        for name in ('', '   ', None):
-            self.assertEqual(safe_attachment_name(name), 'attachment.txt')
-
-    def test_unsafe_characters_collapse(self) -> None:
-        self.assertEqual(safe_attachment_name('my logs (v2)!.txt'),
-                         'my-logs-v2-.txt')
-
-    def test_very_long_name_keeps_its_extension(self) -> None:
-        name = safe_attachment_name('a' * 400 + '.txt')
-        self.assertLessEqual(len(name), 120)
-        self.assertTrue(name.endswith('.txt'))
+# The filename sanitiser and the no-overwrite path picker moved to
+# ``utils_core_lib.filename_utils`` once ticket attachments needed them too —
+# their tests live beside them, in that lib's own suite.
 
 
 class SaveAttachmentTests(unittest.TestCase):

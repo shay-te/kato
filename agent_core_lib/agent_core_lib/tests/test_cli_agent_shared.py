@@ -51,6 +51,67 @@ class _BareTransport(CliAgentSharedBehaviour):
                                       warning=lambda *a, **k: None)
 
 
+class _PromptTransport(_BareTransport):
+    """Enough of a transport to render a real implementation prompt."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._workspace_refusal_guidance = ''
+
+    def _wrap_untrusted(self, text, *, source_path=''):
+        return f'<untrusted {source_path}>{text}</untrusted>'
+
+    # A CLASSMETHOD on the mixin (``_execution_guardrails_text`` reaches it as
+    # ``cls._tool_guardrails_text()``), so the override has to match.
+    @classmethod
+    def _tool_guardrails_text(cls) -> str:
+        return 'tool guardrails'
+
+    def _system_prompt_addendum(self) -> str:
+        return ''
+
+
+class ImplementationPromptAttachmentTests(unittest.TestCase):
+    """Ticket screenshots reach the agent as FILES it can open.
+
+    The tracker only ever hands out a URL needing the tracker's own
+    credentials, so the prompt used to name a screenshot the agent had no way
+    to look at — and the image had to be supplied by hand every time.
+    """
+
+    @staticmethod
+    def _prompt(attachment_paths):
+        return _PromptTransport()._build_implementation_prompt(
+            SimpleNamespace(id='PROJ-1', summary='fix it', description='details'),
+            SimpleNamespace(
+                repositories=[],
+                repository_branches={},
+                agents_instructions='',
+                workspace_root='/wks/PROJ-1',
+                attachment_paths=attachment_paths,
+            ),
+        )
+
+    def test_a_downloaded_screenshot_is_named_in_the_prompt(self) -> None:
+        prompt = self._prompt(['/wks/PROJ-1/attachments/bug.png'])
+        self.assertIn('/wks/PROJ-1/attachments/bug.png', prompt)
+        self.assertIn('Open them', prompt)
+
+    def test_no_attachments_adds_no_empty_section(self) -> None:
+        prompt = self._prompt([])
+        self.assertNotIn('Images attached to the ticket', prompt)
+
+    def test_a_prepared_task_without_the_field_still_builds(self) -> None:
+        # An older prepared context (or a transport calling with none at all)
+        # must not break the prompt that runs the task.
+        prompt = _PromptTransport()._build_implementation_prompt(
+            SimpleNamespace(id='PROJ-1', summary='fix it', description='details'),
+            None,
+        )
+        self.assertIn('Implement task PROJ-1', prompt)
+        self.assertNotIn('Images attached to the ticket', prompt)
+
+
 class AbstractHookTests(unittest.TestCase):
     def test_every_hook_raises_rather_than_defaulting(self) -> None:
         client = _BareTransport()

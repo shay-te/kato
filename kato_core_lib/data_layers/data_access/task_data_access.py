@@ -75,6 +75,9 @@ class TaskDataAccess(DataAccess):
             states=states,
         )
 
+    def download_image_attachments(self, issue_id: str, destination_dir) -> list[str]:
+        return self._client.download_image_attachments(issue_id, destination_dir)
+
     def add_comment(self, issue_id: str, comment: str) -> None:
         pull_request_comment_rule_validator.validate_dict(
             {

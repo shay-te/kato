@@ -26,6 +26,9 @@ from kato_core_lib.helpers.task_context_utils import (
     repository_ids_text,
     task_has_actionable_definition,
 )
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    task_attachments_directory,
+)
 from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import repository_agents_instructions_text
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from kato_core_lib.validation.branch_push import TaskBranchPushValidator
@@ -818,13 +821,43 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
             repository.id: self._repository_service.build_branch_name(task, repository)
             for repository in repositories
         }
+        workspace_root = self._task_workspace_root(repositories)
         return PreparedTaskContext(
             branch_name=next(iter(repository_branches.values()), ''),
             repositories=list(repositories),
             repository_branches=repository_branches,
             agents_instructions=repository_agents_instructions_text(list(repositories)),
-            workspace_root=self._task_workspace_root(repositories),
+            workspace_root=workspace_root,
+            attachment_paths=self._download_task_attachments(task, workspace_root),
         )
+
+    def _download_task_attachments(self, task: Task, workspace_root: str) -> list[str]:
+        """The ticket's screenshots, saved into the task folder.
+
+        Here, and not when the queue was listed, because this is the first
+        moment the task HAS a folder to put them in — and because a ticket can
+        gain a screenshot between being listed and being picked up.
+
+        Best-effort, always: an image kato cannot fetch costs the agent some
+        context, while raising here would cost the operator the whole task.
+        """
+        directory = task_attachments_directory(workspace_root)
+        if not directory:
+            return []
+        try:
+            paths = list(
+                self._task_service.download_image_attachments(task.id, directory) or []
+            )
+        except Exception:
+            self.logger.exception(
+                'failed to download ticket attachments for task %s', task.id,
+            )
+            return []
+        if paths:
+            self._log_task_step(
+                task.id, 'downloaded %d ticket image(s)', len(paths),
+            )
+        return paths
 
     def _task_workspace_root(self, repositories: list[object]) -> str:
         """The task's shared workspace folder, when workspace-clone mode

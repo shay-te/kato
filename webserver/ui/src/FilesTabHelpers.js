@@ -51,15 +51,13 @@ export function normalizeTrees(payload) {
 
 // A tree node's path resolved against its repo, so it names ONE file on disk.
 //
-// The git-repo trees come from ``git ls-files``, so their ``path`` is
-// REPO-RELATIVE ("Dockerfile"); the task-folder tree's is already absolute.
-// Openers used ``node.path`` as the ``absolutePath`` regardless, so in a
-// multi-repo task every repo's ``Dockerfile`` produced the identical value —
-// and both the editor tab key and the file-content cache are keyed on it.
-// Opening ``email-core-lib/Dockerfile`` after ``ob-love-admin-backend/
-// Dockerfile`` therefore focused the FIRST one and served its cached content,
-// and closing the tab didn't help because the cache entry outlived it: the
-// operator was shown a different repo's file under the right file's name.
+// Tree nodes are repo-RELATIVE ("Dockerfile"), so in a multi-repo task every
+// repo's ``Dockerfile`` has the same one — and both the editor tab key and the
+// file-content cache are keyed on the path. Openers that used the relative
+// path as the ``absolutePath`` therefore focused ``ob-love-admin-backend/
+// Dockerfile`` when the operator clicked ``email-core-lib/Dockerfile`` and
+// served its cached content, and closing the tab didn't help because the cache
+// entry outlived it: a different repo's file under the right file's name.
 export function absolutePathForRepo(path, cwd) {
   const normalizedPath = String(path || '').replace(/\\/g, '/');
   const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -78,20 +76,31 @@ export function absolutePathForRepo(path, cwd) {
   return `${normalizedCwd}/${normalizedPath}`;
 }
 
-export function attachIds(nodes, cwd = '') {
+// Resolve a server tree into the rows react-arborist draws: each node gains
+// the two paths the openers need, plus the ``id`` the tree keys rows on.
+//
+// A node's path is DERIVED here, from the names of the folders above it —
+// the server sends ``{name, children?}`` and nothing else. It used to spell
+// the path out on every node, which on a 27-repository task was over half of
+// a 1.4 MB payload, re-sent and re-parsed on every five-second poll, to say
+// what the shape of the tree already says.
+//
+// ``id`` is the repo-relative path: unique within the tree (each repo renders
+// its own), stable across polls, and what ``findTreeNodeIdByRelativePath``
+// hands back for the selection and reveal.
+export function attachIds(nodes, cwd = '', prefix = '') {
   if (!Array.isArray(nodes)) { return []; }
   return nodes.map((node) => {
+    const name = String(node?.name || '');
+    const relativePath = prefix ? `${prefix}/${name}` : name;
     const next = {
       ...node,
-      // ``id`` stays the RAW server path: react-arborist keys rows on it and
-      // ``findTreeNodeIdByRelativePath`` looks it up. Only openers need the
-      // resolved path, and they read ``absolutePath``.
-      id: node.path,
-      relativePath: relativePathForRepo(node.path, cwd),
-      absolutePath: absolutePathForRepo(node.path, cwd),
+      id: relativePath,
+      relativePath,
+      absolutePath: absolutePathForRepo(relativePath, cwd),
     };
     if (Array.isArray(node.children)) {
-      next.children = attachIds(node.children, cwd);
+      next.children = attachIds(node.children, cwd, relativePath);
     }
     return next;
   });
@@ -192,16 +201,6 @@ export function countVisibleTreeRows(nodes, term, options) {
     return rows;
   }
   return countMatching(nodes);
-}
-
-function relativePathForRepo(path, cwd) {
-  const normalizedPath = String(path || '').replace(/\\/g, '/');
-  const normalizedCwd = String(cwd || '').replace(/\\/g, '/').replace(/\/+$/, '');
-  const cwdPrefix = normalizedCwd + '/';
-  if (normalizedCwd && normalizedPath.startsWith(cwdPrefix)) {
-    return normalizedPath.slice(cwdPrefix.length);
-  }
-  return normalizedPath.replace(/^\/+/, '');
 }
 
 

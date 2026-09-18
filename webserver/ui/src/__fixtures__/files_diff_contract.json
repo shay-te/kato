@@ -68,20 +68,16 @@
           {
             "children": [
               {
-                "name": "app.py",
-                "path": "src/app.py"
+                "name": "app.py"
               },
               {
-                "name": "helper.py",
-                "path": "src/helper.py"
+                "name": "helper.py"
               }
             ],
-            "name": "src",
-            "path": "src"
+            "name": "src"
           },
           {
-            "name": "README.md",
-            "path": "README.md"
+            "name": "README.md"
           }
         ]
       }

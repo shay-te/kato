@@ -364,6 +364,43 @@ class TaskFailureHandlerDefensiveTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 
+class TaskServiceAttachmentTests(unittest.TestCase):
+    """Ticket screenshots are fetched by the client that holds the credentials.
+
+    Only the provider client can read an issue attachment — the URL needs its
+    token, and YouTrack's does not even carry a host — so the service layer
+    passes the request straight down rather than trying to fetch anything.
+    """
+
+    @staticmethod
+    def _service(data_access):
+        from kato_core_lib.data_layers.service.task_service import TaskService
+
+        return TaskService(SimpleNamespace(), data_access)
+
+    def test_the_download_is_delegated_to_the_provider(self) -> None:
+        data_access = MagicMock()
+        written = ['/wks/PROJ-1/attachments/bug.png']
+        data_access.download_image_attachments.return_value = written
+
+        result = self._service(data_access).download_image_attachments(
+            'PROJ-1', '/wks/PROJ-1/attachments',
+        )
+
+        self.assertEqual(result, written)
+        data_access.download_image_attachments.assert_called_once_with(
+            'PROJ-1', '/wks/PROJ-1/attachments',
+        )
+
+    def test_a_ticket_with_no_images_is_an_empty_list(self) -> None:
+        data_access = MagicMock()
+        data_access.download_image_attachments.return_value = []
+
+        self.assertEqual(
+            self._service(data_access).download_image_attachments('PROJ-1', '/d'), [],
+        )
+
+
 class TaskStateServiceTests(unittest.TestCase):
     def test_open_state_falls_back_to_first_issue_state(self) -> None:
         # Line 71 isn't quite what coverage said missing — actually

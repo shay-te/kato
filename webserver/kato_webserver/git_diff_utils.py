@@ -402,6 +402,10 @@ def task_folder_file_tree(
     directories are skipped, and at most ``max_entries`` entries are examined,
     breadth-first — so the listing takes a bounded time however much a task
     folder accumulates.
+
+    Same node shape as ``tracked_file_tree``: names only, nested. The client
+    resolves a node against the tree's ``cwd`` (the task root) exactly as it
+    does for a clone, so a node here needs no absolute path of its own.
     """
     # Blank guard FIRST: ``Path('')`` is the current directory, so an empty
     # task root would happily walk whatever kato was started from and list
@@ -460,16 +464,11 @@ def task_folder_file_tree(
                 # generated content, which is where the minutes went.
                 if _looks_like_git_repo(entry) or _is_tooling_dir(entry):
                     continue
-                node = {
-                    'name': name, 'relativePath': name, 'path': str(entry),
-                    'children': [],
-                }
+                node: dict[str, Any] = {'name': name, 'children': []}
                 siblings.append(node)
                 pending.append((entry, node['children']))
                 continue
-            siblings.append({
-                'name': name, 'relativePath': name, 'path': str(entry),
-            })
+            siblings.append({'name': name})
     return _without_empty_dirs(top)
 
 
@@ -478,6 +477,14 @@ def tracked_file_tree(cwd: str) -> list[dict[str, Any]]:
 
     Uses ``git ls-files --cached --others --exclude-standard`` so the tree
     matches what a developer sees in their editor.
+
+    Every node is ``{'name': ...}`` plus ``'children'`` for a directory —
+    and nothing else. A node's path is its ancestors' names joined with
+    ``/``, which the client derives while it walks the tree. Each node used
+    to carry that path spelled out (``build/assets/help/default/index.md``
+    on the leaf, ``build/assets/help/default`` on its parent, and so on up):
+    on a 27-repository task those strings were over half of a 1.4 MB
+    payload that the Files pane downloaded on every poll.
     """
     out = run_git(
         cwd,
@@ -830,6 +837,10 @@ def _elide_oversized_file_diffs(diff_text: str, *, full_paths=()) -> str:
 
 
 def _paths_to_tree(paths: list[str]) -> list[dict[str, Any]]:
+    """Nest sorted repo-relative paths into ``{name, children?}`` nodes.
+
+    Names only — see ``tracked_file_tree`` for why no node carries its path.
+    """
     root: dict[str, dict[str, Any]] = {}
     for path in paths:
         parts = path.split('/')
@@ -837,12 +848,7 @@ def _paths_to_tree(paths: list[str]) -> list[dict[str, Any]]:
         for index, part in enumerate(parts):
             is_leaf = index == len(parts) - 1
             entry = cursor.setdefault(
-                part,
-                {
-                    'name': part,
-                    'path': '/'.join(parts[: index + 1]),
-                    'children': None if is_leaf else {},
-                },
+                part, {'children': None if is_leaf else {}},
             )
             if not is_leaf:
                 cursor = entry['children']
@@ -851,8 +857,8 @@ def _paths_to_tree(paths: list[str]) -> list[dict[str, Any]]:
 
 def _materialize_tree(level: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for entry in level.values():
-        item = {'name': entry['name'], 'path': entry['path']}
+    for name, entry in level.items():
+        item: dict[str, Any] = {'name': name}
         if entry['children'] is not None:
             item['children'] = _materialize_tree(entry['children'])
         items.append(item)

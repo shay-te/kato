@@ -83,11 +83,26 @@ class TaskFolderTreeTests(unittest.TestCase):
         (self.root / 'empty').mkdir()
         self.assertNotIn('empty', self._names([str(self.clone)]))
 
-    def test_every_node_carries_an_absolute_path_the_reader_can_open(self) -> None:
+    def test_every_node_names_a_file_the_reader_can_open(self) -> None:
+        # A node is ``{name, children?}`` and nothing more — the reader
+        # resolves it against the tree's own root, exactly as it does for a
+        # repo clone. What this pins is that the names it would join really do
+        # land on something that exists.
         for node in task_folder_file_tree(str(self.root), [str(self.clone)]):
             with self.subTest(node=node['name']):
-                self.assertTrue(os.path.isabs(node['path']))
-                self.assertTrue(os.path.exists(node['path']))
+                self.assertNotIn('path', node)
+                self.assertTrue(os.path.exists(self.root / node['name']))
+
+    def test_a_node_carries_only_its_name_and_children(self) -> None:
+        # Spelling each node's path out again was over half the payload on a
+        # many-repo task, re-sent every poll to say what the nesting says.
+        scratch = self.root / 'scratch'
+        scratch.mkdir()
+        (scratch / 'note.txt').write_text('x', encoding='utf-8')
+        nodes = task_folder_file_tree(str(self.root), [str(self.clone)])
+        folder = next(n for n in nodes if n['name'] == 'scratch')
+        self.assertEqual(set(folder), {'name', 'children'})
+        self.assertEqual(folder['children'], [{'name': 'note.txt'}])
 
     def test_a_git_repo_in_the_task_folder_is_not_unfolded(self) -> None:
         # A clone the caller did not list, or a bare mirror sitting beside

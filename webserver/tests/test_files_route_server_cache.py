@@ -12,6 +12,8 @@ like every other file here, so this one runs on its own.
 """
 from __future__ import annotations
 
+import gzip
+import json
 import os
 import tempfile
 import unittest
@@ -20,6 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from kato_webserver.app import create_app
+from kato_webserver.file_tree_cache import CACHE_HIT_HEADER, CACHE_HIT_VALUE
 
 TASK_ID = 'CACHE-TEST-1'
 
@@ -70,7 +73,9 @@ class _WorkspaceManager:
         return None
 
 
-class FilesRouteServerCacheTests(unittest.TestCase):
+class _FilesRouteHarness(unittest.TestCase):
+    """Fakes and helpers shared by the route's test classes; no tests itself."""
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -106,8 +111,15 @@ class FilesRouteServerCacheTests(unittest.TestCase):
             file_tree_cache_dir=str(cache_dir) if cache_dir else '',
         )
 
+    def _fetch(self, app, query: str = '', **kwargs):
+        response = app.test_client().get(
+            f'/api/sessions/{TASK_ID}/files{query}', **kwargs,
+        )
+        self.assertIn(response.status_code, (200, 304))
+        return response
+
     def _get(self, app, query: str = ''):
-        response = app.test_client().get(f'/api/sessions/{TASK_ID}/files{query}')
+        response = self._fetch(app, query)
         self.assertEqual(response.status_code, 200)
         return response.get_json()
 
@@ -115,20 +127,28 @@ class FilesRouteServerCacheTests(unittest.TestCase):
     def _names(payload):
         return [entry['name'] for entry in payload['trees'][0]['tree']]
 
+    @staticmethod
+    def _served_from_cache(response) -> bool:
+        return response.headers.get(CACHE_HIT_HEADER) == CACHE_HIT_VALUE
+
+
+class FilesRouteServerCacheTests(_FilesRouteHarness):
+    """The server's copy of the tree: stored, served, refreshed, forgotten."""
+
     def test_with_nothing_cached_a_cached_request_builds_like_any_read(self) -> None:
-        payload = self._get(self._app(), '?cached=1')
+        response = self._fetch(self._app(), '?cached=1')
         self.assertEqual(self.builds, 1)
-        self.assertNotIn('cache_hit', payload)
-        self.assertEqual(self._names(payload), ['README.md'])
+        self.assertFalse(self._served_from_cache(response))
+        self.assertEqual(self._names(response.get_json()), ['README.md'])
 
     def test_a_cached_request_is_answered_without_any_git_work(self) -> None:
         app = self._app()
         self._get(app)
         self.files = ['README.md', 'added-since.py']
-        payload = self._get(app, '?cached=1')
+        response = self._fetch(app, '?cached=1')
         self.assertEqual(self.builds, 1)
-        self.assertTrue(payload['cache_hit'])
-        self.assertEqual(self._names(payload), ['README.md'])
+        self.assertTrue(self._served_from_cache(response))
+        self.assertEqual(self._names(response.get_json()), ['README.md'])
 
     def test_a_plain_request_always_builds_fresh_and_refreshes_the_copy(self) -> None:
         app = self._app()
@@ -142,8 +162,8 @@ class FilesRouteServerCacheTests(unittest.TestCase):
 
     def test_the_copy_survives_a_restart_when_a_directory_is_configured(self) -> None:
         self._get(self._app(cache_dir=self.cache_dir))
-        payload = self._get(self._app(cache_dir=self.cache_dir), '?cached=1')
-        self.assertTrue(payload['cache_hit'])
+        response = self._fetch(self._app(cache_dir=self.cache_dir), '?cached=1')
+        self.assertTrue(self._served_from_cache(response))
         self.assertEqual(self.builds, 1)
 
     def test_an_app_without_a_directory_writes_nothing_to_disk(self) -> None:
@@ -169,9 +189,93 @@ class FilesRouteServerCacheTests(unittest.TestCase):
         response = app.test_client().delete(f'/api/sessions/{TASK_ID}/workspace')
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(list(self.cache_dir.glob('*.json')), [])
-        payload = self._get(app, '?cached=1')
-        self.assertNotIn('cache_hit', payload)
+        rebuilt = self._fetch(app, '?cached=1')
+        self.assertFalse(self._served_from_cache(rebuilt))
         self.assertEqual(self.builds, 2)
+
+
+class FilesRouteUnchangedTreeTests(_FilesRouteHarness):
+    """An unchanged tree is confirmed, not re-sent.
+
+    The Files pane re-reads the tree every few seconds while a task is open,
+    and it is almost always byte-identical to the last one — the agent edits a
+    handful of files, it does not reshape the repository. On a 27-repository
+    task that was 1.4 MB downloaded and parsed every five seconds to be thrown
+    away as unchanged.
+    """
+
+    def _etag(self, app) -> str:
+        return self._fetch(app).headers['ETag']
+
+    def test_a_tree_is_served_with_an_etag(self) -> None:
+        self.assertTrue(self._fetch(self._app()).headers.get('ETag'))
+
+    def test_the_same_tree_keeps_the_same_etag(self) -> None:
+        app = self._app()
+        first = self._etag(app)
+        rebuilt = self._etag(app)
+        self.assertEqual(first, rebuilt)
+
+    def test_a_changed_tree_gets_a_new_etag(self) -> None:
+        app = self._app()
+        before = self._etag(app)
+        self.files = ['README.md', 'added-since.py']
+        self.assertNotEqual(before, self._etag(app))
+
+    def test_an_unchanged_tree_comes_back_as_an_empty_304(self) -> None:
+        app = self._app()
+        etag = self._etag(app)
+        response = self._fetch(app, headers={'If-None-Match': etag})
+        self.assertEqual(response.status_code, 304)
+        self.assertEqual(response.get_data(), b'')
+
+    def test_a_304_still_rebuilds_so_a_real_change_is_never_missed(self) -> None:
+        # The tag is compared against a FRESH build, never used to skip one:
+        # the cache must not become a second opinion on what is current.
+        app = self._app()
+        etag = self._etag(app)
+        self.files = ['README.md', 'added-since.py']
+        response = self._fetch(app, headers={'If-None-Match': etag})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            self._names(response.get_json()), ['README.md', 'added-since.py'],
+        )
+
+    def test_a_cached_answer_is_taggable_too(self) -> None:
+        # The cached body is byte-identical to the fresh build of the same
+        # tree, so the follow-up request the client makes right after painting
+        # it comes back as a 304 — the point of not marking the body itself.
+        app = self._app()
+        self._get(app)
+        cached = self._fetch(app, '?cached=1')
+        self.assertTrue(self._served_from_cache(cached))
+        follow_up = self._fetch(app, headers={'If-None-Match': cached.headers['ETag']})
+        self.assertEqual(follow_up.status_code, 304)
+
+    def test_a_stale_tag_is_answered_with_the_whole_tree(self) -> None:
+        response = self._fetch(
+            self._app(), headers={'If-None-Match': '"not-the-current-tree"'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self._names(response.get_json()), ['README.md'])
+
+    def test_a_client_that_accepts_gzip_is_sent_gzip(self) -> None:
+        response = self._fetch(
+            self._app(), headers={'Accept-Encoding': 'gzip'},
+        )
+        self.assertEqual(response.headers.get('Content-Encoding'), 'gzip')
+        self.assertEqual(response.headers.get('Vary'), 'Accept-Encoding')
+        # werkzeug's test client leaves the body encoded; it must decompress to
+        # exactly the tree, or the browser shows nothing at all.
+        self.assertEqual(
+            self._names(json.loads(gzip.decompress(response.get_data()))),
+            ['README.md'],
+        )
+
+    def test_a_client_that_does_not_accept_gzip_gets_plain_json(self) -> None:
+        response = self._fetch(self._app(), headers={'Accept-Encoding': 'identity'})
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+        self.assertEqual(self._names(response.get_json()), ['README.md'])
 
 
 if __name__ == '__main__':

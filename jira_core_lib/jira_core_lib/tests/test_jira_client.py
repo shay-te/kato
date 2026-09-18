@@ -653,6 +653,70 @@ class JiraClientAttachmentTests(unittest.TestCase):
 
         self.assertIn('image attachment', lines[0])
 
+
+class ImageAttachmentSourceTests(unittest.TestCase):
+    """Where the downloadable screenshots come from.
+
+    Jira's ``content`` URL is absolute but still needs this client's
+    credentials, so the agent could never fetch one itself.
+    """
+
+    @staticmethod
+    def _issue_response(attachments):
+        return mock_response(
+            json_data={'fields': {JiraIssueFields.ATTACHMENT: attachments}},
+        )
+
+    def test_lists_only_image_attachments(self) -> None:
+        client = _make_client()
+        response = self._issue_response([
+            {
+                JiraAttachmentFields.FILENAME: 'shot.png',
+                JiraAttachmentFields.MIME_TYPE: 'image/png',
+                JiraAttachmentFields.CONTENT: 'https://jira.example/file/1',
+            },
+            {
+                JiraAttachmentFields.FILENAME: 'notes.txt',
+                JiraAttachmentFields.MIME_TYPE: 'text/plain',
+                JiraAttachmentFields.CONTENT: 'https://jira.example/file/2',
+            },
+        ])
+
+        with patch.object(client, '_get', return_value=response):
+            sources = client._image_attachment_sources('PROJ-1')
+
+        self.assertEqual(sources, [
+            {'name': 'shot.png', 'url': 'https://jira.example/file/1'},
+        ])
+
+    def test_refetches_the_issue_by_id(self) -> None:
+        # Re-fetched rather than reused from the queue listing: the download
+        # happens when the task is picked up, and the ticket may have gained a
+        # screenshot since it was listed.
+        client = _make_client()
+        with patch.object(
+            client, '_get', return_value=self._issue_response([]),
+        ) as mock_get:
+            client._image_attachment_sources('PROJ-7')
+
+        mock_get.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-7',
+            params={'fields': JiraIssueFields.ATTACHMENT},
+        )
+
+    def test_an_issue_with_no_attachments_is_empty(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=self._issue_response([])):
+            self.assertEqual(client._image_attachment_sources('PROJ-1'), [])
+
+    def test_a_malformed_payload_is_empty_not_a_crash(self) -> None:
+        client = _make_client()
+        for payload in ({}, {'fields': None}, {'fields': {}}):
+            with patch.object(
+                client, '_get', return_value=mock_response(json_data=payload),
+            ):
+                self.assertEqual(client._image_attachment_sources('PROJ-1'), [])
+
     def test_download_returns_empty_for_blank_url(self) -> None:
         client = _make_client()
         result = client._download_text_attachment(

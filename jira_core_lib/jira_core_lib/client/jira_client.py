@@ -389,6 +389,38 @@ class JiraClient(IssueClientBase):
             lines.append(f'- {filename} ({size_text}) {content_url}'.strip())
         return lines
 
+    def _image_attachment_sources(self, issue_id: str) -> list[dict[str, str]]:
+        """``[{'name', 'url'}]`` for the issue's image attachments.
+
+        Re-fetched by id rather than carried from the search response: the
+        download happens once the task is actually picked up, long after the
+        queue was listed, and the ticket may have gained a screenshot since.
+
+        Jira's ``content`` URL is absolute but still needs this client's
+        credentials, so the agent could not fetch it even when the link looked
+        usable.
+        """
+        response = self._get_with_retry(
+            f'/rest/api/3/issue/{issue_id}',
+            params={'fields': JiraIssueFields.ATTACHMENT},
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        fields = payload.get('fields', {}) if isinstance(payload, dict) else {}
+        return [
+            {
+                'name': self._attachment_name(attachment),
+                'url': str(attachment.get(JiraAttachmentFields.CONTENT, '') or ''),
+            }
+            for attachment in self._issue_attachments(
+                fields if isinstance(fields, dict) else {}
+            )
+            if isinstance(attachment, dict)
+            and self._is_image_attachment_mime_type(
+                attachment.get(JiraAttachmentFields.MIME_TYPE)
+            )
+        ]
+
     def _read_text_attachment(self, attachment: dict[str, Any]) -> str | None:
         return self._download_text_attachment(
             attachment.get(JiraAttachmentFields.CONTENT),

@@ -10,6 +10,9 @@ from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    task_attachments_directory,
+)
 from tests.utils import build_task
 
 
@@ -261,3 +264,85 @@ class TaskPreflightServiceTests(unittest.TestCase):
         self.assertIs(failure_handler.call_args.args[0], self.task)
         self.assertIsInstance(failure_handler.call_args.args[1], RuntimeError)
         self.assertIs(failure_handler.call_args.args[2], self.prepared_task)
+
+
+class TaskPreflightAttachmentTests(unittest.TestCase):
+    """The ticket's screenshots are downloaded into the task folder.
+
+    Reported: "kato fails to pull images from YouTrack — we always need to
+    provide them manually." The tracker hands out an attachment as a URL
+    needing its own credentials (YouTrack's does not even carry a host), so
+    the agent was told a screenshot existed and given no way to open it.
+
+    This runs at preflight because that is the first moment the task HAS a
+    folder to put files in.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace_root = Path(self._tmp.name) / 'PROJ-1'
+        self.task = build_task()
+        self.repository = types.SimpleNamespace(
+            id='client',
+            local_path=str(self.workspace_root / 'client'),
+            destination_branch='main',
+        )
+        self.task_service = Mock()
+        self.task_service.download_image_attachments.return_value = []
+        repository_service = Mock()
+        repository_service.build_branch_name.return_value = 'feature/proj-1/client'
+        self.repository_service = repository_service
+
+    def _service(self, *, workspace_mode: bool = True) -> TaskPreflightService:
+        return TaskPreflightService(
+            task_model_access_validator=Mock(),
+            task_service=self.task_service,
+            repository_service=self.repository_service,
+            task_branch_push_validator=Mock(),
+            task_branch_publishability_validator=Mock(),
+            # Only workspace-clone mode gives the task a folder of its own.
+            workspace_provisioner=(
+                (lambda task, repositories: repositories) if workspace_mode else None
+            ),
+        )
+
+    def _prepare(self, *, workspace_mode: bool = True) -> PreparedTaskContext:
+        return self._service(
+            workspace_mode=workspace_mode,
+        )._attach_task_repository_context(self.task, [self.repository])
+
+    def test_images_are_downloaded_into_the_tasks_attachments_folder(self) -> None:
+        self._prepare()
+
+        self.task_service.download_image_attachments.assert_called_once_with(
+            self.task.id, task_attachments_directory(str(self.workspace_root)),
+        )
+
+    def test_the_downloaded_paths_ride_on_the_prepared_context(self) -> None:
+        # This is what the agent's prompt names, so it must survive preflight.
+        written = [str(self.workspace_root / 'attachments' / 'bug.png')]
+        self.task_service.download_image_attachments.return_value = written
+
+        self.assertEqual(self._prepare().attachment_paths, written)
+
+    def test_a_ticket_with_no_images_prepares_normally(self) -> None:
+        self.assertEqual(self._prepare().attachment_paths, [])
+
+    def test_a_failing_download_never_costs_the_operator_the_task(self) -> None:
+        # An image the tracker will not serve is worth some lost context, not
+        # a task that refuses to start.
+        self.task_service.download_image_attachments.side_effect = RuntimeError('403')
+
+        prepared = self._prepare()
+
+        self.assertEqual(prepared.attachment_paths, [])
+        self.assertEqual(prepared.branch_name, 'feature/proj-1/client')
+
+    def test_without_a_task_folder_the_tracker_is_never_asked(self) -> None:
+        # No workspace-clone mode means no folder of the task's own; writing
+        # into a shared checkout would put files inside a repository.
+        prepared = self._prepare(workspace_mode=False)
+
+        self.assertEqual(prepared.attachment_paths, [])
+        self.task_service.download_image_attachments.assert_not_called()

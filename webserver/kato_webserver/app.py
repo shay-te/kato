@@ -103,7 +103,11 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_STATUS_DISABLED,
     SSE_EVENT_STATUS_ENTRY,
 )
-from kato_webserver.file_tree_cache import FileTreeCache
+from kato_webserver.file_tree_cache import (
+    CACHE_HIT_HEADER,
+    CACHE_HIT_VALUE,
+    FileTreeCache,
+)
 from kato_webserver.git_diff_utils import (
     blob_size_at_ref,
     changed_paths,
@@ -2939,9 +2943,9 @@ def _register_http_routes(app: Flask) -> None:
         # once and follows up with a plain request (see file_tree_cache.py).
         # With no copy to give, it falls through to a build like any read.
         if _truthy_arg(request.args.get('cached')):
-            body = cache.cached_body(task_id)
-            if body is not None:
-                return app.response_class(body, mimetype='application/json')
+            entry = cache.cached(task_id)
+            if entry is not None:
+                return _file_tree_response(entry, cache_hit=True)
         agent_service = app.config.get('AGENT_SERVICE')
         # A merge the agent has just resolved is still uncommitted (the agent
         # can't run git), so the tree would show every merged-in file as a
@@ -2955,9 +2959,41 @@ def _register_http_routes(app: Flask) -> None:
             agent_service,
             task_id,
         )
-        return app.response_class(
-            cache.store(task_id, payload), mimetype='application/json',
+        return _file_tree_response(cache.store(task_id, payload))
+
+    def _file_tree_response(entry, *, cache_hit: bool = False):
+        """Serve one cached tree: 304, gzipped, or plain, in that order.
+
+        The tree is re-read every five seconds while a task is open and is
+        almost always byte-identical to the last one — the agent edits a
+        handful of files, it does not reshape the repository. So the answer
+        the client already holds is confirmed with an empty 304 rather than
+        re-sent, and when it does have to be sent it goes compressed (a tree
+        is mostly repeated directory names, so it shrinks about sevenfold).
+        Both forms are computed once when the tree changes, not per request.
+        """
+        headers = {'Cache-Control': 'no-cache'}
+        if cache_hit:
+            headers[CACHE_HIT_HEADER] = CACHE_HIT_VALUE
+        # ``If-None-Match`` is the client echoing the ETag of the tree it is
+        # already showing.
+        if entry.etag in request.if_none_match:
+            response = app.response_class(status=304, headers=headers)
+            response.set_etag(entry.etag)
+            return response
+        body, encoding = entry.body, ''
+        if 'gzip' in request.accept_encodings:
+            body, encoding = entry.gzipped, 'gzip'
+        if encoding:
+            headers['Content-Encoding'] = encoding
+            # The body varies with the request's Accept-Encoding, so a cache
+            # between here and the browser must key on it.
+            headers['Vary'] = 'Accept-Encoding'
+        response = app.response_class(
+            body, mimetype='application/json', headers=headers,
         )
+        response.set_etag(entry.etag)
+        return response
 
     @app.get('/api/sessions/<task_id>/diff')
     def get_session_diff(task_id: str):

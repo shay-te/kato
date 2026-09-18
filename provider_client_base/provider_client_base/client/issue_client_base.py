@@ -11,6 +11,7 @@ peer import — provider libs import it from ``provider_client_base`` only.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
@@ -27,6 +28,10 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
     mentions_include_identity,
 )
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
+from utils_core_lib.utils_core_lib.filename_utils import (
+    safe_attachment_name,
+    unique_file_path,
+)
 from utils_core_lib.utils_core_lib.text_utils import bool_from_text, normalized_text
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 
@@ -41,6 +46,15 @@ _TEXT_ATTACHMENT_MIME_TYPES = frozenset({
     'application/xml',
     'application/yaml',
 })
+
+#: Ceiling on ONE downloaded image attachment. Screenshots are the case this
+#: exists for; anything past this is not a screenshot, and the workspace is on
+#: the operator's own disk.
+MAX_IMAGE_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+#: Ceiling on how many images one issue contributes. A ticket used as a photo
+#: dump must not turn a task pickup into a long download.
+MAX_IMAGE_ATTACHMENTS = 20
 
 
 class IssueClientBase(RetryingClientBase):
@@ -479,6 +493,116 @@ class IssueClientBase(RetryingClientBase):
         except Exception:
             self.logger.exception('failed to read %s %s', log_label, attachment_name)
             return None
+
+    # ----- image-attachment downloading (jira + youtrack) -----
+
+    def _image_attachment_sources(self, issue_id: str) -> list[dict[str, str]]:
+        """``[{'name', 'url'}]`` for the issue's IMAGE attachments.
+
+        Provider hook. The default is empty, so a provider that has not
+        implemented it simply downloads nothing rather than breaking.
+        """
+        return []
+
+    @classmethod
+    def _is_image_attachment_mime_type(cls, mime_type: object) -> bool:
+        # Case-folded: the media type is conventionally lower-case but is
+        # whatever the tracker stored, and a screenshot recorded as
+        # ``IMAGE/PNG`` is still a screenshot.
+        return normalized_text(mime_type).lower().startswith('image/')
+
+    def _download_binary_attachment(
+        self,
+        url: object,
+        *,
+        attachment_name: str,
+        max_bytes: int,
+        log_label: str = 'binary attachment',
+    ) -> bytes | None:
+        """The attachment's raw bytes, or ``None`` when it could not be read.
+
+        The text sibling above decodes to ``str``, which is exactly why an
+        image could not use it. Both go through ``_get_attachment_with_retry``,
+        so relative and absolute URLs and the provider's auth are already
+        handled.
+
+        Oversized attachments return ``None`` rather than a truncated file: a
+        half-written PNG is not an image, and silently handing one over is
+        worse than saying the download failed.
+        """
+        normalized_url = normalized_text(url)
+        if not normalized_url:
+            return None
+        try:
+            response = self._get_attachment_with_retry(normalized_url)
+            response.raise_for_status()
+            content = getattr(response, 'content', b'') or b''
+            if not content:
+                return None
+            if len(content) > max_bytes:
+                self.logger.warning(
+                    'skipping %s %s: %d bytes exceeds the %d-byte limit',
+                    log_label, attachment_name, len(content), max_bytes,
+                )
+                return None
+            return content
+        except Exception:
+            self.logger.exception('failed to read %s %s', log_label, attachment_name)
+            return None
+
+    def download_image_attachments(
+        self,
+        issue_id: str,
+        destination_dir: object,
+        *,
+        max_bytes: int = MAX_IMAGE_ATTACHMENT_BYTES,
+        max_images: int = MAX_IMAGE_ATTACHMENTS,
+    ) -> list[str]:
+        """Save the issue's image attachments into ``destination_dir``.
+
+        Returns the paths actually written, in issue order.
+
+        Issue trackers hand out image attachments as a URL the agent cannot
+        use: YouTrack's is host-less (``/api/files/bug.png``) and Jira's needs
+        the caller's credentials. Naming one in the prompt therefore told the
+        agent a screenshot existed while giving it no way to look — which is
+        why screenshots had to be re-supplied by hand.
+
+        Best-effort per image: one that fails to download is logged and
+        skipped, because a missing screenshot must not fail the task.
+        """
+        directory = Path(str(destination_dir or '')).expanduser()
+        if not str(destination_dir or '').strip():
+            return []
+        try:
+            sources = self._image_attachment_sources(issue_id) or []
+        except Exception:
+            self.logger.exception(
+                'failed to list image attachments for %s', issue_id,
+            )
+            return []
+        written: list[str] = []
+        for source in sources[:max(0, int(max_images))]:
+            if not isinstance(source, dict):
+                continue
+            name = safe_attachment_name(normalized_text(source.get('name')))
+            content = self._download_binary_attachment(
+                source.get('url'),
+                attachment_name=name,
+                max_bytes=max_bytes,
+                log_label=f'{self.provider_name} image attachment',
+            )
+            if not content:
+                continue
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                target = unique_file_path(directory, name)
+                target.write_bytes(content)
+            except OSError:
+                self.logger.exception('failed to save image attachment %s', name)
+                continue
+            written.append(str(target))
+        return written
 
     def _get_attachment_with_retry(self, url: str):
         parsed_url = urlparse(url)

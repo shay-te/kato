@@ -51,6 +51,16 @@ class TaskService(Service):
             states=states or self._configured_issue_states(),
         )
 
+    def download_image_attachments(self, issue_id: str, destination_dir) -> list[str]:
+        """Save the ticket's screenshots into ``destination_dir``.
+
+        Called once the task's workspace exists, because that is the first
+        moment there is anywhere to put them. Returns the paths written.
+        """
+        return self._task_data_access.download_image_attachments(
+            issue_id, destination_dir,
+        )
+
     def get_review_tasks(self, assignee: str | None = None) -> list[Task]:
         return self.get_assigned_tasks(
             assignee=assignee,

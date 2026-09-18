@@ -42,8 +42,11 @@ import FilesTab from './FilesTab.jsx';
 import { fetchFileTree, fetchDiff } from './api.js';
 
 beforeEach(() => {
-  // Serve the exact bytes the real Flask handler returned.
-  fetchFileTree.mockResolvedValue(fixture.files);
+  // Serve the exact bytes the real Flask handler returned, in the envelope the
+  // api layer hands the store (the tree plus its ETag — see api.js).
+  fetchFileTree.mockResolvedValue({
+    payload: fixture.files, etag: '"contract"', cacheHit: false,
+  });
   fetchDiff.mockResolvedValue(fixture.diff);
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
