@@ -108,6 +108,7 @@ from kato_webserver.file_tree_cache import (
     CACHE_HIT_VALUE,
     FileTreeCache,
 )
+from kato_webserver.http_payload import TaggedPayload, conditional_json_response
 from kato_webserver.git_diff_utils import (
     blob_size_at_ref,
     changed_paths,
@@ -1793,6 +1794,13 @@ def _register_http_routes(app: Flask) -> None:
         Always 200: ``{ exists, content, mtime }``. ``exists=false`` (empty
         content, ``mtime=0``) for a task with no plan yet, no workspace, or
         any read error — the UI treats all of those the same.
+
+        ``?known_mtime=`` is the client echoing the timestamp of the plan it
+        already holds. A match answers ``{exists, mtime, unchanged: True}``
+        and the file is never read: the plan is polled every five seconds and
+        changes only when the agent presents a new one, so re-sending it was
+        up to 33 KB a tick (measured) of text the pane already had. Same
+        pattern as the file route below.
         """
         from pathlib import Path
 
@@ -1812,8 +1820,12 @@ def _register_http_routes(app: Flask) -> None:
         try:
             if not plan_path.is_file():
                 return jsonify(empty)
-            content = plan_path.read_text(encoding='utf-8')
+            # Stat BEFORE reading: an unchanged plan costs no file read at all.
             mtime = plan_path.stat().st_mtime_ns
+            known_mtime = (request.args.get('known_mtime') or '').strip()
+            if known_mtime and known_mtime == str(mtime):
+                return jsonify({'exists': True, 'mtime': mtime, 'unchanged': True})
+            content = plan_path.read_text(encoding='utf-8')
         except (OSError, ValueError, UnicodeDecodeError):
             return jsonify(empty)
         return jsonify({'exists': True, 'content': content, 'mtime': mtime})
@@ -2962,38 +2974,27 @@ def _register_http_routes(app: Flask) -> None:
         return _file_tree_response(cache.store(task_id, payload))
 
     def _file_tree_response(entry, *, cache_hit: bool = False):
-        """Serve one cached tree: 304, gzipped, or plain, in that order.
+        """The tree: 304, gzipped, or plain (see ``http_payload``).
 
         The tree is re-read every five seconds while a task is open and is
         almost always byte-identical to the last one — the agent edits a
-        handful of files, it does not reshape the repository. So the answer
-        the client already holds is confirmed with an empty 304 rather than
-        re-sent, and when it does have to be sent it goes compressed (a tree
-        is mostly repeated directory names, so it shrinks about sevenfold).
-        Both forms are computed once when the tree changes, not per request.
+        handful of files, it does not reshape the repository.
         """
-        headers = {'Cache-Control': 'no-cache'}
-        if cache_hit:
-            headers[CACHE_HIT_HEADER] = CACHE_HIT_VALUE
-        # ``If-None-Match`` is the client echoing the ETag of the tree it is
-        # already showing.
-        if entry.etag in request.if_none_match:
-            response = app.response_class(status=304, headers=headers)
-            response.set_etag(entry.etag)
-            return response
-        body, encoding = entry.body, ''
-        if 'gzip' in request.accept_encodings:
-            body, encoding = entry.gzipped, 'gzip'
-        if encoding:
-            headers['Content-Encoding'] = encoding
-            # The body varies with the request's Accept-Encoding, so a cache
-            # between here and the browser must key on it.
-            headers['Vary'] = 'Accept-Encoding'
-        response = app.response_class(
-            body, mimetype='application/json', headers=headers,
+        return conditional_json_response(
+            app, request, entry,
+            headers=({CACHE_HIT_HEADER: CACHE_HIT_VALUE} if cache_hit else None),
         )
-        response.set_etag(entry.etag)
-        return response
+
+    def _diff_response(payload: dict):
+        """The task's diff, tagged exactly like the tree above.
+
+        The heaviest polled payload in the app by some way: a 27-repository
+        task measured 4.3 MB, rebuilt and re-sent every five seconds, and
+        almost always identical to what the pane was already showing.
+        """
+        return conditional_json_response(
+            app, request, TaggedPayload.from_payload(payload),
+        )
 
     @app.get('/api/sessions/<task_id>/diff')
     def get_session_diff(task_id: str):
@@ -3053,7 +3054,7 @@ def _register_http_routes(app: Flask) -> None:
             # No top-level copy of the first repo's diff: the client reads
             # ``diffs``, and that copy was half of every poll's bytes.
             if diffs:
-                return jsonify({
+                return _diff_response({
                     'repository_ids': [d['repo_id'] for d in diffs],
                     'diffs': diffs,
                     'workspace_status': workspace_status,
@@ -3081,7 +3082,7 @@ def _register_http_routes(app: Flask) -> None:
             # Same rationale as the Files endpoint above: prefer an
             # empty diff payload over a 404 so the Changes tab shows
             # "No repositories for this task." instead of an error.
-            return jsonify({
+            return _diff_response({
                 'repository_ids': [],
                 'diffs': [],
                 'workspace_status': workspace_status,
@@ -3090,7 +3091,7 @@ def _register_http_routes(app: Flask) -> None:
             '', cwd, task_id=task_id, agent_service=agent_service,
             full_paths=full_paths,
         )
-        return jsonify({
+        return _diff_response({
             'repository_ids': [],
             'diffs': [single],
             'workspace_status': workspace_status,
@@ -6646,6 +6647,26 @@ def _records_as_dicts(
     ]
 
 
+#: Record fields the tab list does NOT send. Nothing in the UI reads them, and
+#: this list is polled every five seconds per open browser.
+#:
+#: ``task_description`` is the whole ticket body — on a six-task workspace it
+#: measured 8.9 KB of a 13.6 KB response, two thirds of every poll, for text no
+#: surface displays (the tab strip and task palette show ``task_summary``; the
+#: agent gets the description server-side, never through this route).
+#:
+#: Dropped from the RESPONSE only. The field stays on the record and in
+#: ``to_dict``, which is what persists the workspace metadata on disk and is
+#: what the chat-resume and pull-request paths read.
+_TAB_LIST_OMITTED_FIELDS = ('task_description',)
+
+
+def _without_unread_tab_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    for field_name in _TAB_LIST_OMITTED_FIELDS:
+        payload.pop(field_name, None)
+    return payload
+
+
 def _session_record_to_dict(
     record,
     live_session_ids: set[str],
@@ -6664,7 +6685,7 @@ def _session_record_to_dict(
     # decision for that tool (auto-allow path will handle silently;
     # showing orange would be misleading).
     payload['pending_permission_tool_name'] = (pending_permission_tool_by_task or {}).get(task_id, '')
-    return payload
+    return _without_unread_tab_fields(payload)
 
 
 def _iter_live_sessions(session_manager):
@@ -6930,7 +6951,7 @@ def _workspace_record_to_dict(
         except Exception:
             has_pending = False
     payload['has_changes_pending'] = has_pending
-    return payload
+    return _without_unread_tab_fields(payload)
 
 
 def _record_to_dict(record) -> dict[str, Any]:

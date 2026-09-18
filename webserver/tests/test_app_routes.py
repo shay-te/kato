@@ -1558,6 +1558,35 @@ class PlanFileRouteTests(unittest.TestCase):
         body = app.test_client().get('/api/sessions/T-1/plan').get_json()
         self.assertEqual(body, {'exists': False, 'content': '', 'mtime': 0})
 
+    def test_a_matching_known_mtime_does_not_resend_the_plan(self):
+        # Polled every five seconds, but a plan only changes when the agent
+        # presents a new one — up to 33 KB a tick (measured) of text the pane
+        # already had.
+        client = self._client_with_plan('# Plan\n1. Do X')
+        first = client.get('/api/sessions/PROJ-1/plan').get_json()
+
+        body = client.get(
+            f'/api/sessions/PROJ-1/plan?known_mtime={first["mtime"]}',
+        ).get_json()
+
+        self.assertTrue(body['unchanged'])
+        self.assertTrue(body['exists'])
+        self.assertEqual(body['mtime'], first['mtime'])
+        self.assertNotIn('content', body)
+
+    def test_a_stale_known_mtime_returns_the_whole_plan(self):
+        body = self._client_with_plan('# Plan').get(
+            '/api/sessions/PROJ-1/plan?known_mtime=1').get_json()
+
+        self.assertEqual(body['content'], '# Plan')
+        self.assertNotIn('unchanged', body)
+
+    def test_a_blank_known_mtime_is_ignored(self):
+        body = self._client_with_plan('# Plan').get(
+            '/api/sessions/PROJ-1/plan?known_mtime=').get_json()
+
+        self.assertEqual(body['content'], '# Plan')
+
 
 class PlanModeRespawnTests(unittest.TestCase):
     """``_plan_mode_change_needs_respawn`` — the CLI bakes the mode at spawn."""

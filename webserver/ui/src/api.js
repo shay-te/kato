@@ -685,9 +685,16 @@ export function setSessionAgentMode(taskId, mode) {
 // ``{ exists, content, mtime }``; ``mtime`` lets the caller detect a NEW
 // plan (auto-open the centre pane only on a strictly-newer plan, never on
 // every poll). Always resolves — empty payload for no plan / no task.
-export function fetchSessionPlan(taskId) {
+// ``knownMtime``: the timestamp of the plan the caller already holds. The plan
+// is polled every five seconds but only changes when the agent presents a new
+// one, so a match comes back as ``{unchanged: true}`` with no content — up to
+// 33 KB a tick of text the pane already had.
+export function fetchSessionPlan(taskId, { knownMtime = 0 } = {}) {
   if (!taskId) { return Promise.resolve({ exists: false, content: '', mtime: 0 }); }
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/plan`)
+  const query = knownMtime
+    ? `?known_mtime=${encodeURIComponent(String(knownMtime))}`
+    : '';
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/plan${query}`)
     .catch(() => ({ exists: false, content: '', mtime: 0 }));
 }
 
@@ -722,30 +729,23 @@ export function forgetTaskWorkspace(taskId, { markDone = false } = {}) {
 // the caller knows to follow up with a fresh build.
 const TREE_CACHE_HEADER = 'X-Tree-Cache';
 
-// The task's file tree.
+// A GET whose answer the caller may already be holding.
 //
-// ``cached``: take the tree the server last built, immediately — for a first
-// load with nothing on screen. The default builds it fresh.
-//
-// ``signature``: the ETag of the tree the caller is ALREADY showing. The tree
-// is re-read every few seconds while a task is open and is almost always
+// ``signature`` is the ETag of what is on screen. The tree and the diff are
+// both re-read every few seconds while a task is open and are almost always
 // byte-identical — the agent edits a few files, it does not reshape the
-// repository — so the server confirms it with an empty 304 rather than
-// re-sending it. On a 27-repository task that is 1.4 MB per poll neither sent
-// nor parsed.
+// repository — so the server confirms them with an empty 304 instead of
+// re-sending. Measured on one 27-repository task: 1.4 MB of tree and 4.3 MB of
+// diff per poll, neither sent nor parsed.
 //
-// Returns ``{unchanged}`` for that 304, else ``{payload, etag, cacheHit}``.
-export async function fetchFileTree(taskId, { cached = false, signature = '' } = {}) {
-  const query = cached ? '?cached=1' : '';
-  const response = await fetch(
-    `/api/sessions/${encodeURIComponent(taskId)}/files${query}`,
-    {
-      cache: 'no-store',
-      ...(signature ? { headers: { 'If-None-Match': signature } } : {}),
-    },
-  );
+// Returns ``{unchanged}`` for a 304, else ``{payload, etag, headers}``.
+async function fetchConditionalJson(url, signature = '') {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    ...(signature ? { headers: { 'If-None-Match': signature } } : {}),
+  });
   if (response.status === 304) {
-    return { unchanged: true, etag: signature, cacheHit: false };
+    return { unchanged: true, etag: signature };
   }
   if (!response.ok) {
     throw new Error(await errorFromResponse(response));
@@ -755,7 +755,26 @@ export async function fetchFileTree(taskId, { cached = false, signature = '' } =
     // Absent if something between here and the server strips it; the caller
     // then falls back to comparing the payload itself.
     etag: response.headers.get('etag') || '',
-    cacheHit: !!response.headers.get(TREE_CACHE_HEADER),
+    headers: response.headers,
+  };
+}
+
+// The task's file tree.
+//
+// ``cached``: take the tree the server last built, immediately — for a first
+// load with nothing on screen. The default builds it fresh.
+//
+// Returns ``{unchanged}`` or ``{payload, etag, cacheHit}``.
+export async function fetchFileTree(taskId, { cached = false, signature = '' } = {}) {
+  const query = cached ? '?cached=1' : '';
+  const result = await fetchConditionalJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/files${query}`, signature,
+  );
+  if (result.unchanged) { return { ...result, cacheHit: false }; }
+  return {
+    payload: result.payload,
+    etag: result.etag,
+    cacheHit: !!result.headers.get(TREE_CACHE_HEADER),
   };
 }
 
@@ -833,8 +852,13 @@ export async function fetchBaseFileContent(
 // ``repoId`` option here that built ``?repo_id=`` — a name the server has
 // never read — from a call site that never passed it. The real per-repo scope
 // is ``?repo``, used by fetchFullFileDiff below.)
-export function fetchDiff(taskId) {
-  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/diff`);
+// ``signature`` is the ETag of the changeset already on screen — the heaviest
+// polled payload in the app, so a 304 here is the single biggest saving.
+// Returns ``{unchanged}`` or ``{payload, etag}``.
+export function fetchDiff(taskId, { signature = '' } = {}) {
+  return fetchConditionalJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/diff`, signature,
+  );
 }
 
 // Sessions the operator could adopt, for the backend whose tab they are in.

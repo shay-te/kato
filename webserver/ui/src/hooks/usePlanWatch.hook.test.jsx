@@ -75,4 +75,47 @@ describe('usePlanWatch', () => {
     await act(async () => { await Promise.resolve(); });
     expect(fetchSessionPlan).not.toHaveBeenCalled();
   });
+
+  test('offers the held plan timestamp so an unchanged plan is not re-sent', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchSessionPlan.mockResolvedValue(
+        { exists: true, content: '# Plan', mtime: 10 });
+      renderHook(() => usePlanWatch('T1', () => {}));
+
+      // Nothing held yet on the first look.
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(fetchSessionPlan).toHaveBeenLastCalledWith('T1', { knownMtime: 0 });
+
+      // The next poll offers what is on screen, so the server can answer
+      // "still that one" instead of re-sending the whole plan.
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(fetchSessionPlan).toHaveBeenLastCalledWith('T1', { knownMtime: 10 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('an unchanged answer keeps the plan already on screen', async () => {
+    vi.useFakeTimers();
+    try {
+      const onFresh = vi.fn();
+      fetchSessionPlan
+        .mockResolvedValueOnce({ exists: true, content: '# Plan', mtime: 10 })
+        .mockResolvedValue({ exists: true, mtime: 10, unchanged: true });
+      const { result } = renderHook(() => usePlanWatch('T1', onFresh));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(result.current.content).toBe('# Plan');
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+
+      // No content came back, so the pane keeps what it has — and nothing
+      // advanced, so the centre pane must not be yanked open either.
+      expect(result.current.content).toBe('# Plan');
+      expect(result.current.available).toBe(true);
+      expect(onFresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

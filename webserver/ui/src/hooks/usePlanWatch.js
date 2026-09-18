@@ -21,12 +21,28 @@ export function usePlanWatch(taskId, onFreshPlan) {
   // Per-task baseline mtime: ``{ [taskId]: mtime }``. ``undefined`` = not
   // yet observed this session.
   const seenRef = useRef({});
+  // Per-task mtime of the plan CONTENT currently held, so the next poll can
+  // ask "still this one?" instead of downloading it again. Distinct from
+  // ``seenRef``, which is the auto-open baseline and only ever advances on a
+  // genuinely fresh plan.
+  const heldRef = useRef({});
   const onFreshRef = useRef(onFreshPlan);
   onFreshRef.current = onFreshPlan;
 
   usePolling(async () => {
-    const res = await fetchSessionPlan(taskId);
+    // Offer the timestamp of the plan we already hold: an unchanged plan comes
+    // back with no content (and is not even read off disk), instead of
+    // re-sending text the pane is already showing every five seconds.
+    const res = await fetchSessionPlan(taskId, {
+      knownMtime: heldRef.current[taskId] || 0,
+    });
     const mtime = Number(res?.mtime || 0);
+    if (res?.unchanged) {
+      // Same plan we hold — keep it, and do not re-run the auto-open rule
+      // (nothing advanced, so there is nothing fresh to open).
+      return;
+    }
+    heldRef.current[taskId] = mtime;
     const content = String(res?.content || '');
     const exists = !!res?.exists;
     setPlan({ taskId, content, exists });

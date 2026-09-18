@@ -47,7 +47,7 @@ beforeEach(() => {
   fetchFileTree.mockResolvedValue({
     payload: fixture.files, etag: '"contract"', cacheHit: false,
   });
-  fetchDiff.mockResolvedValue(fixture.diff);
+  fetchDiff.mockResolvedValue({ payload: fixture.diff, etag: '"contract-diff"' });
   Object.defineProperty(navigator, 'clipboard', {
     value: { writeText: vi.fn().mockResolvedValue(undefined) },
     configurable: true,

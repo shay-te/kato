@@ -38,16 +38,14 @@ for.
 
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 import logging
 import re
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
 from pathlib import Path
 
+from kato_webserver.http_payload import TaggedPayload, serialize_payload
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 
 #: Response header set (to ``hit``) on a tree served from the cache, so the
@@ -61,41 +59,7 @@ CACHE_HIT_VALUE = 'hit'
 #: tasks; an older one is still answered from disk.
 DEFAULT_MAX_IN_MEMORY = 16
 
-#: Fast rather than smallest: level 6 halves the time for a few percent more
-#: bytes, and this runs on the request path whenever a tree changes.
-_GZIP_LEVEL = 4
-
 _UNSAFE_FILENAME_CHARS = re.compile(r'[^A-Za-z0-9._-]')
-
-
-def serialize_payload(payload: dict) -> bytes:
-    """Compact JSON with sorted keys.
-
-    Sorted so a tree restored from disk serializes byte-for-byte like the fresh
-    build of the same tree: the ETag is a hash of these bytes, and a key-order
-    difference would make an unchanged tree look new to the client.
-    """
-    return json.dumps(
-        payload, separators=(',', ':'), sort_keys=True, ensure_ascii=False,
-    ).encode('utf-8')
-
-
-@dataclass(frozen=True)
-class CachedTree:
-    """One task's last-built tree in every form the route serves."""
-
-    body: bytes
-    #: Unquoted, as werkzeug's ``If-None-Match`` parsing hands it back.
-    etag: str
-    gzipped: bytes
-
-    @classmethod
-    def from_body(cls, body: bytes) -> CachedTree:
-        return cls(
-            body=body,
-            etag=hashlib.sha1(body).hexdigest(),
-            gzipped=gzip.compress(body, compresslevel=_GZIP_LEVEL),
-        )
 
 
 class FileTreeCache:
@@ -110,22 +74,22 @@ class FileTreeCache:
     ) -> None:
         self._directory = Path(directory).expanduser() if directory else None
         self._max_in_memory = max(1, int(max_in_memory))
-        self._entries: OrderedDict[str, CachedTree] = OrderedDict()
+        self._entries: OrderedDict[str, TaggedPayload] = OrderedDict()
         self._lock = threading.Lock()
         self._logger = logger or logging.getLogger(__name__)
 
-    def cached(self, task_id: str) -> CachedTree | None:
+    def cached(self, task_id: str) -> TaggedPayload | None:
         """The last tree stored for ``task_id``, or ``None``."""
         entry = self._from_memory(task_id)
         if entry is None:
             body = self._from_disk(task_id)
             if body is None:
                 return None
-            entry = CachedTree.from_body(body)
+            entry = TaggedPayload.from_body(body)
             self._keep(task_id, entry)
         return entry
 
-    def store(self, task_id: str, payload: dict) -> CachedTree:
+    def store(self, task_id: str, payload: dict) -> TaggedPayload:
         """Record a freshly built payload; return it in its servable forms."""
         body = serialize_payload(payload)
         previous = self._from_memory(task_id)
@@ -133,7 +97,7 @@ class FileTreeCache:
         # and rewriting identical megabytes each time would be pure churn.
         if previous is not None and previous.body == body:
             return previous
-        entry = CachedTree.from_body(body)
+        entry = TaggedPayload.from_body(body)
         self._keep(task_id, entry)
         self._to_disk(task_id, payload)
         return entry
@@ -150,14 +114,14 @@ class FileTreeCache:
         except OSError as exc:
             self._logger.warning('could not remove cached file tree %s: %s', path, exc)
 
-    def _from_memory(self, task_id: str) -> CachedTree | None:
+    def _from_memory(self, task_id: str) -> TaggedPayload | None:
         with self._lock:
             entry = self._entries.get(task_id)
             if entry is not None:
                 self._entries.move_to_end(task_id)
             return entry
 
-    def _keep(self, task_id: str, entry: CachedTree) -> None:
+    def _keep(self, task_id: str, entry: TaggedPayload) -> None:
         with self._lock:
             self._entries[task_id] = entry
             self._entries.move_to_end(task_id)

@@ -144,6 +144,27 @@ class WebserverAppTests(unittest.TestCase):
         self.assertEqual(records[0]['task_id'], 'PROJ-1')
         self.assertEqual(records[0][AGENT_SESSION_ID], 'abc')
 
+    def test_the_tab_list_omits_the_ticket_description(self):
+        """The tab list carries no ticket body.
+
+        Nothing in the UI reads it — the tab strip and task palette show
+        ``task_summary``, and the agent gets the description server-side — yet
+        it was two thirds of a payload every open browser polls every five
+        seconds (8.9 KB of 13.6 KB measured on a six-task workspace).
+        """
+        manager = _FakeManager(records=[_FakeRecord(
+            task_id='PROJ-9', task_summary='short summary',
+            task_description='the whole ticket body ' * 200,
+        )])
+
+        payload = create_app(
+            session_manager=manager,
+        ).test_client().get('/api/sessions').get_json()
+
+        self.assertNotIn('task_description', payload[0])
+        # The summary is what every surface actually displays.
+        self.assertEqual(payload[0]['task_summary'], 'short summary')
+
     def test_session_detail_endpoint_includes_recent_events_when_session_alive(self):
         live_session = MagicMock()
         live_session.is_alive = True

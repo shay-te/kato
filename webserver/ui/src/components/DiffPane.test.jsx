@@ -59,6 +59,12 @@ vi.mock('../contexts/ChatComposerContext.jsx', () => ({
 
 import DiffPane, { diffAnchorKey } from './DiffPane.jsx';
 import { fetchDiff, fetchTaskComments } from '../api.js';
+
+// ``fetchDiff`` answers with the changeset plus the ETag the server tagged it
+// with (see api.js), so the store can ask "still this one?" on the next poll
+// rather than downloading the whole changeset again. An empty tag means "fall
+// back to comparing the payload itself", which is what these tests want.
+const mockDiff = (payload) => fetchDiff.mockResolvedValue({ payload, etag: '' });
 import { parseRepoDiffs } from '../diffModel.js';
 
 
@@ -117,7 +123,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('renders the selected file and nothing else', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     render(<DiffPane openFile={_open()} />);
     const files = await screen.findAllByTestId('diff-file');
@@ -127,11 +133,13 @@ describe('DiffPane — renders ONLY the selected file', () => {
     expect(files[0].getAttribute('data-path')).toBe('src/App.jsx');
     expect(files[0].getAttribute('data-repo')).toBe('client');
     expect(files[0].getAttribute('data-initially-expanded')).toBe('true');
-    expect(fetchDiff).toHaveBeenCalledWith('T1');  // no repoId filter
+    // No repoId filter. The second argument carries the ETag of whatever is
+    // already on screen — empty on a first load.
+    expect(fetchDiff).toHaveBeenCalledWith('T1', { signature: '' });
   });
 
   test('selecting a file in another repo swaps the rendered diff', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const { rerender } = render(<DiffPane openFile={_open()} />);
     await screen.findByTestId('diff-file');
@@ -145,7 +153,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('a stale repoId still finds the file by path alone', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     render(
       <DiffPane openFile={_open({ relativePath: 'api/auth.py', repoId: 'gone' })} />,
@@ -156,7 +164,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('refetches the diff when the workspace version changes', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const { rerender } = render(
       <DiffPane openFile={_open()} workspaceVersion={1} />,
@@ -172,7 +180,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
 
   test('does not reparse unchanged diff payloads on workspace refresh', async () => {
     const payload = { diffs: [] };
-    fetchDiff.mockResolvedValue(payload);
+    mockDiff(payload);
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const { rerender } = render(
       <DiffPane openFile={_open()} workspaceVersion={1} />,
@@ -191,7 +199,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // Comments now come from the shared store, which fetches the whole
     // task once (no per-repo arg) and each pane filters client-side. A
     // same-path comment in ANOTHER repo must not leak onto this file.
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
       { id: 'b1', file_path: 'api/auth.py', repo_id: 'backend' },
@@ -210,7 +218,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('the open request token reaches the rendered diff file', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     render(
       <DiffPane
@@ -230,7 +238,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // card remounts) — without an explicit reset, file B opened after
     // reading deep into file A lands mid-file, and the browser's clamp
     // scroll event persists A's leftover offset into B's remembered view.
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const onViewStateChange = vi.fn();
     const { container, rerender } = render(
@@ -261,7 +269,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // effect and its instant scrollTop=0 ABORTED the in-flight smooth
     // scroll — a comment-badge click on a same-repo file landed at the
     // top of the file instead of on the thread.
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     fetchTaskComments.mockResolvedValue({
       ok: true, body: { comments: [{ id: 'c1', file_path: 'src/new.js' }] },
@@ -292,7 +300,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('mount with a saved scroll offset is NOT reset (tab-return restore)', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const onViewStateChange = vi.fn();
     const { container } = render(
@@ -323,7 +331,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
         files: [{ type: 'modify', newPath: 'src/shared.js', oldPath: 'src/shared.js', hunks: [] }],
       },
     ];
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(repos);
     // Only repo 'client' has a thread on src/shared.js; repo 'backend'
     // has none. The store holds both — the pane re-filters by repo.
@@ -350,7 +358,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('restores saved diff scroll position', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const { container } = render(
       <DiffPane
@@ -368,7 +376,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('reports diff scroll position changes', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const onViewStateChange = vi.fn();
     const { container } = render(
@@ -382,7 +390,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('focusComment scrolls to the file\'s first comment thread', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     fetchTaskComments.mockResolvedValue({ ok: true, body: { comments: [
       { id: 'c1', file_path: 'api/auth.py', repo_id: 'backend' },
@@ -412,7 +420,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
     // request, not on every comments refresh.
     const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     // Fresh array per call so a refetch changes state.repoDiffs identity
     // and the comments effect actually re-runs (a real poll).
     parseRepoDiffs.mockImplementation(() => _repoDiffs());
@@ -449,7 +457,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('conflicted file gets the conflicted flag', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     render(
       <DiffPane openFile={_open({ relativePath: 'api/auth.py', repoId: 'backend' })} />,
@@ -459,7 +467,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('passes file-tree focus requests from the file header to the parent', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const onFocusFileInTree = vi.fn();
     render(
@@ -477,7 +485,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('comment mutations ask the parent to refresh tree comment badges', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     const onCommentsChanged = vi.fn();
     render(
@@ -489,7 +497,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
   });
 
   test('empty changeset → "No changes on this task branch."', async () => {
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue([]);
     render(<DiffPane openFile={_open()} />);
     await waitFor(() => {
@@ -500,7 +508,7 @@ describe('DiffPane — renders ONLY the selected file', () => {
 
   test('selected file missing from a non-empty changeset → per-file message', async () => {
     // E.g. Claude reverted the file between the click and the refresh.
-    fetchDiff.mockResolvedValue({ diffs: [] });
+    mockDiff({ diffs: [] });
     parseRepoDiffs.mockReturnValue(_repoDiffs());
     render(<DiffPane openFile={_open({ relativePath: 'gone.js', repoId: 'client' })} />);
     await waitFor(() => {
