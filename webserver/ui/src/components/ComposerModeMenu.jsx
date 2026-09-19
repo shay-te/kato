@@ -29,14 +29,10 @@ export default function ComposerModeMenu({
   supportsWorkflows = false,
   planAvailable = false,
   onOpenPlan,
-  // The ticket tag holding the task in its mode ('' when none). The server
-  // decides the mode while held; the picker says why, and any other pick is
-  // re-checked against the ticket before it is accepted.
+  // The ticket tag that started the task in its mode ('' when none). It only
+  // sets the STARTING mode: any other pick is accepted and the hold yields.
   heldBy = '',
-  // Drop that hold from HERE. Wired, the held note offers it as an action, so
-  // leaving Plan no longer means opening the tracker to delete a tag by hand.
-  // It takes the tag OFF the ticket — see the release route for why a
-  // local-only unlock would be undone by the next scan.
+  // Take that tag OFF the ticket from HERE, without opening the tracker.
   onReleaseHold,
   releasingHold = false,
 }) {
@@ -45,7 +41,7 @@ export default function ComposerModeMenu({
   const active = agentModeEntry(mode);
   const tooltip = heldBy
     ? `Agent mode: ${active.label} — held by the ${heldBy} tag on the ticket. `
-      + 'Remove the tag to pick another mode.'
+      + 'Pick any mode to switch.'
     : `Agent mode: ${active.label} — ${active.description}. `
       + 'Applies on your next message (kato re-spawns the subprocess and '
       + 'resumes the same session).';
@@ -73,7 +69,6 @@ export default function ComposerModeMenu({
       >
         <span className="composer-mode-icon" aria-hidden="true">{active.icon}</span>
         <span className="composer-mode-label">{active.label}</span>
-        {heldBy && <span className="composer-mode-held-icon" aria-hidden="true">🔒</span>}
       </button>
       {open && (
         <div className="composer-mode-popover" role="menu">
@@ -90,9 +85,9 @@ export default function ComposerModeMenu({
                 >
                   {releasingHold
                     ? 'Removing the tag…'
-                    : 'Remove the tag and unlock'}
+                    : 'Remove the tag'}
                 </button>
-              ) : ' Remove the tag to pick another mode.'}
+              ) : ' Pick any mode to switch.'}
             </div>
           )}
           {AGENT_MODES.map((entry) => (

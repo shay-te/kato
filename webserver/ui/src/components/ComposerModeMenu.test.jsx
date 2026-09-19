@@ -141,17 +141,18 @@ describe('ComposerModeMenu', () => {
 });
 
 describe('ComposerModeMenu — held by a ticket tag', () => {
-  // kato:wait-planning keeps the task in Plan whatever was picked. The picker
-  // has to say so, or it reads as an ordinary choice the operator made.
+  // kato:wait-planning starts the task in Plan. The picker says so, and — the
+  // operator: "dont block me from changing modes on the fly" — any pick goes
+  // through.
   test('the trigger names the tag holding the mode', () => {
     render(<ComposerModeMenu mode="plan" onChange={vi.fn()} heldBy="kato:wait-planning" />);
     const trigger = screen.getByRole('button', {
       name: /agent mode: plan \(held by kato:wait-planning\)/i,
     });
-    expect(trigger.getAttribute('data-tooltip')).toMatch(/remove the tag/i);
+    expect(trigger.getAttribute('data-tooltip')).toMatch(/pick any mode to switch/i);
   });
 
-  test('the menu explains the hold, and a pick still goes to the server to re-check', () => {
+  test('the menu explains the hold, and a pick still goes through', () => {
     const onChange = open({ mode: 'plan', heldBy: 'kato:wait-planning' });
     expect(screen.getByRole('menu')).toHaveTextContent(
       /held in plan by kato:wait-planning on the ticket/i,
@@ -173,7 +174,7 @@ describe('ComposerModeMenu — held by a ticket tag', () => {
     open({ mode: 'plan', heldBy: 'kato:wait-planning', onReleaseHold });
 
     fireEvent.click(
-      screen.getByRole('button', { name: /remove the tag and unlock/i }),
+      screen.getByRole('button', { name: /^remove the tag$/i }),
     );
 
     expect(onReleaseHold).toHaveBeenCalledTimes(1);
@@ -199,10 +200,10 @@ describe('ComposerModeMenu — held by a ticket tag', () => {
     open({ mode: 'plan', heldBy: 'kato:wait-planning' });
 
     expect(screen.getByRole('menu')).toHaveTextContent(
-      /remove the tag to pick another mode/i,
+      /pick any mode to switch/i,
     );
     expect(
-      screen.queryByRole('button', { name: /remove the tag and unlock/i }),
+      screen.queryByRole('button', { name: /^remove the tag$/i }),
     ).toBeNull();
   });
 });

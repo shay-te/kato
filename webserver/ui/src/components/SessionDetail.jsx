@@ -286,8 +286,8 @@ export default function SessionDetail({
   const contextUsage = useContextUsage(taskId, stream.turnInFlight);
 
   const [agentMode, setAgentMode] = useState('');
-  // The ticket tag holding the task in its mode ('' when none) — today only
-  // ``kato:wait-planning``, which holds it in Plan. The server decides.
+  // The ticket tag that started the task in its mode ('' when none) — today
+  // only ``kato:wait-planning``, which starts it in Plan until a pick.
   const [agentModeHeldBy, setAgentModeHeldBy] = useState('');
   const refreshAgentMode = useCallback(() => {
     if (!taskId) { setAgentMode(''); setAgentModeHeldBy(''); return undefined; }
@@ -378,8 +378,9 @@ export default function SessionDetail({
     setAgentMode(next);
     const result = await setSessionAgentMode(taskId, next);
     if (!result || result.ok !== false) { return; }
-    // Refused — above all while the planning tag holds the task. Put the
-    // picker back where the server left it, and say why.
+    // Refused. Put the picker back where the server left it, and say why.
+    // (The planning tag does NOT refuse a pick: it only sets the starting
+    // mode, and yields to whatever the operator picks.)
     refreshAgentMode();
     toastResult({
       kind: 'error',

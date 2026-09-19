@@ -34,6 +34,7 @@ from kato_core_lib.helpers.planning_hold_store import (
     held_permission_mode,
     set_planning_hold,
     task_is_planning_held,
+    yield_planning_hold,
 )
 from kato_core_lib.jobs.process_assigned_tasks import collect_processing_results
 from tests.utils import build_task
@@ -100,6 +101,27 @@ class PlanningHoldStoreTests(_HoldFileMixin, unittest.TestCase):
     def test_a_blank_id_is_never_held_or_written(self) -> None:
         self.assertFalse(set_planning_hold('  ', True))
         self.assertFalse(task_is_planning_held(''))
+        self.assertFalse(self.holds_path.exists())
+
+    def test_a_yielded_hold_is_not_re_engaged_while_the_tag_stays(self) -> None:
+        set_planning_hold('UNA-1', True)
+        self.assertTrue(yield_planning_hold('una-1'))
+        self.assertFalse(task_is_planning_held('UNA-1'))
+        # The next scan still sees the tag: the operator's pick keeps winning.
+        self.assertFalse(set_planning_hold('UNA-1', True))
+        self.assertFalse(task_is_planning_held('UNA-1'))
+        self.assertEqual(held_permission_mode('UNA-1', 'acceptEdits'), 'acceptEdits')
+
+    def test_the_tag_coming_back_after_removal_holds_afresh(self) -> None:
+        set_planning_hold('UNA-1', True)
+        yield_planning_hold('UNA-1')
+        self.assertFalse(set_planning_hold('UNA-1', False))
+        self.assertTrue(set_planning_hold('UNA-1', True))
+        self.assertTrue(task_is_planning_held('UNA-1'))
+
+    def test_yielding_an_unheld_task_changes_nothing(self) -> None:
+        self.assertFalse(yield_planning_hold('UNA-1'))
+        self.assertFalse(yield_planning_hold('  '))
         self.assertFalse(self.holds_path.exists())
 
     def test_the_mode_rule(self) -> None:
@@ -304,33 +326,6 @@ class AgentServiceHoldTests(_HoldServiceMixin, unittest.TestCase):
         task_service = MagicMock()
         _agent_service(task_service, None).sync_planning_holds()
         task_service.get_started_tasks.assert_not_called()
-
-    def _refresh(self, found_task, *, lookups_fail=False):
-        planning, _manager = self._service()
-        set_planning_hold('UNA-7', True)
-        task_service = MagicMock()
-        for queue in ('list_all_assigned_tasks', 'get_assigned_tasks', 'get_review_tasks'):
-            fetch = getattr(task_service, queue)
-            if lookups_fail:
-                fetch.side_effect = RuntimeError('tracker down')
-            else:
-                fetch.return_value = [found_task] if found_task else []
-        return _agent_service(task_service, planning).refresh_planning_hold('UNA-7')
-
-    def test_refresh_releases_at_once_when_the_tag_is_gone(self) -> None:
-        self.assertFalse(self._refresh(build_task(task_id='UNA-7', tags=[])))
-        self.assertFalse(task_is_planning_held('UNA-7'))
-
-    def test_refresh_keeps_the_hold_while_the_tag_is_on(self) -> None:
-        self.assertTrue(
-            self._refresh(build_task(task_id='UNA-7', tags=[TaskTags.WAIT_PLANNING])),
-        )
-
-    def test_refresh_keeps_the_hold_when_the_ticket_cannot_be_read(self) -> None:
-        self.assertTrue(self._refresh(None, lookups_fail=True))
-
-    def test_refresh_keeps_the_hold_when_the_ticket_is_not_found(self) -> None:
-        self.assertTrue(self._refresh(None))
 
     # ----- leaving Plan without opening the tracker -----
     #

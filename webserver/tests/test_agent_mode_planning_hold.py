@@ -7,9 +7,11 @@ even while I am discussing things with him".
 The composer and the chat route read only the operator's own pick, so a task
 the tag was meant to keep in discussion showed "Edit automatically" and was
 respawned that way. Every mode read now goes through one rule — Plan while
-held, the operator's pick otherwise — and a different pick made while held is
-re-checked against the ticket, because the operator has usually just removed
-the tag.
+held, the operator's pick otherwise.
+
+The hold is only the STARTING mode. Reported: "dont block me from changing
+modes on the fly" — a different pick made while held is accepted and the hold
+yields to it, with the tag still on the ticket.
 """
 from __future__ import annotations
 
@@ -49,19 +51,6 @@ class _Manager:
         self.session = None
 
 
-class _AgentService:
-    """Re-reads the ticket the way ``AgentService.refresh_planning_hold`` does."""
-
-    def __init__(self, *, tag_still_on: bool) -> None:
-        self.tag_still_on = tag_still_on
-        self.rechecked: list[str] = []
-
-    def refresh_planning_hold(self, task_id):
-        self.rechecked.append(task_id)
-        set_planning_hold(task_id, self.tag_still_on)
-        return self.tag_still_on
-
-
 class _HoldTestCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -77,10 +66,9 @@ class _HoldTestCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     @staticmethod
-    def _app(*, manager=None, agent_service=None, workspace_manager=None):
+    def _app(*, manager=None, workspace_manager=None):
         app = create_app(
             session_manager=manager or _Manager(),
-            agent_service=agent_service,
             workspace_manager=workspace_manager,
         )
         return app, app.test_client()
@@ -126,52 +114,30 @@ class HeldModeReadTests(_HoldTestCase):
 
 
 class HeldModePickTests(_HoldTestCase):
-    def test_another_pick_while_the_tag_is_on_is_refused_and_not_stored(self) -> None:
-        agent = _AgentService(tag_still_on=True)
-        app, client = self._app(agent_service=agent)
+    def test_another_pick_while_held_is_accepted_and_the_hold_yields(self) -> None:
+        # THE REPORT: "Agent mode not changed — kato:wait-planning is on this
+        # ticket". A pick made on the fly must win.
+        app, client = self._app()
         set_planning_hold('T1', True)
-        response = self._pick(client, '')
-        self.assertEqual(response.status_code, 409)
-        self.assertIn(TAG, response.get_json()['error'])
-        self.assertEqual(agent.rechecked, ['T1'])
-        self._pick(client, 'plan')
-        set_planning_hold('T1', False)
-        self.assertEqual(app.config['TASK_PLAN_MODE_OVERRIDES'].get('T1'), 'plan')
-
-    def test_a_pick_right_after_the_tag_was_removed_is_accepted(self) -> None:
-        agent = _AgentService(tag_still_on=False)
-        _app, client = self._app(agent_service=agent)
-        set_planning_hold('T1', True)
-        response = self._pick(client, 'default')
+        response = self._pick(client, 'bypassPermissions')
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertFalse(task_is_planning_held('T1'))
-        self.assertEqual(self._read(client), {'mode': 'default', 'held_by_tag': ''})
+        self.assertEqual(
+            self._read(client), {'mode': 'bypassPermissions', 'held_by_tag': ''},
+        )
+        self.assertFalse(app_module._task_is_plan_locked(app, 'T1'))
 
-    def test_picking_plan_while_held_reads_no_ticket(self) -> None:
-        agent = _AgentService(tag_still_on=True)
-        _app, client = self._app(agent_service=agent)
-        set_planning_hold('T1', True)
-        self.assertEqual(self._pick(client, 'plan').status_code, 200)
-        self.assertEqual(agent.rechecked, [])
-
-    def test_an_ordinary_mode_change_reads_no_ticket(self) -> None:
-        agent = _AgentService(tag_still_on=True)
-        _app, client = self._app(agent_service=agent)
-        self.assertEqual(self._pick(client, '').status_code, 200)
-        self.assertEqual(agent.rechecked, [])
-
-    def test_with_no_agent_service_the_recorded_hold_stands(self) -> None:
+    def test_the_next_scan_seeing_the_tag_does_not_re_hold(self) -> None:
         _app, client = self._app()
         set_planning_hold('T1', True)
-        self.assertEqual(self._pick(client, '').status_code, 409)
+        self._pick(client, '')
+        set_planning_hold('T1', True)  # the scan: tag still on the ticket
+        self.assertEqual(self._read(client), {'mode': '', 'held_by_tag': ''})
 
-    def test_a_failed_ticket_read_keeps_the_hold(self) -> None:
-        agent = SimpleNamespace(
-            refresh_planning_hold=MagicMock(side_effect=RuntimeError('tracker down')),
-        )
-        _app, client = self._app(agent_service=agent)
+    def test_picking_plan_while_held_keeps_the_hold(self) -> None:
+        _app, client = self._app()
         set_planning_hold('T1', True)
-        self.assertEqual(self._pick(client, 'bypassPermissions').status_code, 409)
+        self.assertEqual(self._pick(client, 'plan').status_code, 200)
         self.assertTrue(task_is_planning_held('T1'))
 
 

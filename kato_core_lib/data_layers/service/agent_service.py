@@ -29,7 +29,6 @@ from kato_core_lib.helpers.push_approval_gate_utils import (
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, session_suffix
 from kato_core_lib.helpers.planning_hold_store import (
     set_planning_hold,
-    task_is_planning_held,
 )
 from kato_core_lib.helpers.task_lookup_utils import find_assigned_or_review_task
 from kato_core_lib.data_layers.service.notification_service import NotificationService
@@ -524,32 +523,6 @@ class AgentService(MissionStepLoggerMixin, Service):
             )
             return
         planning.sync_planning_holds(tasks)
-
-    def refresh_planning_hold(self, task_id: str) -> bool:
-        """Re-read ``task_id``'s tags now; whether it is still held in Plan.
-
-        Asked when the operator picks another mode on a held task. They have
-        usually just removed the tag, and the next scan can be three minutes
-        away. A task that cannot be read stays held.
-        """
-        normalized = str(task_id or '').strip()
-        planning = self._wait_planning_service
-        if (
-            normalized
-            and planning is not None
-            and getattr(planning, 'tracks_planning_holds', False)
-        ):
-            task = find_assigned_or_review_task(
-                self._task_service,
-                normalized,
-                on_error=lambda queue: self.logger.warning(
-                    'could not read %s to re-check the planning hold of task %s',
-                    queue, normalized,
-                ),
-            )
-            if task is not None:
-                planning.observe_planning_hold(task)
-        return task_is_planning_held(normalized)
 
     def release_planning_hold(self, task_id: str) -> dict:
         """Take ``kato:wait-planning`` off the TICKET, then drop the hold.

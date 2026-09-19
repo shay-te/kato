@@ -1072,25 +1072,6 @@ def _task_mode_of(app: Flask, task_id: str) -> str:
     )
 
 
-def _still_held_in_plan(app: Flask, task_id: str) -> bool:
-    """Whether ``kato:wait-planning`` still holds the task, re-read from the ticket.
-
-    Only a held task is re-read, so an ordinary mode change never waits on the
-    tracker. With no agent service to ask, the recorded hold stands.
-    """
-    from kato_core_lib.helpers.planning_hold_store import task_is_planning_held
-    if not task_is_planning_held(task_id):
-        return False
-    refresh = _agent_method(app.config.get('AGENT_SERVICE'), 'refresh_planning_hold')
-    if not callable(refresh):
-        return True
-    try:
-        return bool(refresh(task_id))
-    except Exception:
-        app.logger.exception('could not re-check the planning hold of task %s', task_id)
-        return True
-
-
 def _set_task_mode_of(app: Flask, task_id: str, mode: str = '') -> bool:
     """Write (or clear) the task's agent mode; False when not wired."""
     store = app.config.get('TASK_PLAN_MODE_OVERRIDES')
@@ -1715,21 +1696,14 @@ def _register_http_routes(app: Flask) -> None:
                 'error': f'unknown mode {mode!r}',
                 'allowed': sorted(AGENT_PERMISSION_MODES),
             }), 400
-        # While the planning tag is on the ticket the mode is not the
-        # operator's to change — refused rather than stored, because a stored
-        # pick the spawn then ignores is a picker that lies.
-        if mode != PLAN_PERMISSION_MODE and _still_held_in_plan(app, task_id):
-            from kato_core_lib.data_layers.data.fields import TaskTags
-            return jsonify({
-                'error': (
-                    f'{TaskTags.WAIT_PLANNING} is on this ticket, so the task '
-                    'stays in Plan. Remove the tag to pick another mode.'
-                ),
-                'mode': PLAN_PERMISSION_MODE,
-                'held_by_tag': TaskTags.WAIT_PLANNING,
-            }), 409
         if not _set_task_mode_of(app, task_id, mode):
             return jsonify({'error': 'not available'}), 503
+        # ``kato:wait-planning`` only decides the STARTING mode. A pick made
+        # on the fly wins, so the tag must not drag the task back into Plan —
+        # it yields until the tag is removed and added again.
+        if mode != PLAN_PERMISSION_MODE:
+            from kato_core_lib.helpers.planning_hold_store import yield_planning_hold
+            yield_planning_hold(task_id)
         # Best-effort persistence — a write failure must not fail the choice
         # the operator just made in the live session.
         from kato_core_lib.helpers.plan_mode_store import set_task_mode
