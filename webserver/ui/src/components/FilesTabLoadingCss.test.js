@@ -113,49 +113,101 @@ test('the repo-row history button is NOT the 28px header circle', () => {
   assert.match(won.value, /^16px$/);
 });
 
-// ---- A collapsed repo card closes with a curve ---------------------------
+// ---- The repo card closes with a curve, in every state -------------------
 //
-// Operator: "when tree collapsed make it rounded also at the bottom." The
-// card is rounded at the top only, because expanded the tree scrolls past the
-// bottom edge. Collapsed there is nothing below it, so a square bottom under a
-// rounded top reads as a rendering fault.
+// Two operator reports, the same complaint twice: "when tree collapsed make
+// it rounded also at the bottom", then — of an EXPANDED card — "also keep it
+// round corner at the bottom". The card is round all round now. Only the
+// header still depends on state, because expanded it hands off to the tree.
 
-test('a collapsed repo card is rounded at the BOTTOM too', () => {
-  // Specificity, not presence: the base rule sets a top-only pair, so the
-  // collapsed rule only helps if it actually WINS on both boxes.
-  const wonSection = winningValue(
+test('the repo card is rounded at the BOTTOM in every state', () => {
+  // The section carries one radius, so no state can lose the curve. Asserted
+  // as "nothing overrides it": a state rule reintroducing a top-only pair is
+  // how the expanded card ended up cut off square the first time.
+  const won = winningValue(
     'border-radius',
-    (sel) => sel === '.files-tab-repo' || sel === '.files-tab-repo.is-collapsed',
+    (sel) => sel.startsWith('.files-tab-repo')
+      && !sel.includes('.files-tab-repo-')
+      && !sel.includes(' '),
   );
-  assert.equal(wonSection.selector, '.files-tab-repo.is-collapsed');
+  assert.equal(won.selector, '.files-tab-repo');
   // One value = all four corners. A top-only pair is four values with spaces.
   assert.match(
-    wonSection.value, /^\S+$/,
-    `the collapsed card still has a square bottom (${wonSection.value})`,
+    won.value, /^\S+$/,
+    `the card still has a square bottom (${won.value})`,
   );
+});
 
-  // The header paints the fill and sits flush to the section edge, so it has
-  // to agree or its square corner shows through the section's curve.
-  const wonHeader = winningValue(
+test('collapsed, the HEADER closes with the card', () => {
+  // Specificity, not presence: the base header rule sets a top-only pair, so
+  // the collapsed rule only helps if it actually WINS. The header paints the
+  // fill and sits flush to the section edge, so a square corner here shows
+  // straight through the section's curve.
+  const won = winningValue(
     'border-radius',
     (sel) => sel === '.files-tab-repo-header'
       || sel === '.files-tab-repo.is-collapsed .files-tab-repo-header',
   );
   assert.equal(
-    wonHeader.selector, '.files-tab-repo.is-collapsed .files-tab-repo-header',
+    won.selector, '.files-tab-repo.is-collapsed .files-tab-repo-header',
   );
-  assert.match(wonHeader.value, /^\S+$/);
+  assert.match(won.value, /^\S+$/);
 });
 
-test('an EXPANDED repo card keeps its square bottom', () => {
-  // The curve must not leak to the expanded state: the tree scrolls past that
-  // edge, and rows would slide under a curve.
-  assert.match(ruleFor('.files-tab-repo'), /border-radius:[^;]*0\s+0/);
+test('expanded, the header keeps its square bottom', () => {
+  // A curve here would cut a notch out of a card that continues into a tree.
+  assert.match(ruleFor('.files-tab-repo-header'), /border-radius:[^;]*0\s+0/);
 });
 
-test('the loading skeleton is NOT rounded at the bottom', () => {
-  // It mirrors the loaded header so the pane fills in without re-laying out.
-  // A curve that vanishes when the tree lands is that same shift.
+// ---- A header's tooltip must clear the cards below it --------------------
+//
+// Operator: "tooltip goes under." Every repo header is a sticky, z-indexed
+// box — which makes it a STACKING CONTEXT, so the tooltip's own z-index:1000
+// ranks it only inside its header, never against the page. All the headers
+// share one z, so later ones in the DOM win, and a downward tooltip lands
+// under the next card's header.
+
+test('the hovered repo header outranks its siblings', () => {
+  const rule = ruleFor('.files-tab-repo-header:focus-within');
+  const lifted = /--sticky-header-z:\s*(\d+)/.exec(rule);
+  assert.ok(lifted, 'the hovered header no longer lifts — tooltips go under');
+
+  // Against the resting value the other headers are using.
+  const resting = /z-index:\s*var\(--sticky-header-z,\s*(\d+)\)/
+    .exec(ruleFor('.sticky-section-header'));
+  assert.ok(resting, '.sticky-section-header no longer reads the z variable');
+  assert.ok(
+    Number(lifted[1]) > Number(resting[1]),
+    `lifted ${lifted[1]} must beat a sibling's ${resting[1]}`,
+  );
+});
+
+test('the lift stays under the layers meant to cover the pane', () => {
+  // A repo row lifting itself over an error banner or a modal would be a
+  // worse bug than the one this fixes.
+  const lifted = Number(
+    /--sticky-header-z:\s*(\d+)/
+      .exec(ruleFor('.files-tab-repo-header:focus-within'))[1],
+  );
+  assert.ok(lifted < 50, `the lift (${lifted}) reaches the banner layer`);
+});
+
+test('the pointer lifts it too, not just keyboard focus', () => {
+  // The rules above read the :focus-within selector, because a keyboard
+  // operator never triggers :hover and the fix would otherwise be
+  // mouse-only. :hover has to share that rule, or it is now keyboard-only
+  // instead — which is the case the operator actually reported.
+  assert.match(
+    CSS,
+    /\.files-tab-repo-header:hover,\s*\n\.files-tab-repo-header:focus-within \{/,
+    ':hover no longer shares the lift rule',
+  );
+});
+
+test('the loading skeleton has the SAME radius as the loaded card', () => {
+  // It mirrors the loaded card so the pane fills in without re-laying out. A
+  // curve that appeared or vanished when the tree landed is that same shift —
+  // which is why ``.is-loading`` must not override the radius at all.
   const won = winningValue(
     'border-radius',
     (sel) => sel === '.files-tab-repo' || sel === '.files-tab-repo.is-loading',

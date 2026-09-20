@@ -6184,14 +6184,27 @@ $FILES-PANE-INSET: $SPACE-6;
    * and the header's cancelling margins. */
   --files-card-inset: #{$SPACE-10};
   border: 1px solid $C-NEUTRAL-100-A06;
-  /* TOP corners only — the tree scrolls past the bottom, where a curve
-   * would have rows sliding under it. The header below carries the same
-   * radius so the two edges coincide.
+  /* ALL FOUR corners. The header below rounds only its top two, because it
+   * paints the fill up there and would otherwise cover this curve with a
+   * square block.
+   *
+   * The bottom was square for a long time on the theory that "the tree
+   * scrolls past it and rows would slide under the curve". The tree does
+   * scroll inside the card once it passes the height cap — but it cannot
+   * reach these corners: the card insets every child by
+   * ``--files-card-inset``, which is the SAME 10px as the radius, so the
+   * arc's footprint is card background and nothing else. What the square
+   * bottom actually produced is the screenshot the operator sent: a card
+   * curved at the top and cut off square at the bottom.
+   *
+   * COUPLED to --files-card-inset: if that inset ever drops below this
+   * radius, rows WILL clip the curve and the old reasoning becomes true.
+   * FilesTreeRadiusCss.test.js pins the two against each other.
    *
    * (An older comment here claimed the curve belonged to a wrapping
    * ``.panel-card``. Nothing wraps this pane in one, which is why the tree
    * met the toolbar as a hard square edge for so long.) */
-  border-radius: $RADIUS-10 $RADIUS-10 0 0;
+  border-radius: $RADIUS-10;
   margin-bottom: $SPACE-6;
   /* The row inset that used to sit on the scroller. Applied here so the
    * section's own box still reaches the scroller's rounded corners and gets
@@ -6221,20 +6234,19 @@ $FILES-PANE-INSET: $SPACE-6;
   padding-bottom: $SPACE-6;
 }
 
-/* Collapsed: the header IS the whole card, so it closes with a curve at the
- * bottom as well. Expanded, those corners stay square on purpose — the tree
- * scrolls past them and a curve would have rows sliding under it.
+/* Collapsed: the HEADER is the whole card, so it has to close with a curve at
+ * the bottom too. Expanded it stops at the tree and keeps its top-only radius.
  *
- * BOTH boxes need it. The section paints the 1px outline; the header paints
- * the fill and is pulled flush to the section's edge by the negative margins
- * below, so rounding either one alone leaves the other's square corner
- * showing through.
+ * Only the header is listed. The section is rounded all round in every state
+ * now (see its rule above); the header is the one box whose corners depend on
+ * whether there is a tree under it — it paints the fill and is pulled flush to
+ * the section's edge by the negative margins below, so a square corner here
+ * shows straight through the section's curve.
  *
  * Deliberately NOT applied to ``.is-loading``: that skeleton mirrors the
  * LOADED header so the pane fills in instead of re-laying out, and a curve
  * that vanished when the tree arrived is the exact shift the mirroring
  * exists to prevent. */
-.files-tab-repo.is-collapsed,
 .files-tab-repo.is-collapsed .files-tab-repo-header {
   border-radius: $RADIUS-10;
 }
@@ -6377,6 +6389,27 @@ $FILES-PANE-INSET: $SPACE-6;
   // sticky, so a see-through hover background let the scrolled tree show
   // through it. $C-NEUTRAL-19 reads as the same subtle lighten, but solid.
   background: $C-NEUTRAL-19;
+}
+
+/* Lift the header being pointed at above the ones below it.
+ *
+ * ``StickyHeader`` makes every repo header ``position: sticky`` with a
+ * z-index, and a positioned element with a z-index is a STACKING CONTEXT:
+ * the tooltip's ``z-index: 1000`` only ranks it inside its own header, not
+ * against the page. Every header shares the same z, so the later ones in the
+ * DOM win — and a tooltip that opens downward (they all do) lands over the
+ * next card and is painted over by that card's header. Operator: "tooltip
+ * goes under."
+ *
+ * ``:focus-within`` as well as ``:hover`` — the same tooltip opens on
+ * ``:focus-visible`` for a keyboard operator, who never triggers hover.
+ *
+ * Only while pointed at, and only among these headers: 12 clears a sibling's
+ * 4 and stays well under the error banner (50) and the modal layer, so this
+ * cannot lift a repo row over anything that is meant to cover the pane. */
+.files-tab-repo-header:hover,
+.files-tab-repo-header:focus-within {
+  --sticky-header-z: 12;
 }
 
 .files-tab-repo-chevron {

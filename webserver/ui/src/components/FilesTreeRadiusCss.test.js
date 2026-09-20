@@ -63,18 +63,45 @@ test('the border is back, and the header matches its radius', () => {
   );
 });
 
-test('the repo section is rounded on top', () => {
-  assert.match(
-    ruleBody('.files-tab-repo'), /border-radius:\s*10px 10px 0 0;/,
+test('the repo section is rounded on ALL FOUR corners', () => {
+  // It was "10px 10px 0 0" — curved at the top, cut off square at the
+  // bottom, which is what the operator sent a screenshot of. The tree does
+  // scroll inside the card past the height cap, but it cannot reach these
+  // corners; see the next test for why.
+  assert.match(ruleBody('.files-tab-repo'), /border-radius:\s*10px;/);
+});
+
+test('the card insets its children by at least the radius', () => {
+  // THE reason the bottom can be round. The arc occupies the outer 10px of
+  // each corner; every child — including the scrolling tree — starts
+  // --files-card-inset in from the border. While that inset is >= the
+  // radius, the arc's footprint is card background and nothing can clip it.
+  // Drop the inset below the radius and rows WILL slide under the curve,
+  // which is exactly what the old square bottom was guarding against.
+  const inset = /--files-card-inset:\s*(\d+)px;/.exec(ruleBody('.files-tab-repo'));
+  const radius = /border-radius:\s*(\d+)px;/.exec(ruleBody('.files-tab-repo'));
+  assert.ok(inset, 'no --files-card-inset on .files-tab-repo');
+  assert.ok(radius, 'no border-radius on .files-tab-repo');
+  assert.ok(
+    Number(inset[1]) >= Number(radius[1]),
+    `inset ${inset[1]}px must be >= radius ${radius[1]}px`,
   );
 });
 
-test('both stay square at the BOTTOM', () => {
-  // The tree scrolls past the bottom with nothing clipping it, so a rounded
-  // bottom would have rows sliding under a curve. Both radii end in "0 0".
-  for (const sel of ['.files-tab-repo', '.files-tab-repo-header']) {
-    assert.match(ruleBody(sel), /border-radius:[^;]*0 0;/, sel);
-  }
+test('the header stays square at the bottom while a tree is under it', () => {
+  // The section is round all round; the header is not, because expanded it
+  // hands off to the tree. A curve here would cut a notch out of a filled
+  // card. Collapsed is the exception and has its own rule.
+  assert.match(ruleBody('.files-tab-repo-header'), /border-radius:[^;]*0 0;/);
+});
+
+test('collapsed, the header closes with a curve instead', () => {
+  // Nothing under it then — the header IS the card, so its bottom corners
+  // have to match the section's.
+  assert.match(
+    ruleBody('.files-tab-repo.is-collapsed .files-tab-repo-header'),
+    /border-radius:\s*10px;/,
+  );
 });
 
 test('the header keeps its own background so rows never show through it', () => {

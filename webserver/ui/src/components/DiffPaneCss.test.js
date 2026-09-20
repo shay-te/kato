@@ -171,7 +171,10 @@ test('The file tree rounds its own top, and the SCROLLER clips it', () => {
   // Clipping the section satisfies the first and breaks the second, because
   // it turns the section into a scrollport. The scroller is already the
   // scrollport, so the clip goes there and costs nothing.
-  assertDeclaration(ruleBody('.files-tab-repo'), 'border-radius', '10px 10px 0 0');
+  // The SECTION is rounded all round (its bottom edge is where the card
+  // ends, not a scroll boundary — see FilesTreeRadiusCss.test.js). The top
+  // corners are the ones this test is about, and they are still here.
+  assertDeclaration(ruleBody('.files-tab-repo'), 'border-radius', '10px');
   assertDeclaration(ruleBody('.files-tab-repo'), 'overflow', 'visible');
   assertDeclaration(
     ruleBody('.files-tab-body'), 'border-radius', '10px 10px 0 0',
