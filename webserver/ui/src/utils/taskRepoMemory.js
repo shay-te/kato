@@ -19,35 +19,18 @@
 // stays the authority and overwrites this the moment it lands, so a stale
 // entry costs at most one render of a header that then disappears.
 //
-// Storage access goes through the shared helpers (``storage.js`` /
-// ``json.js``) — the same ones every other persisted module uses. The
-// per-task keyed-map shape is what this file actually owns.
+// The bounded per-task keyed map itself lives in ``taskKeyedStore.js``,
+// shared with ``repoCollapseMemory`` — which keeps a different hint about the
+// same tasks. What this file owns is the SHAPE of its entry.
 
-import { parseJsonOr } from './json.js';
-import { readStorageString, writeStorageItem } from './storage.js';
+import { createTaskKeyedStore } from './taskKeyedStore.js';
 
-const STORAGE_KEY = 'kato.taskRepos.v1';
-
-// Enough for a long working session without letting the entry grow forever.
-// Oldest-written entries are dropped first.
-const MAX_TASKS = 50;
-
-function readAll() {
-  const parsed = parseJsonOr(readStorageString(STORAGE_KEY, ''), {});
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? parsed : {};
-}
-
-function writeAll(all) {
-  writeStorageItem(STORAGE_KEY, JSON.stringify(all));
-}
+const store = createTaskKeyedStore('kato.taskRepos.v1');
 
 // The repos last seen for ``taskId``: ``[{ repo_id, cwd, branch }]``, or
 // ``[]`` when nothing is remembered.
 export function rememberedRepos(taskId) {
-  const key = String(taskId || '').trim();
-  if (!key) { return []; }
-  const entry = readAll()[key];
+  const entry = store.readEntry(taskId);
   const repos = entry && Array.isArray(entry.repos) ? entry.repos : [];
   return repos.filter((repo) => repo && (repo.repo_id || repo.cwd));
 }
@@ -56,27 +39,18 @@ export function rememberedRepos(taskId) {
 // normalized trees the pane renders, so what is remembered is exactly what
 // was last shown.
 export function rememberRepos(taskId, trees) {
-  const key = String(taskId || '').trim();
-  if (!key || !Array.isArray(trees)) { return; }
+  if (!Array.isArray(trees)) { return; }
   // An empty result is not evidence the task has no repos — a failed or
   // half-provisioned fetch looks the same — and forgetting on it would undo
   // the whole point on the next switch. Only a non-empty list is recorded.
   if (trees.length === 0) { return; }
-  const repos = trees.map((tree) => ({
-    repo_id: String(tree.repo_id || ''),
-    cwd: String(tree.cwd || ''),
-    branch: String(tree.branch || ''),
-  }));
-  const all = readAll();
-  all[key] = { repos, at: Date.now() };
-  const keys = Object.keys(all);
-  if (keys.length > MAX_TASKS) {
-    keys
-      .sort((a, b) => (all[a].at || 0) - (all[b].at || 0))
-      .slice(0, keys.length - MAX_TASKS)
-      .forEach((old) => { delete all[old]; });
-  }
-  writeAll(all);
+  store.writeEntry(taskId, {
+    repos: trees.map((tree) => ({
+      repo_id: String(tree.repo_id || ''),
+      cwd: String(tree.cwd || ''),
+      branch: String(tree.branch || ''),
+    })),
+  });
 }
 
 // Is this repo's local branch worth SHOWING?

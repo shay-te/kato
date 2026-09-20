@@ -46,6 +46,7 @@ const mockFileTree = (payload) => fetchFileTree.mockResolvedValue(
 // back to comparing the payload", which is what these tests want.
 const mockDiff = (payload) => fetchDiff.mockResolvedValue({ payload, etag: '' });
 import { resetTaskCache } from './stores/taskCache/index.js';
+import { collapsedRepos } from './utils/repoCollapseMemory.js';
 
 const FILE_TREE_PAYLOAD = {
   trees: [{
@@ -567,6 +568,115 @@ describe('FilesTab — render shell', () => {
     await waitFor(() => { expect(screen.queryByRole('tree')).toBeNull(); });
     fireEvent.click(sectionName());
     await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+  });
+
+  test('a collapsed repo is remembered per task', async () => {
+    // Collapse used to reset on every task switch and reload. The storage
+    // itself is covered in utils/repoCollapseMemory.test.jsx; what this pins
+    // is the WIRING — the pane is not remounted per task, so restoring has to
+    // happen when taskId changes.
+    //
+    // Cleared at both ends because this file shares taskId 'T1' across many
+    // tests, and a leftover collapse would render them a folded pane.
+    localStorage.clear();
+    try {
+      mockFileTree(FILE_TREE_PAYLOAD);
+      mockDiff(DIFF_PAYLOAD);
+      const { container, rerender } = render(
+        <FilesTab taskId="T1" onOpenFile={vi.fn()} />,
+      );
+      await screen.findByText('Changed.js');
+      const collapsedNow = () => container
+        .querySelector('.files-tab-repo').classList.contains('is-collapsed');
+
+      fireEvent.click(
+        screen.getByText('client', { selector: '.files-tab-repo-name' }),
+      );
+      await waitFor(() => { expect(collapsedNow()).toBe(true); });
+
+      // Another task must not inherit it.
+      rerender(<FilesTab taskId="T2" onOpenFile={vi.fn()} />);
+      await waitFor(() => { expect(collapsedNow()).toBe(false); });
+
+      // Coming back restores the choice.
+      rerender(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+      await waitFor(() => { expect(collapsedNow()).toBe(true); });
+    } finally {
+      localStorage.clear();
+    }
+  });
+
+  test('a collapsed repo survives a reload', async () => {
+    // The task-switch path above restores through an effect; a reload has no
+    // previous taskId to change FROM, so the first render itself has to come
+    // up collapsed. An unmount and a fresh mount is what that looks like.
+    localStorage.clear();
+    try {
+      mockFileTree(FILE_TREE_PAYLOAD);
+      mockDiff(DIFF_PAYLOAD);
+      const first = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+      await screen.findByText('Changed.js');
+      fireEvent.click(
+        screen.getByText('client', { selector: '.files-tab-repo-name' }),
+      );
+      await waitFor(() => {
+        expect(first.container.querySelector('.files-tab-repo')
+          .classList.contains('is-collapsed')).toBe(true);
+      });
+      first.unmount();
+
+      mockFileTree(FILE_TREE_PAYLOAD);
+      mockDiff(DIFF_PAYLOAD);
+      const reloaded = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(reloaded.container.querySelector('.files-tab-repo')
+          .classList.contains('is-collapsed')).toBe(true);
+      });
+    } finally {
+      localStorage.clear();
+    }
+  });
+
+  test('opening a file in a collapsed repo stores the expand too', async () => {
+    // Opening a file unfolds the repo holding it. That expand is the
+    // operator's doing just as much as a click on the chevron, so it has to
+    // be remembered — otherwise the pane shows the repo open while storage
+    // still calls it collapsed, and the next reload re-folds the repo they
+    // are working in.
+    localStorage.clear();
+    try {
+      mockFileTree(FILE_TREE_PAYLOAD);
+      mockDiff(DIFF_PAYLOAD);
+      const first = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+      await screen.findByText('Changed.js');
+      fireEvent.click(
+        screen.getByText('client', { selector: '.files-tab-repo-name' }),
+      );
+      await waitFor(() => {
+        expect(collapsedRepos('T1')).toEqual(['client']);
+      });
+      first.unmount();
+
+      // Reopened, and the operator opens a file inside the folded repo.
+      mockFileTree(FILE_TREE_PAYLOAD);
+      mockDiff(DIFF_PAYLOAD);
+      render(
+        <FilesTab
+          taskId="T1"
+          onOpenFile={vi.fn()}
+          focusFileTarget={{
+            repoId: 'client',
+            relativePath: 'src/Changed.js',
+            requestId: 1,
+          }}
+        />,
+      );
+
+      await waitFor(() => { expect(collapsedRepos('T1')).toEqual([]); });
+    } finally {
+      localStorage.clear();
+    }
   });
 
   test('a collapsed repo card is marked so it can close with a curve', async () => {

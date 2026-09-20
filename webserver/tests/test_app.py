@@ -811,6 +811,60 @@ class WebserverAppTests(unittest.TestCase):
         self.assertIn('toolUseResult', frame)
         self.assertIn('input_tokens', frame)
 
+    # ---- the heavy content blocks ----
+    #
+    # Measured on a real 37.5 MB replay, after the field trim: image blocks
+    # were 57.9% of it (one screenshot is ~368 KB of base64, re-sent whole on
+    # every refresh) and thinking another 26.2%, nearly all of it the
+    # signature blob. The chat's block walk renders ``text`` and ``tool_use``
+    # only — it COUNTS image blocks to say "1 image" and pairs tool results by
+    # id, which is why every block survives and only its payload goes.
+
+    @staticmethod
+    def _blocks(content):
+        from kato_webserver.app import _history_raw_for_chat
+        raw = {'type': 'user', 'message': {'content': content}}
+        return _history_raw_for_chat(raw)['message']['content']
+
+    def test_an_image_block_keeps_its_place_but_loses_its_payload(self):
+        blocks = self._blocks([
+            {'type': 'text', 'text': 'look at this'},
+            {'type': 'image', 'source': {
+                'type': 'base64', 'media_type': 'image/png', 'data': 'x' * 5000,
+            }},
+        ])
+
+        # The block SURVIVES: the log counts image blocks for "1 image".
+        self.assertEqual([block['type'] for block in blocks], ['text', 'image'])
+        self.assertNotIn('data', blocks[1]['source'])
+        # The media type is small and says what the block was.
+        self.assertEqual(blocks[1]['source']['media_type'], 'image/png')
+        self.assertEqual(blocks[0]['text'], 'look at this')
+
+    def test_a_thinking_block_keeps_its_place_but_loses_its_signature(self):
+        blocks = self._blocks([
+            {'type': 'thinking', 'thinking': 'y' * 500, 'signature': 'z' * 1500},
+        ])
+
+        self.assertEqual(blocks, [{'type': 'thinking'}])
+
+    def test_what_the_chat_actually_renders_is_untouched(self):
+        rendered = [
+            {'type': 'text', 'text': 'hello'},
+            {'type': 'tool_use', 'id': 'tu_1', 'name': 'Read',
+             'input': {'file_path': '/w/a.py'}},
+        ]
+
+        self.assertEqual(self._blocks(list(rendered)), rendered)
+
+    def test_a_malformed_block_is_passed_through(self):
+        # A transcript record is whatever the CLI wrote; a non-dict block must
+        # not take the whole replay down.
+        self.assertEqual(self._blocks(['nonsense', None]), ['nonsense', None])
+
+    def test_an_image_block_without_a_source_is_harmless(self):
+        self.assertEqual(self._blocks([{'type': 'image'}]), [{'type': 'image'}])
+
     def test_a_permission_ask_is_never_trimmed(self):
         # The modal renders the tool's own input, and the Action Guard
         # annotation is written onto that same raw.

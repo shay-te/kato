@@ -9,6 +9,15 @@
 //
 // ``cwd``, ``slug`` and ``usage`` are trimmed too but are too common as words to
 // scan for; the token-count names below stand in for ``message.usage``.
+//
+// The same applies to the CONTENT-BLOCK payloads the server now strips — an
+// image block's ``source.data`` and a thinking block's ``thinking`` /
+// ``signature`` (together 84% of a measured 37.5 MB replay). Every one of
+// those names is far too common to scan for here: ``data`` and ``thinking``
+// appear all over the UI, and ``signature`` is a parameter name in api.js.
+// Those are pinned server-side instead, in
+// ``webserver/tests/test_app.py`` — the block itself always survives, so the
+// log can still count images and pair tool results.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';

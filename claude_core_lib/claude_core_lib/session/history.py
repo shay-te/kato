@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import glob
 import os
+from collections import deque
 from pathlib import Path
 
 from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
@@ -216,19 +217,29 @@ def load_history_events(
     path = find_session_file(agent_session_id, projects_root=projects_root)
     if path is None:
         return []
-    events: list[dict] = []
+    # The NEWEST ``max_events``, not the oldest.
+    #
+    # This used to append from the top of the file and STOP once it had
+    # ``max_events``, so a long chat replayed its opening and never reached
+    # the conversation the operator was actually in. Measured on a real
+    # 182 MB transcript: the replay ended on 30 July while the last line was
+    # 18 September — seven weeks of work the chat could not show after a
+    # refresh, and 5,000 events of transfer paid to hide it.
+    #
+    # A bounded deque keeps at most ``max_events`` records in memory however
+    # long the transcript is. It costs one full pass instead of an early
+    # break: 0.26s -> 0.51s on that 182 MB file, for showing the right end of
+    # the conversation.
+    events: deque[dict] = deque(maxlen=max(0, int(max_events)))
     try:
         with path.open('r', encoding='utf-8') as fh:
             for raw_line in fh:
                 event = _coerce_event(raw_line)
-                if event is None:
-                    continue
-                events.append(event)
-                if len(events) >= max_events:
-                    break
+                if event is not None:
+                    events.append(event)
     except OSError:
         return []
-    return events
+    return list(events)
 
 
 def _coerce_event(raw_line: str) -> dict | None:

@@ -222,6 +222,70 @@ class LoadHistoryEventsTests(unittest.TestCase):
         events = load_history_events('missing', projects_root=self.projects_root)
         self.assertEqual(events, [])
 
+    def _chat(self, name: str, count: int, *, noise: bool = False) -> None:
+        path = self.projects_root / 'enc-x' / f'{name}.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[dict] = []
+        for index in range(count):
+            if noise:
+                lines.append({'type': 'queue-operation'})
+            lines.append({
+                'type': 'user',
+                'message': {
+                    'role': 'user',
+                    'content': [{'type': 'text', 'text': f'message {index}'}],
+                },
+            })
+        _write_jsonl(path, lines)
+
+    @staticmethod
+    def _texts(events: list[dict]) -> list[str]:
+        return [event['message']['content'][0]['text'] for event in events]
+
+    def test_a_long_chat_replays_its_NEWEST_events(self) -> None:
+        # The cap used to keep the OLDEST: reading appended from the top of
+        # the file and stopped at ``max_events``, so a long chat replayed its
+        # opening and never reached the conversation the operator was in.
+        # Measured on a real 182 MB transcript, the replay ended on 30 July
+        # while the last line was 18 September.
+        self._chat('sess-long', 10)
+
+        events = load_history_events(
+            'sess-long', projects_root=self.projects_root, max_events=3,
+        )
+
+        self.assertEqual(self._texts(events), ['message 7', 'message 8', 'message 9'])
+
+    def test_a_chat_under_the_cap_is_returned_whole_and_in_order(self) -> None:
+        self._chat('sess-short', 3)
+
+        events = load_history_events(
+            'sess-short', projects_root=self.projects_root, max_events=10,
+        )
+
+        self.assertEqual(self._texts(events), ['message 0', 'message 1', 'message 2'])
+
+    def test_filtered_noise_does_not_use_up_the_cap(self) -> None:
+        # Queue operations are dropped before the limit applies; counting them
+        # would make a noisy transcript replay almost nothing.
+        self._chat('sess-noisy', 6, noise=True)
+
+        events = load_history_events(
+            'sess-noisy', projects_root=self.projects_root, max_events=2,
+        )
+
+        self.assertEqual(self._texts(events), ['message 4', 'message 5'])
+
+    def test_a_zero_cap_replays_nothing(self) -> None:
+        self._chat('sess-zero', 3)
+
+        self.assertEqual(
+            load_history_events(
+                'sess-zero', projects_root=self.projects_root, max_events=0,
+            ),
+            [],
+        )
+
     def test_filters_internal_noise_keeps_user_assistant(self) -> None:
         path = self.projects_root / 'enc-x' / 'sess-1.jsonl'
         path.parent.mkdir(parents=True)

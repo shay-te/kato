@@ -6220,6 +6220,38 @@ _HISTORY_FIELDS_THE_CHAT_NEVER_READS = frozenset({
 })
 _HISTORY_MESSAGE_FIELDS_THE_CHAT_NEVER_READS = frozenset({'usage'})
 
+#: Payload fields inside a CONTENT BLOCK that the chat never renders. The block
+#: itself always stays: the log counts image blocks to say "2 images" and pairs
+#: a tool result by its id, so removing one would change what is displayed.
+#:
+#: Measured on a real 37.5 MB replay, AFTER the field trim above: image blocks
+#: were 57.9% of it (one screenshot is ~368 KB of base64, re-sent in full on
+#: every refresh) and ``thinking`` another 26.2% — almost all of it the
+#: ``signature`` blob, not reasoning anyone could read. Neither is rendered:
+#: the chat's block walk handles ``text`` and ``tool_use`` only.
+_BLOCK_FIELDS_THE_CHAT_NEVER_READS = {
+    'tool_result': ('content',),
+    'thinking': ('thinking', 'signature'),
+}
+
+
+def _chat_content_block(block):
+    """One content block with the parts the chat never renders removed."""
+    if not isinstance(block, dict):
+        return block
+    dropped = _BLOCK_FIELDS_THE_CHAT_NEVER_READS.get(block.get('type'))
+    if dropped:
+        return {key: value for key, value in block.items() if key not in dropped}
+    if block.get('type') == 'image':
+        source = block.get('source')
+        if isinstance(source, dict):
+            # Keep the media type — it is small, and it says what the block
+            # WAS. Only the base64 body goes.
+            return {**block, 'source': {
+                key: value for key, value in source.items() if key != 'data'
+            }}
+    return block
+
 
 def _history_raw_for_chat(raw: dict) -> dict:
     """A copy of one transcript record with only what the chat reads."""
@@ -6235,14 +6267,9 @@ def _history_raw_for_chat(raw: dict) -> dict:
         }
         content = message.get('content')
         if isinstance(content, list):
-            # A tool result's body is never rendered; its type and id are what
-            # the chat pairs and counts on.
-            message['content'] = [
-                {key: value for key, value in block.items() if key != 'content'}
-                if isinstance(block, dict) and block.get('type') == 'tool_result'
-                else block
-                for block in content
-            ]
+            # Every block SURVIVES — only the payload the chat never renders is
+            # taken out of it. See _BLOCK_FIELDS_THE_CHAT_NEVER_READS.
+            message['content'] = [_chat_content_block(block) for block in content]
         trimmed['message'] = message
     return trimmed
 

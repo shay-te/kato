@@ -39,6 +39,7 @@ import {
   countVisibleTreeRows,
 } from './FilesTabHelpers.js';
 import { readFileSearchPrefs, writeFileSearchPrefs } from './utils/fileSearchPrefs.js';
+import { collapsedRepos, rememberCollapsedRepos } from './utils/repoCollapseMemory.js';
 import { fuzzyMatches } from './utils/fuzzyMatch.js';
 import { cx } from './utils/cx.js';
 import { cssEscapeAttr } from './utils/dom.js';
@@ -149,7 +150,16 @@ export default function FilesTab({
     () => buildFilesDiffMeta(repoDiffs),
     [repoDiffs],
   );
-  const [collapsed, setCollapsed] = useState(() => new Set());
+  // Restored per task, so folding a repo away survives a reload and a switch
+  // to another task and back (repoCollapseMemory.js).
+  const [collapsed, setCollapsed] = useState(() => new Set(collapsedRepos(taskId)));
+  // ONE place that both applies and remembers, so the pane can never show a
+  // collapse it did not store (or store one it did not show). Declared with
+  // the state because an effect further down lists it as a dependency.
+  const applyCollapsed = useCallback((next) => {
+    setCollapsed(next);
+    rememberCollapsedRepos(taskId, next);
+  }, [taskId]);
   const [query, setQuery] = useState('');
   // VS Code's find-widget narrowings. Remembered per browser: the operator
   // turned them on to stop a search dragging in loosely-related paths, and a
@@ -228,6 +238,22 @@ export default function FilesTab({
     setQuery('');
   }, [taskId]);
 
+  // Restore the collapse choices of the task being switched TO. The pane is
+  // not remounted per task, so the initial state above only ever covers the
+  // first task it shows.
+  //
+  // Only an actual SWITCH: the first task was already restored by that
+  // initial state, and re-doing it here would cost a second render whose
+  // only job is to replace a correct value with an equal one — and would
+  // hide a broken initializer, since the pane would still end up right after
+  // a visible frame of everything expanded.
+  const restoredTaskId = useRef(taskId);
+  useEffect(() => {
+    if (restoredTaskId.current === taskId) { return; }
+    restoredTaskId.current = taskId;
+    setCollapsed(new Set(collapsedRepos(taskId)));
+  }, [taskId]);
+
   useEffect(() => {
     if (!focusFileTarget || status !== 'ready') { return; }
     // Skip re-fires from background refreshes (same request already
@@ -247,15 +273,18 @@ export default function FilesTab({
       handledFilesFocusRef.current = focusFileTarget.requestId;
       setQuery('');
       setShowAllFiles(false);
-      setCollapsed((prev) => {
-        if (!prev.has(repoKey)) { return prev; }
-        const next = new Set(prev);
+      // Persisted like any other expand: the operator opened this file on
+      // purpose, so unfolding its repo is their choice too. Storing it keeps
+      // what is on screen and what is remembered the same thing — otherwise
+      // the next reload silently re-folds a repo they are working in.
+      if (collapsed.has(repoKey)) {
+        const next = new Set(collapsed);
         next.delete(repoKey);
-        return next;
-      });
+        applyCollapsed(next);
+      }
       break;
     }
-  }, [focusFileTarget, status, trees, diffMetaByRepo]);
+  }, [focusFileTarget, status, trees, diffMetaByRepo, collapsed, applyCollapsed]);
 
   // A different task's tree must open at the top, not wherever the previous
   // one was left. The tree DATA is retained by the shared cache (no blank on
@@ -309,14 +338,12 @@ export default function FilesTab({
   }, [trees]);
 
   function toggleRepo(repoKey) {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(repoKey)) { next.delete(repoKey); } else { next.add(repoKey); }
-      return next;
-    });
+    const next = new Set(collapsed);
+    if (next.has(repoKey)) { next.delete(repoKey); } else { next.add(repoKey); }
+    applyCollapsed(next);
   }
-  function collapseAll() { setCollapsed(new Set(repoIds)); }
-  function expandAll() { setCollapsed(new Set()); }
+  function collapseAll() { applyCollapsed(new Set(repoIds)); }
+  function expandAll() { applyCollapsed(new Set()); }
   // "Try again" on a read-only repo badge: re-test push access, then reload the
   // tree so the badge reflects the new state (cleared once push is granted).
   async function recheckPush(repoId) {
