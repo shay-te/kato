@@ -13,13 +13,19 @@ from __future__ import annotations
 
 import gzip
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from flask import Flask
 
+from unittest.mock import patch
+
+from kato_webserver import http_payload
 from kato_webserver.http_payload import (
     TaggedPayload,
     conditional_json_response,
+    register_response_compression,
     serialize_payload,
 )
 
@@ -132,6 +138,195 @@ class ConditionalResponseTests(unittest.TestCase):
         plain = self._respond({'Accept-Encoding': 'identity'})
         zipped = self._respond({'Accept-Encoding': 'gzip'})
         self.assertEqual(plain.headers['ETag'], zipped.headers['ETag'])
+
+
+class ResponseCompressionTests(unittest.TestCase):
+    """kato serves its own static files, so nothing else will compress them.
+
+    The UI bundle went out UNCOMPRESSED on every cold load: 5.3 MB where 1.5 MB
+    would do, the single largest thing the operator waits for.
+    """
+
+    BODY = (b'console.log("kato");' * 200)
+
+    def _client(self, *, body=None, mimetype='application/javascript',
+                etag='"v1"', encoding='', streamed=False):
+        app = Flask(__name__)
+        register_response_compression(app)
+        payload = self.BODY if body is None else body
+
+        @app.get('/asset')
+        def asset():  # noqa: WPS430 - Flask needs the closure
+            if streamed:
+                response = app.response_class(
+                    (chunk for chunk in (payload,)), mimetype=mimetype,
+                )
+            else:
+                response = app.response_class(payload, mimetype=mimetype)
+            if etag:
+                response.headers['ETag'] = etag
+            if encoding:
+                response.headers['Content-Encoding'] = encoding
+            return response
+
+        return app.test_client()
+
+    @staticmethod
+    def _get(client, accept='gzip'):
+        headers = {'Accept-Encoding': accept} if accept else {}
+        return client.get('/asset', headers=headers)
+
+    def test_a_text_asset_is_compressed_for_a_client_that_asked(self) -> None:
+        response = self._get(self._client())
+
+        self.assertEqual(response.headers['Content-Encoding'], 'gzip')
+        self.assertEqual(response.headers['Vary'], 'Accept-Encoding')
+        self.assertLess(len(response.get_data()), len(self.BODY))
+
+    def test_it_decompresses_to_exactly_what_was_served(self) -> None:
+        response = self._get(self._client())
+
+        self.assertEqual(gzip.decompress(response.get_data()), self.BODY)
+
+    def test_the_declared_length_matches_the_bytes_sent(self) -> None:
+        # A stale Content-Length truncates the asset in the browser.
+        response = self._get(self._client())
+
+        self.assertEqual(
+            int(response.headers['Content-Length']), len(response.get_data()),
+        )
+
+    def test_a_client_that_does_not_ask_gets_the_plain_bytes(self) -> None:
+        response = self._get(self._client(), accept='identity')
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+        self.assertEqual(response.get_data(), self.BODY)
+
+    def test_a_request_with_no_accept_encoding_is_left_alone(self) -> None:
+        response = self._get(self._client(), accept='')
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+
+    def test_an_already_encoded_response_is_not_double_compressed(self) -> None:
+        # The tree and diff routes compress themselves; encoding twice hands
+        # the browser garbage.
+        response = self._get(self._client(encoding='gzip'))
+
+        self.assertEqual(response.headers['Content-Encoding'], 'gzip')
+        self.assertEqual(response.get_data(), self.BODY)
+
+    def test_a_streamed_response_is_never_touched(self) -> None:
+        # The chat's event stream has to arrive frame by frame.
+        response = self._get(self._client(streamed=True))
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+
+    def test_an_image_is_left_alone(self) -> None:
+        response = self._get(self._client(mimetype='image/png'))
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+
+    def test_a_tiny_body_is_left_alone(self) -> None:
+        # Under the threshold gzip's framing costs more than it saves.
+        response = self._get(self._client(body=b'ok'))
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+
+    def test_the_bundle_is_compressed_ONCE_per_version(self) -> None:
+        # ~66ms for a 5 MB bundle: doing that per page load would trade bytes
+        # for latency, which is the opposite of the point.
+        client = self._client()
+        with patch.object(
+            http_payload.gzip, 'compress', wraps=http_payload.gzip.compress,
+        ) as compress:
+            first = self._get(client)
+            second = self._get(client)
+
+        self.assertEqual(compress.call_count, 1)
+        self.assertEqual(first.get_data(), second.get_data())
+
+    def test_a_rebuilt_asset_is_compressed_again(self) -> None:
+        # The ETag encodes mtime + size, so a new build misses the cache.
+        app = Flask(__name__)
+        register_response_compression(app)
+        state = {'etag': '"v1"', 'body': self.BODY}
+
+        @app.get('/asset')
+        def asset():  # noqa: WPS430 - Flask needs the closure
+            response = app.response_class(
+                state['body'], mimetype='application/javascript',
+            )
+            response.headers['ETag'] = state['etag']
+            return response
+
+        client = app.test_client()
+        self._get(client)
+        state['etag'] = '"v2"'
+        state['body'] = self.BODY + b'// rebuilt\n'
+
+        response = self._get(client)
+
+        self.assertEqual(gzip.decompress(response.get_data()), state['body'])
+
+
+class StaticFileCompressionTests(unittest.TestCase):
+    """The case every test above could NOT catch.
+
+    Flask hands a static file back as a FILE WRAPPER, and a file wrapper has no
+    length — so werkzeug reports it as "streamed" even though Content-Length is
+    set. A guard that skipped every streamed response therefore skipped every
+    static file, which is the 5.3 MB bundle this whole feature exists for,
+    while the tests above still passed because they build a response from
+    BYTES. Measured before this test existed: 0% cut, no encoding header.
+    """
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        static = Path(tmp.name)
+        self.body = b'console.log("kato");' * 500
+        (static / 'app.js').write_bytes(self.body)
+        # ``static_url_path`` is pinned: Flask derives it from the static
+        # folder's BASENAME, so a temp directory would mount at /tmpXXXX and
+        # every request here would 404 — a harness bug that reads exactly like
+        # the feature being broken.
+        app = Flask(
+            __name__, static_folder=str(static), static_url_path='/static',
+        )
+        register_response_compression(app)
+        self.client = app.test_client()
+
+    def _get(self, **headers):
+        return self.client.get('/static/app.js', headers=headers)
+
+    def test_a_static_file_is_compressed(self) -> None:
+        response = self._get(**{'Accept-Encoding': 'gzip'})
+
+        self.assertEqual(response.headers['Content-Encoding'], 'gzip')
+        self.assertLess(len(response.get_data()), len(self.body))
+
+    def test_it_decompresses_to_the_file_on_disk(self) -> None:
+        response = self._get(**{'Accept-Encoding': 'gzip'})
+
+        self.assertEqual(gzip.decompress(response.get_data()), self.body)
+
+    def test_a_client_that_does_not_ask_gets_the_file_unchanged(self) -> None:
+        response = self._get(**{'Accept-Encoding': 'identity'})
+
+        self.assertIsNone(response.headers.get('Content-Encoding'))
+        self.assertEqual(response.get_data(), self.body)
+
+    def test_the_conditional_304_still_works(self) -> None:
+        # Compression must not cost the revalidation that makes repeat loads
+        # cheap: a 304 has no body to compress and must stay empty.
+        first = self._get(**{'Accept-Encoding': 'gzip'})
+
+        again = self._get(**{
+            'Accept-Encoding': 'gzip', 'If-None-Match': first.headers['ETag'],
+        })
+
+        self.assertEqual(again.status_code, 304)
+        self.assertEqual(again.get_data(), b'')
 
 
 if __name__ == '__main__':

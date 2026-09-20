@@ -747,6 +747,96 @@ class WebserverAppTests(unittest.TestCase):
         self.assertIn('"type": "control_request"', joined)
         self.assertEqual(replayed_count, 2)
 
+    # ---- the connect replay is trimmed, the live tail is not ----
+    #
+    # Both halves of one conversation are re-read on every refresh, but only
+    # the on-disk half was trimmed. The session's backlog is an UNBOUNDED list,
+    # so a long chat re-sent its whole tool output each time a tab reconnected.
+
+    @staticmethod
+    def _fat_event():
+        """A backlog event carrying exactly what the chat never reads."""
+        class _FatEvent:
+            received_at_epoch = 1.0
+
+            @staticmethod
+            def to_dict():
+                return {
+                    'received_at_epoch': 1.0,
+                    'raw': {
+                        'type': 'user',
+                        'toolUseResult': 'x' * 400,
+                        'gitBranch': 'UNA-1',
+                        'message': {
+                            'usage': {'input_tokens': 10, 'output_tokens': 20},
+                            'content': [
+                                {'type': 'text', 'text': 'keep me'},
+                                {
+                                    'type': 'tool_result',
+                                    'tool_use_id': 'tu_1',
+                                    'content': 'y' * 400,
+                                },
+                            ],
+                        },
+                    },
+                }
+        return _FatEvent()
+
+    def test_the_connect_replay_drops_what_the_chat_never_reads(self):
+        event = self._fat_event()
+
+        class _Session:
+            @staticmethod
+            def recent_events():
+                return [event]
+
+        frames = ''.join(
+            frame for _epoch, frame in _replay_session_backlog(_Session())
+        )
+
+        for dropped in ('toolUseResult', 'gitBranch', 'input_tokens', 'y' * 400):
+            self.assertNotIn(dropped, frames)
+        # What the chat DOES read survives: the text, and the id it pairs
+        # tool results on.
+        self.assertIn('keep me', frames)
+        self.assertIn('tu_1', frames)
+
+    def test_the_live_tail_is_left_alone(self):
+        # One event as it happens is not a replay; trimming it would change
+        # what a watching operator sees mid-turn.
+        from kato_webserver.app import _session_event_frame
+
+        frame = _session_event_frame(self._fat_event(), None)
+
+        self.assertIn('toolUseResult', frame)
+        self.assertIn('input_tokens', frame)
+
+    def test_a_permission_ask_is_never_trimmed(self):
+        # The modal renders the tool's own input, and the Action Guard
+        # annotation is written onto that same raw.
+        class _AskEvent:
+            received_at_epoch = 1.0
+
+            @staticmethod
+            def to_dict():
+                return {
+                    'received_at_epoch': 1.0,
+                    # ``cwd`` is on the trim list, so its survival proves this
+                    # took the untrimmed branch.
+                    'raw': {'type': 'control_request', 'cwd': '/w/UNA-1'},
+                }
+
+        class _Session:
+            @staticmethod
+            def recent_events():
+                return [_AskEvent()]
+
+        frames = ''.join(
+            frame for _epoch, frame in _replay_session_backlog(_Session())
+        )
+
+        self.assertIn('/w/UNA-1', frames)
+
     def test_backlog_drops_an_already_answered_control_request(self):
         # Regression: switching back to a task's tab reconnects the SSE and
         # replays the backlog. An ALREADY-ANSWERED control_request must NOT be

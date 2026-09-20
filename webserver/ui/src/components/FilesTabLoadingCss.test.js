@@ -1,4 +1,5 @@
-// The Files pane's two loading affordances, pinned in the COMPILED css.
+// The Files pane's compiled-CSS invariants: the loading affordances, and the
+// shape of a collapsed repo card.
 //
 // The per-repo row uses the SHARED button spinner, which is drawn for a
 // button: 0.2em of border on a ~17px box. At row scale, twenty-five of those
@@ -110,6 +111,56 @@ test('the repo-row history button is NOT the 28px header circle', () => {
     'the global header rule is winning again — the row button is a 28px circle',
   );
   assert.match(won.value, /^16px$/);
+});
+
+// ---- A collapsed repo card closes with a curve ---------------------------
+//
+// Operator: "when tree collapsed make it rounded also at the bottom." The
+// card is rounded at the top only, because expanded the tree scrolls past the
+// bottom edge. Collapsed there is nothing below it, so a square bottom under a
+// rounded top reads as a rendering fault.
+
+test('a collapsed repo card is rounded at the BOTTOM too', () => {
+  // Specificity, not presence: the base rule sets a top-only pair, so the
+  // collapsed rule only helps if it actually WINS on both boxes.
+  const wonSection = winningValue(
+    'border-radius',
+    (sel) => sel === '.files-tab-repo' || sel === '.files-tab-repo.is-collapsed',
+  );
+  assert.equal(wonSection.selector, '.files-tab-repo.is-collapsed');
+  // One value = all four corners. A top-only pair is four values with spaces.
+  assert.match(
+    wonSection.value, /^\S+$/,
+    `the collapsed card still has a square bottom (${wonSection.value})`,
+  );
+
+  // The header paints the fill and sits flush to the section edge, so it has
+  // to agree or its square corner shows through the section's curve.
+  const wonHeader = winningValue(
+    'border-radius',
+    (sel) => sel === '.files-tab-repo-header'
+      || sel === '.files-tab-repo.is-collapsed .files-tab-repo-header',
+  );
+  assert.equal(
+    wonHeader.selector, '.files-tab-repo.is-collapsed .files-tab-repo-header',
+  );
+  assert.match(wonHeader.value, /^\S+$/);
+});
+
+test('an EXPANDED repo card keeps its square bottom', () => {
+  // The curve must not leak to the expanded state: the tree scrolls past that
+  // edge, and rows would slide under a curve.
+  assert.match(ruleFor('.files-tab-repo'), /border-radius:[^;]*0\s+0/);
+});
+
+test('the loading skeleton is NOT rounded at the bottom', () => {
+  // It mirrors the loaded header so the pane fills in without re-laying out.
+  // A curve that vanishes when the tree lands is that same shift.
+  const won = winningValue(
+    'border-radius',
+    (sel) => sel === '.files-tab-repo' || sel === '.files-tab-repo.is-loading',
+  );
+  assert.equal(won.selector, '.files-tab-repo');
 });
 
 test('the read-only badge is not squeezed into that circle either', () => {

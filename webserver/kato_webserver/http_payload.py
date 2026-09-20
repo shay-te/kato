@@ -28,7 +28,11 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
+
+from flask import request as flask_request
 
 #: Fast rather than smallest: level 4 is a few percent larger than level 6 and
 #: about half the time, and this runs on the request path whenever a payload
@@ -68,6 +72,97 @@ class TaggedPayload:
     @classmethod
     def from_payload(cls, payload: dict) -> TaggedPayload:
         return cls.from_body(serialize_payload(payload))
+
+
+#: Worth compressing. Everything else a browser asks kato for — images, fonts,
+#: an opaque download of a workspace file — is already compressed, and gzipping
+#: it spends CPU to make it very slightly bigger.
+_COMPRESSIBLE_MIMETYPES = frozenset({
+    'text/html', 'text/css', 'text/plain', 'text/javascript',
+    'application/javascript', 'application/json', 'image/svg+xml',
+})
+
+#: Under this, gzip's own framing costs more than it saves.
+_COMPRESS_MIN_BYTES = 1024
+
+#: How many compressed bodies to keep. Keyed by the response's ETag, which for
+#: a static file already encodes its mtime and size, so a rebuilt asset misses
+#: and is compressed again.
+_COMPRESSED_CACHE_LIMIT = 32
+
+
+def register_response_compression(app) -> None:
+    """Gzip text responses for clients that asked, compressing once per version.
+
+    kato serves its own static files — there is no nginx in front — so nothing
+    else will ever do this. The UI bundle went out UNCOMPRESSED on every cold
+    load: 5.3 MB where 1.5 MB would do, which is the single largest thing the
+    operator waits for, and 72% of it is pure waste.
+
+    Compressing a 5 MB bundle costs ~66ms, so the result is CACHED against the
+    response's own ETag. Otherwise this would trade bytes for latency on every
+    page load.
+
+    Left alone, deliberately:
+
+    * responses that already carry ``Content-Encoding`` — the tree and diff
+      routes compress themselves (see :func:`conditional_json_response`) and
+      double-encoding would hand the browser garbage;
+    * anything STREAMED — the chat's event stream has to arrive frame by frame
+      and says ``no-transform`` for exactly that reason;
+    * non-200s, so a 304's emptiness is never "compressed".
+    """
+    cache: OrderedDict[str, bytes] = OrderedDict()
+    lock = threading.Lock()
+
+    def _cached_gzip(key: str, data: bytes) -> bytes:
+        if key:
+            with lock:
+                hit = cache.get(key)
+                if hit is not None:
+                    cache.move_to_end(key)
+                    return hit
+        compressed = gzip.compress(data, compresslevel=_GZIP_LEVEL)
+        if key:
+            with lock:
+                cache[key] = compressed
+                while len(cache) > _COMPRESSED_CACHE_LIMIT:
+                    cache.popitem(last=False)
+        return compressed
+
+    @app.after_request
+    def _compress_response(response):  # noqa: WPS430 - Flask needs the closure
+        if (
+            response.status_code != 200
+            or response.headers.get('Content-Encoding')
+            or response.mimetype not in _COMPRESSIBLE_MIMETYPES
+            # Unbounded streams only. A STATIC FILE also reports as "streamed"
+            # — its body is a file wrapper, which has no length — so testing
+            # ``is_streamed`` alone skipped precisely the 5.3 MB bundle this
+            # exists for. A real stream has no Content-Length either; the
+            # event stream is additionally excluded by the mimetypes above.
+            or (response.is_streamed and not response.content_length)
+            or 'gzip' not in flask_request.accept_encodings
+        ):
+            return response
+        # A static file is handed back as a file wrapper; reading it is what
+        # materialises those bytes so they can be compressed and cached.
+        response.direct_passthrough = False
+        data = response.get_data()
+        if len(data) < _COMPRESS_MIN_BYTES:
+            return response
+        compressed = _cached_gzip(response.headers.get('ETag') or '', data)
+        # Already-compressed content can come back BIGGER; sending it would
+        # cost the browser a decode for nothing.
+        if len(compressed) >= len(data):
+            return response
+        response.set_data(compressed)
+        response.headers['Content-Encoding'] = 'gzip'
+        response.headers['Content-Length'] = str(len(compressed))
+        # The body now depends on the request's Accept-Encoding, so any cache
+        # between here and the browser has to key on it.
+        response.headers['Vary'] = 'Accept-Encoding'
+        return response
 
 
 def conditional_json_response(app, request, tagged: TaggedPayload, *, headers=None):

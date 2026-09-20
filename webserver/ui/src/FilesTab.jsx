@@ -1367,7 +1367,14 @@ function RepoTree({
     );
   }
   return (
-    <section className="files-tab-repo" ref={repoRef}>
+    <section
+      // Collapsed, the header is the whole card and closes with a curve at
+      // the bottom too; expanded, those corners stay square because the tree
+      // scrolls past them. The CSS cannot see the chevron, so the state has
+      // to reach it as a class.
+      className={`files-tab-repo${collapsed ? ' is-collapsed' : ''}`}
+      ref={repoRef}
+    >
       <StickyHeader
         as="header"
         className="files-tab-repo-header"

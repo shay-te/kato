@@ -108,7 +108,11 @@ from kato_webserver.file_tree_cache import (
     CACHE_HIT_VALUE,
     FileTreeCache,
 )
-from kato_webserver.http_payload import TaggedPayload, conditional_json_response
+from kato_webserver.http_payload import (
+    TaggedPayload,
+    conditional_json_response,
+    register_response_compression,
+)
 from kato_webserver.git_diff_utils import (
     blob_size_at_ref,
     changed_paths,
@@ -1277,6 +1281,9 @@ def create_app(
         static_folder=str(REPO_ROOT / 'static'),
     )
     _register_csrf_guard(app)
+    # kato serves its own static files, so nothing else compresses them: the
+    # UI bundle went out at 5.3 MB on every cold load where 1.5 MB would do.
+    register_response_compression(app)
     if session_manager is None:
         session_manager = _build_fallback_manager(fallback_state_dir)
     app.config['SESSION_MANAGER'] = session_manager
@@ -6315,17 +6322,36 @@ def _epoch_from_iso(value) -> float:
         return 0.0
 
 
-def _session_event_frame(event, session) -> str:
+def _session_event_frame(event, session, *, trim: bool = False) -> str:
     """Serialise a session event for SSE, annotating ``control_request``
     events with the Action Guard risk so the permission modal can render the
     category/reason. Annotates a COPY of the raw dict so the shared stored
-    event is never mutated from the SSE thread."""
+    event is never mutated from the SSE thread.
+
+    ``trim`` applies the same stripping the on-disk transcript replay already
+    uses (:func:`_history_raw_for_chat`), and is for the CONNECT REPLAY only.
+
+    The two halves of one conversation were treated differently: the disk half
+    was trimmed, the live session's backlog was not — even though a browser
+    re-reads BOTH in full on every refresh, and ``_recent_events`` is an
+    unbounded list, so a long chat re-sent its whole tool output every time a
+    tab reconnected. Measured on real transcripts, the same fields are 12% to
+    44% of the bytes.
+
+    The live tail stays untrimmed — it is one event at a time, not a replay.
+    ``ChatReplayTrimmedFields.test.js`` guards that nothing in the chat reads
+    the dropped fields.
+    """
     payload = event.to_dict()
     raw = payload.get('raw') if isinstance(payload, dict) else None
     if isinstance(raw, dict) and raw.get('type') == CLAUDE_EVENT_CONTROL_REQUEST:
         raw = dict(raw)
         _annotate_action_guard(raw, session)
         payload = {**payload, 'raw': raw}
+        # Never trimmed: the permission modal renders the tool's own input,
+        # and the Action Guard annotation was just written onto it.
+    elif trim and isinstance(raw, dict):
+        payload = {**payload, 'raw': _history_raw_for_chat(raw)}
     return _sse_message(SSE_EVENT_SESSION_EVENT, {'event': payload})
 
 
@@ -6446,7 +6472,7 @@ def _replay_session_backlog(session, backlog=None, agent_service=None, task_id='
         if _maybe_auto_resolve_live_event(app, session, task_id, event):
             continue
         yield float(getattr(event, 'received_at_epoch', 0.0) or 0.0), \
-            _session_event_frame(event, session)
+            _session_event_frame(event, session, trim=True)
 
 
 def _follow_live_session(

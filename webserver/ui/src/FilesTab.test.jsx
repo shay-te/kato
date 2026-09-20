@@ -569,6 +569,27 @@ describe('FilesTab — render shell', () => {
     await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
   });
 
+  test('a collapsed repo card is marked so it can close with a curve', async () => {
+    // "when tree collapsed make it rounded also at the bottom" — the card is
+    // rounded top-only because the tree scrolls past its bottom edge. The CSS
+    // cannot see the chevron, so the collapsed state has to reach it as a
+    // class (the radius itself is pinned in FilesTabLoadingCss.test.js).
+    mockFileTree(FILE_TREE_PAYLOAD);
+    mockDiff(DIFF_PAYLOAD);
+    const { container } = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    await screen.findByText('Changed.js');
+    const section = () => container.querySelector('.files-tab-repo');
+
+    expect(section().classList.contains('is-collapsed')).toBe(false);
+
+    fireEvent.click(
+      screen.getByText('client', { selector: '.files-tab-repo-name' }),
+    );
+    await waitFor(() => {
+      expect(section().classList.contains('is-collapsed')).toBe(true);
+    });
+  });
+
   test('a re-render keeps the rows the tree already drew', async () => {
     // react-arborist renders the Tree's child as a component TYPE. An inline
     // function is a new type on every render, so each re-render of the

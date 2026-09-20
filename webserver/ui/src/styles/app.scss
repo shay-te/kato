@@ -3699,20 +3699,32 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   scrollbar-color: $C-NEUTRAL-96-A42 transparent;
 }
 
+/* Drawn as the Files pane's repo card: 10px, a hairline $C-NEUTRAL-100-A06
+ * border, a solid $C-NEUTRAL-16 fill and the same soft shadow. A queued
+ * message is the same KIND of object — one row the operator can act on — so
+ * it reuses that card rather than inventing a second one. COUPLED to
+ * ``.files-tab-repo-header``: if the house card changes, change both.
+ *
+ * Deliberately NOT a pill. The row grows into a multi-line textarea while
+ * editing (``.is-editing``), where a pill's ends bow out around the text; and
+ * it already carries a pill-shaped Steer button, so a pill inside a pill stops
+ * saying which part is the button. */
 .queued-message-row {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
   padding: $SPACE-6 $SPACE-10;
-  border-radius: $RADIUS-12;
-  background: $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-10;
+  background: $C-NEUTRAL-16;
   border: 1px solid $C-NEUTRAL-100-A06;
+  box-shadow: $SHADOW-23;
   color: $C-NEUTRAL-96-A85;
   font-size: $TEXT-13;
 }
 
+/* Hover brightens the EDGE only. The fill is the card's identity; changing it
+ * on hover made the row read as selected rather than pointed at. */
 .queued-message-row:hover {
-  background: $C-NEUTRAL-100-A06;
   border-color: $C-NEUTRAL-100-A10;
 }
 
@@ -6207,6 +6219,24 @@ $FILES-PANE-INSET: $SPACE-6;
  * rather than re-laying out under the operator's eyes. */
 .files-tab-repo.is-loading {
   padding-bottom: $SPACE-6;
+}
+
+/* Collapsed: the header IS the whole card, so it closes with a curve at the
+ * bottom as well. Expanded, those corners stay square on purpose — the tree
+ * scrolls past them and a curve would have rows sliding under it.
+ *
+ * BOTH boxes need it. The section paints the 1px outline; the header paints
+ * the fill and is pulled flush to the section's edge by the negative margins
+ * below, so rounding either one alone leaves the other's square corner
+ * showing through.
+ *
+ * Deliberately NOT applied to ``.is-loading``: that skeleton mirrors the
+ * LOADED header so the pane fills in instead of re-laying out, and a curve
+ * that vanished when the tree arrived is the exact shift the mirroring
+ * exists to prevent. */
+.files-tab-repo.is-collapsed,
+.files-tab-repo.is-collapsed .files-tab-repo-header {
+  border-radius: $RADIUS-10;
 }
 
 /* Indeterminate bar for a task whose repos are not remembered yet — the one

@@ -7,16 +7,28 @@ const css = readFileSync(
   'utf8',
 );
 
-function ruleBody(selector) {
+// ANCHORED at a line start. The compiled sheet prints one selector per line,
+// and an unanchored search also matches a selector that merely ENDS with the
+// wanted one: looking up ``.files-tab-repo-header`` found the descendant in
+// ``.files-tab-repo.is-collapsed .files-tab-repo-header`` — an earlier rule —
+// and every assertion then ran against the wrong rule's body. A test that
+// silently reads a different rule is worse than no test.
+//
+// The optional trailing ``,`` keeps a multi-selector rule reachable by any one
+// of its selectors, which is how sass prints them in expanded style.
+function ruleRegex(selector, flags = '') {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`));
+  return new RegExp(`(?:^|\\n)${escaped}\\s*(?:,[^{]*)?\\{([^}]*)\\}`, flags);
+}
+
+function ruleBody(selector) {
+  const match = css.match(ruleRegex(selector));
   assert.ok(match, `expected ${selector} rule to exist`);
   return match[1];
 }
 
 function ruleBodyContaining(selector, text) {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const matches = [...css.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))];
+  const matches = [...css.matchAll(ruleRegex(selector, 'g'))];
   const match = matches.find((entry) => {
     return entry[1].includes(text);
   });
