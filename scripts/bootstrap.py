@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -23,11 +24,63 @@ from _script_utils import (  # noqa: E402
 )
 
 
+def _venv_has_pip(python_bin: Path) -> bool:
+    """Is this venv actually usable, or just an interpreter with no pip?
+
+    ``python -m venv`` creates ``bin/python`` BEFORE it bootstraps pip, so a
+    run that dies at the pip step still leaves an interpreter behind. The
+    common cause is Debian/Ubuntu, which strips ``ensurepip`` out of the base
+    Python into a separate ``pythonX.Y-venv`` package.
+    """
+    if not python_bin.exists():
+        return False
+    try:
+        probe = subprocess.run(
+            [str(python_bin), '-c', 'import pip'],
+            capture_output=True,
+        )
+    except OSError:
+        return False
+    return probe.returncode == 0
+
+
+def _venv_repair_hint() -> str:
+    """Name the package AND the leftover directory.
+
+    Both halves are needed: installing the package alone does not help while
+    the half-built venv is still on disk, because the existence check below
+    skips creation and the failure resurfaces later as ``No module named
+    pip`` — which mentions neither venv nor the package.
+    """
+    version = f'{sys.version_info.major}.{sys.version_info.minor}'
+    return (
+        f'\n{VENV_DIR} exists but has no pip, so it cannot be used.\n'
+        f'On Debian/Ubuntu that means the matching venv package is missing:\n'
+        f'\n'
+        f'    sudo apt install python{version}-venv\n'
+        f'    rm -rf {VENV_DIR}\n'
+        f'\n'
+        f'then re-run this script. Install the VERSION-MATCHED package — a\n'
+        f'bare "python3-venv" can target a different interpreter than the\n'
+        f'python{version} running this script.\n'
+    )
+
+
 def _ensure_venv() -> None:
     python_bin = venv_python_path()
-    if python_bin.exists():
+    if _venv_has_pip(python_bin):
         return
+    if python_bin.exists():
+        # A leftover from an earlier failed run. Say so instead of pressing on
+        # into a pip command that cannot work.
+        print(_venv_repair_hint(), file=sys.stderr)
+        sys.exit(1)
     run_step('python -m venv .venv', [sys.executable, '-m', 'venv', str(VENV_DIR)])
+    # ``venv`` can exit 0 and still leave no pip (``--without-pip``, or a
+    # distro that half-provides ensurepip), so verify rather than assume.
+    if not _venv_has_pip(python_bin):
+        print(_venv_repair_hint(), file=sys.stderr)
+        sys.exit(1)
 
 
 def _install_python_deps() -> None:
