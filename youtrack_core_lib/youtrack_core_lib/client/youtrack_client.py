@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import YouTrackClientBase
+from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import (
+    YouTrackClientBase,
+    raise_for_status_with_detail,
+)
 from youtrack_core_lib.youtrack_core_lib.data.fields import (
     YouTrackAttachmentFields,
     YouTrackCommentFields,
@@ -92,7 +95,7 @@ class YouTrackClient(YouTrackClientBase):
                 '$top': 1,
             },
         )
-        response.raise_for_status()
+        raise_for_status_with_detail(response)
 
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Task]:
         # Paginate via ``$top`` + ``$skip`` so teams with more than
@@ -113,7 +116,7 @@ class YouTrackClient(YouTrackClientBase):
                     '$skip': skip,
                 },
             )
-            response.raise_for_status()
+            raise_for_status_with_detail(response)
             page = list(self._json_items(response))
             if not page:
                 break
