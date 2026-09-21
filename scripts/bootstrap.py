@@ -19,6 +19,7 @@ from _script_utils import (  # noqa: E402
     REPO_ROOT,
     VENV_DIR,
     have_executable,
+    require_supported_python,
     run_step,
     venv_python_path,
 )
@@ -144,6 +145,9 @@ def main() -> int:
     # anything about *your* configuration. The deps + UI bundle are
     # already installed before this point, so skipping is safe.
     skip_tests = '--skip-tests' in sys.argv[1:]
+    # FIRST, before anything is created: an interpreter below the minimum
+    # fails several steps later wearing someone else's error message.
+    require_supported_python()
     _ensure_venv()
     _install_python_deps()
     _maybe_build_ui_bundle()

@@ -18,6 +18,47 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = REPO_ROOT / '.venv'
 
+# MUST match ``requires-python`` in pyproject.toml (pinned by
+# tests/test_bootstrap_python_version.py). Kept as a literal because the
+# check has to run on interpreters OLDER than the minimum, where ``tomllib``
+# (3.11+) does not exist and could not parse pyproject to find it out.
+MIN_PYTHON = (3, 11)
+
+
+def require_supported_python() -> None:
+    """Refuse an interpreter below ``MIN_PYTHON``, naming a real fix.
+
+    Distro ``python3`` is frequently older than what this project needs —
+    Pop!_OS/Ubuntu 22.04 ship 3.10 — and every downstream failure from that
+    describes something else. Creating the venv fails first, and on
+    Debian/Ubuntu the stdlib's own message names the venv package for
+    WHICHEVER interpreter is running, sending the operator to
+    ``apt install python3.10-venv``; installing it just moves the wall to
+    ``pip install -e .`` rejecting the project on ``requires-python``.
+
+    So check here, at the one point every entry path passes through, before
+    anything is created.
+    """
+    if sys.version_info >= MIN_PYTHON:
+        return
+    minimum = '.'.join(str(part) for part in MIN_PYTHON)
+    running = '.'.join(str(part) for part in sys.version_info[:3])
+    print(
+        f'\nkato needs Python >= {minimum}, but this is {running}\n'
+        f'  ({sys.executable})\n'
+        '\n'
+        'Run bootstrap with a newer interpreter, e.g.:\n'
+        '\n'
+        f'    python{minimum} tools/kato/kato.py up\n'
+        '\n'
+        'On Debian/Ubuntu that interpreter also needs its own venv package\n'
+        f'(``sudo apt install python{minimum}-venv``). Do NOT install the venv\n'
+        f'package for {running} — it would let the venv build and then fail at\n'
+        'the install step instead.\n',
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
 
 def venv_python_path() -> Path:
     """Return the path to the venv Python interpreter on the current OS.

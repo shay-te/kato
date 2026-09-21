@@ -13,4 +13,36 @@
 # the same Python source (tools/kato/kato.py).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$SCRIPT_DIR/tools/kato/kato.py" "$@"
+
+# Pick an interpreter that satisfies pyproject's ``requires-python``, rather
+# than whatever ``python3`` happens to be. Distro python3 is often older than
+# kato needs (Pop!_OS / Ubuntu 22.04 ship 3.10), and bootstrapping under it
+# fails later wearing an unrelated message: on Debian/Ubuntu the venv step
+# dies telling you to ``apt install python3.10-venv``, and installing that
+# just moves the wall to ``requires-python``.
+#
+# Newest first, so a box with several installed uses the newest. KATO_PYTHON
+# overrides everything for an operator who wants a specific one.
+find_python() {
+    if [ -n "${KATO_PYTHON:-}" ]; then
+        printf '%s\n' "$KATO_PYTHON"
+        return 0
+    fi
+    for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+            && "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+if ! PYTHON="$(find_python)"; then
+    echo "kato needs Python >= 3.11 and none was found on PATH." >&2
+    echo "Install one (e.g. 'sudo apt install python3.13 python3.13-venv')," >&2
+    echo "or point kato at yours: KATO_PYTHON=/path/to/python3.13 ./kato $*" >&2
+    exit 1
+fi
+
+exec "$PYTHON" "$SCRIPT_DIR/tools/kato/kato.py" "$@"
