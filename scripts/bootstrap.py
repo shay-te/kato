@@ -104,9 +104,62 @@ def _install_python_deps() -> None:
     )
 
 
+def _node_can_build() -> tuple[bool, str]:
+    """Can this Node actually run the bundler?
+
+    A CAPABILITY probe, not version arithmetic: Vite reaches for the global
+    ``crypto.getRandomValues``, which older Node does not expose, and the
+    exact release that boundary falls on has moved around. Asking Node
+    whether it has the thing cannot be wrong about the boundary.
+
+    Returns ``(ok, reason)`` — ``reason`` is operator-facing when not ok.
+    """
+    try:
+        version = subprocess.run(
+            ['node', '--version'], capture_output=True, text=True,
+        )
+    except OSError as exc:
+        return False, f'node is not runnable ({exc})'
+    running = (version.stdout or version.stderr or '').strip() or 'unknown'
+    probe = subprocess.run(
+        [
+            'node', '-e',
+            'if (!globalThis.crypto || !globalThis.crypto.getRandomValues)'
+            ' process.exit(1)',
+        ],
+        capture_output=True,
+    )
+    if probe.returncode != 0:
+        return False, (
+            f'node {running} has no global crypto.getRandomValues, which the\n'
+            f'    bundler needs (this is the "crypto$2.getRandomValues is not a\n'
+            f'    function" error). Install Node 20 LTS or newer.'
+        )
+    return True, running
+
+
 def _maybe_build_ui_bundle() -> None:
+    """Best effort. The bundle is COMMITTED, so this step is an optimization.
+
+    It used to be fatal whenever npm merely EXISTED: npm absent skipped
+    politely and used the committed bundle, while npm present-but-unusable
+    (old Node) killed the whole bootstrap. Backwards — the harder failure
+    got the harsher treatment, and an operator who only wanted to RUN kato
+    was blocked by a build they did not need.
+
+    A developer changing ``webserver/ui/src`` still runs ``npm run build``
+    themselves and sees any real error there.
+    """
     if not have_executable('npm'):
         print('==> skipping webserver/ui build (npm not found; using committed bundle)')
+        return
+    node_ok, reason = _node_can_build()
+    if not node_ok:
+        print(
+            f'==> skipping webserver/ui build (using committed bundle)\n'
+            f'    {reason}',
+            flush=True,
+        )
         return
     ui_dir = REPO_ROOT / 'webserver' / 'ui'
     # Drop ``npm --prefix <path>`` and use ``cwd=ui_dir`` instead.
@@ -120,14 +173,27 @@ def _maybe_build_ui_bundle() -> None:
     # find it without ``shell=True``. shutil.which already confirmed npm
     # is on PATH; we just need cmd.exe to resolve the right shim.
     use_shell = sys.platform == 'win32'
-    run_step(
-        'npm install (planning UI)',
-        npm_args_install, shell=use_shell, cwd=str(ui_dir),
-    )
-    run_step(
-        'npm run build (planning UI)',
-        npm_args_build, shell=use_shell, cwd=str(ui_dir),
-    )
+    for label, args in (
+        ('npm install (planning UI)', npm_args_install),
+        ('npm run build (planning UI)', npm_args_build),
+    ):
+        print(f'==> {label}', flush=True)
+        completed = subprocess.run(
+            args, shell=use_shell, cwd=str(ui_dir),
+        )
+        if completed.returncode != 0:
+            # Warn, do NOT exit: the committed bundle is still on disk and
+            # kato serves it. Blocking here would turn a UI-toolchain
+            # problem into "kato will not install".
+            print(
+                f'\n==> WARNING: {label} failed (exit {completed.returncode}).\n'
+                f'    Continuing with the committed bundle — kato will run.\n'
+                f'    Rebuild later with: cd webserver/ui && npm install'
+                f' && npm run build\n',
+                file=sys.stderr,
+                flush=True,
+            )
+            return
 
 
 def _run_tests() -> None:

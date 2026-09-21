@@ -1,6 +1,9 @@
 {
   "name": "kato-planning-ui",
   "version": "0.1.0",
+  "engines": {
+    "node": ">=20"
+  },
   "private": true,
   "description": "React-driven right-side pane (Files + Changes) for the Kato planning UI.",
   "type": "module",
