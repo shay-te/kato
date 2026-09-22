@@ -514,5 +514,83 @@ class WorkspaceServicePreflightLogTests(unittest.TestCase):
         self.assertEqual(entries, [])
 
 
+class WorkspaceServiceReadsDoNotBlockTests(unittest.TestCase):
+    """A long ``delete`` must not freeze ``list_workspaces`` / ``get``.
+
+    ``delete`` runs ``shutil.rmtree`` over the whole task folder. When the
+    reads shared the mutation lock, deleting a workspace carrying 20+ clones
+    held every reader for the entire tree walk — measured at the full delete
+    duration, against 7ms once the reads stopped taking the lock. The visible
+    damage was in the host UI: its tab strip is painted from
+    ``list_workspaces``, so forgetting one task froze the strip and then
+    emptied it, which reads as "all my tasks are gone" rather than "one task
+    is being deleted".
+
+    Safe because ``WorkspaceDataAccess`` is documented thread-safe for reads:
+    ``atomic_write_json`` means a reader racing a writer sees the old or the
+    new payload, never a torn one.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.data_access = WorkspaceDataAccess(root=self.root)
+        self.service = WorkspaceService(self.data_access, max_parallel_tasks=4)
+
+    def test_reads_answer_while_a_delete_is_in_flight(self) -> None:
+        from unittest.mock import patch
+        self.service.create(task_id='FAT-1', task_summary='fat', repository_ids=[])
+        self.service.create(task_id='KEEP-1', task_summary='keep', repository_ids=[])
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_delete(_task_id: str) -> None:
+            # Stands in for the rmtree of a many-clone workspace.
+            entered.set()
+            release.wait(timeout=10)
+
+        with patch.object(self.data_access, 'delete', side_effect=slow_delete):
+            deleter = threading.Thread(
+                target=lambda: self.service.delete('FAT-1'), daemon=True,
+            )
+            deleter.start()
+            self.assertTrue(entered.wait(timeout=10), 'delete never started')
+
+            # Read from ANOTHER thread so a regression fails the assertion
+            # instead of hanging the suite behind the held lock.
+            read_done = threading.Event()
+            seen: dict[str, object] = {}
+
+            def read() -> None:
+                seen['ids'] = [r.task_id for r in self.service.list_workspaces()]
+                seen['keep'] = self.service.get('KEEP-1')
+                read_done.set()
+
+            reader = threading.Thread(target=read, daemon=True)
+            reader.start()
+            blocked = not read_done.wait(timeout=5)
+            release.set()
+            deleter.join(timeout=10)
+            reader.join(timeout=10)
+
+        self.assertFalse(
+            blocked,
+            'list_workspaces/get blocked behind an in-flight delete — the '
+            'reads are taking the mutation lock again',
+        )
+        self.assertIn('KEEP-1', seen['ids'])
+        self.assertIsNotNone(seen['keep'])
+
+    def test_delete_still_removes_the_workspace(self) -> None:
+        # The lock change must not weaken what delete actually does.
+        self.service.create(task_id='GONE-1', task_summary='g', repository_ids=[])
+        self.assertTrue(self.service.workspace_path('GONE-1').is_dir())
+        self.service.delete('GONE-1')
+        self.assertFalse(self.service.workspace_path('GONE-1').exists())
+        self.assertIsNone(self.service.get('GONE-1'))
+
+
 if __name__ == '__main__':
     unittest.main()

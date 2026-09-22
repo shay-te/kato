@@ -99,7 +99,12 @@ export default function App() {
   // text into the composer without re-rendering the whole tree
   // on every keystroke.
   const composerRef = useRef(null);
-  const { sessions, refresh } = useSessions();
+  const {
+    sessions,
+    refresh,
+    loaded: sessionsLoaded,
+    reachable: katoReachable,
+  } = useSessions();
   const attention = useTaskAttention();
   // Live agent status published by the active task's SessionDetail. Subscribed
   // once here and passed down (via TabList) so the tab dot/badge derive from the
@@ -818,6 +823,8 @@ export default function App() {
       top={
         <TabList
           sessions={sessions}
+          sessionsLoaded={sessionsLoaded}
+          katoReachable={katoReachable}
           activeTaskId={activeTaskId}
           attentionTaskIds={attentionTaskIds}
           agentStatuses={agentStatuses}

@@ -694,3 +694,53 @@ describe('TabList — drag to reorder task tabs', () => {
     expect(ids(second.container)).toEqual(['A-2', 'A-3', 'A-1', 'A-9']);
   });
 });
+
+describe('TabList empty state tells the three cases apart', () => {
+  // An empty strip used to render the onboarding copy no matter WHY it was
+  // empty. Reloading the page during kato's ~24s startup therefore said
+  // "No tabs yet. Click + Add task" — indistinguishable from having had every
+  // task deleted, while the workspaces sat untouched on disk.
+  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  test('an unreachable kato says so, and never says "No tabs yet"', () => {
+    render(
+      <TabList sessions={[]} sessionsLoaded={false} katoReachable={false} onSelect={() => {}} />,
+    );
+    expect(screen.getByText(/Can’t reach kato/)).toBeInTheDocument();
+    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+    // The reassurance matters: this is the moment operators think data is gone.
+    expect(screen.getByText(/workspaces are untouched/)).toBeInTheDocument();
+  });
+
+  test('a still-loading strip does not claim the operator has no tasks', () => {
+    render(
+      <TabList sessions={[]} sessionsLoaded={false} katoReachable onSelect={() => {}} />,
+    );
+    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+  });
+
+  test('a fast first load never flashes a loading message', () => {
+    render(
+      <TabList sessions={[]} sessionsLoaded={false} katoReachable onSelect={() => {}} />,
+    );
+    // Before the grace period elapses the strip stays quiet.
+    expect(screen.queryByText(/Loading your tasks/)).not.toBeInTheDocument();
+  });
+
+  test('a slow first load eventually explains itself', async () => {
+    render(
+      <TabList sessions={[]} sessionsLoaded={false} katoReachable onSelect={() => {}} />,
+    );
+    await vi.advanceTimersByTimeAsync(700);
+    expect(await screen.findByText(/Loading your tasks/)).toBeInTheDocument();
+    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+  });
+
+  test('a loaded, reachable, genuinely empty kato still onboards', () => {
+    render(
+      <TabList sessions={[]} sessionsLoaded katoReachable onSelect={() => {}} />,
+    );
+    expect(screen.getByText(/No tabs yet/)).toBeInTheDocument();
+  });
+});

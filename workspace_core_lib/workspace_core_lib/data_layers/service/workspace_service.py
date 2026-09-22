@@ -119,13 +119,26 @@ class WorkspaceService(Service):
     def exists(self, task_id: str) -> bool:
         return self._data_access.exists(task_id)
 
+    # Reads deliberately do NOT take ``self._lock``.
+    #
+    # ``WorkspaceDataAccess`` is documented thread-safe for exactly this:
+    # ``atomic_write_json`` means a reader racing a writer sees either the
+    # old or the new payload, never a torn one. The lock buys these two
+    # nothing — and it cost a great deal, because it is the SAME lock
+    # ``delete`` holds while ``shutil.rmtree`` runs. Forgetting a task whose
+    # workspace carries 20+ clones held it for the whole tree walk, and every
+    # ``list_workspaces`` behind it blocked: the operator's tab strip froze,
+    # then emptied, and the UI (which cannot tell a slow list from an empty
+    # one) told them their tasks were gone.
+    #
+    # A half-deleted workspace can now surface for one poll before it
+    # disappears. That is correct and self-correcting — ``list_all`` already
+    # tolerates a folder whose metadata is missing.
     def get(self, task_id: str) -> WorkspaceRecord | None:
-        with self._lock:
-            return self._data_access.get(task_id)
+        return self._data_access.get(task_id)
 
     def list_workspaces(self) -> list[WorkspaceRecord]:
-        with self._lock:
-            return self._data_access.list_all()
+        return self._data_access.list_all()
 
     # ----- create / update / delete -----
 

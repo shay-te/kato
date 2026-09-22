@@ -86,3 +86,46 @@ class RepositoryConnectionsValidatorTests(unittest.TestCase):
 
         service._prepare_repository_access.assert_called_once_with('repo-1')
         self.assertFalse(hasattr(service, '_validate_repository_git_access'))
+
+
+class RepositoryConnectionsValidatorConcurrencyTests(unittest.TestCase):
+    """Boot validation is network-bound, so its worker cap is load-bearing.
+
+    Each per-repo check is a provider round-trip. At a cap of 8 a 62-repo
+    inventory took ~8 waves, measured as a 22-second gap between the
+    webserver binding and the first reconciliation line — the window in
+    which kato is serving but not yet scanning.
+    """
+
+    def _service(self, repositories):
+        return SimpleNamespace(
+            _validate_git_executable=Mock(),
+            _ensure_repositories=Mock(),
+            _prepare_repository_access=Mock(),
+            _validate_repository_git_access=Mock(),
+            _repositories=repositories,
+            repositories=repositories,
+        )
+
+    def test_an_empty_inventory_validates_instead_of_crashing(self) -> None:
+        # ``ThreadPoolExecutor(max_workers=0)`` is a ValueError, so an empty
+        # explicitly-loaded inventory used to take down the whole boot
+        # validation rather than pass trivially.
+        validator = RepositoryConnectionsValidator(self._service([]))
+        validator.validate()  # must not raise
+
+    def test_every_repository_is_checked_above_the_old_cap(self) -> None:
+        repositories = [f'repo-{n}' for n in range(40)]
+        service = self._service(repositories)
+
+        RepositoryConnectionsValidator(service).validate()
+
+        self.assertEqual(service._prepare_repository_access.call_count, 40)
+        self.assertEqual(service._validate_repository_git_access.call_count, 40)
+
+    def test_the_worker_cap_is_bounded_and_above_eight(self) -> None:
+        from kato_core_lib.validation import repository_connections as module
+        # Bounded on purpose: the checks mostly hit ONE provider, and kato
+        # already runs a 180s scan cadence to stay under its rate limits.
+        self.assertGreater(module._MAX_VALIDATION_WORKERS, 8)
+        self.assertLessEqual(module._MAX_VALIDATION_WORKERS, 32)

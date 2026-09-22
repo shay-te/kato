@@ -58,6 +58,11 @@ class YouTrackClientBase(IssueClientBase):
     # unset so the real identity is resolved from ``/api/users/me``.
     _BOT_LOGIN_ALIASES = frozenset({'me'})
 
+    # How many issues are enriched at once in ``_normalize_issue_tasks``.
+    # Subclass-overridable so a deployment against a rate-limited instance
+    # can dial it down without forking the batching logic.
+    ISSUE_ENRICHMENT_WORKERS = 8
+
     def __init__(
         self,
         base_url: str,
@@ -141,20 +146,63 @@ class YouTrackClientBase(IssueClientBase):
         to_task: Callable[[dict[str, Any]], Task],
         include: Callable[[dict[str, Any]], bool] | None = None,
     ) -> list[Task]:
+        """Build one :class:`Task` per issue payload, enriching CONCURRENTLY.
+
+        ``to_task`` is not cheap: for each issue it fetches that issue's tags,
+        comments and attachments — three more round-trips per issue. Run one
+        after another, a 76-issue answer meant 228 sequential requests and
+        took ~33 seconds, which is the entire cost of both the task picker and
+        every queue scan.
+
+        The work is pure I/O wait, so a bounded pool collapses it. The bound
+        matters: these all hit ONE provider, and the caller already paces its
+        scans to stay under provider rate limits — an unbounded fan-out would
+        trade a slow scan for a throttled account.
+
+        Order is preserved (callers dedupe first-seen-wins), and a single
+        malformed payload is still skipped with a log rather than failing the
+        batch.
+        """
+        candidates = [
+            item for item in items
+            if isinstance(item, dict) and (include is None or include(item))
+        ]
+        if not candidates:
+            return []
+        if len(candidates) == 1:
+            # One issue needs no pool — and keeping this path synchronous
+            # means the common single-issue lookups behave exactly as before.
+            return self._collect_task(candidates[0], to_task)
+
+        from concurrent.futures import ThreadPoolExecutor
+        workers = min(len(candidates), self.ISSUE_ENRICHMENT_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(to_task, item) for item in candidates]
         tasks: list[Task] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if include and not include(item):
-                continue
+        for future in futures:
             try:
-                tasks.append(to_task(item))
+                tasks.append(future.result())
             except (KeyError, TypeError, ValueError):
                 self.logger.exception(
                     'failed to normalize %s issue payload',
                     self.__class__.__name__,
                 )
         return tasks
+
+    def _collect_task(
+        self,
+        item: dict[str, Any],
+        to_task: Callable[[dict[str, Any]], Task],
+    ) -> list[Task]:
+        """``[task]``, or ``[]`` when the payload can't be normalized."""
+        try:
+            return [to_task(item)]
+        except (KeyError, TypeError, ValueError):
+            self.logger.exception(
+                'failed to normalize %s issue payload',
+                self.__class__.__name__,
+            )
+            return []
 
     # ----- description building -----
 

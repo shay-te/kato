@@ -9,6 +9,21 @@ if TYPE_CHECKING:
     from kato_core_lib.data_layers.service.repository_service import RepositoryService
 
 
+# How many repository connectivity checks run at once.
+#
+# Each check is a NETWORK round-trip against the provider, so this is
+# I/O-bound and a low cap just leaves the boot waiting. At 8, a 62-repo
+# inventory needed ~8 waves, which showed up as a 22-second gap between
+# "planning webserver listening" and the first reconciliation line — the
+# whole window in which kato is up but not yet scanning.
+#
+# Deliberately not unbounded: the checks mostly hit ONE provider, and kato
+# already had to back its scan cadence off to 180s to stay under provider
+# rate limits. A thundering herd here would trade a slow boot for a
+# throttled one.
+_MAX_VALIDATION_WORKERS = 16
+
+
 class RepositoryConnectionsValidator(ValidationBase):
     def __init__(self, repository_service: RepositoryService) -> None:
         self._repository_service = repository_service
@@ -41,7 +56,12 @@ class RepositoryConnectionsValidator(ValidationBase):
             raise RuntimeError('\n'.join(errors))
 
     def _validate_repositories_parallel(self, repositories: list) -> list[str]:
-        with ThreadPoolExecutor(max_workers=min(len(repositories), 8)) as executor:
+        if not repositories:
+            # ``max_workers=0`` is a ValueError, so an empty inventory used to
+            # crash the whole boot validation rather than pass trivially.
+            return []
+        workers = min(len(repositories), _MAX_VALIDATION_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = [executor.submit(self._validate_one, repo) for repo in repositories]
         errors: list[str] = []
         for future in futures:

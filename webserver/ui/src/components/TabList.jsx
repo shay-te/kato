@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
+import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import {
   orderByPinned,
@@ -33,6 +34,12 @@ import {
  */
 export default function TabList({
   sessions,
+  // Has a session list ever arrived, and did the last poll reach kato? An
+  // empty ``sessions`` alone cannot tell "you have no tasks" from "kato has
+  // not answered yet" — and rendering the onboarding copy for the second
+  // case reads as data loss. See hooks/useSessions.js.
+  sessionsLoaded = true,
+  katoReachable = true,
   activeTaskId,
   attentionTaskIds,
   agentStatuses = {},
@@ -381,6 +388,39 @@ export default function TabList({
     }
   }, [revealRequestId, activeTaskId]);
 
+  // What an EMPTY strip actually means. Three different situations used to
+  // share the onboarding sentence, and the two that are not "you have no
+  // tasks" are the ones that scare people: a reload during kato's ~24s
+  // startup, or a kato that went away, both said "No tabs yet. Click
+  // + Add task" as if the workspaces had been wiped.
+  //
+  // The waiting copy is gated behind ``useDelayedFlag`` so the usual
+  // millisecond load never flashes it — the strip just stays quiet until
+  // either the tabs or a real answer arrive.
+  const awaitingFirstLoad = !sessionsLoaded && katoReachable;
+  const showWaiting = useDelayedFlag(awaitingFirstLoad, 600);
+  let emptyStateMessage;
+  if (!katoReachable) {
+    emptyStateMessage = (
+      <>
+        Can’t reach kato right now — it may be starting up or stopped.
+        Your tasks and workspaces are untouched; this strip fills in as
+        soon as kato answers.
+      </>
+    );
+  } else if (awaitingFirstLoad) {
+    emptyStateMessage = showWaiting ? <>Loading your tasks…</> : null;
+  } else {
+    emptyStateMessage = (
+      <>
+        No tabs yet. Click <strong>+ Add task</strong> to pick one
+        of your assigned tasks, or tag a YouTrack task with{' '}
+        <code>kato:wait-planning</code> and let kato pick it up
+        autonomously.
+      </>
+    );
+  }
+
   // Trailing actions live in their own pill so they stay visually
   // separated from the segments (and don't get swallowed by the
   // horizontal scroll).
@@ -430,10 +470,7 @@ export default function TabList({
     return (
       <nav id="tabs-pane" className="tabs-pane-top is-empty">
         <p id="empty-state" className="empty">
-          No tabs yet. Click <strong>+ Add task</strong> to pick one
-          of your assigned tasks, or tag a YouTrack task with{' '}
-          <code>kato:wait-planning</code> and let kato pick it up
-          autonomously.
+          {emptyStateMessage}
         </p>
         {trailingActions}
       </nav>

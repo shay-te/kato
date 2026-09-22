@@ -588,5 +588,122 @@ class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
             self.client._comment_addressed_elsewhere('just a note'))
 
 
+class NormalizeIssueTasksConcurrencyTests(unittest.TestCase):
+    """Enrichment runs concurrently — it is three round-trips per issue.
+
+    ``to_task`` fetches each issue's tags, comments and attachments, so a
+    76-issue answer used to mean 228 SEQUENTIAL requests. Measured against a
+    real instance that was 26.4s serial against 4.3s at eight workers, for
+    byte-identical results; it is the whole cost of the task picker and of
+    every queue scan.
+    """
+
+    def setUp(self):
+        self.client = _make_base()
+
+    def test_results_keep_input_order(self) -> None:
+        # Callers dedupe first-seen-wins, so order is part of the contract —
+        # completion order must not leak into the result.
+        import time
+        items = [{'id': f'T-{n}'} for n in range(12)]
+
+        def to_task(item):
+            # Reverse the natural completion order: later ids finish first.
+            time.sleep(0.02 * (len(items) - int(item['id'].split('-')[1])))
+            return Task(id=item['id'])
+
+        tasks = self.client._normalize_issue_tasks(items, to_task=to_task)
+        self.assertEqual([t.id for t in tasks], [i['id'] for i in items])
+
+    def test_enrichment_actually_overlaps(self) -> None:
+        import threading
+        items = [{'id': f'T-{n}'} for n in range(8)]
+        live = 0
+        peak = 0
+        guard = threading.Lock()
+
+        def to_task(item):
+            nonlocal live, peak
+            with guard:
+                live += 1
+                peak = max(peak, live)
+            try:
+                threading.Event().wait(0.05)
+                return Task(id=item['id'])
+            finally:
+                with guard:
+                    live -= 1
+
+        self.client._normalize_issue_tasks(items, to_task=to_task)
+        self.assertGreater(peak, 1, 'enrichment ran one issue at a time')
+
+    def test_concurrency_is_bounded(self) -> None:
+        # Unbounded fan-out would trade a slow scan for a throttled account:
+        # every one of these requests hits the same provider.
+        import threading
+        items = [{'id': f'T-{n}'} for n in range(40)]
+        live = 0
+        peak = 0
+        guard = threading.Lock()
+
+        def to_task(item):
+            nonlocal live, peak
+            with guard:
+                live += 1
+                peak = max(peak, live)
+            try:
+                threading.Event().wait(0.02)
+                return Task(id=item['id'])
+            finally:
+                with guard:
+                    live -= 1
+
+        self.client._normalize_issue_tasks(items, to_task=to_task)
+        self.assertLessEqual(peak, self.client.ISSUE_ENRICHMENT_WORKERS)
+
+    def test_one_bad_payload_still_only_skips_itself(self) -> None:
+        items = [{'id': 'GOOD-1'}, {'id': 'BAD'}, {'id': 'GOOD-2'}]
+
+        def to_task(item):
+            if item['id'] == 'BAD':
+                raise ValueError('bad')
+            return Task(id=item['id'])
+
+        tasks = self.client._normalize_issue_tasks(items, to_task=to_task)
+        self.assertEqual([t.id for t in tasks], ['GOOD-1', 'GOOD-2'])
+
+    def test_a_single_issue_skips_the_pool(self) -> None:
+        # The common single-issue lookup must behave exactly as before.
+        tasks = self.client._normalize_issue_tasks(
+            [{'id': 'ONLY-1'}], to_task=lambda x: Task(id=x['id']),
+        )
+        self.assertEqual([t.id for t in tasks], ['ONLY-1'])
+
+    def test_a_single_bad_issue_is_skipped_not_raised(self) -> None:
+        def bad(_item):
+            raise KeyError('missing')
+
+        self.assertEqual(
+            self.client._normalize_issue_tasks([{'id': 'X'}], to_task=bad), [],
+        )
+
+    def test_include_filter_still_applies_before_enrichment(self) -> None:
+        items = [{'id': 'keep-1'}, {'id': 'drop'}, {'id': 'keep-2'}]
+        enriched: list[str] = []
+
+        def to_task(item):
+            enriched.append(item['id'])
+            return Task(id=item['id'])
+
+        tasks = self.client._normalize_issue_tasks(
+            items,
+            to_task=to_task,
+            include=lambda x: x['id'].startswith('keep'),
+        )
+        self.assertEqual([t.id for t in tasks], ['keep-1', 'keep-2'])
+        # Filtered-out issues must never cost a round-trip.
+        self.assertNotIn('drop', enriched)
+
+
 if __name__ == '__main__':
     unittest.main()
