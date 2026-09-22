@@ -71,7 +71,7 @@ class GitLabIssuesClient(IssueClientBase):
             f'/projects/{self._project}/issues',
             params={'assignee_username': assignee, 'state': 'all', 'per_page': 1},
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
 
     def get_assigned_tasks(
         self,

@@ -96,7 +96,7 @@ class BitbucketIssuesClient(IssueClientBase):
             f'/repositories/{self._workspace}/{self._repo_slug}/issues',
             params={'pagelen': 1},
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
 
     def get_assigned_tasks(
         self,

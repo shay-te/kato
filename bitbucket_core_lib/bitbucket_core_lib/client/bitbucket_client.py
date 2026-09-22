@@ -36,7 +36,7 @@ class BitbucketClient(PullRequestClientBase):
 
     def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
         response = self._get_with_retry(f'/repositories/{repo_owner}/{repo_slug}')
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
 
     def create_pull_request(
         self,

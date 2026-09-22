@@ -77,7 +77,7 @@ class GitHubIssuesClient(IssueClientBase):
             f'/repos/{self._owner}/{self._repo}/issues',
             params={'assignee': assignee, 'state': 'all', 'per_page': 1},
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
 
     def get_assigned_tasks(
         self,

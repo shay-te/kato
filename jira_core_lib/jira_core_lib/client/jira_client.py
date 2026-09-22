@@ -171,7 +171,7 @@ class JiraClient(IssueClientBase):
                 'maxResults': 1,
             },
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
 
     def get_assigned_tasks(
         self,
@@ -193,7 +193,7 @@ class JiraClient(IssueClientBase):
                 'maxResults': 100,
             },
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
         return self._normalize_issue_records(
             self._json_items(response, items_key='issues'),
             to_record=self._to_record,
