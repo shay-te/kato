@@ -93,11 +93,40 @@ def probe_backend(backend: str, *, binary: str = '', now=None) -> dict:
     return result
 
 
+def _configured_binary(backend: str) -> str:
+    """What kato would actually launch for ``backend`` — settings included.
+
+    Never raises: readiness must degrade to the bare CLI name, not 500 the
+    endpoint that draws the chat tabs.
+    """
+    try:
+        from kato_core_lib.helpers.agent_version_utils import binary_for_backend
+        return binary_for_backend(backend)
+    except Exception:
+        return ''
+
+
 def probe_chat_backends(binaries: dict | None = None) -> list[dict]:
-    """Readiness for every chat backend, in tab order."""
+    """Readiness for every chat backend, in tab order.
+
+    ``binaries`` is an OVERRIDE, not the source of truth. It used to be the
+    only input, read from ``app.config['AGENT_BINARIES']`` — a key nothing in
+    production ever set, so every probe ran against a bare ``claude`` on PATH
+    and an operator who had already pointed ``KATO_CLAUDE_BINARY`` at an
+    absolute path still got "Claude isn't set up on this host" on a host where
+    the CLI was installed and working. Anything the caller does not name now
+    falls back to the configured binary, which is the same answer the version
+    probe and ``/api/config-status`` give.
+    """
     resolved = binaries or {}
     return [
-        probe_backend(backend, binary=str(resolved.get(backend, '') or ''))
+        probe_backend(
+            backend,
+            binary=(
+                str(resolved.get(backend, '') or '').strip()
+                or _configured_binary(backend)
+            ),
+        )
         for backend in CHAT_BACKENDS
     ]
 

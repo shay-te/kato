@@ -134,7 +134,18 @@ def _resolve_backend(env: dict, backend: str = '') -> str:
         return 'openhands'
 
 
-def _binary_for(backend: str, env: dict) -> str:
+def binary_for_backend(backend: str, env: dict | None = None) -> str:
+    """The CLI path kato would actually launch for ``backend``.
+
+    Public because the readiness probe needs the SAME answer this module
+    uses: resolving the binary in two places is how the setup panel came to
+    report ``claude not found on PATH`` while ``KATO_CLAUDE_BINARY`` sat in
+    ``settings.json`` pointing at a perfectly good absolute path.
+
+    ``env`` defaults to the config kato would boot with right now, so a
+    binary saved through the Settings UI counts without a restart.
+    """
+    env = _config_env() if env is None else env
     if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
         return env.get('KATO_CLAUDE_BINARY', '').strip() or 'claude'
     if AgentBackend.is_a(backend, AgentBackend.CODEX):
@@ -253,7 +264,7 @@ def installed_version(
     backend = _resolve_backend(env, backend)
     if backend == 'openhands':
         return None
-    found, raw = _probe(_binary_for(backend, env), runner=runner)
+    found, raw = _probe(binary_for_backend(backend, env), runner=runner)
     if not found:
         return None
     version = parse_version(raw)
@@ -285,7 +296,7 @@ def agent_version_info(
         info['detail'] = 'OpenHands runs as a server — no local CLI to version-check.'
         return info
 
-    binary = _binary_for(backend, env)
+    binary = binary_for_backend(backend, env)
     info['binary'] = binary
     info['download_url'] = _download_url(backend, env)
     found, raw = _probe(binary, runner=runner)
@@ -451,7 +462,7 @@ def upgrade_plan(env: dict | None = None, backend: str = '') -> dict:
         return plan
 
     backend = _resolve_backend(env, backend)
-    binary = _binary_for(backend, env)
+    binary = binary_for_backend(backend, env)
     package = _NPM_PACKAGES.get(backend, '')
     npm = shutil.which('npm')
     npm_usable = bool(package and npm)

@@ -212,5 +212,62 @@ class BackendsEndpointTests(unittest.TestCase):
             self.assertEqual(build.call_count, first, 'the GET still re-probed')
 
 
+class ConfiguredBinaryTests(unittest.TestCase):
+    """A caller that names no binary gets the CONFIGURED one, not a bare name.
+
+    ``probe_chat_backends`` used to read ONLY its ``binaries`` argument, fed
+    from ``app.config['AGENT_BINARIES']`` — a key nothing outside a test ever
+    set. Every probe therefore ran ``which('claude')``, so a host whose
+    ``KATO_CLAUDE_BINARY`` pointed at an absolute path (the documented fix for
+    a CLI that is not on kato's PATH — an installer that appends to the shell
+    rc cannot reach an already-running kato) still opened the setup panel
+    saying "Claude isn't set up on this host" with the CLI installed, working,
+    and correctly configured.
+    """
+
+    def setUp(self) -> None:
+        readiness.reset_probe_cache()
+        self.addCleanup(readiness.reset_probe_cache)
+
+    @staticmethod
+    def _configured(backend, env=None):
+        return f'/opt/bin/{backend}'
+
+    def _probed_binaries(self, build) -> dict:
+        return {call.args[0]: call.args[1] for call in build.call_args_list}
+
+    def test_an_unnamed_backend_falls_back_to_the_configured_binary(self) -> None:
+        with patch(
+            'kato_core_lib.helpers.agent_version_utils.binary_for_backend',
+            side_effect=self._configured,
+        ), patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.return_value = None
+            readiness.probe_chat_backends({})
+        probed = self._probed_binaries(build)
+        self.assertEqual(probed['claude'], '/opt/bin/claude')
+        self.assertEqual(probed['codex'], '/opt/bin/codex')
+
+    def test_an_explicit_binary_still_wins(self) -> None:
+        with patch(
+            'kato_core_lib.helpers.agent_version_utils.binary_for_backend',
+            side_effect=self._configured,
+        ), patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.return_value = None
+            readiness.probe_chat_backends({'claude': '/explicit/claude'})
+        probed = self._probed_binaries(build)
+        self.assertEqual(probed['claude'], '/explicit/claude')
+        # The unnamed one still resolves.
+        self.assertEqual(probed['codex'], '/opt/bin/codex')
+
+    def test_a_resolver_that_blows_up_degrades_instead_of_raising(self) -> None:
+        with patch(
+            'kato_core_lib.helpers.agent_version_utils.binary_for_backend',
+            side_effect=RuntimeError('settings.json unreadable'),
+        ), patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.return_value = None
+            results = readiness.probe_chat_backends({})
+        self.assertTrue(all(row['ready'] for row in results))
+
+
 if __name__ == '__main__':
     unittest.main()
