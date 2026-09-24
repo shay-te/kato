@@ -142,7 +142,7 @@ class WorkspaceDataAccess(DataAccess):
         if not root.exists():
             return
         for entry in sorted(root.iterdir()):
-            # A dot-prefixed folder is kato's own, never a task. The trash
+            # A dot-prefixed folder belongs to the host, never a task. The trash
             # area (``.trash``) lives INSIDE the root on purpose — it has to
             # be on the same filesystem for the rename in ``delete`` to be
             # atomic and O(1), and "a sibling of the root" is not even
@@ -224,7 +224,7 @@ class WorkspaceDataAccess(DataAccess):
         """Get the workspace OUT OF THE WAY fast. ``(detached, trash_path)``.
 
         This is the whole answer to "deleting a task takes 19-51 seconds and
-        freezes kato". A real task workspace here is 100k-340k files and
+        freezes the host". A real task workspace here is 100k-340k files and
         1.5-11 GB across 10-27 git clones; ``shutil.rmtree`` over that is
         tens of seconds. ``os.replace`` of the same tree measured **0.130 ms**
         and is O(1) — it does not care how big the tree is. So the delete
