@@ -1079,16 +1079,32 @@ class ClaudeSessionManager(object):
     def terminate_session(self, task_id: str, *, remove_record: bool = False) -> None:
         normalized_task_id = self._normalize_task_id(task_id)
         lookup_key = self._lookup_key(task_id)
+        # Pop under the lock, TERMINATE OUTSIDE IT.
+        #
+        # ``session.terminate()`` is a multi-second subprocess teardown (stdin
+        # grace, SIGTERM, kill, docker kill, reader joins). Holding this lock
+        # across it froze every other caller — and this same lock backs
+        # ``list_records`` / ``get_record`` / ``get_session``, which
+        # ``GET /api/sessions`` walks repeatedly on every 5s tab-strip poll.
+        # So deleting tasks made the whole UI stop responding, and concurrent
+        # deletes serialised instead of overlapping. Measured: 6 parallel
+        # deletes of 7s-terminating sessions took 42s wall instead of ~7s,
+        # with a concurrent ``list_records()`` blocked for 41.5s.
+        #
+        # Popping first is what makes this safe: the session is already out of
+        # ``_sessions``, so nothing can hand it to another caller while it
+        # dies. ``codex_core_lib``'s manager has always done it this way.
         with self._lock:
             session = self._sessions.pop(lookup_key, None)
-            if session is not None:
-                try:
-                    session.terminate()
-                except Exception:
-                    self.logger.exception(
-                        'failed to terminate streaming session for task %s',
-                        normalized_task_id,
-                    )
+        if session is not None:
+            try:
+                session.terminate()
+            except Exception:
+                self.logger.exception(
+                    'failed to terminate streaming session for task %s',
+                    normalized_task_id,
+                )
+        with self._lock:
             if remove_record:
                 # Capture the record BEFORE dropping it — we need its
                 # Claude session id to delete the CLI transcript.

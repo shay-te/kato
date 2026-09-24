@@ -512,3 +512,74 @@ describe('Tab — pin button', () => {
     }).not.toThrow();
   });
 });
+
+
+// ── The × must delete, never select ───────────────────────────────────────
+// Operator report: "when I press the cross icon he will not show me the
+// dialog, even when I press it 5-6 times, and he also switches to the task
+// which I did not want."
+//
+// Cause: `.tabs-pane-top .tab:active { transform: scale(0.97) }` scaled the
+// whole <li> about its centre on mouse-DOWN, sliding the × disc LEFT out from
+// under the cursor — 0.03 x (halfWidth - 20px), i.e. ~9px on a 665px tab and
+// ~13px on a 909px one, against a disc only 16px wide. Tabs size to the ticket
+// summary, so real ones are wide. Mouse-UP then hit-tested the <li>, and the
+// browser dispatched `click` at the nearest common ancestor — the <li>, whose
+// handler selects the task.
+//
+// jsdom does not do layout, so the SHIFT itself cannot be reproduced here.
+// What is pinned instead is the consequence and the guard: a click that
+// arrives on the <li> after a press that began on the × must still forget.
+
+describe('Tab — the × deletes and never selects', () => {
+  function renderTab(extra = {}) {
+    const onSelect = vi.fn();
+    const onForget = vi.fn();
+    const { container } = render(
+      <Tab
+        session={_session({ task_id: 'UNA-1' })}
+        onSelect={onSelect}
+        onForget={onForget}
+        {...extra}
+      />,
+    );
+    return { container, onSelect, onForget };
+  }
+
+  test('a normal × click forgets and does not select', () => {
+    const { onSelect, onForget } = renderTab();
+    fireEvent.click(screen.getByLabelText('Forget this task'));
+    expect(onForget).toHaveBeenCalledWith('UNA-1');
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('a press that starts on the × still forgets when the click retargets', () => {
+    // Exactly the reported failure: pointerdown lands on the ×, the element
+    // moves, and the click is dispatched at the <li> instead.
+    const { container, onSelect, onForget } = renderTab();
+    fireEvent.pointerDown(screen.getByLabelText('Forget this task'));
+    fireEvent.click(container.querySelector('li.tab'));
+
+    expect(onForget).toHaveBeenCalledWith('UNA-1');
+    expect(onSelect).not.toHaveBeenCalled();   // the task must NOT open
+  });
+
+  test('the intent is consumed, so the next tab click selects normally', () => {
+    const { container, onSelect, onForget } = renderTab();
+    fireEvent.pointerDown(screen.getByLabelText('Forget this task'));
+    fireEvent.click(container.querySelector('li.tab'));
+    onForget.mockClear();
+
+    fireEvent.click(container.querySelector('li.tab'));
+
+    expect(onSelect).toHaveBeenCalledWith('UNA-1');
+    expect(onForget).not.toHaveBeenCalled();
+  });
+
+  test('an ordinary click on the tab body still selects', () => {
+    const { container, onSelect, onForget } = renderTab();
+    fireEvent.click(container.querySelector('li.tab'));
+    expect(onSelect).toHaveBeenCalledWith('UNA-1');
+    expect(onForget).not.toHaveBeenCalled();
+  });
+});

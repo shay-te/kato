@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 
 from core_lib.data_layers.data_access.data_access import DataAccess
@@ -141,6 +142,15 @@ class WorkspaceDataAccess(DataAccess):
         if not root.exists():
             return
         for entry in sorted(root.iterdir()):
+            # A dot-prefixed folder is kato's own, never a task. The trash
+            # area (``.trash``) lives INSIDE the root on purpose — it has to
+            # be on the same filesystem for the rename in ``delete`` to be
+            # atomic and O(1), and "a sibling of the root" is not even
+            # expressible when the root is a Windows drive root like ``D:\``.
+            # Without this skip it would list as a phantom ERRORED task,
+            # which is the same bug the lessons folders once caused.
+            if entry.name.startswith('.'):
+                continue
             try:
                 if not entry.is_dir():
                     continue
@@ -202,27 +212,132 @@ class WorkspaceDataAccess(DataAccess):
             label='workspace metadata',
         )
 
+    #: Folder (inside the root, dot-prefixed so ``_iter_workspace_dirs``
+    #: skips it) holding workspaces that have been detached and are waiting
+    #: to be reaped.
+    TRASH_DIRNAME = '.trash'
+
+    def trash_root(self) -> Path:
+        return self._root / self.TRASH_DIRNAME
+
+    def detach(self, task_id: str) -> tuple[bool, Path | None]:
+        """Get the workspace OUT OF THE WAY fast. ``(detached, trash_path)``.
+
+        This is the whole answer to "deleting a task takes 19-51 seconds and
+        freezes kato". A real task workspace here is 100k-340k files and
+        1.5-11 GB across 10-27 git clones; ``shutil.rmtree`` over that is
+        tens of seconds. ``os.replace`` of the same tree measured **0.130 ms**
+        and is O(1) — it does not care how big the tree is. So the delete
+        request renames the folder into ``.trash`` and returns immediately;
+        the bytes are freed later by :meth:`reap_trash` on a background
+        worker, where taking a long time costs nobody anything.
+
+        The trash lives INSIDE the root so the rename is guaranteed to stay
+        on one filesystem — across volumes ``os.replace`` raises ``EXDEV``
+        and we would silently be back to the slow path. ``_iter_workspace_dirs``
+        skips dot-prefixed names so it never shows up as a task.
+
+        Returns ``(False, None)`` when the rename could not be done, which is
+        NOT an error: on Windows a directory cannot be renamed while any file
+        inside it is held by a handle opened without ``FILE_SHARE_DELETE`` —
+        git packfiles, an editor, an indexer, Defender — so this genuinely
+        fails there and the caller must fall back to deleting in place. That
+        fallback is the reason this returns a flag instead of raising.
+        """
+        workspace_dir = self.workspace_dir(task_id)
+        if not workspace_dir.exists():
+            return (True, None)
+        trash_root = self.trash_root()
+        try:
+            trash_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._logger.warning(
+                'could not create the workspace trash at %s: %s', trash_root, exc,
+            )
+            return (False, None)
+        # ``uuid4`` rather than a counter or a timestamp: two deletes of the
+        # same task id (a re-adopted task deleted twice) must not collide,
+        # and a leftover entry from a previous run must not be reused.
+        target = trash_root / f'{workspace_dir.name}.{uuid.uuid4().hex[:12]}'
+        try:
+            os.replace(workspace_dir, target)
+            return (True, target)
+        except OSError as exc:
+            self._logger.info(
+                'workspace %s could not be detached (%s); deleting in place',
+                task_id, exc,
+            )
+            return (False, None)
+
+    def reap_trash(self, *, budget_seconds: float = 0.0) -> int:
+        """Delete detached workspaces. Returns how many were fully removed.
+
+        Runs OFF the request path, so slowness here is invisible. Each entry
+        is independent: one that cannot be removed yet (a Windows handle not
+        released, a permission glitch) is left for the next pass instead of
+        blocking the others.
+
+        ``budget_seconds`` (0 = unbounded) caps one pass so a caller on a
+        shared worker can stay responsive.
+        """
+        import time as _time
+        trash_root = self.trash_root()
+        if not trash_root.is_dir():
+            return 0
+        started = _time.monotonic()
+        removed = 0
+        try:
+            entries = sorted(trash_root.iterdir())
+        except OSError:
+            return 0
+        for entry in entries:
+            if budget_seconds and (_time.monotonic() - started) >= budget_seconds:
+                break
+            if self._remove_tree(entry):
+                removed += 1
+        return removed
+
     def delete(self, task_id: str) -> None:
-        """Remove the workspace folder and everything inside it.
+        """Remove the workspace folder and everything inside it, in place.
 
-        Idempotent: deleting a missing workspace is a no-op. Logs but
-        doesn't raise on filesystem errors so a permission glitch on
-        one task can't block cleanup of others — the caller verifies
-        ``workspace_dir.exists()`` after to detect partial failures.
+        The SLOW path, kept for callers that have nowhere to detach to and
+        for the Windows case where :meth:`detach` cannot rename. Prefer
+        ``detach`` + ``reap_trash`` on any request-serving thread.
 
-        Windows-specific: file locks on .git/index, .pack files, and
-        any file held by a recently-killed process can cause
-        ``rmtree`` to fail with PermissionError. ``onerror`` flips
-        read-only bits and retries once; a short post-delete retry
-        catches the case where the OS is slow to release a handle
-        after we just terminated the subprocess.
+        Idempotent: deleting a missing workspace is a no-op, and filesystem
+        errors are logged rather than raised so one bad task cannot block the
+        cleanup of others — the caller verifies ``workspace_dir.exists()``.
+        """
+        workspace_dir = self.workspace_dir(task_id)
+        if not workspace_dir.exists():
+            return
+        if not self._remove_tree(workspace_dir):
+            self._logger.warning(
+                'failed to delete workspace for task %s at %s '
+                '(likely a file lock — close any process with '
+                'open handles in this clone)',
+                task_id, workspace_dir,
+            )
+
+    def _remove_tree(self, target: Path) -> bool:
+        """``shutil.rmtree`` with the permission + file-lock recovery. True on success.
+
+        The expensive chmod pre-walk is NOT run up front any more. It used to
+        run on every delete and cost ~40% of the total (measured 7.5s of an
+        18.9s delete on a 125k-entry workspace), to repair a permission state
+        that almost never exists. On Windows it is worse than useless:
+        ``os.chmod`` there only toggles the read-only bit, yet still costs one
+        NTFS metadata write per file, each inspected by Defender.
+
+        So: try the plain removal first, and only pay for the repair pass if
+        something actually refuses to go.
         """
         import shutil
         import stat
         import time
-        workspace_dir = self.workspace_dir(task_id)
-        if not workspace_dir.exists():
-            return
+
+        if not target.exists():
+            return True
 
         def _on_rm_error(func, path, exc_info):
             # Most rmtree failures are read-only files (git pack files,
@@ -252,45 +367,50 @@ class WorkspaceDataAccess(DataAccess):
                 # a meaningful trace (and genuine locks surface cleanly).
                 raise exc_info[1]
 
-        # Best-effort: make the whole tree user-rwx BEFORE rmtree, top-down so
-        # we add search/write to a directory before trying to chmod its
-        # children. This recovers a clone left in a broken permission state
-        # (a git op stripped perms, a metadata file the parent can no longer
-        # stat) where rmtree's per-entry onerror retry alone can't, because
-        # unlinking a file needs write+execute on its PARENT dir. Every step is
-        # swallowed — rmtree below does the actual removal + final error report.
-        try:
-            os.chmod(workspace_dir, stat.S_IRWXU)
-        except OSError:
-            pass
-        for dirpath, dirnames, filenames in os.walk(
-            workspace_dir, topdown=True, onerror=lambda _exc: None,
-        ):
-            for name in dirnames + filenames:
-                try:
-                    os.chmod(os.path.join(dirpath, name), stat.S_IRWXU)
-                except OSError:
-                    pass
-
-        last_exc: OSError | None = None
         for attempt in range(3):
             try:
-                shutil.rmtree(workspace_dir, onerror=_on_rm_error)
-                return
-            except OSError as exc:
-                last_exc = exc
-                if attempt < 2:
+                shutil.rmtree(target, onerror=_on_rm_error)
+                return True
+            except OSError:
+                if attempt == 0:
+                    # NOW earn the repair pass: a clone left in a broken
+                    # permission state needs write+execute on a PARENT dir
+                    # before its children can be unlinked, which rmtree's
+                    # per-entry onerror cannot fix on its own.
+                    self._make_tree_writable(target)
+                elif attempt < 2:
                     # Brief pause lets the OS release handles from a
                     # subprocess we just terminated (Windows is slow to
                     # propagate the close).
                     time.sleep(0.5)
-        self._logger.warning(
-            'failed to delete workspace for task %s at %s '
-            'after 3 attempts: %s '
-            '(likely a file lock — close any process with '
-            'open handles in this clone)',
-            task_id, workspace_dir, last_exc,
-        )
+        return not target.exists()
+
+    @staticmethod
+    def _make_tree_writable(root: Path) -> None:
+        """Best-effort user-rwx over the tree, top-down. Never follows symlinks.
+
+        Symlinks are SKIPPED, not chmod'ed. ``os.chmod`` follows them, so the
+        old version reached through a link and changed the mode of a file
+        OUTSIDE the workspace (measured: a 0644 file rewritten to 0700).
+        Nothing here needs a link's target to be writable — unlinking the link
+        itself only needs permission on its parent directory.
+        """
+        import stat
+        try:
+            os.chmod(root, stat.S_IRWXU)
+        except OSError:
+            pass
+        for dirpath, dirnames, filenames in os.walk(
+            root, topdown=True, onerror=lambda _exc: None, followlinks=False,
+        ):
+            for name in dirnames + filenames:
+                path = os.path.join(dirpath, name)
+                try:
+                    if os.path.islink(path):
+                        continue
+                    os.chmod(path, stat.S_IRWXU)
+                except OSError:
+                    pass
 
     # ----- internals -----
 

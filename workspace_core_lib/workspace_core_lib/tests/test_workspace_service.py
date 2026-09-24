@@ -546,12 +546,17 @@ class WorkspaceServiceReadsDoNotBlockTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def slow_delete(_task_id: str) -> None:
-            # Stands in for the rmtree of a many-clone workspace.
+        def slow_detach(_task_id: str):
+            # Stands in for the in-flight removal of a many-clone workspace.
+            # Patched on ``detach`` rather than ``delete``: the fast path
+            # renames the folder aside and only falls back to ``delete`` when
+            # that rename fails (Windows open handles), so ``detach`` is what
+            # a delete actually spends its time in now.
             entered.set()
             release.wait(timeout=10)
+            return (True, None)
 
-        with patch.object(self.data_access, 'delete', side_effect=slow_delete):
+        with patch.object(self.data_access, 'detach', side_effect=slow_detach):
             deleter = threading.Thread(
                 target=lambda: self.service.delete('FAT-1'), daemon=True,
             )

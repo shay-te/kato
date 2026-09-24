@@ -334,6 +334,7 @@ def _start_post_boot_workers(app) -> None:
     _start_pending_comment_work_after_ui(app)
     _start_resume_prompt_watcher(app)
     _start_comment_run_watcher(app)
+    _start_workspace_trash_reaper(app)
     _warm_up_repository_inventory(app)
 
 
@@ -1672,6 +1673,45 @@ def _warm_up_repository_inventory(app) -> None:
     warm_up = getattr(service, 'warm_up_repository_inventory', None)
     if callable(warm_up):
         warm_up()
+
+
+#: How often the trash reaper frees detached workspaces, and how long one
+#: pass may run. Deleting a task now RENAMES its folder into the workspaces
+#: root's ``.trash`` (O(1), ~0.1ms) and returns; this is what actually frees
+#: the bytes. Slowness here costs nobody anything — but it must run, or
+#: ``.trash`` grows without bound.
+_TRASH_REAP_INTERVAL_SECONDS = 20.0
+_TRASH_REAP_BUDGET_SECONDS = 10.0
+
+
+def _start_workspace_trash_reaper(app) -> None:
+    """Free the bytes of workspaces that delete detached.
+
+    Daemon thread, best-effort: a failure here leaves the bytes on disk for
+    the next pass and never affects a delete, which has already returned.
+    """
+    workspace_manager = getattr(app, 'workspace_manager', None)
+    reap = getattr(workspace_manager, 'reap_trash', None)
+    if not callable(reap):
+        return
+
+    def _loop() -> None:
+        while True:
+            try:
+                freed = reap(budget_seconds=_TRASH_REAP_BUDGET_SECONDS)
+                if freed:
+                    app.logger.info(
+                        'freed %d deleted workspace(s) from disk', freed,
+                    )
+            except Exception:
+                app.logger.exception(
+                    'workspace trash reap failed; retrying next pass',
+                )
+            time.sleep(_TRASH_REAP_INTERVAL_SECONDS)
+
+    threading.Thread(
+        target=_loop, name='kato-workspace-reaper', daemon=True,
+    ).start()
 
 
 def _start_resume_prompt_watcher(app) -> None:

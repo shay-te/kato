@@ -916,8 +916,25 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   box-shadow: $SHADOW-20;
 }
 
+/* Press feedback WITHOUT moving anything.
+ *
+ * This was ``transform: scale(0.97)`` on the whole <li>, scaled about the
+ * default centre origin — and it made the × unclickable. The × disc sits at
+ * the far RIGHT edge, so on mouse-DOWN the whole tab shrank and slid the disc
+ * LEFT out from under the cursor: 0.03 x (halfWidth - 20px), which is 9px on a
+ * 665px tab and 13px on a 909px one, against a disc only 16px wide. Tabs size
+ * to the ticket summary, so real ones are wide.
+ *
+ * Mouse-UP then hit-tested at the unchanged cursor position, found the <li>,
+ * and the browser dispatched ``click`` at the nearest common ancestor — the
+ * <li> — whose handler SELECTS the task. That is both halves of the operator's
+ * report: "I press the cross 5-6 times before the dialog shows, and it opens
+ * the task I didn't want."
+ *
+ * A background change gives the same affordance and moves no geometry, so the
+ * pointer stays over whatever it was pressed on. */
 .tabs-pane-top .tab:active {
-  transform: scale(0.97);
+  background: $C-NEUTRAL-100-A10;
 }
 
 .tabs-pane-top .tab:focus {

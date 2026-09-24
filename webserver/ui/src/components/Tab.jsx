@@ -162,13 +162,35 @@ export default function Tab({
   // does nothing rather than switching tasks under the operator.
   const CONTROL_SELECTOR = 'button, input, .tab-resize-handle';
 
+  // Where the press STARTED. A click is dispatched at the nearest common
+  // ancestor of the mousedown and mouseup targets, so a press that begins on
+  // the × but ends a pixel outside it arrives here on the <li> instead — and
+  // selecting the task is the one thing the operator did not want.
+  //
+  // Belt and braces for the scale(0.97) hit-test bug (see .tab:active in
+  // app.scss). That transform is gone, but sub-pixel layout, a smooth-scrolling
+  // strip or a slightly moved finger can still retarget a click, and the cost
+  // of getting it wrong is destructive-looking: the wrong task opens.
+  //
+  // It DISPATCHES rather than suppresses. Swallowing the click would stop the
+  // task switch but leave the press dead, and the operator asked for both:
+  // never open the task, AND get the dialog on the first press.
+  const pressedForgetRef = useRef(false);
+
   function handleSelect(event) {
+    if (pressedForgetRef.current) {
+      pressedForgetRef.current = false;
+      closeTooltip();
+      if (typeof onForget === 'function') { onForget(session.task_id); }
+      return;
+    }
     if (event?.target?.closest?.(CONTROL_SELECTOR)) { return; }
     closeTooltip();
     onSelect(session.task_id);
   }
   function handleForget(event) {
     event.stopPropagation();
+    pressedForgetRef.current = false;  // consumed on the normal path
     closeTooltip();
     if (typeof onForget !== 'function') { return; }
     // Don't act here — hand off to App, which opens the
@@ -465,6 +487,9 @@ export default function Tab({
           type="button"
           className="tab-forget-btn"
           aria-label="Forget this task"
+          // Records the intent at press time, before any retargeting can
+          // happen. Cleared by whichever handler consumes it.
+          onPointerDown={() => { pressedForgetRef.current = true; }}
           onClick={handleForget}
         >
           <Icon name="xmark" />

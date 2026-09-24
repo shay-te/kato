@@ -85,6 +85,12 @@ from utils_core_lib.utils_core_lib.text_utils import (
 
 _IS_WINDOWS = os.name == 'nt'
 
+#: How long ``terminate`` waits for ``_proc_lock`` before concluding that a
+#: writer is wedged on a full stdin pipe and killing the subprocess to break
+#: it open. Short on purpose: this runs on the task-delete path, behind the
+#: session manager's global lock, which also backs the tab-strip poll.
+TERMINATE_LOCK_TIMEOUT_SECONDS = 2.0
+
 
 def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
     """Block up to ``timeout`` seconds for ``proc`` to exit. True on exit."""
@@ -1194,14 +1200,46 @@ class StreamingClaudeSession(object):
         Three-step escalation: each step gives the subprocess a chance to
         exit cleanly before the next, more forceful one. We hold the proc
         lock for the whole sequence so a concurrent ``start`` can't race.
+
+        The lock is taken with a TIMEOUT, never with a bare ``with``, and
+        that is load-bearing. ``_write_stdin_line`` holds this same lock
+        across an UNBUFFERED ``write()`` + ``flush()`` (the spawn uses
+        ``bufsize=0``), so a CLI that stops draining its stdin blocks that
+        write forever — and a bare ``with self._proc_lock`` here then waits
+        forever too. Reproduced against a real subprocess: terminate never
+        acquired, and only killing the process released the writer.
+
+        That was not merely a slow delete. ``terminate_session`` runs inside
+        the session manager's process-global lock, which also backs
+        ``list_records`` — so one wedged session froze ``GET /api/sessions``,
+        i.e. the whole tab strip, indefinitely. Killing the subprocess breaks
+        the pipe, the blocked write fails with ``BrokenPipeError``, and the
+        writer releases the lock.
         """
-        with self._proc_lock:
+        acquired = self._proc_lock.acquire(timeout=TERMINATE_LOCK_TIMEOUT_SECONDS)
+        if not acquired:
+            self.logger.warning(
+                'task %s: a writer is blocked on stdin holding the proc lock; '
+                'killing the subprocess to break it open',
+                self._task_id,
+            )
+            self._kill_without_proc_lock()
+            # Second chance: the writer's failed write releases the lock. If
+            # it still does not come, proceed WITHOUT it rather than hang —
+            # the process is already dead by this point.
+            acquired = self._proc_lock.acquire(
+                timeout=TERMINATE_LOCK_TIMEOUT_SECONDS,
+            )
+        try:
             proc = self._proc
             if proc is not None:
                 self._close_stdin_locked()
                 if not _wait_for_exit(proc, max(0.1, float(grace_seconds))):
                     self._escalate_to_sigterm(proc)
                 self._proc = None
+        finally:
+            if acquired:
+                self._proc_lock.release()
         for thread in self._reader_threads:
             thread.join(timeout=1.0)
         self._reader_threads = []
@@ -1260,6 +1298,28 @@ class StreamingClaudeSession(object):
                 getattr(proc, 'pid', '?'),
             )
             return False
+
+    def _kill_without_proc_lock(self) -> None:
+        """Kill the subprocess WITHOUT taking ``_proc_lock``.
+
+        Only ``terminate`` calls this, and only when the lock could not be
+        acquired — meaning a writer is wedged inside it. Taking the lock here
+        would deadlock against exactly the thread we are trying to free.
+
+        Reading ``self._proc`` without the lock is safe for this purpose: an
+        attribute read is atomic, and the worst case is that we kill a process
+        that was already on its way out.
+        """
+        proc = self._proc
+        if proc is None:
+            return
+        if _IS_WINDOWS:
+            self._kill_tree_safely(proc)
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        _wait_for_exit(proc, 2.0)
 
     def _escalate_to_kill(self, proc: subprocess.Popen) -> None:
         self.logger.warning(
