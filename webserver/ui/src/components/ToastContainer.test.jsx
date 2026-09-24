@@ -166,3 +166,62 @@ describe('ToastContainer — sticky toasts close on the × only', () => {
     expect(container.querySelectorAll('.toast')).toHaveLength(0);
   });
 });
+
+
+// ── A scrollable report must survive the drag that scrolls it ──────────────
+// A long message scrolls inside the card. On a TIMED toast the whole card is
+// click-to-dismiss, so releasing the scrollbar thumb lands a click that would
+// throw the report away mid-read.
+
+describe('ToastContainer — scrollable message', () => {
+  beforeEach(() => { toastStore.clear(); });
+  afterEach(() => { toastStore.clear(); });
+
+  function setScrollable(el, scrollable) {
+    // jsdom has no layout: scrollHeight/clientHeight are always 0, so the
+    // overflow state has to be stated explicitly.
+    Object.defineProperty(el, 'scrollHeight', { value: scrollable ? 500 : 20, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { value: 20, configurable: true });
+  }
+
+  test('clicking a SCROLLABLE message does not dismiss a timed toast', () => {
+    const { container } = render(<ToastContainer />);
+    act(() => {
+      toastStore.push({ kind: 'info', title: 'Pushed', message: 'many\nlines', durationMs: 7000 });
+    });
+    const message = container.querySelector('.toast-message');
+    setScrollable(message, true);
+
+    act(() => { fireEvent.click(message); });
+
+    expect(container.querySelectorAll('.toast')).toHaveLength(1);
+  });
+
+  test('clicking a SHORT message still dismisses a timed toast', () => {
+    // The affordance is unchanged for a card about to vanish by itself.
+    const { container } = render(<ToastContainer />);
+    act(() => {
+      toastStore.push({ kind: 'info', title: 'Saved', message: 'ok', durationMs: 7000 });
+    });
+    const message = container.querySelector('.toast-message');
+    setScrollable(message, false);
+
+    act(() => { fireEvent.click(message); });
+
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+
+  test('the × closes a toast whose message is scrollable', () => {
+    // The close button is outside .toast-message precisely so it stays
+    // reachable no matter how long the report is.
+    const { container } = render(<ToastContainer />);
+    act(() => {
+      toastStore.push({ kind: 'warning', title: 'Pushed', message: 'many\nlines' });
+    });
+    setScrollable(container.querySelector('.toast-message'), true);
+
+    act(() => { fireEvent.click(container.querySelector('.toast-close')); });
+
+    expect(container.querySelectorAll('.toast')).toHaveLength(0);
+  });
+});

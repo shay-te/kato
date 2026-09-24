@@ -75,12 +75,20 @@ class GracefulShutdownIsBoundedTests(unittest.TestCase):
         handler = _handler_for(app)
 
         started = time.monotonic()
-        with patch.object(kato_main, 'SHUTDOWN_GRACE_SECONDS', 0.2):
+        with patch.object(kato_main, 'SHUTDOWN_GRACE_SECONDS', 0.2), \
+                patch.object(kato_main, '_emit_raw') as emit:
             _run_handler(handler)
         elapsed = time.monotonic() - started
 
         self.assertLess(elapsed, 5.0, 'shutdown waited on a hung cleanup')
-        app.logger.warning.assert_called()
+        # The warning goes straight to stderr, NOT through ``logging``: a
+        # handler lock held by any other thread is what made Ctrl+C
+        # intermittently do nothing at all.
+        self.assertIn(
+            'exceeded',
+            ' '.join(str(call.args[0]) for call in emit.call_args_list),
+        )
+        app.logger.warning.assert_not_called()
 
     def test_a_failing_cleanup_still_exits(self) -> None:
         service = MagicMock()
@@ -136,12 +144,14 @@ class SecondSignalExitsImmediatelyTests(unittest.TestCase):
         app = _app(MagicMock())
         handler = _handler_for(app)
         _run_handler(handler)
-        with patch.object(kato_main.os, '_exit'):
+        with patch.object(kato_main.os, '_exit'), \
+                patch.object(kato_main, '_emit_raw') as emit:
             handler(2, None)
-        messages = ' '.join(
-            str(call.args[0]) for call in app.logger.warning.call_args_list
-        )
+        messages = ' '.join(str(call.args[0]) for call in emit.call_args_list)
         self.assertIn('second shutdown signal', messages)
+        # This is the escape hatch for a first Ctrl+C that is already stuck,
+        # so it must not be able to block on a logging handler lock either.
+        app.logger.warning.assert_not_called()
 
     def test_each_hook_tracks_its_own_state(self) -> None:
         # Two instances must not share a flag — a fresh hook's first signal

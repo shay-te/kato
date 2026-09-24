@@ -60,7 +60,23 @@ function ToastCard({ entry, onDismiss }) {
           </div>
         )}
         {entry.title && <strong className="toast-title">{entry.title}</strong>}
-        {entry.message && <pre className="toast-message">{entry.message}</pre>}
+        {entry.message && (
+          <pre
+            className="toast-message"
+            // A long message scrolls (see .toast-message). On a TIMED toast
+            // the whole card is click-to-dismiss, so dragging the scrollbar
+            // thumb ends in a click that would throw the report away
+            // mid-read. Swallow the click only when this element is actually
+            // scrollable — a short message keeps click-anywhere-to-dismiss,
+            // which is the right affordance for a card about to vanish.
+            onClick={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollHeight > el.clientHeight) { e.stopPropagation(); }
+            }}
+          >
+            {entry.message}
+          </pre>
+        )}
       </div>
       <button
         type="button"

@@ -1966,3 +1966,142 @@ describe('FilesTab — the wait shows the workspace, not a blank line', () => {
     expect(loaderSeen.value).toBe(false);
   });
 });
+
+
+// ── Collapse all folders ───────────────────────────────────────────────────
+// The header chevron is all-or-nothing: it hides the repo entirely. A repo
+// with twenty top-level packages open is unreadable long before that, and
+// closing them one at a time is the tedium this removes.
+
+describe('collapse all folders', () => {
+  const TREE = {
+    trees: [{
+      repo_id: 'client',
+      cwd: '/tmp/client',
+      tree: [
+        {
+          name: 'src',
+          children: [
+            { name: 'components', children: [{ name: 'a.js' }] },
+            { name: 'b.js' },
+          ],
+        },
+        { name: 'docs', children: [{ name: 'c.md' }] },
+      ],
+      // Changed files exist, so the DEFAULT (changed) view has folders in it.
+      changed_files: ['src/components/a.js', 'docs/c.md'],
+      conflicted_files: [],
+    }],
+  };
+
+  const heightFor = (rows) => `${rows * 28 + 8}px`;
+  const treeHeight = () => screen.getByRole('tree').style.height;
+  const collapseBtn = () => screen.getByRole(
+    'button', { name: /collapse all folders in client/i },
+  );
+  const expandBtn = () => screen.getByRole(
+    'button', { name: /expand all folders in client/i },
+  );
+  const rowText = () => document.querySelector('.files-tab-repo').textContent;
+
+  // The changed view is driven by the DIFF, not by ``changed_files`` alone:
+  // without a diff the repo renders "Nothing changed yet." and there are no
+  // folders on screen to collapse.
+  const diffFor = (path) => [
+    `diff --git a/${path} b/${path}`,
+    'index 1111111..2222222 100644',
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    '@@ -1 +1,2 @@',
+    '-old',
+    '+new',
+    '',
+  ].join('\n');
+
+  beforeEach(() => {
+    mockFileTree(TREE);
+    mockDiff({
+      diffs: [{
+        repo_id: 'client',
+        cwd: '/tmp/client',
+        diff: `${diffFor('src/components/a.js')}${diffFor('docs/c.md')}`,
+        conflicted_files: [],
+      }],
+    });
+  });
+
+  // ── the CHANGED view (what kato opens by default) ──────────────────────
+  // The first cut drove only the react-arborist ref, which this view does
+  // not use — the button was inert exactly where it was most needed.
+  test('it collapses folders in the default (changed) view', async () => {
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    // The nested folder and its file are on screen to begin with.
+    await waitFor(() => expect(rowText()).toContain('components'));
+    expect(rowText()).toContain('a.js');
+
+    fireEvent.click(collapseBtn());
+
+    // The FILES are hidden; the folder rows themselves stay, which is what
+    // "collapsed" means — otherwise there would be nothing left to reopen.
+    await waitFor(() => expect(rowText()).not.toContain('a.js'));
+    expect(rowText()).not.toContain('c.md');
+    expect(rowText()).toContain('docs');
+  });
+
+  test('expand puts the changed view back', async () => {
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    await waitFor(() => expect(rowText()).toContain('a.js'));
+    fireEvent.click(collapseBtn());
+    await waitFor(() => expect(rowText()).not.toContain('a.js'));
+
+    fireEvent.click(expandBtn());
+
+    await waitFor(() => expect(rowText()).toContain('a.js'));
+  });
+
+  // ── the ALL view (react-arborist) ──────────────────────────────────────
+  test('it collapses folders in the All view too', async () => {
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Show all files' }));
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+
+    fireEvent.click(await screen.findByText('src'));
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(4)); });
+
+    fireEvent.click(collapseBtn());
+
+    await waitFor(() => { expect(treeHeight()).toBe(heightFor(2)); });
+  });
+
+  test('collapsing the folders does NOT collapse the repo section', async () => {
+    const { container } = render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    await waitFor(() => expect(rowText()).toContain('components'));
+
+    fireEvent.click(collapseBtn());
+
+    // The whole header is the repo's own toggle, so the click must not
+    // bubble — otherwise tidying the folders would close the repo over them.
+    await waitFor(() => expect(rowText()).not.toContain('a.js'));
+    expect(container.querySelector('.files-tab-repo.is-collapsed')).toBeNull();
+    expect(screen.getByText('client')).toBeInTheDocument();
+  });
+
+  test('both controls use the toolbar +/- glyphs', async () => {
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    await waitFor(() => expect(rowText()).toContain('components'));
+    // Same affordance as "expand/collapse all repositories", one level down.
+    expect(expandBtn().querySelector('[data-icon="plus"]')).toBeTruthy();
+    expect(collapseBtn().querySelector('[data-icon="minus"]')).toBeTruthy();
+  });
+
+  test('they are disabled while the repo section is collapsed', async () => {
+    render(<FilesTab taskId="T1" onOpenFile={vi.fn()} />);
+    await waitFor(() => expect(rowText()).toContain('components'));
+    expect(collapseBtn()).not.toBeDisabled();
+
+    fireEvent.click(screen.getByText('client', { selector: '.files-tab-repo-name' }));
+
+    await waitFor(() => expect(collapseBtn()).toBeDisabled());
+    expect(expandBtn()).toBeDisabled();
+  });
+});

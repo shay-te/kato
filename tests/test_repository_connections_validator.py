@@ -126,6 +126,6 @@ class RepositoryConnectionsValidatorConcurrencyTests(unittest.TestCase):
     def test_the_worker_cap_is_bounded_and_above_eight(self) -> None:
         from kato_core_lib.validation import repository_connections as module
         # Bounded on purpose: the checks mostly hit ONE provider, and kato
-        # already runs a 180s scan cadence to stay under its rate limits.
+        # already paces its scans (50s) against those same rate limits.
         self.assertGreater(module._MAX_VALIDATION_WORKERS, 8)
         self.assertLessEqual(module._MAX_VALIDATION_WORKERS, 32)

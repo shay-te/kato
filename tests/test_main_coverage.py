@@ -713,16 +713,14 @@ class WarmUpRepositoryInventoryTests(unittest.TestCase):
 
 class TaskScanSettingsTests(unittest.TestCase):
     def test_reads_settings_with_defaults(self) -> None:
-        # Default ``scan_interval_seconds=180`` (3 min): slow enough
-        # that parallel PR-lookups don't trip provider rate limits,
-        # fast enough that review-comment pickup stays responsive.
-        # See ``_run_task_scan_loop`` for the guard that treats
-        # ``<=0`` as "manual-only" mode.
+        # Asserted against the constant, not a literal: the interval has ONE
+        # home (``DEFAULT_SCAN_INTERVAL_SECONDS``) and changing it there must
+        # not need a test edit too.
         cfg = SimpleNamespace(kato=SimpleNamespace(
             get=lambda key, default=None: default,
         ))
         scan = main_module._task_scan_settings(cfg)
-        self.assertEqual(scan, 180.0)
+        self.assertEqual(scan, main_module.DEFAULT_SCAN_INTERVAL_SECONDS)
 
     def test_reads_settings_from_config(self) -> None:
         cfg = SimpleNamespace(kato=SimpleNamespace(
@@ -1094,10 +1092,18 @@ class RegisterShutdownHookFiringTests(unittest.TestCase):
             main_module._register_shutdown_hook(app)
             handler = signal.getsignal(signal.SIGINT)
             self.assertTrue(callable(handler))
-            with patch.object(main_module, '_exit_now') as exit_now:
+            with patch.object(main_module, '_exit_now') as exit_now, \
+                    patch.object(main_module, '_emit_raw') as emit:
                 handler(signal.SIGINT, None)
             exit_now.assert_called_once_with(0)
-            app.logger.info.assert_called()
+            # Announced on stderr rather than through ``logging``: every
+            # logging handler takes a lock any thread can hold, and a SIGINT
+            # landing in that window used to hang the handler outright.
+            self.assertIn(
+                'stopping kato',
+                ' '.join(str(call.args[0]) for call in emit.call_args_list),
+            )
+            app.logger.info.assert_not_called()
             app.service.shutdown.assert_called()
         finally:
             signal.signal(signal.SIGINT, original_sigint)

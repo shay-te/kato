@@ -148,7 +148,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 
 | File | What it does |
 |------|-------------|
-| `kato_core_lib/main.py` | Entry point; UI-first boot (serve webserver, then validate + reconcile in a background thread); scan loop (180s interval, no startup delay) |
+| `kato_core_lib/main.py` | Entry point; UI-first boot (serve webserver, then validate + reconcile in a background thread); scan loop (50s interval, no startup delay) |
 | `kato_core_lib/jobs/process_assigned_tasks.py` | Each scan cycle: dispatch tasks + review comments |
 | `kato_core_lib/data_layers/service/agent_service.py` | Top-level service object — owns all sub-services |
 | `kato_core_lib/data_layers/service/task_preflight_service.py` | Pre-flight: resolve repos, clone workspaces, prep branches |
@@ -178,7 +178,7 @@ main() → KatoInstance.init(cfg, defer_validation=True)  ← builds the service
              _run_boot_reconciliation()                 ← orphan/branch/status/comment/done-task steps
              _start_post_boot_workers()                 ← incl. warm_up_repository_inventory (disk walk)
              ready_event.set()                          ← releases the scan loop
-       → _run_task_scan_loop(ready_event)               ← waits for ready_event; then every 180s
+       → _run_task_scan_loop(ready_event)               ← waits for ready_event; then every 50s
 ```
 Validation no longer blocks the UI. On a configured boot the webserver binds before any
 network validation; a validation failure retries + surfaces in the UI banner instead of
@@ -243,7 +243,7 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
 ```yaml
 kato:
   task_scan:
-    scan_interval_seconds: 180  # default (3 min — a 30s cadence tripped provider rate limits)
+    scan_interval_seconds: 50  # main.py → DEFAULT_SCAN_INTERVAL_SECONDS. 0 = manual-only.
 ```
 
 Auto-discovery: if `REPOSITORY_ROOT_PATH` is set (no explicit `repositories:` list), Kato walks the tree for `.git` folders. Result cached after first run. Background warm-up runs this at boot.

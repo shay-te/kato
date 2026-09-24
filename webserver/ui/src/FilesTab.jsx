@@ -1015,6 +1015,24 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId, busy = true }) {
           </span>
           <button
             type="button"
+            className="files-tab-repo-collapse-btn"
+            disabled
+            aria-hidden="true"
+            tabIndex={-1}
+          >
+            <Icon name="plus" />
+          </button>
+          <button
+            type="button"
+            className="files-tab-repo-collapse-btn"
+            disabled
+            aria-hidden="true"
+            tabIndex={-1}
+          >
+            <Icon name="minus" />
+          </button>
+          <button
+            type="button"
             className="files-tab-repo-commits-btn"
             disabled
             aria-hidden="true"
@@ -1127,6 +1145,42 @@ function RepoTree({
     const count = allTreeRef.current?.visibleNodes?.length;
     setDrawnRowCount(typeof count === 'number' ? count : null);
   }, []);
+  // Open/shut every folder in THIS repo without collapsing the repo itself.
+  //
+  // The header chevron is all-or-nothing: it hides the repo entirely. A repo
+  // with twenty nested packages open is unreadable long before that, and
+  // closing them one at a time is the tedium this removes. Scoped per repo on
+  // purpose — the operator is reading one project and wants that one tidied.
+  //
+  // BOTH views have to be driven, which the first cut got wrong: the Changed
+  // view is not react-arborist at all (it is ``ChangedFilesTree`` over a
+  // ``closedFolders`` Set), so calling ``closeAll`` on the tree ref did
+  // nothing in the view kato opens by default — the button looked dead.
+  // Driving both keeps the two in step when the operator switches views.
+  const setAllFoldersOpen = useCallback((open) => {
+    try {
+      if (open) { allTreeRef.current?.openAll?.(); }
+      else { allTreeRef.current?.closeAll?.(); }
+    } catch (_) {
+      // A tree mid-teardown (repo removed between polls) must never take the
+      // pane down over a cosmetic action.
+    }
+    setClosedChangedFolders(
+      open ? new Set() : collectChangedFolderKeys(filteredChangedNodes),
+    );
+    // The row count changed; the section has to resize to match.
+    window.requestAnimationFrame(syncDrawnRowCount);
+  }, [syncDrawnRowCount, filteredChangedNodes]);
+  // The whole header is the repo's own toggle, so these must not bubble —
+  // otherwise tidying the folders would also close the repo over them.
+  const collapseAllFolders = useCallback((event) => {
+    event.stopPropagation();
+    setAllFoldersOpen(false);
+  }, [setAllFoldersOpen]);
+  const expandAllFolders = useCallback((event) => {
+    event.stopPropagation();
+    setAllFoldersOpen(true);
+  }, [setAllFoldersOpen]);
   // What every row of this repo's tree needs — handed to the stable
   // ``RepoTreeNode`` through context (see there for why not a closure).
   const nodeContext = useMemo(() => ({
@@ -1444,6 +1498,34 @@ function RepoTree({
               RO
             </button>
           )}
+          {/* The SAME +/- pair the toolbar uses for whole repositories, one
+              level down: there it opens and closes repos, here the folders
+              inside one. Reusing the glyphs means the operator learns the
+              affordance once.
+
+              Disabled rather than hidden while the repo is collapsed: a
+              control that vanishes moves the history button along the row,
+              and the pane must not re-lay-out under the operator. */}
+          <button
+            type="button"
+            className="files-tab-repo-collapse-btn tooltip-end"
+            onClick={expandAllFolders}
+            disabled={collapsed}
+            data-tooltip="Expand all folders in this repo"
+            aria-label={`Expand all folders in ${heading}`}
+          >
+            <Icon name="plus" />
+          </button>
+          <button
+            type="button"
+            className="files-tab-repo-collapse-btn tooltip-end"
+            onClick={collapseAllFolders}
+            disabled={collapsed}
+            data-tooltip="Collapse all folders in this repo"
+            aria-label={`Collapse all folders in ${heading}`}
+          >
+            <Icon name="minus" />
+          </button>
           {repoId && taskId && (
             <button
               type="button"
@@ -1946,6 +2028,20 @@ function resolveSelectionRepoKey(openFile, trees, diffMetaByRepo) {
 // Files visible in the changed tree, in render order — folders whose key
 // is in ``closedFolders`` contribute nothing. This is the walk order for
 // ArrowUp/ArrowDown keyboard navigation. Exported for unit tests.
+// Every folder key in the changed tree, at any depth.
+//
+// The changed view does NOT use react-arborist — it is a plain render driven
+// by a ``closedFolders`` Set — so "collapse everything" here means naming
+// each folder, not calling a tree API. Exported for unit tests.
+export function collectChangedFolderKeys(nodes, into = new Set()) {
+  for (const node of nodes || []) {
+    if (node.kind === 'file') { continue; }
+    into.add(node.key);
+    collectChangedFolderKeys(node.children, into);
+  }
+  return into;
+}
+
 export function listVisibleChangedFiles(nodes, closedFolders) {
   const files = [];
   for (const node of nodes || []) {

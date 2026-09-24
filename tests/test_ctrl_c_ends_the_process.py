@@ -101,5 +101,96 @@ class CtrlCEndsTheProcessTests(unittest.TestCase):
         )
 
 
+_LOGGING_LOCK_CHILD = '''
+import logging, sys, threading, time
+from types import SimpleNamespace
+
+sys.path.insert(0, {root!r})
+from kato_core_lib import main as kato_main
+
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+
+# Another thread is mid-write and holds the log handler's lock. kato logs
+# from many threads at once (idle spinner, webserver request threads, the
+# watchers, agent readers), so a SIGINT landing in this window is ordinary.
+handler = logging.getLogger().handlers[0]
+def _hog():
+    handler.acquire()
+    threading.Event().wait()
+threading.Thread(target=_hog, daemon=True).start()
+time.sleep(0.3)
+
+app = SimpleNamespace(
+    logger=logging.getLogger('probe'),
+    service=SimpleNamespace(shutdown=lambda: None),
+    resume_prompt_watcher=None,
+    comment_run_watcher=None,
+)
+kato_main._register_shutdown_hook(app)
+print('ready', flush=True)
+while True:
+    time.sleep(0.1)
+'''
+
+
+class CtrlCSurvivesAHeldLoggingLockTests(unittest.TestCase):
+    """The shutdown path must not wait on a lock another thread can hold.
+
+    This is the "sometimes Ctrl+C works, sometimes it does nothing at all"
+    report. The handler used to call ``app.logger.info(...)`` before doing
+    anything else, and every logging handler guards itself with a lock. A
+    SIGINT arriving while another thread held that lock left the handler
+    blocking on it forever — and since the handler never reached its own
+    ``os._exit``, pressing Ctrl+C again could not help either.
+
+    Reproduced 5 times out of 5 before the fix: alive 20s after the signal.
+    Out of process for the same reason as the test above — what is under
+    test is whether the PROCESS ends.
+    """
+
+    def test_sigint_exits_even_while_a_log_handler_lock_is_held(self) -> None:
+        child = subprocess.Popen(
+            [sys.executable, '-c', _LOGGING_LOCK_CHILD.format(root=str(REPO_ROOT))],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            self.assertEqual(
+                (child.stdout.readline() or '').strip(), 'ready',
+                'the child never installed the shutdown hook',
+            )
+            child.send_signal(signal.SIGINT)
+            started = time.monotonic()
+            try:
+                child.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.fail(
+                    'kato did not exit on SIGINT while a log handler lock was '
+                    'held — the intermittent "Ctrl+C does nothing" hang'
+                )
+            elapsed = time.monotonic() - started
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+            if child.stdout is not None:
+                child.stdout.close()
+        # Bounded by the cleanup deadline plus the flush deadline, not by the
+        # thread that is never giving the lock back.
+        self.assertLess(
+            elapsed,
+            kato_main_grace() + 6.0,
+            f'SIGINT took {elapsed:.1f}s with a log handler lock held',
+        )
+
+
+def kato_main_grace() -> float:
+    """``SHUTDOWN_GRACE_SECONDS`` read from the module under test."""
+    sys.path.insert(0, str(REPO_ROOT))
+    from kato_core_lib import main as kato_main
+    return float(kato_main.SHUTDOWN_GRACE_SECONDS)
+
+
 if __name__ == '__main__':
     unittest.main()

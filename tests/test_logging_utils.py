@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -116,3 +118,104 @@ class AgentWorkflowRootResetTests(unittest.TestCase):
             agent_configure_logger('ClaudeCliClient').name,
             'kato.workflow.ClaudeCliClient',
         )
+
+
+class StreamEncodingHardeningTests(unittest.TestCase):
+    """A non-ASCII character must never take a request down.
+
+    Reported from a Windows host: every chat message produced
+
+        UnicodeEncodeError: 'charmap' codec can't encode character '→'
+
+    and Claude stopped responding on every task. Those were ONE bug.
+    ``logging.Handler.handleError`` writes the failing record's traceback to
+    ``sys.stderr`` and catches only ``OSError``, so when that write hits the
+    same unencodable character the error propagates out of ``emit()`` — out
+    of ``logger.info()`` — and into the caller. In kato's case the caller is
+    ``post_message``, so the POST 500s and the message never reaches the
+    agent.
+
+    Fixing only kato's format strings would not have been enough: the
+    ARGUMENTS are operator data (ticket summaries, branch names, agent
+    output) and can hold anything.
+    """
+
+    def setUp(self) -> None:
+        self._stdout, self._stderr = sys.stdout, sys.stderr
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        sys.stdout, sys.stderr = self._stdout, self._stderr
+
+    @staticmethod
+    def _cp1252_stream() -> io.TextIOWrapper:
+        # What a redirected stream on Windows actually gives you.
+        return io.TextIOWrapper(io.BytesIO(), encoding='cp1252', errors='strict')
+
+    def _log_arrow(self) -> None:
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        logger = logging.getLogger('kato-encoding-probe')
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        logger.info(
+            'task %s: chat message from the %s tab → running on %s',
+            'UNA-3070', 'claude', 'claude',
+        )
+
+    def test_without_hardening_the_error_escapes_into_the_caller(self) -> None:
+        # Pins the CAUSE. If a future logging change stops it escaping, this
+        # test failing is the signal to revisit the whole rationale above.
+        sys.stderr = self._cp1252_stream()
+        with self.assertRaises(UnicodeEncodeError):
+            self._log_arrow()
+
+    def test_hardening_lets_the_log_call_return(self) -> None:
+        sys.stderr = self._cp1252_stream()
+        logging_utils.harden_stream_encoding()
+        self._log_arrow()  # must not raise
+
+    def test_the_line_is_actually_written_not_just_swallowed(self) -> None:
+        # Degrading to a silent no-op would also "not raise" — the operator
+        # still has to be able to read the line.
+        buffer = io.BytesIO()
+        sys.stderr = io.TextIOWrapper(buffer, encoding='cp1252', errors='strict')
+        logging_utils.harden_stream_encoding()
+        self._log_arrow()
+        sys.stderr.flush()
+        written = buffer.getvalue().decode('utf-8', errors='replace')
+        self.assertIn('UNA-3070', written)
+        self.assertIn('→', written)
+
+    def test_non_ascii_in_the_ARGUMENTS_is_survivable_too(self) -> None:
+        # The reason a format-string sweep could not have fixed this.
+        buffer = io.BytesIO()
+        sys.stderr = io.TextIOWrapper(buffer, encoding='cp1252', errors='strict')
+        logging_utils.harden_stream_encoding()
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        logger = logging.getLogger('kato-encoding-args-probe')
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        logger.info('task %s: %s', 'UNA-1', 'café — “quoted” ✓')
+        sys.stderr.flush()
+        self.assertIn('café', buffer.getvalue().decode('utf-8', errors='replace'))
+
+    def test_a_stream_without_reconfigure_is_tolerated(self) -> None:
+        # pytest capture / a custom tee replaces the stream with an object
+        # that has no ``reconfigure``. That must not raise at startup.
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        logging_utils.harden_stream_encoding()  # must not raise
+
+    def test_configure_logger_hardens_on_first_call(self) -> None:
+        # Every entry point goes through configure_logger, so nothing has to
+        # remember to call the hardening itself.
+        sys.stderr = self._cp1252_stream()
+        logging_utils._LOGGING_CONFIGURED = False
+        self.addCleanup(setattr, logging_utils, '_LOGGING_CONFIGURED', False)
+        with patch.object(logging_utils, 'harden_stream_encoding') as harden:
+            logging_utils.configure_logger('probe')
+        harden.assert_called_once_with()

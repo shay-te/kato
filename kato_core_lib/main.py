@@ -1301,10 +1301,53 @@ def _open_browser_when_ready(url: str, logger) -> None:
     ).start()
 
 
+#: Seconds between autonomous task scans. Change it here. ``0`` = manual-only.
+#: Rate-limit note: at 16+ parallel PR-lookups a tick this is ~1152 req/hour
+#: against Bitbucket's ~1000/hour (30s was 1920 and tripped it). Raise this
+#: first if you see 429s.
+DEFAULT_SCAN_INTERVAL_SECONDS = 50.0
+
+
 #: How long a graceful shutdown may take before kato stops waiting for it.
 #: Cleanup terminates live agent subprocesses, and one that ignores its
 #: terminate leaves the operator holding a Ctrl+C that did nothing.
 SHUTDOWN_GRACE_SECONDS = 8.0
+
+
+#: How long the final log flush may take before the process leaves without it.
+#: ``logging.shutdown()`` acquires every handler's lock, and any thread can be
+#: holding one — see ``_emit_raw``.
+FLUSH_GRACE_SECONDS = 2.0
+
+
+def _emit_raw(text: str) -> None:
+    """Write to stderr WITHOUT touching the logging module.
+
+    Nothing on the shutdown path may go through ``logging``. Every handler
+    guards itself with a lock, and kato logs from many threads at once (the
+    idle spinner, webserver request threads, the watchers, agent readers). A
+    SIGINT that lands while one of them holds that lock leaves the handler
+    blocking on it forever — and because the handler never reaches its own
+    ``os._exit``, no amount of further Ctrl+C helps. Reproduced 5 times out
+    of 5: the process was still alive 20s after the signal.
+
+    Writing to ``sys.stderr`` directly is fine and is what callers see (and
+    what the shutdown-responsiveness tests capture): it is only the logging
+    module's own handler locks that another thread holds for an unbounded
+    time. ``os.write`` on fd 2 is the fallback for a stderr that has been
+    closed or replaced with something broken.
+    """
+    try:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+        return
+    except Exception:
+        pass
+    try:
+        os.write(2, text.encode('utf-8', 'replace'))
+    except Exception:
+        # A closed or redirected stderr must never turn Ctrl+C into a crash.
+        pass
 
 
 def _exit_now(code: int) -> None:
@@ -1325,8 +1368,20 @@ def _exit_now(code: int) -> None:
 
     A seam, not a bare ``os._exit``: the shutdown handler is called directly
     by tests, and a real exit there would take the test runner with it.
+
+    The flush is BOUNDED for the same reason the handler no longer logs:
+    ``logging.shutdown()`` acquires every handler's lock, so a thread stuck
+    mid-write would hold the exit open indefinitely. Losing the last few log
+    lines is strictly better than not exiting.
     """
-    _flush_log_handlers()
+    run_with_deadline(
+        _flush_log_handlers,
+        seconds=FLUSH_GRACE_SECONDS,
+        default=None,
+        on_timeout=lambda: _emit_raw(
+            'log flush timed out — exiting without it.\n',
+        ),
+    )
     os._exit(code)
 
 
@@ -1375,14 +1430,15 @@ def _register_shutdown_hook(app) -> None:
             # Second Ctrl+C. Do NOT go back through cleanup — that is what
             # is already stuck. os._exit skips interpreter teardown, which
             # is the point: nothing here can block it.
-            app.logger.warning(
-                'second shutdown signal — exiting immediately, cleanup skipped',
+            # NO logging here, and nothing buffered: this is the escape hatch
+            # for a first Ctrl+C that is already stuck, so it must not be able
+            # to block on anything. ``app.logger.warning`` used to run first
+            # and could itself wait on a handler lock held by another thread,
+            # which made the force-exit as unreliable as the path it rescues.
+            _emit_raw(
+                'second shutdown signal — exiting immediately, '
+                'cleanup skipped.\n',
             )
-            try:
-                sys.stderr.write('forcing exit.\n')
-                sys.stderr.flush()
-            except Exception:
-                pass
             os._exit(130)
             # Unreachable in production — os._exit does not return. Explicit
             # so the escalation cannot fall through into the graceful path it
@@ -1403,15 +1459,13 @@ def _register_shutdown_hook(app) -> None:
         try:
             if supports_inline_status(sys.stderr):
                 clear_inline_status(sys.stderr, status_text='Idle · next scan in 000s')
-            sys.stderr.write(
-                'stopping kato… (press Ctrl+C again to force an immediate exit)\n',
-            )
-            sys.stderr.flush()
         except Exception:
             # A closed / redirected stderr must never turn Ctrl+C into a
             # crash. The shutdown below proceeds regardless.
             pass
-        app.logger.info('shutting down kato agent (signal %s)', signum)
+        _emit_raw(
+            'stopping kato… (press Ctrl+C again to force an immediate exit)\n',
+        )
         # BOUNDED. Cleanup used to run inline in the handler, so a session
         # whose subprocess would not terminate held the whole shutdown open
         # and Ctrl+C looked broken. On timeout kato exits anyway — the
@@ -1420,9 +1474,9 @@ def _register_shutdown_hook(app) -> None:
             _cleanup,
             seconds=SHUTDOWN_GRACE_SECONDS,
             default=None,
-            on_timeout=lambda: app.logger.warning(
-                'graceful shutdown exceeded %ss — exiting anyway',
-                SHUTDOWN_GRACE_SECONDS,
+            on_timeout=lambda: _emit_raw(
+                f'graceful shutdown exceeded {SHUTDOWN_GRACE_SECONDS}s — '
+                'exiting anyway.\n',
             ),
         )
         # NOT ``raise SystemExit`` — see ``_exit_now``. Unwinding the main
@@ -1662,7 +1716,7 @@ def _start_comment_run_watcher(app) -> None:
     """Always-on, browser-independent drain of local comment runs.
 
     The ticket-scan loop's comment drain is gated by
-    ``scan_interval_seconds`` (~180s, and disabled at 0) and the live
+    ``scan_interval_seconds`` (~50s, and disabled at 0) and the live
     SSE path only fires when a browser tab is watching that task — so a
     queued comment whose prior turn ended with no tab open was stranded.
     This watcher ticks the service's EXISTING advance/drain primitives
@@ -1690,11 +1744,9 @@ def _start_comment_run_watcher(app) -> None:
 
 def _task_scan_settings(cfg: DictConfig) -> float:
     task_scan_cfg = cfg.kato.get('task_scan', {}) or {}
-    # Default 180s (3 min) matches the yaml. Slow enough that parallel
-    # PR-lookups across (task × repo) don't trip Bitbucket / GitHub / GitLab
-    # rate limits; fast enough that review-comment pickup feels responsive.
-    # ``0`` disables the autonomous loop (operator must manually trigger scans).
-    return float(task_scan_cfg.get('scan_interval_seconds', 180.0))
+    return float(
+        task_scan_cfg.get('scan_interval_seconds', DEFAULT_SCAN_INTERVAL_SECONDS),
+    )
 
 
 def _wait_for_boot_ready(

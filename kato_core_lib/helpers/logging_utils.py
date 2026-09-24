@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 from agent_core_lib.agent_core_lib.helpers.logging_utils import (
     set_workflow_root as _set_agent_workflow_root,
@@ -44,6 +45,48 @@ def _workflow_log_level() -> int:
         'info',
         _DEFAULT_WORKFLOW_LOG_LEVEL,
     )
+
+
+def harden_stream_encoding() -> None:
+    """Make stdout/stderr incapable of crashing on a non-ASCII character.
+
+    Reported from a Windows host, on every chat message::
+
+        UnicodeEncodeError: 'charmap' codec can't encode character
+        '\\u2192' in position 102: character maps to <undefined>
+
+    A redirected stream on Windows defaults to cp1252, which cannot encode
+    the ``->`` arrow in a routing line. ``logging`` catches the failure and
+    prints a full traceback instead of the line, so the operator loses the
+    message and gains a stack trace — several per message.
+
+    Sweeping non-ASCII out of kato's own format strings would NOT fix this,
+    which is the important part: the arguments are operator data — ticket
+    summaries, branch names, file paths, agent output — and can contain
+    anything at all. The stream is the one place that covers both sides.
+
+    ``errors='replace'`` is the guarantee: whatever encoding we end up on,
+    an unencodable character degrades to ``?`` instead of raising. UTF-8 is
+    preferred first because a redirected stream is read back by something
+    that can decode it; if that is refused we keep the console's own
+    encoding and only add the error handler.
+
+    Idempotent, and safe to call when ``sys.stdout`` has been replaced by an
+    object without ``reconfigure`` (pytest capture, a custom tee).
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding='utf-8', errors='replace')
+        except (OSError, ValueError, LookupError):
+            try:
+                reconfigure(errors='replace')
+            except (OSError, ValueError, LookupError):
+                # Nothing more to try — a stream that refuses both is one we
+                # must not take the process down over.
+                pass
 
 
 def _named_handler(logger: logging.Logger, handler_name: str) -> logging.Handler | None:
@@ -89,6 +132,11 @@ def configure_logger(name: str) -> logging.Logger:
     global _LOGGING_CONFIGURED
 
     if not _LOGGING_CONFIGURED:
+        # BEFORE the handlers exist. They capture ``sys.stderr`` by reference
+        # and ``reconfigure`` mutates that object in place, so the order is
+        # not load-bearing — but a handler that logs during setup should
+        # already be on a stream that cannot raise.
+        harden_stream_encoding()
         _ensure_root_logging()
         _ensure_workflow_logging()
         _LOGGING_CONFIGURED = True

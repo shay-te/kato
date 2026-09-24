@@ -6307,6 +6307,7 @@ $FILES-PANE-INSET: $SPACE-6;
  * there is nothing to collapse and no commits to list yet. Dimmed rather
  * than removed, so the header keeps the exact geometry of the loaded one. */
 .files-tab-repo.is-loading .files-tab-repo-chevron,
+.files-tab-repo.is-loading .files-tab-repo-collapse-btn,
 .files-tab-repo.is-loading .files-tab-repo-commits-btn {
   opacity: 0.35;
   pointer-events: none;
@@ -6506,7 +6507,8 @@ $FILES-PANE-INSET: $SPACE-6;
  * above. Centred icon (no padding asymmetry), no border by default —
  * the hover/active states do the visual lifting so the resting state
  * stays calm in the dark repo header. */
-.files-tab-repo-commits-btn {
+.files-tab-repo-commits-btn,
+.files-tab-repo-collapse-btn {
   background: transparent;
   border: 1px solid transparent;
   border-radius: $RADIUS-CIRCLE;
@@ -6524,10 +6526,19 @@ $FILES-PANE-INSET: $SPACE-6;
   transition: background-color 0.12s ease-out, color 0.12s ease-out, border-color 0.12s ease-out;
 }
 
-.files-tab-repo-commits-btn:hover {
+.files-tab-repo-commits-btn:hover,
+.files-tab-repo-collapse-btn:not(:disabled):hover {
   background: $C-NEUTRAL-16;
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-16;
+}
+
+/* Collapsed repo: there are no folders on screen to tidy. Dimmed in place
+ * rather than hidden, so the history button beside it never shifts. */
+.files-tab-repo-collapse-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
 }
 
 .files-tab-repo-commits-btn[aria-expanded=true] {
@@ -8904,7 +8915,13 @@ $FILES-PANE-INSET: $SPACE-6;
   border-radius: $RADIUS-6;
   padding: $SPACE-10 $SPACE-14;
   min-width: 320px;
-  max-width: 560px;
+  // Wide enough that a per-repo report stops wrapping every line. These
+  // messages are one line per repository ("repo: nothing to push — no
+  // commits on the task branch and a clean tree"), and at 560px almost
+  // every one wrapped to two or three, turning a 25-repo push into a wall
+  // that ran off the bottom of the screen. The container's
+  // ``calc(100vw - 48px)`` still clamps this on a narrow window.
+  max-width: 880px;
   box-shadow: $SHADOW-26;
   animation: kato-toast-slide 0.18s ease-out;
   cursor: pointer;
@@ -9001,6 +9018,18 @@ $FILES-PANE-INSET: $SPACE-6;
   white-space: pre-wrap;
   word-break: break-word;
   color: $C-NEUTRAL-96;
+  // Widening buys a lot, but a 25-repo report still outgrows any card, so
+  // the MESSAGE scrolls rather than the card growing without limit. Only
+  // this element scrolls: the task chip, the title and the × stay pinned,
+  // so the operator can always see what the report is about and close it.
+  //
+  // ``auto``, never ``scroll`` — that is the "only in these cases" part:
+  // a short toast has no bar at all, and no reserved gutter to make it
+  // look like it is missing one. The global thin scrollbar theme at the
+  // top of this file styles the bar when it does appear, so there is no
+  // second copy of that here.
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .toast-close {
