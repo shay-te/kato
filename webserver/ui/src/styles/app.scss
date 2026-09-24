@@ -12308,3 +12308,104 @@ button.settings-prompt-editor-head {
 @media (prefers-reduced-motion: reduce) {
   .kato-icon-spin { animation: none; }
 }
+
+/* ── Bulk delete dialog ────────────────────────────────────────────────────
+ * Multi-select task delete with live per-task state. The operator keeps
+ * 10-15 tasks open as a safety net and tidies up in batches, and used to
+ * have no way to tell a delete had started — so they pressed it repeatedly.
+ * The status column is the whole point of the dialog. */
+.bulk-forget-body {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-12;
+  min-width: 520px;
+}
+
+.bulk-forget-list {
+  display: flex;
+  flex-direction: column;
+  /* Capped so a 15-task list scrolls instead of pushing the buttons off
+   * screen; ``auto`` so a short list shows no bar at all. */
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.bulk-forget-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: $SPACE-10;
+  padding: $SPACE-8 $SPACE-10;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+  cursor: pointer;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-96;
+}
+
+.bulk-forget-row:last-child {
+  border-bottom: 0;
+}
+
+.bulk-forget-row.is-head {
+  cursor: default;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12_5;
+  position: sticky;
+  top: 0;
+  background: $C-NEUTRAL-04;
+  z-index: 1;
+}
+
+.bulk-forget-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bulk-forget-summary {
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12_5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-forget-state {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-4;
+  font-size: $TEXT-12_5;
+  white-space: nowrap;
+}
+
+.bulk-forget-state.is-queued { color: $C-NEUTRAL-64; }
+.bulk-forget-state.is-deleting { color: $C-CYAN-58; }
+.bulk-forget-state.is-done { color: $C-GREEN-52; }
+.bulk-forget-state.is-failed { color: $C-RED-42; }
+
+.bulk-forget-empty {
+  margin: 0;
+  padding: $SPACE-14;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-13;
+}
+
+.bulk-forget-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-12;
+}
+
+.bulk-forget-progress {
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12_5;
+}
+
+.bulk-forget-buttons {
+  display: inline-flex;
+  gap: $SPACE-8;
+}

@@ -12074,3 +12074,114 @@ button.settings-prompt-editor-head {
     animation: none;
   }
 }
+/* ── Bulk delete dialog ────────────────────────────────────────────────────
+ * Multi-select task delete with live per-task state. The operator keeps
+ * 10-15 tasks open as a safety net and tidies up in batches, and used to
+ * have no way to tell a delete had started — so they pressed it repeatedly.
+ * The status column is the whole point of the dialog. */
+.bulk-forget-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 520px;
+}
+
+.bulk-forget-list {
+  display: flex;
+  flex-direction: column;
+  /* Capped so a 15-task list scrolls instead of pushing the buttons off
+   * screen; ``auto`` so a short list shows no bar at all. */
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+}
+
+.bulk-forget-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #2a2a2a;
+  cursor: pointer;
+  font-size: 13px;
+  color: #f5f5f7;
+}
+
+.bulk-forget-row:last-child {
+  border-bottom: 0;
+}
+
+.bulk-forget-row.is-head {
+  cursor: default;
+  color: #a3a3a3;
+  font-size: 12.5px;
+  position: sticky;
+  top: 0;
+  background: #0a0a0a;
+  z-index: 1;
+}
+
+.bulk-forget-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bulk-forget-summary {
+  color: #a3a3a3;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bulk-forget-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.bulk-forget-state.is-queued {
+  color: #a3a3a3;
+}
+
+.bulk-forget-state.is-deleting {
+  color: #2997ff;
+}
+
+.bulk-forget-state.is-done {
+  color: #34d399;
+}
+
+.bulk-forget-state.is-failed {
+  color: #b91c1c;
+}
+
+.bulk-forget-empty {
+  margin: 0;
+  padding: 14px;
+  color: #a3a3a3;
+  font-size: 13px;
+}
+
+.bulk-forget-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bulk-forget-progress {
+  color: #a3a3a3;
+  font-size: 12.5px;
+}
+
+.bulk-forget-buttons {
+  display: inline-flex;
+  gap: 8px;
+}

@@ -3,6 +3,7 @@ import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
+import BulkForgetModal from './components/BulkForgetModal.jsx';
 import { moveTab } from './utils/tabOrder.js';
 import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
 import { usePendingPermissions } from './hooks/usePendingPermissions.js';
@@ -24,7 +25,9 @@ import TaskPalette from './components/TaskPalette.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { fetchScanStatus, forgetTaskWorkspace, triggerScan } from './api.js';
 import { waitForScanToFinish } from './utils/scanProgress.js';
-import { toast } from './stores/toastStore.js';
+import { toast, toastResult } from './stores/toastStore.js';
+import { deleteQueue } from './stores/deleteQueueStore.js';
+import { apiErrorMessage } from './utils/apiError.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
 import { useNotificationRouting } from './hooks/useNotificationRouting.js';
@@ -310,31 +313,10 @@ export default function App() {
   const [tabRevealRequest, setTabRevealRequest] = useState(0);
   const fileTreeFocusRequestRef = useRef(0);
 
-  const doForgetTask = useCallback(async (taskId, markDone = false) => {
-    if (!taskId) { return; }
-    // Show the operator what's happening — silently failing was the
-    // original bug. Backend now returns 500 with a concrete error
-    // message when the workspace dir can't be removed (live process
-    // file locks, antivirus, etc.), and 502 when ``markDone`` was asked
-    // for but the ticket couldn't be moved to done — in THAT case the
-    // server deleted nothing, so the tab is still there to retry from.
-    const result = await forgetTaskWorkspace(taskId, { markDone });
-    if (!result.ok) {
-      // Route the error text through the canonical apiErrorMessage
-      // precedence (body.error → result.error → fallback) instead of
-      // the previous hand-rolled chain, so this site agrees with every
-      // other error toast on which message wins.
-      toast.errorFromResult(result, {
-        title: `Couldn't forget ${taskId}`,
-        fallback: 'unknown error — see kato logs for details',
-        durationMs: 12000,
-      });
-      // Refresh anyway so the operator sees the current state — a
-      // partial cleanup (session record gone, workspace dir still
-      // there) should still cause the tab to flicker its dot.
-      refresh();
-      return;
-    }
+  // Everything that must happen LOCALLY once the server has forgotten a task.
+  // Extracted so the bulk delete reuses this exact sequence instead of
+  // growing a second, drifting copy of it.
+  const purgeForgottenTask = useCallback((taskId) => {
     // Forget the task in the shared view-data cache: purges its store slices
     // (tree / diff / comments / publish / PR) AND fans out to the registered
     // satellite purgers (chat-stream + file-content) — one call clears every
@@ -360,6 +342,34 @@ export default function App() {
       setOpenTabs([]);
       setActiveTabKey(null);
     }
+  }, [activeTaskId]);
+
+  const doForgetTask = useCallback(async (taskId, markDone = false) => {
+    if (!taskId) { return; }
+    // Show the operator what's happening — silently failing was the
+    // original bug. Backend now returns 500 with a concrete error
+    // message when the workspace dir can't be removed (live process
+    // file locks, antivirus, etc.), and 502 when ``markDone`` was asked
+    // for but the ticket couldn't be moved to done — in THAT case the
+    // server deleted nothing, so the tab is still there to retry from.
+    const result = await forgetTaskWorkspace(taskId, { markDone });
+    if (!result.ok) {
+      // Route the error text through the canonical apiErrorMessage
+      // precedence (body.error → result.error → fallback) instead of
+      // the previous hand-rolled chain, so this site agrees with every
+      // other error toast on which message wins.
+      toast.errorFromResult(result, {
+        title: `Couldn't forget ${taskId}`,
+        fallback: 'unknown error — see kato logs for details',
+        durationMs: 12000,
+      });
+      // Refresh anyway so the operator sees the current state — a
+      // partial cleanup (session record gone, workspace dir still
+      // there) should still cause the tab to flicker its dot.
+      refresh();
+      return;
+    }
+    purgeForgottenTask(taskId);
     refresh();
     toast.show({
       kind: 'success',
@@ -368,7 +378,59 @@ export default function App() {
         ? 'Ticket moved to Done. Workspace clone and Claude session removed.'
         : 'Workspace clone and Claude session removed.',
     });
-  }, [activeTaskId, refresh]);
+  }, [purgeForgottenTask, refresh]);
+
+  // ----- bulk delete -----
+  //
+  // Bounded concurrency, not a stampede. Each delete still terminates an agent
+  // subprocess server-side (seconds), so firing 15 at once would open 15 Flask
+  // threads all doing subprocess teardown. Three at a time keeps the run short
+  // without that. The server no longer serialises them, so this is purely
+  // about not being rude to it.
+  const [bulkForgetOpen, setBulkForgetOpen] = useState(false);
+  const runBulkForget = useCallback(async (taskIds) => {
+    const ids = (taskIds || []).filter(Boolean);
+    if (ids.length === 0) { return; }
+    deleteQueue.enqueue(ids);
+    const queue = [...ids];
+    const WORKERS = 3;
+
+    async function worker() {
+      for (;;) {
+        const taskId = queue.shift();
+        if (!taskId) { return; }
+        deleteQueue.starting(taskId);
+        try {
+          // markDone deliberately FALSE for bulk: moving the ticket is a
+          // network round trip with retry/backoff that can take minutes per
+          // task, and the operator said they update the board themselves.
+          const result = await forgetTaskWorkspace(taskId, { markDone: false });
+          if (result.ok) {
+            purgeForgottenTask(taskId);
+            deleteQueue.succeeded(taskId);
+          } else {
+            deleteQueue.failed(taskId, apiErrorMessage(result, 'delete failed'));
+          }
+        } catch (err) {
+          deleteQueue.failed(taskId, String(err && err.message ? err.message : err));
+        }
+        refresh();
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(WORKERS, ids.length) }, worker));
+    refresh();
+    const { done, failed } = deleteQueue.counts();
+    // One loud FINAL report, the way every other kato action ends. Failures
+    // are sticky so a partial run cannot scroll away unseen.
+    toastResult({
+      kind: failed > 0 ? 'warning' : 'success',
+      title: failed > 0 ? 'Deleted with problems' : 'Tasks deleted',
+      message: failed > 0
+        ? `${done} deleted, ${failed} failed — the failed rows stay listed with their reason.`
+        : `${done} task${done === 1 ? '' : 's'} deleted.`,
+    });
+  }, [purgeForgottenTask, refresh]);
 
   const confirmForgetTask = useCallback((markDone = false) => {
     const taskId = forgetCandidate?.task_id;
@@ -822,6 +884,7 @@ export default function App() {
       leftWidth={leftResizer.width}
       top={
         <TabList
+          onOpenBulkForget={() => setBulkForgetOpen(true)}
           sessions={sessions}
           sessionsLoaded={sessionsLoaded}
           katoReachable={katoReachable}
@@ -954,6 +1017,18 @@ export default function App() {
           session={forgetCandidate}
           onConfirm={confirmForgetTask}
           onCancel={cancelForgetTask}
+        />
+      )}
+      {bulkForgetOpen && (
+        <BulkForgetModal
+          sessions={sessions}
+          onRun={runBulkForget}
+          onClose={() => {
+            // Keep FAILED rows — the operator has not read them yet. Done
+            // rows are already gone from the task list itself.
+            deleteQueue.clearFinished();
+            setBulkForgetOpen(false);
+          }}
         />
       )}
       {addTaskModalOpen && (

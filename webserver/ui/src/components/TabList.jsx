@@ -50,6 +50,7 @@ export default function TabList({
   onSelect,
   onForget,
   onOpenAddTask,
+  onOpenBulkForget,
   onOpenTaskPalette,
   onScanNow,
   scanPending,
@@ -452,6 +453,17 @@ export default function TabList({
       >
         <Icon name="plus" />
       </button>
+      {typeof onOpenBulkForget === 'function' && (
+        <button
+          type="button"
+          className="tabs-action"
+          data-tooltip="Delete tasks — pick several and remove their workspaces in one go."
+          aria-label="Delete tasks"
+          onClick={onOpenBulkForget}
+        >
+          <Icon name="trash" />
+        </button>
+      )}
       <button
         type="button"
         id="tabs-scan-now"
