@@ -30,6 +30,31 @@ def find_task_by_id(
     ``on_error`` is an optional callback invoked with the queue name when a
     fetch raises, letting callers log.
     """
+    # Ask for the ONE task first, when the platform can answer that.
+    #
+    # The queue walk below fetches the operator's whole backlog and enriches
+    # every issue in it (tags + comments + attachments each) to answer a
+    # question about a single task. Measured: 78 issues / 4.78s, against
+    # 0.66s for the same task by id. That cost landed on every "Sync
+    # repositories" click, which is why syncing an existing task felt far
+    # slower than the initial clone — the clone path already HAS the Task
+    # object and never pays this.
+    #
+    # Optional by design: ``get_task`` is a capability, not a contract. A
+    # provider without it falls through to the walk below, unchanged.
+    direct = getattr(task_service, 'get_task', None)
+    if callable(direct):
+        try:
+            task = direct(task_id)
+            if task is not None and task_id_matches(task, task_id):
+                return task
+        except Exception:
+            # A by-id lookup that errors must not strand the caller — the
+            # queue walk can still find it, and a platform that is genuinely
+            # down will fail there too, where the error is already reported.
+            if on_error is not None:
+                on_error('get_task')
+
     for queue_name in queues:
         fetch = getattr(task_service, queue_name, None)
         if not callable(fetch):

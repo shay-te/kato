@@ -1249,3 +1249,78 @@ class ImageAttachmentSourceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class YouTrackGetTaskByIdTests(unittest.TestCase):
+    """One issue by id, instead of reading the whole backlog to find it.
+
+    Callers that need a single task were walking the assigned/review/all
+    queues, which fetches every issue AND enriches each with its own tags,
+    comments and attachments. Measured against a live instance: 78 issues in
+    4.78s, against 0.66s for the same task by id.
+    """
+
+    def _client(self):
+        return YouTrackClient('https://youtrack.example', 'yt-token')
+
+    def _enrichment(self):
+        # ``_to_task`` fetches tags, comments and attachments per issue.
+        return [
+            mock_response(json_data=[]),   # tags
+            mock_response(json_data=[]),   # comments
+            mock_response(json_data=[]),   # attachments
+        ]
+
+    def test_fetches_the_single_issue_by_id(self) -> None:
+        client = self._client()
+        issue = mock_response(json_data={
+            'idReadable': 'PROJ-7', 'summary': 'one task', 'description': 'body',
+        })
+
+        with patch.object(
+            client, '_get', side_effect=[issue, *self._enrichment()],
+        ) as mock_get:
+            task = client.get_task('PROJ-7')
+
+        self.assertIsNotNone(task)
+        self.assertEqual(task.id, 'PROJ-7')
+        self.assertEqual(task.summary, 'one task')
+        # The issue itself is addressed directly — no query, no $top, no
+        # listing of anything else.
+        first_call = mock_get.call_args_list[0]
+        self.assertEqual(first_call.args[0], '/api/issues/PROJ-7')
+        self.assertEqual(
+            first_call.kwargs['params'],
+            {'fields': 'idReadable,summary,description'},
+        )
+
+    def test_a_missing_issue_is_None_not_an_error(self) -> None:
+        # The caller falls back to the queue walk on None, so a 404 must not
+        # raise — a task that genuinely is not there is an ordinary answer.
+        client = self._client()
+        missing = mock_response(json_data={}, status_code=404)
+        with patch.object(client, '_get', return_value=missing):
+            self.assertIsNone(client.get_task('PROJ-404'))
+        missing.raise_for_status.assert_not_called()
+
+    def test_a_blank_id_asks_the_platform_nothing(self) -> None:
+        client = self._client()
+        with patch.object(client, '_get') as mock_get:
+            self.assertIsNone(client.get_task('   '))
+        mock_get.assert_not_called()
+
+    def test_a_payload_without_an_id_is_None(self) -> None:
+        client = self._client()
+        empty = mock_response(json_data={'summary': 'no id here'})
+        with patch.object(client, '_get', return_value=empty):
+            self.assertIsNone(client.get_task('PROJ-9'))
+
+    def test_a_server_error_still_raises(self) -> None:
+        # Only 404 is an ordinary answer. A 500 is a real fault and must not
+        # be silently reported as "no such task".
+        client = self._client()
+        broken = mock_response(json_data={}, status_code=500)
+        broken.raise_for_status.side_effect = RuntimeError('500')
+        with patch.object(client, '_get', return_value=broken):
+            with self.assertRaises(Exception):
+                client.get_task('PROJ-9')

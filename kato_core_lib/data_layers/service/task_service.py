@@ -126,6 +126,17 @@ class TaskService(Service):
             deduped.append(task)
         return deduped
 
+    def get_task(self, issue_id: str):
+        """One task by id — the cheap path for "which task is this?".
+
+        Used by ``find_task_by_id`` before it resorts to walking every queue,
+        which fetches and enriches the operator's entire backlog.
+        """
+        fetch = getattr(self._task_data_access, 'get_task', None)
+        if not callable(fetch):
+            return None
+        return fetch(issue_id)
+
     def add_comment(self, issue_id: str, comment: str) -> None:
         self._task_data_access.add_comment(issue_id, comment)
 

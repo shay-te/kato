@@ -75,6 +75,17 @@ class TaskDataAccess(DataAccess):
             states=states,
         )
 
+    def get_task(self, issue_id: str):
+        """One task by id, when the platform client supports it.
+
+        Optional capability: a client without ``get_task`` returns None here
+        and the caller falls back to walking the queues.
+        """
+        fetch = getattr(self._client, 'get_task', None)
+        if not callable(fetch):
+            return None
+        return fetch(issue_id)
+
     def download_image_attachments(self, issue_id: str, destination_dir) -> list[str]:
         return self._client.download_image_attachments(issue_id, destination_dir)
 
