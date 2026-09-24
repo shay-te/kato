@@ -73,7 +73,18 @@ def harden_stream_encoding() -> None:
 
     Idempotent, and safe to call when ``sys.stdout`` has been replaced by an
     object without ``reconfigure`` (pytest capture, a custom tee).
+
+    ``raiseExceptions = False`` is the SECOND guarantee, and the one that
+    actually protects the request. Reconfiguring covers every stream we can
+    reach, but a handler we do not own — or a stream that refuses both
+    attempts above — could still fail, and ``handleError`` guards only
+    ``OSError``. With the flag off, a logging failure is silently dropped
+    instead of propagating into the caller. Losing a log line is bad; 500ing
+    the POST that carries the operator's message, so the agent never receives
+    it, is much worse. The cost is that ``--- Logging error ---`` reports stop
+    being printed; with the stream hardened there should be none left to see.
     """
+    logging.raiseExceptions = False
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, 'reconfigure', None)
         if not callable(reconfigure):

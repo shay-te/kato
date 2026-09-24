@@ -142,10 +142,15 @@ class StreamEncodingHardeningTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self._stdout, self._stderr = sys.stdout, sys.stderr
+        # harden_stream_encoding() also flips the GLOBAL
+        # ``logging.raiseExceptions``, so it has to be restored or it leaks
+        # into every later test in the process.
+        self._raise = logging.raiseExceptions
         self.addCleanup(self._restore)
 
     def _restore(self) -> None:
         sys.stdout, sys.stderr = self._stdout, self._stderr
+        logging.raiseExceptions = self._raise
 
     @staticmethod
     def _cp1252_stream() -> io.TextIOWrapper:
@@ -164,12 +169,33 @@ class StreamEncodingHardeningTests(unittest.TestCase):
             'UNA-3070', 'claude', 'claude',
         )
 
-    def test_without_hardening_the_error_escapes_into_the_caller(self) -> None:
-        # Pins the CAUSE. If a future logging change stops it escaping, this
-        # test failing is the signal to revisit the whole rationale above.
-        sys.stderr = self._cp1252_stream()
-        with self.assertRaises(UnicodeEncodeError):
+    def test_without_hardening_the_line_is_lost(self) -> None:
+        # The stable, operator-visible half of the bug: the log line never
+        # reaches the stream at all.
+        #
+        # The other half — the UnicodeEncodeError ESCAPING logger.info() into
+        # the caller, which is what 500s the POST and stops the agent getting
+        # the message — is real and was reproduced, but it fires from
+        # ``traceback.print_stack`` inside ``handleError`` (which guards only
+        # OSError), so WHETHER it escapes depends on what is on the call
+        # stack at the time. That is CPython's internals, not kato's
+        # behaviour, so it is documented here rather than asserted.
+        logging.raiseExceptions = True  # a fresh process, before hardening
+        buffer = io.BytesIO()
+        sys.stderr = io.TextIOWrapper(buffer, encoding='cp1252', errors='strict')
+        try:
             self._log_arrow()
+        except UnicodeEncodeError:
+            pass  # escaped — the worse outcome, and also a failure to log
+        sys.stderr.flush()
+        written = buffer.getvalue().decode('utf-8', errors='replace')
+        # The FORMATTED line never lands. Asserted WITHOUT reference to the
+        # '--- Logging error ---' report, because whether that is printed is
+        # what ``logging.raiseExceptions`` controls — and the hardening turns
+        # it off. ('running on claude' is the substituted text; the raw
+        # 'running on %s' is what appears in an error report, so the
+        # substitution is what discriminates.)
+        self.assertNotIn('running on claude', written)
 
     def test_hardening_lets_the_log_call_return(self) -> None:
         sys.stderr = self._cp1252_stream()
@@ -185,8 +211,14 @@ class StreamEncodingHardeningTests(unittest.TestCase):
         self._log_arrow()
         sys.stderr.flush()
         written = buffer.getvalue().decode('utf-8', errors='replace')
-        self.assertIn('UNA-3070', written)
+        # The FORMATTED line, not just the id: 'running on claude' is the
+        # substituted text, whereas the raw 'running on %s' is what shows up
+        # inside a logging-error report. Asserting the substitution is what
+        # tells the two apart.
+        self.assertIn('task UNA-3070: chat message from the claude tab', written)
+        self.assertIn('running on claude', written)
         self.assertIn('→', written)
+        self.assertNotIn('--- Logging error ---', written)
 
     def test_non_ascii_in_the_ARGUMENTS_is_survivable_too(self) -> None:
         # The reason a format-string sweep could not have fixed this.
@@ -219,3 +251,47 @@ class StreamEncodingHardeningTests(unittest.TestCase):
         with patch.object(logging_utils, 'harden_stream_encoding') as harden:
             logging_utils.configure_logger('probe')
         harden.assert_called_once_with()
+
+
+class LoggingCanNeverKillARequestTests(unittest.TestCase):
+    """Second guarantee: a log line must never 500 the request that made it.
+
+    The stream hardening covers every stream kato can reach, but a handler it
+    does not own — or a stream that refuses reconfiguration — could still
+    fail, and ``logging.Handler.handleError`` guards only ``OSError``. With
+    ``raiseExceptions`` off, the failure is dropped instead of propagating
+    into ``post_message``.
+    """
+
+    def setUp(self) -> None:
+        self._raise, self._err = logging.raiseExceptions, sys.stderr
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        logging.raiseExceptions = self._raise
+        sys.stderr = self._err
+
+    def test_hardening_disables_logging_exception_propagation(self) -> None:
+        logging.raiseExceptions = True
+        logging_utils.harden_stream_encoding()
+        self.assertFalse(logging.raiseExceptions)
+
+    def test_a_handler_that_cannot_be_hardened_still_cannot_raise(self) -> None:
+        # A stream object that refuses reconfigure AND cannot encode: the
+        # worst case the hardening cannot repair.
+        class _Unfixable(io.TextIOWrapper):
+            def reconfigure(self, **kwargs):
+                raise ValueError('refused')
+
+        sys.stderr = _Unfixable(io.BytesIO(), encoding='cp1252', errors='strict')
+        logging_utils.harden_stream_encoding()
+
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setFormatter(logging.Formatter('%(message)s'))
+        logger = logging.getLogger('kato-unfixable-probe')
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+
+        # Must not raise, even though the write underneath genuinely fails.
+        logger.info('tab → run %s', 'claude')
