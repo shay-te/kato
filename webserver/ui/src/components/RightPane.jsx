@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
 import PanelCard from './PanelCard.jsx';
+import { useGlobalSearchShortcut } from '../hooks/useGlobalSearchShortcut.js';
 
 export default function RightPane({
   activeTaskId,
@@ -18,6 +19,21 @@ export default function RightPane({
   // the focus effect — repeated Cmd+P presses re-focus the input
   // even if it's already mounted.
   const [focusFilterSignal, setFocusFilterSignal] = useState(0);
+  // The term Ctrl/Cmd+Shift+F seeded, paired with the tick that delivered it.
+  // Paired rather than held alone because the SAME term can be searched twice
+  // in a row — a bare string would not change, so the effect downstream would
+  // not re-run and the second press would look dead.
+  const [searchSeed, setSearchSeed] = useState('');
+
+  // Ctrl/Cmd+Shift+F — search the task's repos for the highlighted word.
+  // Seeds the Files pane's search box (which greps content at two or more
+  // characters) and focuses it, so the operator can refine immediately.
+  const runGlobalSearch = useCallback((seed) => {
+    if (!activeTaskId) { return; }
+    setSearchSeed(seed || '');
+    setFocusFilterSignal((tick) => tick + 1);
+  }, [activeTaskId]);
+  useGlobalSearchShortcut(runGlobalSearch);
 
   // VS Code's Cmd+P / Ctrl+P focuses the file search box. Only
   // intercepted when there's an active task — otherwise the browser
@@ -48,6 +64,7 @@ export default function RightPane({
           taskSummary={activeTaskSummary}
           workspaceVersion={workspaceVersion}
           focusFilterSignal={focusFilterSignal}
+      searchSeed={searchSeed}
           focusFileTarget={focusFileTarget}
           openFile={openFile}
           onOpenFile={onOpenFile}

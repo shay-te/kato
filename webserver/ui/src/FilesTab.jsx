@@ -108,6 +108,7 @@ export default function FilesTab({
   taskSummary = '',
   workspaceVersion = 0,
   focusFilterSignal = 0,
+  searchSeed = '',
   focusFileTarget = null,
   openFile = null,
   onOpenFile,
@@ -224,10 +225,22 @@ export default function FilesTab({
   // else.
   useEffect(() => {
     if (focusFilterSignal === 0) { return; }
+    // Ctrl/Cmd+Shift+F arrives with the highlighted word; Ctrl/Cmd+P arrives
+    // with nothing and just focuses what is already there. Seeding REPLACES
+    // the query on purpose — the operator asked to search this word, so
+    // leaving the previous term in front of it would be the wrong answer.
+    if (searchSeed) { setQuery(searchSeed); }
     const node = filterInputRef.current;
     if (!node) { return; }
     node.focus();
+    // Select the text so the next keystroke replaces it: a seeded term the
+    // operator wants to refine is far more common than one they want to
+    // append to.
     node.select();
+  // ``searchSeed`` is deliberately NOT a dependency — the tick is what says
+  // "a search was requested". Including it would re-fire (and steal focus)
+  // whenever a seed merely changed value.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusFilterSignal]);
 
   // Reset the filter when switching tasks — every task has its own

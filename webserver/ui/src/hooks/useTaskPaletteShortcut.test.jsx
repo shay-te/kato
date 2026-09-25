@@ -1,11 +1,15 @@
-// Ctrl/Cmd+Shift+F opens the task palette.
+// Ctrl/Cmd+Shift+P opens the task palette.
 //
-// The key choice is load-bearing, so it is pinned here. NOT Ctrl+P:
-// RightPane already binds Ctrl/Cmd+P to focus the workspace FILE filter,
-// so the palette on that key double-bound it — both handlers fired and
-// the operator got the palette on top of a focused file search. Ctrl+P
-// is also VS Code's "Go to File", so file search is the meaning already
-// in everyone's fingers.
+// MOVED from Ctrl+Shift+F, which now runs the workspace content search
+// seeded with the highlighted word. The operator's report was the
+// mismatch: highlighting a function name and pressing the "search
+// everywhere" chord gave them a task switcher.
+//
+// The key choice is load-bearing, so all four combinations are pinned
+// here. NOT Ctrl+P: RightPane binds Ctrl/Cmd+P to focus the workspace
+// FILE filter, so the palette on that key double-bound it — both
+// handlers fired and the operator got the palette on top of a focused
+// file search. Ctrl+P is also VS Code's "Go to File".
 
 import { describe, test, expect, vi, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
@@ -39,18 +43,26 @@ afterEach(() => {
 });
 
 describe('useTaskPaletteShortcut', () => {
-  test('Ctrl+Shift+F opens the palette', () => {
+  test('Ctrl+Shift+P opens the palette', () => {
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
-    press({ ctrlKey: true, shiftKey: true });
+    pressP({ ctrlKey: true, shiftKey: true });
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
-  test('Cmd+Shift+F opens it on macOS', () => {
+  test('Cmd+Shift+P opens it on macOS', () => {
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
-    press({ metaKey: true, shiftKey: true });
+    pressP({ metaKey: true, shiftKey: true });
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  test('Ctrl+Shift+F is NOT claimed — it is the global content search now', () => {
+    const onOpen = vi.fn();
+    render(<Harness onOpen={onOpen} />);
+    const event = press({ ctrlKey: true, shiftKey: true });
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
   test('Ctrl+P is NOT claimed — it belongs to the workspace file filter', () => {
@@ -63,7 +75,7 @@ describe('useTaskPaletteShortcut', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  test('Ctrl+F alone is left to the browser find bar', () => {
+  test('Ctrl+F alone is NOT claimed — that is find-in-file', () => {
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
     const event = press({ ctrlKey: true });
@@ -71,10 +83,10 @@ describe('useTaskPaletteShortcut', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
-  test('a bare f is left alone so typing still works', () => {
+  test('a bare p is left alone so typing still works', () => {
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
-    const event = press({});
+    const event = pressP({});
     expect(onOpen).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
   });
@@ -82,7 +94,7 @@ describe('useTaskPaletteShortcut', () => {
   test('Alt is left alone too', () => {
     const onOpen = vi.fn();
     render(<Harness onOpen={onOpen} />);
-    press({ ctrlKey: true, shiftKey: true, altKey: true });
+    pressP({ ctrlKey: true, shiftKey: true, altKey: true });
     expect(onOpen).not.toHaveBeenCalled();
   });
 
@@ -95,7 +107,7 @@ describe('useTaskPaletteShortcut', () => {
     const onOpen = vi.fn();
     const { getByLabelText } = render(<Harness onOpen={onOpen} />);
     getByLabelText('composer').focus();
-    press({ ctrlKey: true, shiftKey: true });
+    pressP({ ctrlKey: true, shiftKey: true });
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
@@ -106,7 +118,7 @@ describe('useTaskPaletteShortcut', () => {
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     document.body.appendChild(dialog);
-    press({ ctrlKey: true, shiftKey: true });
+    pressP({ ctrlKey: true, shiftKey: true });
     expect(onOpen).not.toHaveBeenCalled();
   });
 
@@ -114,7 +126,7 @@ describe('useTaskPaletteShortcut', () => {
     const onOpen = vi.fn();
     const { unmount } = render(<Harness onOpen={onOpen} />);
     unmount();
-    press({ ctrlKey: true, shiftKey: true });
+    pressP({ ctrlKey: true, shiftKey: true });
     expect(onOpen).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import Editor from '@monaco-editor/react';
 import { fetchFileContent, fileRawUrl } from '../api.js';
 import { useFindWidgetEscape } from '../hooks/useFindWidgetEscape.js';
+import { useFindInFileShortcut } from '../hooks/useFindInFileShortcut.js';
 import { readCachedFileContent, writeCachedFileContent } from '../utils/fileContentCache.js';
 import {
   useTaskComments,
@@ -564,6 +565,11 @@ export default function EditorPane({
   // binding needs editor focus, which leaves the bar pinned over the file the
   // moment focus is anywhere else. See the hook for the full mechanism.
   useFindWidgetEscape(editorRef);
+
+  // Ctrl/Cmd+F finds the highlighted word IN THIS FILE even when the cursor
+  // is not in the editor (a diff row, the tree, a chat message). Monaco's own
+  // binding covers the in-editor case and is left alone; see the hook.
+  useFindInFileShortcut(editorRef);
 
   // Scroll the editor to a line when the operator clicks a chip.
   function jumpToLine(line) {

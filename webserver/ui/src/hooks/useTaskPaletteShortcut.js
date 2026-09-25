@@ -2,18 +2,26 @@ import { useEffect } from 'react';
 import { modalOrDrawerOpen } from '../utils/modalOpen.js';
 
 /**
- * Ctrl+Shift+F (Cmd+Shift+F on macOS) opens the task palette.
+ * Ctrl+Shift+P (Cmd+Shift+P on macOS) opens the task palette.
  *
- * NOT Ctrl+P. That key was already taken: ``RightPane`` binds Ctrl/Cmd+P
- * to focus the workspace FILE filter, so putting the task palette on it
- * double-bound the key — both handlers fired, and the operator got the
- * palette on top of a focused file search. Ctrl+P is also what VS Code
- * uses for "Go to File", so file search is the meaning already in
- * everyone's fingers; taking it for tasks fights that.
+ * MOVED here from Ctrl+Shift+F. That key is the "search wider" gesture in
+ * VS Code muscle memory, and kato has a real global search to put on it —
+ * the workspace content search in the Files pane. Highlighting a symbol and
+ * pressing Ctrl+Shift+F should grep the task's repos for it, not open a task
+ * switcher; the operator reported exactly that mismatch.
  *
- * Ctrl+Shift+F is the "search wider" gesture in the same muscle memory
- * (VS Code: search across all files), it is unbound in Chrome, Edge,
- * Firefox and Safari, and it is unbound anywhere in kato.
+ * Ctrl+Shift+P is the natural home: VS Code puts its command palette there,
+ * so "a palette of things to jump to" is already the meaning in everyone's
+ * fingers.
+ *
+ * NOT Ctrl+P. That key is taken: ``RightPane`` binds Ctrl/Cmd+P to focus the
+ * workspace FILE filter, so putting the palette on it double-bound the key —
+ * both handlers fired and the operator got the palette on top of a focused
+ * file search. Ctrl+P is also VS Code's "Go to File".
+ *
+ * Caveat worth knowing: Firefox binds Ctrl+Shift+P to "new private window"
+ * at the browser level, which a page cannot override. On Firefox the
+ * palette is still reachable from the tab-strip button.
  *
  * The shortcut stands down when a modal or the settings drawer is open
  * (that surface owns the keyboard), and — unlike the Tab task-cycling
@@ -27,7 +35,7 @@ import { modalOrDrawerOpen } from '../utils/modalOpen.js';
 export function useTaskPaletteShortcut(onOpen) {
   useEffect(() => {
     function onKeyDown(event) {
-      if (event.key !== 'f' && event.key !== 'F') { return; }
+      if (event.key !== 'p' && event.key !== 'P') { return; }
       if (!(event.metaKey || event.ctrlKey)) { return; }
       if (!event.shiftKey || event.altKey) { return; }
       if (modalOrDrawerOpen()) { return; }

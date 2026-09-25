@@ -420,7 +420,7 @@ describe('TabList — go-to-task button', () => {
   }
 
   test('renders a search action that opens the task palette', () => {
-    // The Ctrl+Shift+F shortcut is the fast path, but a shortcut nobody is told
+    // The Ctrl+Shift+P shortcut is the fast path, but a shortcut nobody is told
     // about does not exist — with a full strip the only discoverable way
     // to reach a task was to scroll and read every pill.
     const onOpenTaskPalette = vi.fn();
@@ -432,7 +432,7 @@ describe('TabList — go-to-task button', () => {
   test('the tooltip teaches the keyboard shortcut', () => {
     renderStrip({ onOpenTaskPalette: vi.fn() });
     const button = screen.getByRole('button', { name: /go to task/i });
-    expect(button.getAttribute('data-tooltip')).toMatch(/Ctrl\+Shift\+F/);
+    expect(button.getAttribute('data-tooltip')).toMatch(/Ctrl\+Shift\+P/);
   });
 
   test('it is disabled when no handler is supplied', () => {

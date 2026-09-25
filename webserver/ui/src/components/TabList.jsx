@@ -427,7 +427,7 @@ export default function TabList({
   // horizontal scroll).
   const trailingActions = (
     <div className="tabs-actions">
-      {/* Go to task. The Ctrl/Cmd+Shift+F shortcut is the fast path, but a
+      {/* Go to task. The Ctrl/Cmd+Shift+P shortcut is the fast path, but a
           shortcut nobody is told about does not exist — with a strip full
           of tasks (most scrolled out of sight) the only discoverable way
           to reach one was to scroll and read every pill. The tooltip
@@ -436,7 +436,7 @@ export default function TabList({
         type="button"
         id="tabs-go-to-task"
         className="tabs-action"
-        data-tooltip="Go to task (Ctrl+Shift+F) — search your open tasks by id or name and jump straight to one."
+        data-tooltip="Go to task (Ctrl+Shift+P) — search your open tasks by id or name and jump straight to one."
         aria-label="Go to task"
         onClick={onOpenTaskPalette}
         disabled={typeof onOpenTaskPalette !== 'function'}

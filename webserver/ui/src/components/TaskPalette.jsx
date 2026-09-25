@@ -6,7 +6,7 @@ import {
   nextPaletteIndex,
 } from '../utils/taskPalette.js';
 
-// Ctrl/Cmd+Shift+F task palette — "search every task", for tasks.
+// Ctrl/Cmd+Shift+P task palette — "search every task", for tasks.
 //
 // Tab / Shift+Tab already walks the task strip, but that only helps when
 // the task you want is a step or two away. With a strip full of tasks

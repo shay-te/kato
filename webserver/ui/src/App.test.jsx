@@ -787,15 +787,17 @@ describe('App — chaos / random button mashing', () => {
 });
 
 describe('App — task palette', () => {
-  // Ctrl+SHIFT+F, not Ctrl+P: RightPane already binds Ctrl/Cmd+P to focus
-  // the workspace FILE filter, so the palette on that key double-bound it.
+  // Ctrl+SHIFT+P. Not Ctrl+P: RightPane binds Ctrl/Cmd+P to focus the
+  // workspace FILE filter, so the palette on that key double-bound it. And
+  // not Ctrl+Shift+F any more — that is the workspace content search now,
+  // seeded with whatever the operator has highlighted.
   function openPalette() {
     window.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'f', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
+      key: 'p', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true,
     }));
   }
 
-  test('Ctrl+Shift+F opens a searchable list of the open tasks', () => {
+  test('Ctrl+Shift+P opens a searchable list of the open tasks', () => {
     useSessions.mockReturnValue({
       sessions: [
         { task_id: 'UNA-2818', task_summary: 'elastic search variables' },
