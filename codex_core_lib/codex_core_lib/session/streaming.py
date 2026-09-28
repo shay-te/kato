@@ -326,6 +326,10 @@ class StreamingCodexSession(object):
                 errors='replace',
                 cwd=self._cwd or None,
                 env=self._build_env() if self._build_env else None,
+                # Own process group, so anything the agent starts (an
+                # ``npm run dev``, a watcher) dies with the session instead of
+                # outliving it. Same reasoning as the Claude transport.
+                start_new_session=True,
             )
         except OSError as exc:
             self._record_stderr(f'failed to launch {self._binary}: {exc}')

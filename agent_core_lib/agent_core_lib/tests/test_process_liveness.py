@@ -11,7 +11,10 @@ strength of a stale registry entry.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+import sys
+import time
 import unittest
 from unittest import mock
 
@@ -136,6 +139,97 @@ class ImageNameTests(unittest.TestCase):
     def test_posix_unreadable_proc_is_unknown(self) -> None:
         with mock.patch.object(process_liveness, 'IS_WINDOWS', False):
             self.assertEqual(process_liveness.image_name(-1), '')
+
+
+class KillProcessGroupTests(unittest.TestCase):
+    """POSIX must reap what the AGENT started, not just the agent.
+
+    Operator report: a machine crashed with 15-20 node servers still running.
+    An agent that runs ``npm run dev`` leaves that server behind — killing the
+    CLI does not touch it, because it is a separate process that simply gets
+    reparented. Measured with real processes: single-pid kill left the server
+    alive indefinitely; a group kill reaped it.
+
+    The guard is the dangerous half. Signalling a group we SHARE would kill
+    the orchestrator and every other agent with it, so the group is used only
+    when it is not our own.
+    """
+
+    def test_a_group_leading_process_has_its_group_signalled(self) -> None:
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
+                mock.patch.object(os, 'getpgid', side_effect=[4242, 999]), \
+                mock.patch.object(os, 'killpg') as killpg, \
+                mock.patch.object(os, 'kill'):
+            self.assertTrue(process_liveness.kill_process_tree(4242))
+        self.assertEqual(killpg.call_args[0][0], 4242)
+
+    def test_our_OWN_group_is_never_signalled(self) -> None:
+        # The suicide guard: same pgid as us => single-pid kill only.
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
+                mock.patch.object(os, 'getpgid', return_value=999), \
+                mock.patch.object(os, 'killpg') as killpg, \
+                mock.patch.object(os, 'kill') as kill:
+            self.assertTrue(process_liveness.kill_process_tree(4242))
+        killpg.assert_not_called()
+        self.assertEqual(kill.call_args[0][0], 4242)
+
+    def test_an_unresolvable_group_still_kills_the_process(self) -> None:
+        # getpgid failing must not stop the kill — the single-pid attempt is
+        # what decides the answer.
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
+                mock.patch.object(os, 'getpgid', side_effect=OSError('nope')), \
+                mock.patch.object(os, 'kill') as kill:
+            self.assertTrue(process_liveness.kill_process_tree(4242))
+        self.assertEqual(kill.call_args[0][0], 4242)
+
+    def test_windows_does_not_use_groups(self) -> None:
+        # taskkill /T already walked the children there.
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', True), \
+                mock.patch.object(os, 'killpg') as killpg, \
+                mock.patch.object(subprocess, 'run') as run:
+            run.return_value = mock.Mock(returncode=0)
+            self.assertTrue(process_liveness.kill_process_tree(4242))
+        killpg.assert_not_called()
+
+    def test_a_real_child_in_its_own_session_is_reaped_with_its_child(self) -> None:
+        # No mocks: the behaviour the operator actually cares about.
+        agent = subprocess.Popen(
+            [
+                sys.executable, '-c',
+                'import subprocess, sys, time;'
+                "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+                'print(p.pid, flush=True); time.sleep(60)',
+            ],
+            stdout=subprocess.PIPE, text=True, start_new_session=True,
+        )
+        self.addCleanup(_force_kill, agent)
+        server_pid = int(agent.stdout.readline().strip())
+        self.addCleanup(_force_kill_pid, server_pid)
+
+        self.assertTrue(process_liveness.kill_process_tree(agent.pid))
+        agent.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while process_liveness.pid_alive(server_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(
+            process_liveness.pid_alive(server_pid),
+            'the server the agent started outlived the agent',
+        )
+
+
+def _force_kill(proc) -> None:
+    try:
+        proc.kill()
+        proc.wait(timeout=2)
+    except Exception:
+        pass
+
+
+def _force_kill_pid(pid: int) -> None:
+    try:
+        os.kill(pid, getattr(signal, 'SIGKILL', signal.SIGTERM))
+    except OSError:
+        pass
 
 
 if __name__ == '__main__':

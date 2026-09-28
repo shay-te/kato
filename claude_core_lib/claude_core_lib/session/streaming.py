@@ -92,6 +92,22 @@ _IS_WINDOWS = os.name == 'nt'
 TERMINATE_LOCK_TIMEOUT_SECONDS = 2.0
 
 
+def _process_group_of(proc: subprocess.Popen) -> int | None:
+    """The agent's process group id, or ``None`` when there is not a safe one.
+
+    Returns ``None`` when the group is our OWN — that happens if the spawn did
+    not get ``start_new_session=True`` — because signalling it would take down
+    the orchestrator and every other agent with it. Leaking a dev server is
+    bad; killing the orchestrator is worse.
+    """
+    if _IS_WINDOWS:
+        return None
+    try:
+        group_id = os.getpgid(proc.pid)
+        return group_id if group_id > 0 and group_id != os.getpgid(0) else None
+    except (OSError, AttributeError, ProcessLookupError):
+        return None
+
 def _wait_for_exit(proc: subprocess.Popen, timeout: float) -> bool:
     """Block up to ``timeout`` seconds for ``proc`` to exit. True on exit."""
     try:
@@ -1037,6 +1053,14 @@ class StreamingClaudeSession(object):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     bufsize=0,  # unbuffered: we want each NDJSON line ASAP
+                    # Own process group (POSIX) / own job (Windows), so the
+                    # agent and EVERYTHING IT STARTS can be killed together.
+                    # Without this, an ``npm run dev`` the agent ran survives
+                    # the session forever — measured, and reported as 15-20
+                    # node servers eating a machine until it crashed. It also
+                    # makes the group kill SAFE: the agent leads its own
+                    # group, so signalling that group cannot reach the orchestrator.
+                    start_new_session=True,
                 )
             except (OSError, FileNotFoundError) as exc:
                 raise RuntimeError(
@@ -1233,10 +1257,23 @@ class StreamingClaudeSession(object):
         try:
             proc = self._proc
             if proc is not None:
+                # Captured BEFORE the kill, while the pid still resolves: once
+                # the agent is reaped its group id is unreadable, and the group
+                # is exactly what still holds its leftover servers.
+                group_id = _process_group_of(proc)
                 self._close_stdin_locked()
                 if not _wait_for_exit(proc, max(0.1, float(grace_seconds))):
                     self._escalate_to_sigterm(proc)
                 self._proc = None
+                # Sweep the group however the agent died.
+                #
+                # The graceful path is the COMMON one — the agent usually
+                # exits on its own or on SIGTERM, so ``_escalate_to_kill``
+                # never runs. But an ``npm run dev`` the agent started does
+                # NOT die just because its parent did: it is reparented and
+                # keeps running, holding its port and its memory. That is the
+                # leak behind "15-20 node servers ate my machine".
+                self._reap_process_group(group_id)
         finally:
             if acquired:
                 self._proc_lock.release()
@@ -1299,6 +1336,30 @@ class StreamingClaudeSession(object):
             )
             return False
 
+    def _reap_process_group(self, group_id: int | None) -> None:
+        """End anything the agent left behind in its process group.
+
+        SIGTERM first so a dev server gets to close its port cleanly, then
+        SIGKILL for whatever ignored it. Both are best-effort: a group that is
+        already empty raises ``ProcessLookupError``, which is success.
+
+        Windows has no process groups in this sense — ``taskkill /T`` in
+        ``_kill_tree_safely`` already walked the children there, so this is a
+        POSIX-only sweep.
+        """
+        if group_id is None or _IS_WINDOWS:
+            return
+        sigkill = getattr(signal, 'SIGKILL', signal.SIGTERM)
+        for sig, settle in ((signal.SIGTERM, 0.3), (sigkill, 0.0)):
+            try:
+                os.killpg(group_id, sig)
+            except ProcessLookupError:
+                return          # nothing left — the common, happy case
+            except OSError:
+                return          # not ours to signal; nothing more to try
+            if settle:
+                time.sleep(settle)
+
     def _kill_without_proc_lock(self) -> None:
         """Kill the subprocess WITHOUT taking ``_proc_lock``.
 
@@ -1313,8 +1374,10 @@ class StreamingClaudeSession(object):
         proc = self._proc
         if proc is None:
             return
-        if _IS_WINDOWS:
-            self._kill_tree_safely(proc)
+        # Tree kill on EVERY platform: on Windows it walks the npm shim's
+        # children, on POSIX it signals the agent's process group so a dev
+        # server the agent started dies with it.
+        self._kill_tree_safely(proc)
         try:
             proc.kill()
         except (ProcessLookupError, OSError):
@@ -1326,11 +1389,11 @@ class StreamingClaudeSession(object):
             'streaming claude session for task %s ignored SIGTERM; killing',
             self._task_id,
         )
-        if _IS_WINDOWS:
-            # Same tree semantics as the SIGTERM step — see above. The
-            # ``proc.kill()`` below stays as a last-resort fallback for
-            # when taskkill itself is unavailable.
-            self._kill_tree_safely(proc)
+        # Same tree semantics as the SIGTERM step — see above. On POSIX this
+        # signals the agent's process GROUP, which is the only thing that
+        # reaps an ``npm run dev`` the agent left running; ``proc.kill()``
+        # below stays as the last-resort single-process fallback.
+        self._kill_tree_safely(proc)
         # ``Popen.kill()`` is portable: SIGKILL on POSIX, ``TerminateProcess``
         # on Windows. ``signal.SIGKILL`` itself doesn't exist on Windows.
         try:

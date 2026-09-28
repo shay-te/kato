@@ -79,12 +79,39 @@ def kill_process_tree(pid: int, *, logger=None, label: str = 'agent') -> bool:
     # importable there (tests patch ``IS_WINDOWS`` to exercise both paths on
     # one platform).
     sigkill = getattr(signal, 'SIGKILL', signal.SIGTERM)
+
+    # Signal the whole GROUP, so a dev server the agent started dies with it.
+    #
+    # Measured: killing only the pid leaves the grandchild alive indefinitely.
+    # The caller spawns the agent with ``start_new_session=True`` precisely so
+    # it leads its own group and this is safe.
+    #
+    # The guard is not optional. If the agent were NOT in its own group it
+    # would share ours, and ``killpg`` would take down the orchestrator — and
+    # every other agent it is supervising — instead of one CLI. When the
+    # groups match we fall back to the single-pid kill, which is the old
+    # behaviour: it leaks the server, but leaking beats suicide.
+    group_signalled = False
+    try:
+        group_id = os.getpgid(pid)
+        if group_id > 0 and group_id != os.getpgid(0):
+            os.killpg(group_id, sigkill)
+            group_signalled = True
+    except (OSError, AttributeError):
+        # Includes ProcessLookupError (the pid is already gone), a missing
+        # getpgid/killpg, and permission denied. Deliberately NOT a return:
+        # whether the kill landed is decided by the single-pid attempt below,
+        # so resolving the group is a best-effort ADDITION to the old
+        # behaviour and can never change its answer.
+        group_signalled = False
+
     try:
         os.kill(pid, sigkill)
     except ProcessLookupError:
+        # Already gone — including "the group kill above got it".
         return True
     except OSError:
-        return False
+        return group_signalled
     return True
 
 
