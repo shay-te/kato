@@ -4,7 +4,7 @@ Composition contract:
 
   * Workspace-scope addendum is always appended (independent of docker mode)
   * Sandbox addendum is appended only when docker is on
-  * Architecture doc, when present, comes first (operator content not buried)
+  * Lessons, when present, come first (curated content not buried)
 
 Plus a content lock on each load-bearing claim in the addendum so a
 silent reword can't happen without the test failing first. The wording
@@ -26,31 +26,31 @@ from sandbox_core_lib.sandbox_core_lib.system_prompt import (
 
 
 class ComposeSystemPromptTests(unittest.TestCase):
-    def test_off_with_no_arch_doc_returns_workspace_then_resumed(self) -> None:
+    def test_off_with_no_lessons_returns_workspace_then_resumed(self) -> None:
         self.assertEqual(
-            compose_system_prompt('', docker_mode_on=False),
+            compose_system_prompt(docker_mode_on=False),
             (
                 f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
                 f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
             ),
         )
 
-    def test_off_with_arch_doc_joins_arch_workspace_resumed(self) -> None:
-        arch = 'Architecture: services A, B, C with kafka in between.'
-        result = compose_system_prompt(arch, docker_mode_on=False)
-        self.assertTrue(result.startswith(arch))
+    def test_off_with_lessons_joins_lessons_workspace_resumed(self) -> None:
+        lessons = 'Lessons: services A, B, C talk through kafka.'
+        result = compose_system_prompt(docker_mode_on=False, lessons=lessons)
+        self.assertTrue(result.startswith(lessons))
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
         self.assertEqual(
             result,
             (
-                f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
+                f'{lessons}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
                 f'{RESUMED_SESSION_ADDENDUM}\n\n{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
             ),
         )
 
-    def test_on_with_no_arch_doc_appends_workspace_resumed_sandbox(self) -> None:
-        result = compose_system_prompt('', docker_mode_on=True)
+    def test_on_with_no_lessons_appends_workspace_resumed_sandbox(self) -> None:
+        result = compose_system_prompt(docker_mode_on=True)
         self.assertEqual(
             result,
             (
@@ -59,12 +59,12 @@ class ComposeSystemPromptTests(unittest.TestCase):
             ),
         )
 
-    def test_on_with_arch_doc_joins_arch_workspace_resumed_sandbox(self) -> None:
-        arch = 'Architecture: services A, B, C with kafka in between.'
-        result = compose_system_prompt(arch, docker_mode_on=True)
-        # Architecture comes first so the operator-authored content is
+    def test_on_with_lessons_joins_lessons_workspace_resumed_sandbox(self) -> None:
+        lessons = 'Lessons: services A, B, C talk through kafka.'
+        result = compose_system_prompt(docker_mode_on=True, lessons=lessons)
+        # Lessons come first so the curated content is
         # not buried below boilerplate; sandbox stays last.
-        self.assertTrue(result.startswith(arch))
+        self.assertTrue(result.startswith(lessons))
         self.assertTrue(result.endswith(SANDBOX_SYSTEM_PROMPT_ADDENDUM))
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
@@ -72,27 +72,9 @@ class ComposeSystemPromptTests(unittest.TestCase):
         self.assertEqual(
             result,
             (
-                f'{arch}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
+                f'{lessons}\n\n{WORKSPACE_SCOPE_ADDENDUM}\n\n'
                 f'{RESUMED_SESSION_ADDENDUM}\n\n{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n'
                 f'{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
-            ),
-        )
-
-    def test_none_arch_doc_treated_as_empty(self) -> None:
-        # ``read_architecture_doc`` may return ``''`` or ``None`` —
-        # the composer must accept both without raising.
-        self.assertEqual(
-            compose_system_prompt(None, docker_mode_on=False),  # type: ignore[arg-type]
-            (
-                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}'
-            ),
-        )
-        self.assertEqual(
-            compose_system_prompt(None, docker_mode_on=True),  # type: ignore[arg-type]
-            (
-                f'{WORKSPACE_SCOPE_ADDENDUM}\n\n{RESUMED_SESSION_ADDENDUM}\n\n'
-                f'{UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM}\n\n{SANDBOX_SYSTEM_PROMPT_ADDENDUM}'
             ),
         )
 

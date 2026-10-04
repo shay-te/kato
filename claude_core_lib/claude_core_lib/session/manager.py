@@ -210,7 +210,6 @@ class ClaudeSessionManager(object):
         effort: str = '',
         env: dict[str, str] | None = None,
         expected_branch: str = '',
-        architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
         sandbox_root: str = '',
@@ -236,7 +235,6 @@ class ClaudeSessionManager(object):
             'max_turns': max_turns,
             'effort': effort,
             'env': env,
-            'architecture_doc_path': architecture_doc_path,
             'lessons_path': lessons_path,
             'docker_mode_on': docker_mode_on,
             # Task folder for the docker bind mount; '' keeps the old

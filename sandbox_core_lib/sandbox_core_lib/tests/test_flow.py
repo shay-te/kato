@@ -11,7 +11,7 @@ Scenarios covered:
   3. Secret-free workspace: validate → scan → no secrets → record spawn logged
   4. Workspace with secrets: validate → scan → secrets found → SandboxError raised
   5. Bypass declined at prompt: gate starts → operator declines → BypassPermissionsRefused
-  6. System prompt assembly: arch doc + lessons + docker mode → full composed prompt
+  6. System prompt assembly: lessons + docker mode → full composed prompt
   7. Untrusted workspace content: wrap → inject into system prompt context framing
   8. Credential detection pipeline: file content → find_credential_patterns → summarize
   9. Audit-log shipping gate: record spawn → ship_audit_entry called
@@ -236,26 +236,24 @@ class BypassDeclinedFlowTests(unittest.TestCase):
 
 
 class SystemPromptAssemblyFlowTests(unittest.TestCase):
-    """Flow 6: arch doc + lessons + docker mode → full composed prompt."""
+    """Flow 6: lessons + docker mode → full composed prompt."""
 
     def test_full_prompt_assembly_docker_on(self):
-        arch = '# Project Architecture\nThis is the project.'
         lessons = 'Use short functions.'
 
-        prompt = compose_system_prompt(arch, docker_mode_on=True, lessons=lessons)
+        prompt = compose_system_prompt(docker_mode_on=True, lessons=lessons)
 
-        # All four sections present
-        self.assertIn(arch, prompt)
+        # All three sections present
         self.assertIn(lessons, prompt)
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, prompt)
         self.assertIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, prompt)
 
     def test_prompt_without_docker_excludes_sandbox_addendum(self):
-        prompt = compose_system_prompt('Arch.', docker_mode_on=False)
+        prompt = compose_system_prompt(docker_mode_on=False)
         self.assertNotIn('api.anthropic.com', prompt)
 
     def test_prompt_always_warns_against_filesystem_scans(self):
-        prompt = compose_system_prompt('', docker_mode_on=False)
+        prompt = compose_system_prompt(docker_mode_on=False)
         self.assertIn('find /', prompt)
 
 

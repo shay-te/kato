@@ -927,9 +927,6 @@ def _resume_streaming_sessions(app) -> None:
         app.logger.exception('failed to list workspaces during session resume')
         return
     spawn_defaults = _planning_spawn_defaults(runner)
-    architecture_doc_path = (
-        os.environ.get('KATO_ARCHITECTURE_DOC_PATH', '') or ''
-    )
     resumed = 0
     skipped: list[str] = []
     for record in records:
@@ -963,7 +960,6 @@ def _resume_streaming_sessions(app) -> None:
                 initial_prompt=initial_prompt,
                 cwd=cwd,
                 expected_branch=task_id,
-                architecture_doc_path=architecture_doc_path,
                 **spawn_defaults,
             )
             resumed += 1
@@ -1004,6 +1000,11 @@ def _planning_spawn_defaults(runner) -> dict[str, object]:
         'allowed_tools',
         'disallowed_tools',
         'effort',
+        # Without this a session resumed at boot is spawned with no lessons
+        # directive at all: it starts work without the one document every
+        # other spawn is required to read first. The field list is copied by
+        # hand, and this one was simply never on it.
+        'lessons_path',
     )
     result: dict[str, object] = {
         field: (getattr(defaults, field, '') or '') for field in fields

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 import threading
-import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -173,40 +175,147 @@ class ResolveTicketPlatformConfigTests(unittest.TestCase):
             KatoCoreLib._resolve_ticket_platform_config(open_cfg)
 
 
-class KickStartupCompactTests(unittest.TestCase):
-    """Lines 541-554: background-thread compact + exception swallow."""
+class BringLessonsDocumentUpToDateTests(unittest.TestCase):
+    """What boot does to the lessons document before any agent reads it."""
 
-    def test_returns_early_when_no_compact_due(self) -> None:
+    @staticmethod
+    def _service():
         service = MagicMock()
-        service.should_compact.return_value = False
-        KatoCoreLib._kick_startup_compact(service)
-        service.compact.assert_not_called()
+        service.filed = threading.Event()
+        service.file_pending.side_effect = lambda: service.filed.set()
+        service.has_pending.return_value = False
+        return service
 
-    def test_spawns_background_thread_when_compact_due(self) -> None:
-        service = MagicMock()
-        service.should_compact.return_value = True
-        # Make compact() block briefly so we can confirm it's threaded.
-        compact_event = threading.Event()
-        service.compact.side_effect = lambda: compact_event.set()
-        KatoCoreLib._kick_startup_compact(service)
-        # Wait briefly for the thread to fire.
-        self.assertTrue(compact_event.wait(timeout=2.0))
+    def test_adopts_the_legacy_document_inline_then_files_in_the_background(self) -> None:
+        service = self._service()
+        with patch.dict(os.environ, {'KATO_ARCHITECTURE_DOC_PATH': '/docs/arch.md'}):
+            KatoCoreLib._bring_lessons_document_up_to_date(service)
+        # Adoption is a file copy and has already happened when boot moves on
+        # — the gate is pointed at the document straight after.
+        service.adopt_legacy_document.assert_called_once_with('/docs/arch.md')
+        # Filing is an AI run per batch; the boot does not wait for it.
+        self.assertTrue(service.filed.wait(timeout=2.0))
 
-    def test_background_thread_swallows_compact_exception(self) -> None:
-        # Line 543-547: exception inside _run is logged + swallowed.
+    def test_with_no_legacy_document_configured_it_still_files(self) -> None:
+        service = self._service()
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('KATO_ARCHITECTURE_DOC_PATH', None)
+            KatoCoreLib._bring_lessons_document_up_to_date(service)
+        service.adopt_legacy_document.assert_called_once_with('')
+        self.assertTrue(service.filed.wait(timeout=2.0))
+
+    def test_a_failed_adoption_neither_stops_the_boot_nor_the_filing(self) -> None:
+        service = self._service()
+        service.adopt_legacy_document.side_effect = RuntimeError('disk')
+        KatoCoreLib._bring_lessons_document_up_to_date(service)  # no raise
+        service.logger.exception.assert_called_once()
+        self.assertTrue(service.filed.wait(timeout=2.0))
+
+    def test_a_filing_crash_stays_inside_the_worker(self) -> None:
         service = MagicMock()
-        service.should_compact.return_value = True
-        compact_event = threading.Event()
+        service.has_pending.return_value = False
+        crashed = threading.Event()
 
         def boom():
-            compact_event.set()
-            raise RuntimeError('compact crashed')
+            crashed.set()
+            raise RuntimeError('editor crashed')
 
-        service.compact.side_effect = boom
-        KatoCoreLib._kick_startup_compact(service)
-        self.assertTrue(compact_event.wait(timeout=2.0))
-        # Wait for the thread to finish (join via Thread enumerate).
-        time.sleep(0.05)
+        service.file_pending.side_effect = boom
+        KatoCoreLib._bring_lessons_document_up_to_date(service)
+        self.assertTrue(crashed.wait(timeout=2.0))
+
+
+class KeepFilingTests(unittest.TestCase):
+    """The backlog keeps being filed after a failed batch, until it is empty.
+
+    One failed batch used to end the filing: the rest of the backlog sat until
+    the next restart or promoted lesson. On the operator's machine six of ten
+    batches waited a day and a half after a run failed in the night.
+    """
+
+    def _run(self, outcomes, pending_after):
+        service = MagicMock()
+        service.can_file = True
+        service.file_pending.side_effect = list(outcomes)
+        service.has_pending.side_effect = list(pending_after)
+        waits: list[int] = []
+        KatoCoreLib._keep_filing(service, sleep=waits.append)
+        return service, waits
+
+    def test_a_failed_batch_is_retried_until_the_backlog_is_empty(self) -> None:
+        service, waits = self._run(
+            outcomes=[True, False, True],
+            pending_after=[True, True, False],
+        )
+        self.assertEqual(service.file_pending.call_count, 3)
+        self.assertEqual(len(waits), 2)
+
+    def test_the_wait_doubles_while_nothing_moves_and_is_capped(self) -> None:
+        failures = 8
+        _, waits = self._run(
+            outcomes=[False] * failures + [True],
+            pending_after=[True] * failures + [False],
+        )
+        self.assertEqual(waits, [300, 600, 1200, 2400, 3600, 3600, 3600, 3600])
+
+    def test_progress_resets_the_wait(self) -> None:
+        _, waits = self._run(
+            outcomes=[False, False, True, False, True],
+            pending_after=[True, True, True, True, False],
+        )
+        self.assertEqual(waits, [300, 600, 300, 300])
+
+    def test_a_crash_counts_as_no_progress_not_as_the_end(self) -> None:
+        service, waits = self._run(
+            outcomes=[RuntimeError('editor crashed'), True],
+            pending_after=[True, False],
+        )
+        self.assertEqual(service.file_pending.call_count, 2)
+        self.assertEqual(waits, [300])
+
+    def test_nothing_pending_means_one_call_and_no_wait(self) -> None:
+        service, waits = self._run(outcomes=[False], pending_after=[False])
+        self.assertEqual(service.file_pending.call_count, 1)
+        self.assertEqual(waits, [])
+
+    def test_without_an_editor_it_does_not_loop_at_all(self) -> None:
+        service = MagicMock()
+        service.can_file = False
+        KatoCoreLib._keep_filing(service, sleep=self.fail)
+        service.file_pending.assert_not_called()
+
+
+class PointLessonsGateAtTests(unittest.TestCase):
+    """The gate is armed exactly when there is something to read."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / 'lessons.md'
+        patcher = patch.dict(os.environ, {'AGENT_LESSONS_PATH': 'stale'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_document_with_content_arms_the_gate(self) -> None:
+        self.path.write_text('- a rule\n', encoding='utf-8')
+        KatoCoreLib._point_lessons_gate_at(self.path)
+        self.assertEqual(os.environ['AGENT_LESSONS_PATH'], str(self.path))
+
+    def test_a_blank_or_missing_document_disarms_it(self) -> None:
+        # A gate with no directive would deny every tool while nothing said why.
+        KatoCoreLib._point_lessons_gate_at(self.path)
+        self.assertNotIn('AGENT_LESSONS_PATH', os.environ)
+
+        os.environ['AGENT_LESSONS_PATH'] = 'stale'
+        self.path.write_text('   \n', encoding='utf-8')
+        KatoCoreLib._point_lessons_gate_at(self.path)
+        self.assertNotIn('AGENT_LESSONS_PATH', os.environ)
+
+    def test_an_unreadable_document_disarms_it(self) -> None:
+        self.path.write_text('- a rule\n', encoding='utf-8')
+        with patch.object(Path, 'read_text', side_effect=OSError('locked')):
+            KatoCoreLib._point_lessons_gate_at(self.path)
+        self.assertNotIn('AGENT_LESSONS_PATH', os.environ)
 
 
 class ValidateRuntimeSourceFingerprintTests(unittest.TestCase):

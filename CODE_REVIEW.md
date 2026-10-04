@@ -43,9 +43,6 @@ The test asserts `mock_service_cls.assert_called_once_with(...)` with a long kwa
 ### S3.3 — Heartbeat broadcasts may overwhelm SSE buffer on long idle
 `_idle_with_heartbeat` logs `Idle · next scan in Xs` every 5 seconds. The broadcaster ring buffer is 500 entries. Over an 8-hour idle window that's ~5,760 heartbeat entries. The UI filters them out of the visible history (correct) but they still consume the buffer, evicting real events that came earlier. **Fix:** drop heartbeats from the broadcaster at the source — log them via a separate channel, or filter them in `StatusBroadcastHandler.emit`.
 
-### S3.4 — `architecture_doc_utils.read_architecture_doc` cap bypasses on the wrapper
-The 200k char cap applies to the *body*. The wrapper adds ~1,200 chars on top. So the actual `--append-system-prompt` value is ~201,200 chars. Won't break anything but the cap is misleadingly named.
-
 ### S3.5 — Tab `data-task-id` attribute relies on tasks being unique strings
 [`Tab.jsx`](webserver/ui/src/components/Tab.jsx) sets `data-task-id={session.task_id}`. If `task_id` were ever empty or duplicate (it shouldn't be), the DOM selector helpers in `useNotifications` (`querySelector(\`[data-task-id="${id}"]\`)`) would silently no-op. Defensive guard worth adding in `useSessions` to reject duplicate-id sessions.
 

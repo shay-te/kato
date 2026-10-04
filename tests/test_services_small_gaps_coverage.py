@@ -17,31 +17,6 @@ from unittest.mock import MagicMock, patch
 
 
 # --------------------------------------------------------------------------
-# lessons_data_access — bad timestamp passing the regex
-# --------------------------------------------------------------------------
-
-
-class LessonsDataAccessTimestampParseTests(unittest.TestCase):
-    def test_last_compacted_returns_none_for_unparseable_timestamp(self) -> None:
-        # Lines 118-119: pattern matches but ``datetime.fromisoformat``
-        # rejects the captured string. The pattern is permissive (any
-        # combination of digits/T/Z/:/./-/+) so an operator-edited
-        # file can pass the regex but still be malformed.
-        from kato_core_lib.data_layers.data_access.lessons_data_access import (
-            LessonsDataAccess,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            da = LessonsDataAccess(Path(td))
-            # Numerically-looking but invalid timestamp (passes the
-            # regex on line 41 but ValueError from fromisoformat).
-            da._global_path.write_text(
-                '<!-- last_compacted: 9999-99-99T99:99:99 -->\nbody\n',
-                encoding='utf-8',
-            )
-            self.assertIsNone(da.last_compacted_at())
-
-
-# --------------------------------------------------------------------------
 # agent_state_registry — defensive branches around stored PR contexts
 # --------------------------------------------------------------------------
 
@@ -218,27 +193,6 @@ class LessonsServiceTests(unittest.TestCase):
             llm_one_shot=MagicMock(),
         )
         self.assertIs(service.data_access, data_access)
-
-    def test_compact_returns_false_when_global_write_fails(self) -> None:
-        # Line 199: ``if not self._data_access.write_global(...): return False``.
-        # Defensive: a disk write failure must surface as False so the
-        # caller doesn't proceed to delete per-task files (which would
-        # lose the lessons).
-        from kato_core_lib.data_layers.service.lessons_service import (
-            LessonsService,
-        )
-        data_access = MagicMock()
-        data_access.read_global_body.return_value = 'old'
-        data_access.read_all_per_task.return_value = {'T1': 'lesson 1'}
-        data_access.write_global.return_value = False  # write failure
-        llm = MagicMock(return_value='compacted body')
-        service = LessonsService(
-            data_access=data_access,
-            llm_one_shot=llm,
-        )
-        self.assertFalse(service.compact())
-        # Critical: per-task files were NOT deleted on failure.
-        data_access.delete_per_task.assert_not_called()
 
 
 # --------------------------------------------------------------------------

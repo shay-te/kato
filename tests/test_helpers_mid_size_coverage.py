@@ -611,15 +611,6 @@ class LessonsDataAccessDefensiveTests(unittest.TestCase):
         with patch.object(Path, 'read_text', side_effect=OSError('locked')):
             self.assertEqual(self.da.read_global(), '')
 
-    def test_last_compacted_returns_none_for_malformed_timestamp(self) -> None:
-        # Lines 118-119: fromisoformat raises on a bad timestamp →
-        # return None (treat as "never compacted") rather than crash.
-        self.da._global_path.write_text(
-            '<!-- last_compacted: not-an-iso-date -->\nbody\n',
-            encoding='utf-8',
-        )
-        self.assertIsNone(self.da.last_compacted_at())
-
     def test_read_per_task_swallows_oserror(self) -> None:
         # Lines 130-134: OSError on read_text → log + return None.
         per_task = self.da._per_task_dir / 'PROJ-1.md'
@@ -653,16 +644,6 @@ class LessonsDataAccessDefensiveTests(unittest.TestCase):
         )
         for bad in ('../escape', 'foo/bar', 'foo\\bar', 'evil\x00name', '.', '..'):
             self.assertEqual(LessonsDataAccess._normalize_task_id(bad), '')
-
-    def test_read_first_line_swallows_oserror(self) -> None:
-        # Lines 215-216: open() raises → return ''.
-        from kato_core_lib.data_layers.data_access.lessons_data_access import (
-            LessonsDataAccess,
-        )
-        bogus = self.state_dir / 'nope.md'
-        bogus.write_text('hi', encoding='utf-8')
-        with patch.object(Path, 'open', side_effect=OSError('cannot open')):
-            self.assertEqual(LessonsDataAccess._read_first_line(bogus), '')
 
     def test_write_per_task_rejects_invalid_id(self) -> None:
         # Lines 140-144: write_per_task with an invalid id (rejected

@@ -92,10 +92,9 @@ class RunLocalAutoBootstrapTests(unittest.TestCase):
             calls['bootstrap_cmd'] = cmd
             return bootstrap_rc
 
-        completed = mock.Mock(returncode=0)
         with mock.patch.object(run_local, 'venv_python_path', return_value=fake_python), \
              mock.patch.object(run_local.subprocess, 'call', side_effect=fake_call), \
-             mock.patch.object(run_local.subprocess, 'run', return_value=completed) as run_mock:
+             mock.patch.object(run_local, 'run_leaving_ctrl_c_to_child', return_value=0) as run_mock:
             rc = run_local.main()
         return rc, calls, run_mock
 
@@ -131,10 +130,9 @@ class RunLocalSupervisedRestartTests(unittest.TestCase):
         fake_python = mock.Mock()
         fake_python.exists.return_value = True
         fake_python.__str__ = lambda self: '/fake/.venv/bin/python'
-        results = [mock.Mock(returncode=run_local._RESTART_EXIT_CODE),
-                   mock.Mock(returncode=0)]
+        results = [run_local._RESTART_EXIT_CODE, 0]
         with mock.patch.object(run_local, 'venv_python_path', return_value=fake_python), \
-             mock.patch.object(run_local.subprocess, 'run', side_effect=results) as run_mock:
+             mock.patch.object(run_local, 'run_leaving_ctrl_c_to_child', side_effect=results) as run_mock:
             rc = run_local.main()
         self.assertEqual(rc, 0)
         self.assertEqual(run_mock.call_count, 2)

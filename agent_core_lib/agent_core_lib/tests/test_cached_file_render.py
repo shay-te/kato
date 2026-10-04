@@ -1,20 +1,18 @@
 """Tests for ``cached_file_render`` — the shared mtime+size file cache.
 
-Both the architecture-doc and lessons readers route through this, so
-every behaviour they rely on is pinned here: non-file short-circuits,
+The lessons reader routes through this, so
+every behaviour it relies on is pinned here: non-file short-circuits,
 compute-once on a cache hit, mtime/size invalidation, distinct-path
 isolation, and the "don't cache an empty render" rule.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from agent_core_lib.agent_core_lib.helpers.cached_file_render import cached_file_render
 
@@ -51,14 +49,6 @@ class CachedFileRenderTests(unittest.TestCase):
     def test_returns_empty_for_directory_path(self) -> None:
         self.assertEqual(cached_file_render(str(self.tmpdir), self._render), '')
         self.assertEqual(self.compute_calls, [])
-
-    def test_warns_on_non_file_when_message_and_logger_given(self) -> None:
-        logger = MagicMock(spec=logging.Logger)
-        cached_file_render(
-            str(self.tmpdir / 'nope.txt'), self._render,
-            logger=logger, stat_error_message='%s is not a file',
-        )
-        logger.warning.assert_called_once()
 
     def test_first_call_invokes_renderer(self) -> None:
         target = self._write('x.txt', 'hello')

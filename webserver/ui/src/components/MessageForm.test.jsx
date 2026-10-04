@@ -1241,3 +1241,154 @@ describe('MessageForm — Remote Control is Claude-only', () => {
     expect(onRemoteControlChange).toHaveBeenCalledWith(true);
   });
 });
+
+
+// Which model ACTUALLY runs vs which one the operator explicitly pinned.
+//
+// The composer resolves an empty override to the backend's `default: true`
+// model so the picker never reads "Default" (see effectiveModelId). That
+// resolution also erased the distinction the operator needed: a task pinned
+// to a gated tier and a task on the configured default rendered identically.
+// One task sat ~18h on a gated model and the spend only showed up days later
+// on the usage page.
+describe('MessageForm — non-default model flag', () => {
+  const MODELS = [
+    { id: 'opus', label: 'Opus 5.5', default: true },
+    { id: 'fable', label: 'Fable 5.1' },
+  ];
+
+  function triggerDot(container) {
+    return container.querySelector('.composer-actions-trigger-dot');
+  }
+
+  test('an override away from the default is flagged', () => {
+    const { container } = renderForm({
+      availableModels: MODELS, selectedModel: 'fable',
+    });
+    expect(triggerDot(container)).not.toBeNull();
+  });
+
+  test('no override means no flag', () => {
+    const { container } = renderForm({ availableModels: MODELS });
+    expect(triggerDot(container)).toBeNull();
+  });
+
+  test('an override that MATCHES the default is not flagged', () => {
+    // Pinning the same model you would have got anyway is not a surprise,
+    // and flagging it would train the operator to ignore the marker.
+    const { container } = renderForm({
+      availableModels: MODELS, selectedModel: 'opus',
+    });
+    expect(triggerDot(container)).toBeNull();
+  });
+
+  test('nothing is flagged when the backend advertises no default', () => {
+    // Without a `default: true` row there is no baseline to differ FROM, so
+    // claiming "not your default" would be an invention.
+    const { container } = renderForm({
+      availableModels: [{ id: 'opus', label: 'Opus 5.5' }],
+      selectedModel: 'opus',
+    });
+    expect(triggerDot(container)).toBeNull();
+  });
+
+  test('an empty catalog never flags', () => {
+    const { container } = renderForm({ availableModels: [] });
+    expect(triggerDot(container)).toBeNull();
+  });
+});
+
+
+// Clicking an attachment opens it full size.
+//
+// The tile is 72px. That is enough to see THAT something is attached and not
+// enough to see WHAT — the operator reported a screenshot reading as "just a
+// white square". Two separate causes, fixed together: the tile used
+// ``object-fit: cover``, which crops a wide screenshot to a centre sliver
+// (often a blank region), and there was no way to open the image at all.
+describe('MessageForm — attachment preview', () => {
+  beforeEach(() => { _idbMem.clear(); _idbGate.promise = null; });
+
+  const SRC = 'data:image/png;base64,AAAA';
+
+  async function withAttachment(taskId = 'T1') {
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}${taskId}`, [
+      { media_type: 'image/png', data: 'AAAA' },
+    ]);
+    const view = renderForm({ taskId });
+    await waitFor(() => {
+      expect(view.container.querySelector('.message-attachment img')).toBeTruthy();
+    });
+    return view;
+  }
+
+  test('clicking the thumbnail opens the full image', async () => {
+    await withAttachment();
+    fireEvent.click(screen.getByRole('button', { name: /preview image 1/i }));
+    const dialog = screen.getByRole('dialog', { name: /image preview/i });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog.querySelector('.image-preview-full'))
+      .toHaveAttribute('src', SRC);
+  });
+
+  test('no preview is open until the thumbnail is clicked', async () => {
+    await withAttachment();
+    expect(screen.queryByRole('dialog', { name: /image preview/i })).toBeNull();
+  });
+
+  test('Escape closes the preview', async () => {
+    await withAttachment();
+    fireEvent.click(screen.getByRole('button', { name: /preview image 1/i }));
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /image preview/i })).toBeNull();
+    });
+  });
+
+  test('the remove button removes and never opens the preview', async () => {
+    // The × sits on top of the tile. If the click fell through to the tile
+    // the operator would get a lightbox for the image they just deleted.
+    const { container } = await withAttachment();
+    fireEvent.click(screen.getByRole('button', { name: /remove attachment/i }));
+    expect(screen.queryByRole('dialog', { name: /image preview/i })).toBeNull();
+    await waitFor(() => {
+      expect(container.querySelector('.message-attachment img')).toBeNull();
+    });
+  });
+
+  test('removing the previewed image closes it instead of showing another', async () => {
+    // Needs TWO attachments to be meaningful. With one, removing it empties
+    // the list and the defensive lookup closes the preview on its own — the
+    // guard only earns its keep when a DIFFERENT image slides into the index
+    // being previewed, which is the silent-swap this prevents.
+    _idbMem.set(`${IMAGE_DRAFT_PREFIX}T1`, [
+      { media_type: 'image/png', data: 'AAAA' },
+      { media_type: 'image/png', data: 'BBBB' },
+    ]);
+    const { container } = renderForm({ taskId: 'T1' });
+    await waitFor(() => {
+      expect(container.querySelectorAll('.message-attachment img')).toHaveLength(2);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /preview image 1/i }));
+    expect(screen.getByRole('dialog', { name: /image preview/i })
+      .querySelector('.image-preview-full')).toHaveAttribute('src', SRC);
+
+    // Remove the FIRST image: index 0 now holds the second one.
+    fireEvent.click(screen.getAllByRole('button', { name: /remove attachment/i })[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /image preview/i })).toBeNull();
+    });
+    // Belt and braces: it must not have silently swapped to image two.
+    expect(document.querySelector('.image-preview-full')).toBeNull();
+  });
+
+  test('the thumbnail is a button, not a bare image', async () => {
+    // It has to be reachable by keyboard; a click handler on <img> is not.
+    await withAttachment();
+    const opener = screen.getByRole('button', { name: /preview image 1/i });
+    expect(opener.tagName).toBe('BUTTON');
+    expect(opener.getAttribute('type')).toBe('button');
+  });
+});

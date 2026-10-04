@@ -53,7 +53,7 @@ npm run build
 ## Core-Lib Architecture
 
 Monorepo of mostly **closed black-box libs**. `kato_core_lib` is the top-level orchestrator. The agent transports (`claude_core_lib`, `codex_core_lib`, `openhands_core_lib`) depend on THREE shared bases, not one:
-- **`agent_core_lib`** — the reusable agent-behavior layer (prompt helpers, session/text utils, architecture/lessons readers, the resume-prompt renderer, the generic `workspace_scope_block`). Imports zero other core-libs itself.
+- **`agent_core_lib`** — the reusable agent-behavior layer (prompt helpers, session/text utils, the lessons-document directive + read gate, the resume-prompt renderer, the generic `workspace_scope_block`). Imports zero other core-libs itself.
 - **`sandbox_core_lib`** — workspace-content delimiter framing (`wrap_untrusted_workspace_content`, the prompt-injection defense), the Docker sandbox manager, bypass-permissions validation, system-prompt composition.
 - **`provider_client_base`** — the shared `ReviewComment` type and provider-agnostic retry/client-base plumbing.
 
@@ -217,6 +217,37 @@ switch on — it is the stricter statement. The UI's own Push / Done buttons
 Pending approvals are in-memory: a kato restart drops them, and `approve_push`
 then 404s ("no pending publish for this task"). The branch and commits survive
 in the workspace, so the UI's Push button is the recovery path.
+
+### Lessons — how the agent gets better between tasks
+```
+ONE document: lessons.md (KATO_LESSONS_PATH, default <KATO_WORKSPACES_ROOT>/lessons.md)
+
+agent spawn → directive names the file; a PreToolUse gate blocks every other tool until it is Read
+            → the agent works with it as constraints
+            → near the end of the task the AGENT edits it (at most once): records what the task
+              taught and — over the size budget (LESSONS_BUDGET_CHARS) — must leave it smaller
+
+operator prompt / diff comment → candidate (lesson-candidates/, never shown to the agent)
+     → validated (Done-push, comment addressed, or task deleted with "done") → lessons/<id>.md
+     → LessonsService.file_pending(): an AI EDITOR confined to that one file (Read/Grep/Edit only)
+       files each lesson — merges it into the rule that covers it, or adds it where its scope is
+     → abandoned (task or comment deleted) → discarded
+```
+
+**Every write to the lessons document is an AI edit — kato never appends to it.** That is what
+makes the file better the more is written to it instead of longer: a rule is FILED (searched
+for, merged, deduplicated), never pasted. Do not add a deterministic append, an "inbox"
+section, or a path that writes lessons into the file without the editor. Pending lessons wait
+in `lessons/` and are deleted only once the editor reports them filed; a run that fails, stops
+early, or leaves less than half the document is not taken as filed (and the last is undone).
+
+**There is no second document and no whole-file regeneration — do not add either back.** A
+separate "architecture doc" used to be read alongside the lessons file, and a tool-less
+"compaction" used to REGENERATE the whole lessons file on every promotion. The two files said
+the same kind of thing in two places, and the regeneration only ever grew the file (it was told
+to preserve every rule) until it outgrew its own timeout and silently stopped.
+`KATO_ARCHITECTURE_DOC_PATH` is read exactly once, at boot, to adopt an old file as the lessons
+document (`LessonsService.adopt_legacy_document`); its earlier lessons are queued for the editor.
 
 ### PR review comment
 ```

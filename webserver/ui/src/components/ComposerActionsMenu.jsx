@@ -20,6 +20,7 @@ export default function ComposerActionsMenu({
   disabled = false,
   models = [],
   selectedModel = '',
+  modelIsNonDefault = false,
   onModelChange,
   effortLevels = [],
   selectedEffort = '',
@@ -54,7 +55,9 @@ export default function ComposerActionsMenu({
       <button
         type="button"
         className={`composer-actions-trigger tooltip-above tooltip-start ${open ? 'is-open' : ''}`}
-        data-tooltip="Actions — Claude commands, model, reasoning effort, and Remote Control."
+        data-tooltip={modelIsNonDefault
+          ? 'Actions — this task is pinned to a model that is NOT your default.'
+          : 'Actions — Claude commands, model, reasoning effort, and Remote Control.'}
         aria-label="Actions"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -62,6 +65,9 @@ export default function ComposerActionsMenu({
         onClick={() => (open ? close() : setOpen(true))}
       >
         <span aria-hidden="true">/</span>
+        {modelIsNonDefault && (
+          <span className="composer-actions-trigger-dot" aria-hidden="true" />
+        )}
       </button>
       {open && (
         <div className="composer-actions-popover" role="menu">
@@ -89,8 +95,17 @@ export default function ComposerActionsMenu({
             <>
               <div className="composer-actions-section">Model</div>
               {models.length > 0 && (
-                <div className="composer-actions-row">
-                  <span className="composer-actions-row-label">Model</span>
+                <div className={`composer-actions-row${
+                  modelIsNonDefault ? ' is-override' : ''
+                }`}>
+                  <span className="composer-actions-row-label">
+                    Model
+                    {modelIsNonDefault && (
+                      <span className="composer-actions-override-flag">
+                        not your default
+                      </span>
+                    )}
+                  </span>
                   <select
                     className="composer-actions-select"
                     aria-label="Select model"

@@ -739,7 +739,7 @@ attacks to kato's specific countermeasure for each. Status legend:
 
 | # | Risk | Status | How kato handles it |
 |---|---|---|---|
-| 61 | `CLAUDE.md` poisoning (repo ships malicious instructions) | **B** | Per-task workspace = single repo. Architecture doc is mounted from kato (operator-controlled). Workspace `CLAUDE.md` still loaded — operator awareness for untrusted repos. |
+| 61 | `CLAUDE.md` poisoning (repo ships malicious instructions) | **B** | Per-task workspace = single repo. Workspace `CLAUDE.md` still loaded — operator awareness for untrusted repos. |
 | 62 | Plugin installation by Claude (`claude mcp add`) | **M** | Egress firewall blocks plugin/MCP registry fetches. No new MCP can be wired at runtime. |
 | 63 | Skill file poisoning (`.claude/skills/` in repo) | **B** | Per-workspace scope. Operator awareness for untrusted repos. |
 | 64 | Hook installation (`.claude/settings.json` registers hooks) | **M** | The auth volume is mounted **read-only** at `/auth-src` during spawns, and the entrypoint copies only `.credentials.json` into the per-task tmpfs at `/home/claude/.claude`. `settings.json`, `hooks/`, `commands/`, `agents/`, and MCP config from the volume are **not** carried into spawn containers, so a poisoned write from a prior task cannot register hooks for this one. The login flow is the only path that can write the volume, and after each successful login `stamp_auth_volume_manifest` records a SHA-256 of `.credentials.json` that subsequent spawns verify (mismatch = abort). |
@@ -1097,8 +1097,8 @@ operators see their posture too.
 
 - **Security-posture summary** at boot (`print_security_posture`):
   backend, docker on/off, bypass on/off, **read-only pre-approval
-  on/off**, root on/off, allowed-tools widening, architecture doc
-  path. **Always printed** — fires under every combination of flags
+  on/off**, root on/off, allowed-tools widening. **Always printed** —
+  fires under every combination of flags
   including the all-off default. Three banner variants (default /
   docker-only / docker+bypass) call out what's active and what the
   operator might want to discover; the read-only row carries an

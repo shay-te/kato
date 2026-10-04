@@ -617,6 +617,49 @@ class ForgetWorkspaceBranchTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()['forgotten'])
 
+    def _delete_with_agent_service(self, agent_service, url):
+        workspace = MagicMock()
+        workspace.delete.return_value = None
+        workspace.workspace_path.return_value = Path(self._tmp.name) / 'gone'
+        app = create_app(session_manager=_Manager(), workspace_manager=workspace)
+        app.config['SESSION_MANAGER'] = None
+        app.config['AGENT_SERVICE'] = agent_service
+        return app.test_client().delete(url)
+
+    def test_delete_discards_the_tasks_lesson_candidates(self):
+        # Nothing else ever removes them: promotion needs a finished push or
+        # an addressed comment, and a deleted task can have neither.
+        agent_service = MagicMock()
+        response = self._delete_with_agent_service(
+            agent_service, '/api/sessions/T-9/workspace',
+        )
+        self.assertEqual(response.status_code, 200)
+        agent_service.lessons.release_task_candidates.assert_called_once_with(
+            'T-9', validated=False,
+        )
+
+    def test_delete_marked_done_promotes_the_tasks_lesson_candidates(self):
+        # "This task is done" is the same validation a finished push gives.
+        agent_service = MagicMock()
+        response = self._delete_with_agent_service(
+            agent_service, '/api/sessions/T-9/workspace?done=1',
+        )
+        self.assertEqual(response.status_code, 200)
+        agent_service.lessons.release_task_candidates.assert_called_once_with(
+            'T-9', validated=True,
+        )
+
+    def test_delete_survives_a_lesson_release_failure(self):
+        agent_service = MagicMock()
+        agent_service.lessons.release_task_candidates.side_effect = (
+            RuntimeError('boom')
+        )
+        response = self._delete_with_agent_service(
+            agent_service, '/api/sessions/T-9/workspace',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['forgotten'])
+
 
 # --------------------------------------------------------------------------
 # Status SSE stream (2196, 2238-2241)

@@ -1458,6 +1458,27 @@ class DeleteTaskCommentTests(unittest.TestCase):
             result = service.comments.delete_task_comment('T1', 'c1')
         self.assertFalse(result['ok'])
 
+    def test_a_deleted_comment_takes_its_lesson_candidate_with_it(self) -> None:
+        # A deleted comment can never be marked addressed, so nothing would
+        # ever promote the candidate staged from it.
+        lessons = MagicMock()
+        service = AgentService(**_kwargs(lessons_service=lessons))
+        store = MagicMock()
+        store.delete.return_value = True
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            service.comments.delete_task_comment('T1', 'c1')
+        lessons.discard_candidates.assert_called_once_with('comment__T1__c1__')
+        lessons.promote_candidates.assert_not_called()
+
+    def test_a_delete_that_removed_nothing_discards_nothing(self) -> None:
+        lessons = MagicMock()
+        service = AgentService(**_kwargs(lessons_service=lessons))
+        store = MagicMock()
+        store.delete.return_value = False
+        with patch.object(service.comments, 'comment_store', return_value=store):
+            service.comments.delete_task_comment('T1', 'c1')
+        lessons.discard_candidates.assert_not_called()
+
 
 class EditTaskCommentTests(unittest.TestCase):
     """Edit flow for queued local comments.

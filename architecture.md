@@ -138,7 +138,7 @@ kato_core_lib/
       repository_inventory_service.py — lazy inventory + tag resolution
       repository_service.py     —     branch state machine + git plumbing (subclass of inventory)
   helpers/                      — cross-cutting *_utils.py modules
-    architecture_doc_utils.py   —   reads the file `KATO_ARCHITECTURE_DOC_PATH` points at
+    lessons_path_utils.py       —   one resolver for the lessons document path (writer and reader agree)
     atomic_json_utils.py        —   crash-safe JSON write
     retry_utils.py              —   transient-HTTP retry primitive (used by client/ layer)
     text_utils.py, …            —   small string/dict helpers
@@ -288,11 +288,13 @@ Created in [`provision_task_workspace_clones`](kato_core_lib/data_layers/service
 
 **Review-state TTL.** `KATO_WORKSPACE_REVIEW_TTL_SECONDS` (default 3600 = 1 hour) caps how long a `review`-status workspace persists before the cleanup loop deletes it, regardless of whether the ticket is still in the review bucket. Set to 0 to disable. Review-comment processing for tickets whose workspace was already cleaned re-clones on demand. The operator can also force immediate cleanup via the planning UI's "Forget this task" button, which calls `DELETE /api/sessions/<task_id>/workspace`.
 
-### 5.8 Architecture-doc context injection
+### 5.8 The lessons document
 
-`KATO_ARCHITECTURE_DOC_PATH` (optional) — file path read on every Claude spawn and appended to Claude's system prompt via `claude --append-system-prompt <text>`. Re-read on each spawn so editing the file takes effect on the next turn without a kato restart. Caps content at 200k chars defensively.
+`KATO_LESSONS_PATH` (default `<KATO_WORKSPACES_ROOT>/lessons.md`) is the ONE document that carries knowledge from task to task. Every agent spawn gets a short directive naming it — never its contents — through `--append-system-prompt`, and a `PreToolUse` gate ([`lessons_gate.py`](agent_core_lib/agent_core_lib/helpers/lessons_gate.py)) refuses every other tool until the file has been read in that session. The directive ([`lessons_doc_utils.py`](agent_core_lib/agent_core_lib/helpers/lessons_doc_utils.py)) also hands the agent its upkeep: record what the task taught, once, near the end, and — past `LESSONS_BUDGET_CHARS` — leave the file smaller than it was found.
 
-Applies to every spawn: autonomous one-shot ([`ClaudeCliClient`](kato_core_lib/client/claude/cli_client.py)), planning sessions ([`StreamingClaudeSession`](kato_core_lib/client/claude/streaming_session.py)), and chat-respawns from idle tabs ([`PlanningSessionRunner.resume_session_for_chat`](kato_core_lib/data_layers/service/planning_session_runner.py)). Resumed sessions still receive it because Claude rebuilds the system prompt on every spawn — `--resume` only carries the conversation, not the prompt.
+**Every write to the document is an AI edit.** Kato never appends to it. Operator corrections are captured as candidates, validated (Done-push, comment addressed, or a task deleted as done), and then FILED by [`LessonsService.file_pending`](kato_core_lib/data_layers/service/lessons_service.py): an AI run confined to that one file with only read / search / edit ([`file_editor_utils.py`](claude_core_lib/claude_core_lib/helpers/file_editor_utils.py)) that looks for a rule already covering each lesson, sharpens it in place or adds the new one where its scope is, and never leaves a duplicate. Pending lessons are removed only once the run reports them filed; a run that fails, stops early or guts the document loses nothing.
+
+There is no second document. A separate "architecture doc" (`KATO_ARCHITECTURE_DOC_PATH`) used to be injected alongside it; that setting now configures nothing and is read once, at boot, to adopt the old file as the lessons document ([`adopt_legacy_document`](kato_core_lib/data_layers/service/lessons_service.py)).
 
 ### 5.9 Planning UI (Flask + SSE + React)
 

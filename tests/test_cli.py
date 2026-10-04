@@ -28,19 +28,19 @@ class SubcommandRoutingTests(unittest.TestCase):
         patcher.start()
 
     def test_up_runs_run_local_script(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             self.assertEqual(cli.main(['up']), 0)
         argv = _call_argv(m)
         self.assertEqual(argv[0], sys.executable)
         self.assertTrue(argv[1].endswith('scripts/run_local.py'))
 
     def test_bootstrap_runs_bootstrap_script(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['bootstrap'])
         self.assertTrue(_call_argv(m)[1].endswith('scripts/bootstrap.py'))
 
     def test_doctor_defaults_to_all_mode(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['doctor'])
         self.assertEqual(
             _call_argv(m),
@@ -49,7 +49,7 @@ class SubcommandRoutingTests(unittest.TestCase):
         )
 
     def test_doctor_mode_is_forwarded(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['doctor', '--mode', 'openhands'])
         self.assertEqual(_call_argv(m)[-1], 'openhands')
 
@@ -58,7 +58,7 @@ class SubcommandRoutingTests(unittest.TestCase):
             cli.main(['doctor', '--mode', 'bogus'])
 
     def test_test_runs_unittest_discover(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['test'])
         self.assertEqual(
             _call_argv(m),
@@ -68,7 +68,7 @@ class SubcommandRoutingTests(unittest.TestCase):
     def test_build_agent_server_tag_from_env(self):
         with mock.patch.dict('os.environ',
                              {'KATO_AGENT_SERVER_IMAGE_TAG': '9.9-test'}), \
-             mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+             mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['build-agent-server'])
         argv = _call_argv(m)
         self.assertEqual(argv[:4],
@@ -76,18 +76,18 @@ class SubcommandRoutingTests(unittest.TestCase):
 
     def test_build_agent_server_default_tag(self):
         with mock.patch.dict('os.environ', {}, clear=True), \
-             mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+             mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['build-agent-server'])
         self.assertEqual(_call_argv(m)[3], 'kato-agent-server:1.12.0-python')
 
     def test_sandbox_verify_runs_verify_module(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['sandbox', 'verify'])
         self.assertEqual(_call_argv(m),
                          ['VPY', '-m', 'kato_core_lib.sandbox.verify'])
 
     def test_sandbox_build_invokes_build_image(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['sandbox', 'build'])
         argv = _call_argv(m)
         self.assertEqual(argv[0], 'VPY')
@@ -95,7 +95,7 @@ class SubcommandRoutingTests(unittest.TestCase):
         self.assertIn('build_image()', argv[2])
 
     def test_sandbox_login_invokes_login_command(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=0) as m:
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['sandbox', 'login'])
         self.assertIn('login_command()', _call_argv(m)[2])
 
@@ -107,8 +107,19 @@ class SubcommandRoutingTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.main([])
 
+    def test_children_are_run_so_that_ctrl_c_reaches_only_them(self):
+        # ``subprocess.call`` SIGKILLs its child 0.25s after Ctrl+C. Behind
+        # ``kato up`` that child is kato, mid-shutdown — it was killed before
+        # it could stop its agent sessions, which kept running. Every child
+        # goes through the helper that leaves Ctrl+C to the child.
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m, \
+             mock.patch.object(cli.subprocess, 'call') as plain_call:
+            cli.main(['up'])
+        plain_call.assert_not_called()
+        self.assertEqual(m.call_args.kwargs['cwd'], str(cli.REPO_ROOT))
+
     def test_propagates_nonzero_exit_code(self):
-        with mock.patch.object(cli.subprocess, 'call', return_value=3):
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=3):
             self.assertEqual(cli.main(['up']), 3)
 
 
@@ -209,13 +220,19 @@ class ScriptEntryPointTest(unittest.TestCase):
         # runpy.run_module(..., run_name='__main__') re-executes the file in
         # a fresh namespace, so patching kato_core_lib.cli.cmd_doctor has no
         # effect on the new __main__ namespace's cmd_doctor. Patch the
-        # external subprocess boundary instead — that's what every cmd_*
-        # eventually calls through _run, and patches there survive runpy.
+        # external process boundary instead — the ``Popen`` that every cmd_*
+        # eventually reaches through _run's helper — and patches there
+        # survive runpy.
         import runpy
         argv_backup = sys.argv
         sys.argv = ['cli', 'doctor']
+        child = mock.Mock()
+        child.wait.return_value = 0
         try:
-            with mock.patch('subprocess.call', return_value=0):
+            with mock.patch(
+                'utils_core_lib.utils_core_lib.process_utils.subprocess.Popen',
+                return_value=child,
+            ):
                 with self.assertRaises(SystemExit) as ctx:
                     runpy.run_module('kato_core_lib.cli', run_name='__main__')
                 self.assertEqual(ctx.exception.code, 0)

@@ -437,16 +437,19 @@ export default function EventLog({
             the newest one instead of floating over the chat. */}
         {footer}
         {/* Jump-to-latest: sticky to the scrollport bottom, shown only when
-            the operator has scrolled up off the newest message. */}
+            the operator has scrolled up off the newest message.
+            ``tooltip-above tooltip-end``: it sits at the pane's bottom-right
+            corner, right above the composer, so the default centred-below
+            tooltip would open over the input and be clipped by the edge. */}
         {!atBottom && (
           <button
             type="button"
-            className="event-log-scroll-bottom"
+            className="event-log-scroll-bottom tooltip-above tooltip-end"
             onClick={handleScrollToBottom}
             aria-label="Scroll to latest"
             data-tooltip="Scroll to latest"
           >
-            <Icon name="chevron-down" />
+            <Icon name="arrow-down" />
           </button>
         )}
       </div>

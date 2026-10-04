@@ -3,7 +3,8 @@
 Locks the file-layout contract:
   * Per-task lessons live at ``state_dir/lessons/<task-id>.md``.
   * Global lesson file lives at ``state_dir/lessons.md``.
-  * The global file's first line is the compaction timestamp.
+  * The lessons document is written exactly as given — nothing is stamped
+    onto it — and can be copied aside before it is replaced.
   * Path-traversal characters in task ids are rejected (no escape from
     the per-task dir).
 """
@@ -12,8 +13,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from kato_core_lib.data_layers.data_access.lessons_data_access import (
     LessonsDataAccess,
@@ -165,44 +166,49 @@ class LessonsDataAccessTests(unittest.TestCase):
         self.assertIn('- core lesson 1', body)
         self.assertIn('- core lesson 2', body)
 
-    def test_write_global_prepends_timestamp_header(self) -> None:
-        fixed = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
-        self.dao.write_global('- a', compacted_at=fixed)
-        raw = self.dao.read_global()
-        self.assertTrue(raw.startswith('<!-- last_compacted: 2026-05-04T12:00:00+00:00 -->'))
+    def test_write_global_writes_the_document_as_given(self) -> None:
+        # The agent curates this file. Nothing is stamped onto it: the
+        # ``last_compacted`` header belonged to a step that no longer exists.
+        self.dao.write_global('# Lessons\n\n- a')
+        self.assertEqual(self.dao.read_global(), '# Lessons\n\n- a\n')
 
-    def test_write_global_strips_existing_header_in_input(self) -> None:
-        # If a caller passes content that ALREADY has a header (e.g. they
-        # passed the raw read), we strip it before writing the new one.
-        # Otherwise we'd end up with two headers.
-        self.dao.write_global(
-            '<!-- last_compacted: 2025-01-01T00:00:00+00:00 -->\n\n- a',
-        )
-        raw = self.dao.read_global()
-        # Exactly one header line.
-        self.assertEqual(raw.count('<!-- last_compacted:'), 1)
-
-    def test_last_compacted_at_parses_header(self) -> None:
-        fixed = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
-        self.dao.write_global('- a', compacted_at=fixed)
-        parsed = self.dao.last_compacted_at()
-        self.assertEqual(parsed, fixed)
-
-    def test_last_compacted_at_none_when_file_missing(self) -> None:
-        self.assertIsNone(self.dao.last_compacted_at())
-
-    def test_last_compacted_at_none_when_header_absent(self) -> None:
+    def test_read_global_body_strips_a_header_left_by_an_older_version(self) -> None:
         (self.state_dir / 'lessons.md').write_text(
-            '- bare lesson without header\n', encoding='utf-8',
+            '<!-- last_compacted: 2026-05-04T12:00:00+00:00 -->\n\n- core 1\n- core 2\n',
+            encoding='utf-8',
         )
-        self.assertIsNone(self.dao.last_compacted_at())
-
-    def test_read_global_body_strips_header(self) -> None:
-        fixed = datetime(2026, 5, 4, 12, 0, 0, tzinfo=timezone.utc)
-        self.dao.write_global('- core 1\n- core 2', compacted_at=fixed)
         body = self.dao.read_global_body()
         self.assertNotIn('last_compacted', body)
         self.assertIn('- core 1', body)
+
+    def test_backup_copies_the_document_beside_itself(self) -> None:
+        self.dao.write_global('- a')
+        backup = self.dao.backup_global('bak-1')
+        self.assertEqual(backup, self.state_dir / 'lessons.md.bak-1')
+        self.assertEqual(backup.read_text(encoding='utf-8'), '- a\n')
+        # A copy, not a move.
+        self.assertEqual(self.dao.read_global(), '- a\n')
+
+    def test_backup_of_an_empty_document_is_nothing(self) -> None:
+        self.assertIsNone(self.dao.backup_global('bak-1'))
+        self.assertEqual(list(self.state_dir.glob('lessons.md.*')), [])
+
+    def test_backup_reports_a_failed_copy(self) -> None:
+        self.dao.write_global('- a')
+        with patch(
+            'kato_core_lib.data_layers.data_access.lessons_data_access'
+            '.atomic_write_text', return_value=False,
+        ):
+            self.assertIsNone(self.dao.backup_global('bak-1'))
+
+    # ----- adoption marker -----
+
+    def test_adoption_marker_round_trip(self) -> None:
+        self.assertEqual(self.dao.adopted_legacy_path(), '')
+        self.assertTrue(self.dao.mark_legacy_adopted('/docs/architecture.md'))
+        self.assertEqual(self.dao.adopted_legacy_path(), '/docs/architecture.md')
+        # Kept beside the document, never inside it — the agent edits that file.
+        self.assertEqual(self.dao.read_global(), '')
 
 
 class StripTimestampHeaderTests(unittest.TestCase):

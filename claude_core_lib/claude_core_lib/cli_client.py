@@ -102,7 +102,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         model_smoke_test_enabled: bool = False,
         extra_args: list[str] | None = None,
         effort: str = '',
-        architecture_doc_path: str = '',
         lessons_path: str = '',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
@@ -150,7 +149,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
         self._model_access_smoke_test_ran = False
         self._extra_args = list(extra_args or [])
-        self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
         # Product-specific actionable refusal guidance appended to the
         # generic workspace scope block. Supplied by the spawner (the orchestrator)
@@ -546,7 +544,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         append_additional_dirs(command, additional_dirs)
         # ``include_system_prompt=False`` is for boot smoke-tests that
         # only need to confirm model reachability ("Reply with: ok").
-        # Inlining the architecture doc + lessons there can push the
+        # The full system prompt there can push the
         # command line past Windows' CreateProcess limit (~32K chars,
         # less when the operator's PATH or env is unusual), surfacing
         # as ``[WinError 206] The filename or extension is too long``.
@@ -554,7 +552,6 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         # validator skips it.
         if include_system_prompt:
             appended_system_prompt = build_appended_system_prompt(
-                architecture_doc_path=self._architecture_doc_path,
                 lessons_path=self._lessons_path,
                 docker_mode_on=self._docker_mode_on,
                 logger=self.logger,
@@ -758,7 +755,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
     def _run_model_access_validation(self) -> None:
         self.logger.info('running Claude CLI model access validation')
         # Smoke test sends ``Reply with exactly: ok`` — no need for the
-        # architecture doc / lessons here. Skipping them keeps the
+        # lessons directive here. Skipping it keeps the
         # boot command line short, which matters on Windows where
         # CreateProcess caps total args at ~32K chars.
         command = self._build_command(

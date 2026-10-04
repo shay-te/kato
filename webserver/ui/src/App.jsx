@@ -18,6 +18,7 @@ import FileTabStrip from './components/FileTabStrip.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import SetupModeGate from './components/SetupModeGate.jsx';
 import AgentVersionBanner from './components/AgentVersionBanner.jsx';
+import UiBuildBanner from './components/UiBuildBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import TabList from './components/TabList.jsx';
@@ -966,6 +967,7 @@ export default function App() {
           button labelled "update Codex" that ran `claude update` is exactly
           the bug this reads around. */}
       <AgentVersionBanner backend={activeBannerBackend} />
+      <UiBuildBanner />
       <Header
         onRefresh={handleHeaderRefresh}
         statusLatest={status.latest}

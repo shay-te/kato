@@ -141,8 +141,8 @@ class ClassifyToolInputSandboxTests(unittest.TestCase):
         self.assertFalse(outside)
 
     def test_allowed_path_outside_sandbox_is_not_flagged(self) -> None:
-        # orchestrator's configured lessons.md / architecture.md live outside the task
-        # folder but the agent is MEANT to touch them — an exact allow-list
+        # orchestrator's configured lessons.md lives outside the task
+        # folder but the agent is MEANT to touch it — an exact allow-list
         # match must NOT trip the out-of-sandbox warning.
         lessons = os.path.normpath('/Users/x/Desktop/dev_orchestrator/lessons.md')
         outside, _ = classify_tool_input_sandbox(

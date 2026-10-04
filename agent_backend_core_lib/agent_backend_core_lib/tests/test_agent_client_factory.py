@@ -47,7 +47,6 @@ def _make_claude_cfg(**overrides):
         bypass_permissions=False,
         timeout_seconds=1800,
         model_smoke_test_enabled=False,
-        architecture_doc_path='',
         lessons_path='',
     )
     for k, v in overrides.items():
@@ -76,7 +75,6 @@ def _make_codex_cfg(**overrides):
         bypass_permissions=False,
         timeout_seconds=1800,
         model_smoke_test_enabled=False,
-        architecture_doc_path='',
         lessons_path='',
     )
     for k, v in overrides.items():
@@ -377,7 +375,6 @@ class BuildClaudeTests(unittest.TestCase):
             bypass_permissions=True,
             timeout_seconds=900,
             model_smoke_test_enabled=False,
-            architecture_doc_path='/arch.md',
             lessons_path='/lessons.md',
         )
         cfg.repository_root_path = '/repos/project'
@@ -403,7 +400,6 @@ class BuildClaudeTests(unittest.TestCase):
             max_retries=3,
             repository_root_path='/repos/project',
             model_smoke_test_enabled=False,
-            architecture_doc_path='/arch.md',
             lessons_path='/lessons.md',
             workspace_refusal_guidance='',
             self_reply_prefixes=(),
@@ -496,7 +492,6 @@ class BuildCodexTests(unittest.TestCase):
             bypass_permissions=True,
             timeout_seconds=900,
             model_smoke_test_enabled=False,
-            architecture_doc_path='/arch.md',
             lessons_path='/lessons.md',
         )
         cfg.repository_root_path = '/repos/project'
@@ -522,7 +517,6 @@ class BuildCodexTests(unittest.TestCase):
             max_retries=3,
             repository_root_path='/repos/project',
             model_smoke_test_enabled=False,
-            architecture_doc_path='/arch.md',
             lessons_path='/lessons.md',
             workspace_refusal_guidance='',
             self_reply_prefixes=(),

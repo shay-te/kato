@@ -88,3 +88,73 @@ test('expanded prompt pins the collapse toggle to the TOP, not the bottom', () =
   );
   assertDeclaration(withJump, 'right', '40px');
 });
+
+// ── jump-to-latest button ──────────────────────────────────────────────
+//
+// It shipped as a flat oval that scrolled away with the messages: "not
+// floating, not round". Each assertion below pins one of the three causes,
+// none of which was visible in the button's own rule — the rule said
+// ``sticky`` and ``34px`` square and rendered as neither.
+
+const uncommented = css.replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Every top-level rule in source order, one entry per comma-separated part.
+function cascade() {
+  const out = [];
+  for (const m of uncommented.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const selector of m[1].split(',')) {
+      out.push({ selector: selector.trim(), body: m[2] });
+    }
+  }
+  return out;
+}
+
+test('jump-to-latest stays sticky: no equal-ranked rule replaces its position', () => {
+  // The button matches each of these single simple selectors, all (0,1,0).
+  // A tie is settled by source ORDER, so the last one to declare ``position``
+  // wins — which is how ``[data-tooltip] { position: relative }``, thousands
+  // of lines further down, turned the sticky button into a relative one.
+  // Asserting the WINNER, not that the rule exists: the rule always existed.
+  const matching = new Set([
+    '.event-log-scroll-bottom', '[data-tooltip]', '.tooltip-above', '.tooltip-end',
+  ]);
+  const declaring = cascade().filter(({ selector, body }) => (
+    matching.has(selector) && /(?:^|;)\s*position\s*:/.test(body)
+  ));
+  assert.deepEqual(
+    declaring.map((r) => r.selector), ['.event-log-scroll-bottom'],
+    'a rule the jump-to-latest button also matches now sets ``position`` at '
+    + 'the same specificity — it will out-rank the button\'s ``sticky`` by '
+    + 'source order. Make that rule a ``:where()`` base instead',
+  );
+  assertDeclaration(ruleBody('.event-log-scroll-bottom'), 'position', 'sticky');
+});
+
+test('jump-to-latest is a circle that the flex column cannot squash', () => {
+  const body = ruleBody('.event-log-scroll-bottom');
+  // #event-log is an overflowing flex column: without this the button is
+  // shrunk to its glyph's height (34x17) and a 50% radius draws an ellipse.
+  assertDeclaration(body, 'flex', 'none');
+  assertDeclaration(body, 'width', '28px');
+  assertDeclaration(body, 'height', '28px');
+  assertDeclaration(body, 'border-radius', '50%');
+});
+
+test('jump-to-latest floats just above the composer and costs no layout', () => {
+  const body = ruleBody('.event-log-scroll-bottom');
+  // A sticky inset is measured from the scrollport's CONTENT box, and
+  // #event-log's padding-bottom already reserves the composer + queued list.
+  // Repeating them here parked the button a composer's height too high.
+  assertDeclaration(body, 'bottom', '0');
+  assert.doesNotMatch(body, /--composer-h|--queued-h/);
+  assert.ok(
+    cascade().some(({ selector, body }) => (
+      selector === '#event-log' && /padding-bottom\s*:[^;]*--composer-h/.test(body)
+    )),
+    'the log no longer reserves the composer in its padding — the button\'s '
+    + '``bottom: 0`` relies on that',
+  );
+  // Height + the column gap, negated: mounting the button must not add to
+  // the scroll height, or the log jumps when it appears and disappears.
+  assertDeclaration(body, 'margin-top', 'calc\\(-1 \\* \\(28px \\+ 12px\\)\\)');
+});

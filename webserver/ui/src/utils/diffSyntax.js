@@ -113,22 +113,83 @@ export function detectDiffLanguage(path) {
 export function tokenizeHunks(hunks, path) {
   if (!hunks || hunks.length === 0) { return null; }
   const language = detectDiffLanguage(path);
-  const options = { enhancers: [markEdits(hunks)] };
+
+  // ONE HUNK AT A TIME — never all of them in a single pass.
+  //
+  // react-diff-view builds the text it hands the tokenizer from the hunk
+  // lines alone, padding every collapsed gap with an EMPTY line
+  // (``toTokenTrees`` → ``mapChanges``, which yields '' for a line no hunk
+  // covers). So a file whose hunks skip lines 20-46 is tokenized as:
+  //
+  //     19:  /*
+  //     20-46:                  <- the closing */ lived here; now blank
+  //     47:  const promiseStatus = ...
+  //
+  // Prism therefore never sees the ``*/``, and paints the ENTIRE rest of
+  // the file as comment — the operator's report was a diff where all the
+  // real code rendered as a comment and stayed that way until they expanded
+  // the gap far enough to reveal the terminator.
+  //
+  // Tokenizing each hunk separately means comment / string / template state
+  // cannot cross a gap it was never allowed to see. The trade-off is the
+  // inverse case — lines genuinely INSIDE a comment whose ``/*`` and ``*/``
+  // are both hidden now render as code rather than as comment. That is the
+  // strictly less harmful direction: it under-decorates a few lines instead
+  // of blanking the whole file, and it cannot hide real code.
+  //
+  // The correct-in-every-case fix is to pass ``oldSource`` (react-diff-view
+  // then highlights the whole file and patches it), which needs the full
+  // file body in the diff payload — that payload is POLLED, so it is not a
+  // trade this makes lightly.
+  const combined = { old: [], new: [] };
+  let tokenized = false;
+  for (const hunk of hunks) {
+    const partial = _tokenizeHunk(hunk, language);
+    if (!partial) { continue; }
+    tokenized = true;
+    // Indices are ABSOLUTE line numbers already: each pass pads from line 1
+    // up to its own hunk, so the hunk's lines land where they belong.
+    _copyLines(combined.old, partial.old, hunk.oldStart, hunk.oldLines);
+    _copyLines(combined.new, partial.new, hunk.newStart, hunk.newLines);
+  }
+  return tokenized ? combined : null;
+}
+
+
+// Tokenize a single hunk. Null when even the edits-only pass fails, which
+// leaves that hunk on react-diff-view's plain-text rendering.
+function _tokenizeHunk(hunk, language) {
+  const options = { enhancers: [markEdits([hunk])] };
   if (language) {
     options.highlight = true;
     options.refractor = refractorAdapter;
     options.language = language;
   }
   try {
-    return tokenize(hunks, options);
+    return tokenize([hunk], options);
   } catch (_) {
     // Highlight pass blew up (refractor pukes on rare edge cases —
-    // e.g. unterminated strings spanning multiple hunks). Retry
-    // with edits only so we at least keep the intra-line tint.
+    // e.g. an unterminated string). Retry with edits only so we at
+    // least keep the intra-line tint.
     try {
-      return tokenize(hunks, { enhancers: [markEdits(hunks)] });
+      return tokenize([hunk], { enhancers: [markEdits([hunk])] });
     } catch (_inner) {
       return null;
+    }
+  }
+}
+
+
+// Copy one hunk's line tokens into the combined array. Lines no hunk covers
+// are deliberately left as HOLES: react-diff-view renders a line with no
+// token entry from its raw text (``CodeCell``: ``tokens ? … : text``), so a
+// hole degrades to plain text rather than to an empty cell.
+function _copyLines(target, source, start, count) {
+  if (!Array.isArray(source) || !start || !count) { return; }
+  for (let line = start; line < start + count; line += 1) {
+    const index = line - 1;
+    if (index >= 0 && source[index] !== undefined) {
+      target[index] = source[index];
     }
   }
 }

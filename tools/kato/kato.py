@@ -166,9 +166,11 @@ def main(argv: list[str]) -> int:
 
 
 #: How long Ctrl+C waits for the child to finish its own graceful shutdown
-#: before escalating. Slightly longer than the child's own grace period so
-#: its cleanup gets to finish first.
-CHILD_SHUTDOWN_GRACE_SECONDS = 10.0
+#: before escalating. Longer than kato's own worst case — its cleanup budget
+#: (8s) plus the bounded log flush (2s) — so that cleanup always gets to
+#: finish first. At exactly 10s the two could tie, and this wrapper would
+#: terminate the launcher in the last instant of kato's shutdown.
+CHILD_SHUTDOWN_GRACE_SECONDS = 15.0
 
 
 def _run_child(cmd, *, cwd):

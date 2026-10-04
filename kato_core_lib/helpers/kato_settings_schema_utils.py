@@ -254,10 +254,6 @@ SETTINGS_SCHEMA: list[dict] = [
              'sending the contents again. Measured at ~13% of everything '
              'tools put in context. It can always force a re-read by asking '
              'for a line range. Off by default.', {}),
-            ('KATO_ARCHITECTURE_DOC_PATH', 'text',
-             'Architecture doc path',
-             'Markdown file appended to Claude\'s system prompt on '
-             'every spawn. Re-read each spawn.', {}),
             ('KATO_LESSONS_PATH', 'text',
              'Lessons file path',
              'Markdown file of compacted lessons appended to Claude\'s '

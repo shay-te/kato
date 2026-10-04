@@ -24,10 +24,13 @@ import logging
 
 from kato_core_lib.helpers.comment_store_utils import comment_store_for
 from kato_core_lib.helpers.late_binding import provider_for
+from kato_core_lib.helpers.lesson_candidate_utils import (
+    comment_lesson_candidate_id,
+    comment_lesson_candidate_prefix,
+)
 from kato_core_lib.helpers.service_results import failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
-import uuid
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 
 
@@ -331,7 +334,7 @@ class TaskCommentService(object):
         if not body:
             return
         comment_id = str(getattr(comment, 'id', '') or '').strip()
-        candidate_id = self._comment_lesson_candidate_id(task_id, comment_id)
+        candidate_id = comment_lesson_candidate_id(task_id, comment_id)
         file_path = str(getattr(comment, 'file_path', '') or '').strip()
         line = int(getattr(comment, 'line', -1) or -1)
         context = (
@@ -367,20 +370,6 @@ class TaskCommentService(object):
         lines = self._file_lines(task_id, repo_id, file_path)
         return None if lines is None else len(lines)
 
-
-    @staticmethod
-    def _comment_lesson_candidate_prefix(task_id: str, comment_id: str) -> str:
-        return (
-            f'comment__{str(task_id or "").strip()}__'
-            f'{str(comment_id or "").strip()}__'
-        )
-
-    @classmethod
-    def _comment_lesson_candidate_id(cls, task_id: str, comment_id: str) -> str:
-        return (
-            f'{cls._comment_lesson_candidate_prefix(task_id, comment_id)}'
-            f'{uuid.uuid4().hex}'
-        )
 
 
 
@@ -495,7 +484,7 @@ class TaskCommentService(object):
             )
         if self._lesson_service is not None:
             self._lesson_service.promote_candidates(
-                self._comment_lesson_candidate_prefix(task_id, updated.id),
+                comment_lesson_candidate_prefix(task_id, updated.id),
             )
         remote_reply = {'attempted': False}
         if (
@@ -592,6 +581,13 @@ class TaskCommentService(object):
                 'no workspace for task',
             )
         removed = store.delete(comment_id)
+        # A deleted comment can never be marked addressed, so the candidate
+        # staged from it can never be promoted — drop it with the comment
+        # rather than leaving it in the candidates directory for good.
+        if removed and self._lesson_service is not None:
+            self._lesson_service.discard_candidates(
+                comment_lesson_candidate_prefix(task_id, comment_id),
+            )
         return {'ok': bool(removed), 'comment_id': comment_id}
 
     def edit_task_comment(

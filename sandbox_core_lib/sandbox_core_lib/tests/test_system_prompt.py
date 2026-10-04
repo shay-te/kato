@@ -49,22 +49,22 @@ class SystemPromptConstantsTests(unittest.TestCase):
 
 class ComposeSystemPromptTests(unittest.TestCase):
     def test_docker_off_excludes_sandbox_addendum(self):
-        result = compose_system_prompt('', docker_mode_on=False)
+        result = compose_system_prompt(docker_mode_on=False)
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, result)
 
     def test_docker_on_includes_sandbox_addendum(self):
-        result = compose_system_prompt('', docker_mode_on=True)
+        result = compose_system_prompt(docker_mode_on=True)
         self.assertIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, result)
 
     def test_always_includes_workspace_scope_addendum(self):
-        result_off = compose_system_prompt('', docker_mode_on=False)
-        result_on = compose_system_prompt('', docker_mode_on=True)
+        result_off = compose_system_prompt(docker_mode_on=False)
+        result_on = compose_system_prompt(docker_mode_on=True)
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result_off)
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result_on)
 
     def test_always_includes_resumed_session_addendum(self):
-        result_off = compose_system_prompt('', docker_mode_on=False)
-        result_on = compose_system_prompt('', docker_mode_on=True)
+        result_off = compose_system_prompt(docker_mode_on=False)
+        result_on = compose_system_prompt(docker_mode_on=True)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result_off)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result_on)
 
@@ -74,67 +74,48 @@ class ComposeSystemPromptTests(unittest.TestCase):
         # regardless of docker mode -- so the explanation of what the
         # delimiter tags mean must not be docker-gated either, or the
         # wrapping is silently inert in the (default) non-docker config.
-        result_off = compose_system_prompt('', docker_mode_on=False)
-        result_on = compose_system_prompt('', docker_mode_on=True)
+        result_off = compose_system_prompt(docker_mode_on=False)
+        result_on = compose_system_prompt(docker_mode_on=True)
         self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result_off)
         self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result_on)
 
-    def test_architecture_doc_included_when_provided(self):
-        arch = '# Architecture\nThis is the arch doc.'
-        result = compose_system_prompt(arch, docker_mode_on=False)
-        self.assertIn(arch, result)
-
-    def test_architecture_doc_excluded_when_empty(self):
-        result = compose_system_prompt('', docker_mode_on=False)
-        self.assertNotIn('# Architecture', result)
-
     def test_lessons_included_when_provided(self):
         lessons = 'Always write tests first.'
-        result = compose_system_prompt('', docker_mode_on=False, lessons=lessons)
+        result = compose_system_prompt(docker_mode_on=False, lessons=lessons)
         self.assertIn(lessons, result)
 
     def test_lessons_excluded_when_empty(self):
-        result = compose_system_prompt('', docker_mode_on=False, lessons='')
-        # All always-on addenda present, no arch or lessons content added
+        result = compose_system_prompt(docker_mode_on=False, lessons='')
+        # All always-on addenda present, no lessons content added
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)
         self.assertIn(UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM, result)
-        self.assertNotIn('# Architecture', result)
         self.assertNotIn(SANDBOX_SYSTEM_PROMPT_ADDENDUM, result)
 
     def test_sections_joined_with_double_newline(self):
-        result = compose_system_prompt('Arch.', docker_mode_on=False)
+        result = compose_system_prompt(docker_mode_on=False, lessons='Lessons.')
         self.assertIn('\n\n', result)
 
-    def test_order_arch_then_lessons_then_workspace_scope(self):
-        arch = 'Arch doc content'
+    def test_order_lessons_then_workspace_scope(self):
         lessons = 'Lessons content'
-        result = compose_system_prompt(arch, docker_mode_on=False, lessons=lessons)
-        arch_pos = result.index(arch)
+        result = compose_system_prompt(docker_mode_on=False, lessons=lessons)
         lessons_pos = result.index(lessons)
         scope_pos = result.index(WORKSPACE_SCOPE_ADDENDUM)
-        self.assertLess(arch_pos, lessons_pos)
         self.assertLess(lessons_pos, scope_pos)
 
     def test_order_workspace_scope_before_sandbox_when_docker_on(self):
-        result = compose_system_prompt('', docker_mode_on=True)
+        result = compose_system_prompt(docker_mode_on=True)
         scope_pos = result.index(WORKSPACE_SCOPE_ADDENDUM)
         sandbox_pos = result.index(SANDBOX_SYSTEM_PROMPT_ADDENDUM)
         self.assertLess(scope_pos, sandbox_pos)
 
-    def test_none_architecture_treated_as_empty(self):
-        result = compose_system_prompt(None, docker_mode_on=False)  # type: ignore[arg-type]
-        self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
-
     def test_none_lessons_treated_as_empty(self):
-        result = compose_system_prompt('', docker_mode_on=False, lessons=None)  # type: ignore[arg-type]
+        result = compose_system_prompt(docker_mode_on=False, lessons=None)  # type: ignore[arg-type]
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
 
-    def test_all_parts_present_when_docker_on_and_arch_and_lessons(self):
-        arch = 'Architecture section.'
+    def test_all_parts_present_when_docker_on_and_lessons(self):
         lessons = 'Prior lessons.'
-        result = compose_system_prompt(arch, docker_mode_on=True, lessons=lessons)
-        self.assertIn(arch, result)
+        result = compose_system_prompt(docker_mode_on=True, lessons=lessons)
         self.assertIn(lessons, result)
         self.assertIn(WORKSPACE_SCOPE_ADDENDUM, result)
         self.assertIn(RESUMED_SESSION_ADDENDUM, result)

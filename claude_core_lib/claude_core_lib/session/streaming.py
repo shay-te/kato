@@ -249,7 +249,6 @@ class StreamingClaudeSession(object):
         resume_session_id: str = '',
         env: dict[str, str] | None = None,
         effort: str = '',
-        architecture_doc_path: str = '',
         lessons_path: str = '',
         docker_mode_on: bool = False,
         sandbox_root: str = '',
@@ -337,14 +336,13 @@ class StreamingClaudeSession(object):
         # from what the orchestrator expected. The manager registers this to keep its
         # persisted record in sync so the next ``--resume`` uses the right id.
         self._session_id_correction_callback = None
-        self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
-        # Configured product files the agent is MEANT to touch (the orchestrator writes
-        # learned lessons here and reads the architecture doc), even though
-        # they live outside the task folder. Allow-listed so the
-        # out-of-sandbox warning never fires on them. See sandbox_scope.
-        self._sandbox_allowed_paths = tuple(
-            p for p in (self._architecture_doc_path, self._lessons_path) if p
+        # Configured product file the agent is MEANT to touch (the orchestrator
+        # keeps learned lessons here), even though it lives outside the task
+        # folder. Allow-listed so the out-of-sandbox warning never fires on
+        # it. See sandbox_scope.
+        self._sandbox_allowed_paths = (
+            (self._lessons_path,) if self._lessons_path else ()
         )
         # Extra directories Claude is allowed to read/edit beyond
         # ``cwd``. For multi-repo tasks the chat path uses this to
@@ -530,7 +528,7 @@ class StreamingClaudeSession(object):
     @property
     def sandbox_allowed_paths(self) -> tuple[str, ...]:
         """Specific files the agent may touch even outside the task folder
-        (e.g. the orchestrator's lessons / architecture docs). Exposed so a caller that
+        (e.g. the orchestrator's lessons file). Exposed so a caller that
         re-classifies a tool input (the webserver Action Guard) applies the
         same allow-list the live sandbox annotation does."""
         return tuple(self._sandbox_allowed_paths)
@@ -1677,14 +1675,13 @@ class StreamingClaudeSession(object):
         command.extend(['--disallowedTools', merged_disallowed])
         # When ``the docker setting=true`` the agent gets a short
         # description of the sandboxed environment appended to its
-        # system prompt. The composer joins the architecture doc,
-        # learned lessons, and the addendum into one value because the
+        # system prompt. The composer joins the learned lessons and
+        # the addendum into one value because the
         # Claude CLI takes a single ``--append-system-prompt``. Shared
         # with ``ClaudeCliClient._build_command`` via
         # ``build_appended_system_prompt`` so streaming and one-shot
         # spawns deliver identical guidance to the agent.
         appended_system_prompt = build_appended_system_prompt(
-            architecture_doc_path=self._architecture_doc_path,
             lessons_path=self._lessons_path,
             docker_mode_on=self._docker_mode_on,
             logger=self.logger,

@@ -1,3 +1,4 @@
+import os
 import re
 import tempfile
 import unittest
@@ -7,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION_ID
 from kato_webserver.app import (
+    UI_BUILD_HEADER,
+    ui_build_id,
     DEFAULT_CHAT_EFFORT,
     _advance_task_comments_after_result,
     _complete_in_progress_task_comments,
@@ -127,6 +130,56 @@ class WebserverAppTests(unittest.TestCase):
                 match, f'{asset} is not cache-busted in index.html',
             )
             self.assertGreater(int(match.group(1)), 0)
+
+    # A window left open keeps running the bundle it loaded. The cache-bust
+    # above only helps a page that is RELOADED, so the page is told which
+    # build it loaded and every API response says which one is current.
+
+    def test_the_page_is_told_which_build_it_loaded(self):
+        body = self.client.get('/').data.decode('utf-8')
+        match = re.search(r'<meta name="kato-ui-build" content="([^"]+)"', body)
+        self.assertIsNotNone(match, 'index.html does not carry the build id')
+        self.assertRegex(match.group(1), r'^\d+-\d+-\d+$')
+
+    def test_api_responses_name_the_build_on_disk_and_it_matches_the_page(self):
+        body = self.client.get('/').data.decode('utf-8')
+        loaded = re.search(r'<meta name="kato-ui-build" content="([^"]+)"', body).group(1)
+
+        response = self.client.get('/api/sessions')
+
+        # Equal now, so a freshly loaded window is never told it is stale.
+        self.assertEqual(response.headers[UI_BUILD_HEADER], loaded)
+
+    def test_only_api_responses_carry_the_build(self):
+        self.assertNotIn(UI_BUILD_HEADER, self.client.get('/').headers)
+        self.assertNotIn(UI_BUILD_HEADER, self.client.get('/healthz').headers)
+
+    def test_the_build_id_moves_when_any_bundle_file_is_rewritten(self):
+        with tempfile.TemporaryDirectory() as root:
+            static_root = Path(root)
+            (static_root / 'build').mkdir()
+            (static_root / 'css').mkdir()
+            files = [
+                static_root / 'build' / 'app.js',
+                static_root / 'build' / 'app.css',
+                static_root / 'css' / 'app.css',
+            ]
+            for index, path in enumerate(files):
+                path.write_text('x', encoding='utf-8')
+                os.utime(path, (1000 + index, 1000 + index))
+            before = ui_build_id(static_root)
+            self.assertEqual(before, '1000-1001-1002')
+            self.assertEqual(ui_build_id(static_root), before)
+
+            for index, path in enumerate(files):
+                os.utime(path, (2000 + index, 2000 + index))
+                self.assertNotEqual(ui_build_id(static_root), before, path.name)
+                os.utime(path, (1000 + index, 1000 + index))
+
+    def test_a_bundle_file_that_is_missing_does_not_break_the_id(self):
+        # Before the first build there is nothing on disk at all.
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(ui_build_id(Path(root)), '0-0-0')
 
     def test_index_renders_empty_state_when_no_sessions(self):
         empty_app = create_app(session_manager=_FakeManager(records=[]))

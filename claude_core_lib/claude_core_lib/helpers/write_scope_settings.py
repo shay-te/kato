@@ -121,7 +121,7 @@ def read_dedupe_hook_settings() -> dict:
 
 
 def lessons_gate_hook_settings() -> dict:
-    """``PreToolUse`` hook that blocks every tool until the lessons file is read.
+    """Hooks that block every tool until the lessons file is read in full.
 
     The lessons text is no longer pasted into the system prompt — it pushed
     the Windows spawn command line past its 32,767-character limit — so the
@@ -134,17 +134,24 @@ def lessons_gate_hook_settings() -> dict:
 
     Matcher ``*`` rather than a tool list: a new CLI capability must be gated
     the moment it exists, not whenever someone remembers to add it here.
+
+    TWO events, one module. ``PreToolUse`` is the gate. ``PostToolUse`` on
+    ``Read`` is how the gate learns what a read actually RETURNED — which
+    lines, of how many — so "read" means the whole file and not the first
+    call that named it. Without the second the gate still works, it just
+    cannot be satisfied by evidence and stands down after a few denials.
     """
-    return {'hooks': {'PreToolUse': [{
-        'matcher': '*',
-        'hooks': [{
-            'type': 'command',
-            'command': f'{sys.executable} -m {_LESSONS_GATE_MODULE}',
-        }],
-    }]}}
+    command = {
+        'type': 'command',
+        'command': f'{sys.executable} -m {_LESSONS_GATE_MODULE}',
+    }
+    return {'hooks': {
+        'PreToolUse': [{'matcher': '*', 'hooks': [command]}],
+        'PostToolUse': [{'matcher': 'Read', 'hooks': [command]}],
+    }}
 
 
-def _absolute_rule_path(path: str) -> str:
+def absolute_rule_path(path: str) -> str:
     """``path`` in the form a permission rule reads as ABSOLUTE.
 
     A rule path with ONE leading slash is resolved relative to the settings
@@ -187,9 +194,9 @@ def agent_state_dir_write_deny_rules() -> list[str]:
     is not a tool call.
     """
     # ONE ``Edit`` rule in the absolute ``//`` form — see
-    # ``_absolute_rule_path`` for the live verification of both choices. The
+    # ``absolute_rule_path`` for the live verification of both choices. The
     # per-tool single-slash rules this replaced never matched a single write.
-    home = _absolute_rule_path(os.path.expanduser('~'))
+    home = absolute_rule_path(os.path.expanduser('~'))
     return [f'Edit({home}/.claude/**)']
 
 
@@ -202,7 +209,7 @@ def agent_memory_read_deny_rules() -> list[str]:
     this one. Scoped to the memory folders only; everything else the CLI keeps
     in that directory stays readable.
     """
-    home = _absolute_rule_path(os.path.expanduser('~'))
+    home = absolute_rule_path(os.path.expanduser('~'))
     return [f'Read({home}/.claude/projects/**/memory/**)']
 
 
@@ -257,6 +264,7 @@ def out_of_workspace_write_settings(
     # told, by hand, on every new task.
     settings.update(auto_memory_directory_setting(cwd))
     hooks: list = []
+    after_tool_hooks: list = []
     if dedupe_reads:
         hooks.extend(read_dedupe_hook_settings()['hooks']['PreToolUse'])
     # Gated on the lessons path being CONFIGURED. ``read_lessons_file``
@@ -266,12 +274,16 @@ def out_of_workspace_write_settings(
     # A gate with no matching directive would deny every tool while nothing on
     # screen said why.
     if str(os.environ.get(LESSONS_PATH_ENV, '') or '').strip():
-        hooks.extend(lessons_gate_hook_settings()['hooks']['PreToolUse'])
+        gate = lessons_gate_hook_settings()['hooks']
+        hooks.extend(gate['PreToolUse'])
+        after_tool_hooks.extend(gate['PostToolUse'])
     # MERGED, not ``update``d. Two ``settings.update({'hooks': ...})`` calls
     # would leave only the last one's PreToolUse list — the read-dedupe hook
     # would vanish the moment a lessons file existed.
     if hooks:
         settings['hooks'] = {'PreToolUse': hooks}
+    if after_tool_hooks:
+        settings['hooks']['PostToolUse'] = after_tool_hooks
     return settings
 
 

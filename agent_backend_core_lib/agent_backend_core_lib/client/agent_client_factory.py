@@ -143,9 +143,6 @@ class AgentClientFactory(object):
                 not self._testing
                 and bool(getattr(cli_cfg, 'model_smoke_test_enabled', False))
             ),
-            architecture_doc_path=str(
-                getattr(cli_cfg, 'architecture_doc_path', '') or ''
-            ),
             lessons_path=str(
                 getattr(cli_cfg, 'lessons_path', '') or ''
             ),

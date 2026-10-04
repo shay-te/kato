@@ -25,6 +25,14 @@ from _script_utils import (  # noqa: E402
     venv_python_path,
 )
 
+# This launcher may run before the venv exists (a fresh clone bootstraps from
+# here), so it reaches the helper by path rather than through the installed
+# package. ``utils_core_lib`` is stdlib-only, so that is always safe.
+sys.path.insert(0, str(REPO_ROOT))
+from utils_core_lib.utils_core_lib.process_utils import (  # noqa: E402
+    run_leaving_ctrl_c_to_child,
+)
+
 
 def _bootstrap_if_needed(python_bin: Path) -> int:
     """First run on a fresh clone: bootstrap in place (venv + deps + UI
@@ -78,13 +86,16 @@ def main() -> int:
     env['KATO_SUPERVISED_RESTART'] = '1'
 
     while True:
-        completed = subprocess.run(
+        # Ctrl+C belongs to kato, not to this loop: the terminal sends it to
+        # both, and ``subprocess.run`` would SIGKILL kato 0.25s later, in the
+        # middle of its own shutdown. See ``run_leaving_ctrl_c_to_child``.
+        returncode = run_leaving_ctrl_c_to_child(
             [str(python_bin), '-m', 'kato_core_lib.main'],
             cwd=REPO_ROOT,
             env=env,
         )
-        if completed.returncode != _RESTART_EXIT_CODE:
-            return completed.returncode
+        if returncode != _RESTART_EXIT_CODE:
+            return returncode
         # Reload settings saved through the UI before the relaunch so the
         # fresh process boots with them (shell still wins).
         env = layered_env(os.environ, read_kato_settings_file())

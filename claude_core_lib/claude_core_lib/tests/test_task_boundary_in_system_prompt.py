@@ -36,20 +36,16 @@ class TaskBoundaryInSystemPromptTests(unittest.TestCase):
         self.task = os.path.join(self.root, 'PROJ-8')
         self.repo = os.path.join(self.task, 'billing-api')
         os.makedirs(self.repo)
-        # Shared across tasks, so they live at the workspaces root — outside
-        # every task folder, which is exactly why they need naming.
-        self.doc = os.path.join(self.root, 'architecture.md')
+        # Shared across tasks, so it lives at the workspaces root — outside
+        # every task folder, which is exactly why it needs naming.
         self.lessons = os.path.join(self.root, 'lessons.md')
-        with open(self.doc, 'w', encoding='utf-8') as handle:
-            handle.write('# Architecture\n')
         with open(self.lessons, 'w', encoding='utf-8') as handle:
             handle.write('- a lesson\n')
 
-    def _build(self, cwd, *, root=None, doc=None, lessons=None):
+    def _build(self, cwd, *, root=None, lessons=None):
         env = {WORKSPACES_ROOT_ENV: self.root if root is None else root}
         with patch.dict(os.environ, env):
             return build_appended_system_prompt(
-                architecture_doc_path=self.doc if doc is None else doc,
                 lessons_path=self.lessons if lessons is None else lessons,
                 docker_mode_on=False,
                 logger=_LOGGER,
@@ -71,12 +67,11 @@ class TaskBoundaryInSystemPromptTests(unittest.TestCase):
             f'YOUR MEMORY IS ONLY IN: {os.path.join(self.task, "memory")}{os.sep}', prompt,
         )
 
-    def test_the_shared_files_are_named_as_exact_path_exceptions(self) -> None:
+    def test_the_shared_file_is_named_as_an_exact_path_exception(self) -> None:
         # The popup that started this: the agent `cd`-ed into the folder holding
-        # the architecture doc to grep it. Exact-path access is exempt; the
+        # a shared document to grep it. Exact-path access is exempt; the
         # folder is not.
         prompt = self._build(self.repo)
-        self.assertIn(f'  - {self.doc}', prompt)
         self.assertIn(f'  - {self.lessons}', prompt)
         self.assertIn('Never ``cd`` into its folder', prompt)
 
@@ -84,7 +79,6 @@ class TaskBoundaryInSystemPromptTests(unittest.TestCase):
         missing = os.path.join(self.root, 'no-such-lessons.md')
         prompt = self._build(self.repo, lessons=missing)
         self.assertNotIn(missing, prompt)
-        self.assertIn(f'  - {self.doc}', prompt)
 
     def test_the_boundary_is_still_there_on_a_resumed_style_launch(self) -> None:
         # The builder is the same for a resume: nothing depends on a first
@@ -122,11 +116,11 @@ class OneShotLaunchCarriesTheBoundaryTests(unittest.TestCase):
         task = os.path.join(root, 'PROJ-9')
         repo = os.path.join(task, 'web-app')
         os.makedirs(repo)
-        doc = os.path.join(root, 'architecture.md')
-        with open(doc, 'w', encoding='utf-8') as handle:
-            handle.write('# Architecture\n')
+        lessons = os.path.join(root, 'lessons.md')
+        with open(lessons, 'w', encoding='utf-8') as handle:
+            handle.write('- a lesson\n')
 
-        client = ClaudeCliClient(binary='claude', architecture_doc_path=doc)
+        client = ClaudeCliClient(binary='claude', lessons_path=lessons)
         with patch.dict(os.environ, {WORKSPACES_ROOT_ENV: root}):
             command = client._build_command(
                 additional_dirs=[], agent_session_id='', cwd=repo,
@@ -135,7 +129,7 @@ class OneShotLaunchCarriesTheBoundaryTests(unittest.TestCase):
         prompt = command[command.index('--append-system-prompt') + 1]
         self.assertIn(f'YOUR TASK FOLDER IS: {task}', prompt)
         self.assertIn(f'YOUR MEMORY IS ONLY IN: {os.path.join(task, "memory")}{os.sep}', prompt)
-        self.assertIn(f'  - {doc}', prompt)
+        self.assertIn(f'  - {lessons}', prompt)
 
 
 class StreamingLaunchCarriesTheBoundaryTests(unittest.TestCase):
@@ -157,12 +151,12 @@ class StreamingLaunchCarriesTheBoundaryTests(unittest.TestCase):
         task = os.path.join(root, 'PROJ-10')
         repo = os.path.join(task, 'chat-repo')
         os.makedirs(repo)
-        doc = os.path.join(root, 'architecture.md')
-        with open(doc, 'w', encoding='utf-8') as handle:
-            handle.write('# Architecture\n')
+        lessons = os.path.join(root, 'lessons.md')
+        with open(lessons, 'w', encoding='utf-8') as handle:
+            handle.write('- a lesson\n')
 
         session = StreamingClaudeSession(
-            task_id='PROJ-10', cwd=repo, architecture_doc_path=doc,
+            task_id='PROJ-10', cwd=repo, lessons_path=lessons,
         )
         with patch.dict(os.environ, {WORKSPACES_ROOT_ENV: root}), patch(
             'shutil.which', return_value='/usr/local/bin/claude',
@@ -172,7 +166,7 @@ class StreamingLaunchCarriesTheBoundaryTests(unittest.TestCase):
         prompt = command[command.index('--append-system-prompt') + 1]
         self.assertIn(f'YOUR TASK FOLDER IS: {task}', prompt)
         self.assertIn(f'YOUR MEMORY IS ONLY IN: {os.path.join(task, "memory")}{os.sep}', prompt)
-        self.assertIn(f'  - {doc}', prompt)
+        self.assertIn(f'  - {lessons}', prompt)
 
 
 if __name__ == '__main__':

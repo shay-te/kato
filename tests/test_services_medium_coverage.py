@@ -263,7 +263,7 @@ class WaitPlanningServiceTests(unittest.TestCase):
     # ``PlanningSessionRunner.start_session``, the same funnel every other
     # spawn path uses, instead of hand-copying a SUBSET of that funnel's
     # defaults. The subset was the bug — it silently dropped the sandbox
-    # root, the --add-dir set, the architecture/lessons docs, docker mode,
+    # root, the --add-dir set, the lessons file, docker mode,
     # the plan-mode lock and the per-task backend defaults. Funnel routing
     # is covered by ``tests/test_wait_planning_service.py``.
 

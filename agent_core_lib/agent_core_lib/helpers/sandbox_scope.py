@@ -126,7 +126,7 @@ def classify_tool_input_sandbox(
 
     ``allowed_paths`` are SPECIFIC files the product intentionally lets the
     agent touch even though they live outside the task folder — e.g. the orchestrator's
-    configured ``lessons_path`` / ``architecture_doc_path``. The agent is
+    configured ``lessons_path``. The agent is
     SUPPOSED to read/write those, so an exact match is never flagged. They
     are passed in (not hard-coded) to keep this lib product-agnostic.
 

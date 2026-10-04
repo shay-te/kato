@@ -1,4 +1,5 @@
 import { refreshCache, REFRESH_TARGET } from './utils/refreshCache.js';
+import { uiBuildStore, UI_BUILD_HEADER } from './stores/uiBuildStore.js';
 
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
 
@@ -26,6 +27,11 @@ async function fetchJson(url, { timeoutMs = 0 } = {}) {
       cache: 'no-store',
       ...(controller ? { signal: controller.signal } : {}),
     });
+    // Every read through here doubles as "which UI build is on disk now" —
+    // the session list polls every few seconds, so a rebuilt bundle is
+    // noticed without a request of its own. Optional chaining because test
+    // doubles hand back a bare ``{ ok, json }``.
+    uiBuildStore.observe(response.headers?.get?.(UI_BUILD_HEADER));
     if (!response.ok) {
       throw new Error(await errorFromResponse(response));
     }

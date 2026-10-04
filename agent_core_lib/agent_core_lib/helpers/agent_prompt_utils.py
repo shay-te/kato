@@ -579,7 +579,7 @@ def workspace_scope_block(allowed_paths, extra_refusal_guidance: str = '') -> st
         'folder. ``cd``-ing up to it, or grepping/listing it, is just '
         'as forbidden as reaching into another task\'s folder '
         'directly — even to look for something that feels like it '
-        'should be shared (a README, an architecture doc, a config '
+        'should be shared (a README, a design doc, a config '
         'file). It is not there for you; do not go looking.\n'
         '- Do NOT touch the operator\'s shared source clones at '
         '``AGENT_REPOSITORY_ROOT_PATH`` — even if a path under it appears '

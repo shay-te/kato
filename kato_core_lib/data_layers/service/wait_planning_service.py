@@ -315,7 +315,7 @@ class WaitPlanningService(object):
         ``sandbox_root`` (so the docker sandbox mounted only ``cwd`` — the
         FIRST repo clone — hiding every sibling repo of the same task) and no
         ``additional_dirs`` (so a multi-repo task's agent had no ``--add-dir``
-        for the other clones). It also silently dropped the architecture doc,
+        for the other clones). It also silently dropped
         the lessons file, docker mode, the per-task plan-mode lock, the
         per-task backend defaults (a Codex tab got the Claude binary) and the
         Remote Control bridge — every one of which the runner's funnel

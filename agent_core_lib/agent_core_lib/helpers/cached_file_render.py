@@ -1,15 +1,13 @@
 """Shared mtime+size cache for rendering directive text from a file.
 
-The architecture-doc and lessons-doc helpers both follow the same
-flow: normalise the configured path, stat the file (rejecting
-non-files), key a per-path cache on ``(mtime, size)``, and only the
-render step differs. This module owns that flow so the two callers
-share one cache implementation; each passes its own ``renderer``
-callable for the bit that is genuinely different.
+The lessons-doc helper follows this flow: normalise the configured
+path, stat the file (rejecting non-files), key a per-path cache on
+``(mtime, size)``, then render. This module owns the stat-and-cache
+half; the caller passes its own ``renderer`` callable for the render
+step.
 """
 from __future__ import annotations
 
-import logging
 import threading
 from pathlib import Path
 from typing import Callable
@@ -18,19 +16,12 @@ _cache: dict[str, tuple[float, int, str]] = {}
 _cache_lock = threading.Lock()
 
 
-def cached_file_render(
-    path: str,
-    renderer: Callable[[Path], str],
-    *,
-    logger: logging.Logger | None = None,
-    stat_error_message: str | None = None,
-) -> str:
+def cached_file_render(path: str, renderer: Callable[[Path], str]) -> str:
     """Return ``renderer(file_path)`` cached on the file's mtime+size.
 
     * Empty / blank ``path`` → ``''`` (renderer not invoked).
-    * Path that doesn't stat or isn't a regular file → ``''``. When
-      ``stat_error_message`` is provided and a ``logger`` is given,
-      a warning is emitted (``%s`` receives the resolved path).
+    * Path that doesn't stat or isn't a regular file → ``''``, silently:
+      the document is optional, and "not there yet" is the normal state.
     * On a cache hit (same mtime+size) the stored value is returned
       without re-rendering.
     * The render result is cached only when non-empty, so callers
@@ -47,8 +38,6 @@ def cached_file_render(
         if not file_path.is_file():
             raise OSError('not a file')
     except OSError:
-        if normalized and stat_error_message is not None and logger is not None:
-            logger.warning(stat_error_message, file_path)
         return ''
     cache_key = str(file_path)
     mtime = stat.st_mtime

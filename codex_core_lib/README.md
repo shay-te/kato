@@ -16,8 +16,8 @@ codex_core_lib/codex_core_lib/
     └── one_shot_utils.py       ← codex_one_shot / make_codex_one_shot
 ```
 
-That's it — everything else (prompt builders, architecture-doc
-reader, lessons reader, AGENTS.md reader, result-shape helpers,
+That's it — everything else (prompt builders, lessons reader,
+AGENTS.md reader, result-shape helpers,
 text utilities, ImplementationFields) lives in
 [`agent_core_lib`](../agent_core_lib/) and is shared with
 [`claude_core_lib`](../claude_core_lib/) so the two CLI backends
@@ -65,7 +65,7 @@ moved.
 | Max turns | `--max-turns N` | **none** — Codex 0.132 has no per-invocation turn cap |
 | Working directory | subprocess `cwd=` | `-C, --cd <DIR>` (explicit flag) |
 | Additional writable dirs | `--add-dir <DIR>` | `--add-dir <DIR>` (same name) |
-| System-prompt append flag | `--append-system-prompt <text>` | **none** — kato prepends the architecture-doc + lessons text to the user prompt instead |
+| System-prompt append flag | `--append-system-prompt <text>` | **none** — kato prepends the lessons text to the user prompt instead |
 | Non-interactive env hint | `CLAUDE_CODE_NONINTERACTIVE=1` | **none** — `--json` on `codex exec` already disables TTY behaviour |
 | Session resume | `--resume <id>` flag | `codex exec resume <id>` sub-subcommand (NOT a flag). Resume accepts a **restricted flag subset** — `--sandbox`, `-C`, `--add-dir` are rejected (resumed sessions inherit those from the original spawn); `--json`, `-o`, `-m`, `--skip-git-repo-check`, `--dangerously-bypass-*`, `-c` are accepted. |
 | Workspace-outside-git escape hatch | n/a | `--skip-git-repo-check` (kato always sets this since workspaces aren't always git roots) |

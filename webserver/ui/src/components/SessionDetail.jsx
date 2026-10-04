@@ -66,7 +66,13 @@ export default function SessionDetail({
   onOpenPlan,
 }) {
   const taskId = session?.task_id;
-  const stream = useSessionStream(taskId, onActivity);
+  // ``session.working`` is handed over as an INPUT — the server's last word on
+  // whether this task is busy — so the stream opens on that instead of on a
+  // snapshot from whenever the tab was last focused. It decides nothing here;
+  // agent status is still derived in one place, utils/agentStatus.js.
+  const stream = useSessionStream(
+    taskId, onActivity, { serverWorking: session?.working },
+  );
 
   useEffect(() => {
     if (typeof onRegisterReconnect === 'function') {

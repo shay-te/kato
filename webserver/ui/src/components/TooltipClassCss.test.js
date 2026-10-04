@@ -58,3 +58,24 @@ test('the chats button anchors its tooltip away from the panel edge', () => {
   assert.match(source, /tooltip-start/);
   assert.doesNotMatch(source, /tooltip-below/);
 });
+
+test('the tooltip positioning base never out-ranks a component', () => {
+  // ``[data-tooltip]`` only needs to be a positioned ancestor for its
+  // ::before / ::after — and sticky, absolute and fixed are positioned too.
+  // As a bare attribute selector it carried (0,1,0): a tie with any single
+  // class, settled by source order. It sat late in the sheet, so it turned
+  // the chat's sticky jump-to-latest button and the absolutely-placed
+  // comment-jump icon into ``relative`` and neither one said why.
+  // ``:where()`` contributes zero specificity, so a component always wins.
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const setsPosition = [];
+  for (const m of plain.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!/(?:^|;)\s*position\s*:/.test(m[2])) { continue; }
+    for (const selector of m[1].split(',').map((s) => s.trim())) {
+      // The tooltip's own pseudo-elements position THEMSELVES, not the host.
+      if (/::(before|after)/.test(selector)) { continue; }
+      if (/\[data-tooltip\]/.test(selector)) { setsPosition.push(selector); }
+    }
+  }
+  assert.deepEqual(setsPosition, [':where([data-tooltip])']);
+});

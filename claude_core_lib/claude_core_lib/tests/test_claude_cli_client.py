@@ -1560,6 +1560,16 @@ class BuildCommandPartialBranchTests(unittest.TestCase):
             cmd = client._build_command(additional_dirs=[], agent_session_id='')
         self.assertNotIn('--append-system-prompt', cmd)
 
+    def test_smoke_test_command_skips_the_system_prompt(self) -> None:
+        # The boot-time smoke test omits the whole appended system prompt —
+        # the fix for ``[WinError 206]`` on Windows. Real spawns still get it.
+        client = ClaudeCliClient(binary='claude')
+        cmd = client._build_command(
+            additional_dirs=[], agent_session_id='',
+            include_system_prompt=False,
+        )
+        self.assertNotIn('--append-system-prompt', cmd)
+
     def test_blank_additional_dirs_are_dropped(self) -> None:
         # Branch 930->928: ``if normalized_dir:`` falsy — blank entries
         # are silently skipped (``--add-dir ""`` would be a CLI error).

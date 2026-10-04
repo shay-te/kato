@@ -2368,32 +2368,61 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   );
 }
 
-/* Jump-to-latest button — sticky to the scrollport bottom (floats above the
- * composer), only rendered when the operator has scrolled up off the newest
- * message. Right-aligned so it never sits over the message text. */
+/* Jump-to-latest button — a round disc floating just above the composer, only
+ * rendered when the operator has scrolled up off the newest message.
+ * Right-aligned so it never sits over the message text.
+ *
+ * It rendered as a flat oval scrolling along with the messages, for three
+ * separate reasons, each of which is pinned by EventLogCss.test.js:
+ *
+ *   1. Not floating. The tooltip base ``[data-tooltip] { position: relative }``
+ *      sits later in the sheet at the same specificity, so it replaced the
+ *      ``sticky`` here. That base is ``:where()`` now and cannot out-rank a
+ *      component again.
+ *   2. Not round. #event-log is a flex COLUMN whose content overflows, so
+ *      every child is asked to shrink. Bubbles cannot go below their content;
+ *      a button with a fixed height can, down to its glyph — 34px wide by 17px
+ *      tall, and a 50% radius on that box is an ellipse. Hence ``flex: none``.
+ *   3. Wrong height. A sticky inset is measured from the scrollport's CONTENT
+ *      box, and #event-log's bottom padding already reserves the composer and
+ *      the queued list. Adding them again here parked the button a composer's
+ *      height too high, in the middle of the text.
+ *
+ * The negative top margin cancels the button's own height plus the column
+ * gap, so mounting it adds nothing to the scroll height — it floats over the
+ * log instead of pushing the last message up when it appears. */
 .event-log-scroll-bottom {
   position: sticky;
-  bottom: calc(var(--composer-h, $SPACE-94) + var(--queued-h, 0px) + #{$SPACE-12});
+  bottom: 0;
   align-self: flex-end;
+  flex: none;
+  margin-top: calc(-1 * (#{$ICON-BOX-LG} + #{$SPACE-12}));
   z-index: 5;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid $C-NEUTRAL-16;
+  width: $ICON-BOX-LG;
+  height: $ICON-BOX-LG;
+  padding: 0;
+  border: 1px solid $C-NEUTRAL-100-A10;
   border-radius: $RADIUS-CIRCLE;
   background: $C-NEUTRAL-16;
   color: $C-NEUTRAL-96;
+  font-size: $ICON-GLYPH-LG;
+  line-height: 1;
   cursor: pointer;
-  box-shadow: $SHADOW-21;
+  box-shadow: $SHADOW-17;
   transition: background 120ms ease, border-color 120ms ease, transform 90ms ease;
 }
 
 .event-log-scroll-bottom:hover {
-  background: $C-NEUTRAL-100-A10;
+  background: $C-NEUTRAL-19;
   border-color: $C-NEUTRAL-45;
   transform: translateY(-1px);
+}
+
+.event-log-scroll-bottom:active {
+  transform: scale(0.94);
 }
 
 #event-log > :first-child {
@@ -4048,19 +4077,37 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .message-attachment {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: 72px;
+  height: 72px;
   border-radius: $RADIUS-12;
   overflow: hidden;
   background: $C-NEUTRAL-100-A06;
   border: 1px solid $C-NEUTRAL-100-A06;
 }
 
+/* ``contain``, NOT ``cover``.
+ *
+ * cover scaled the image to FILL the tile and cropped the overflow, so a wide
+ * screenshot showed a centre sliver — frequently an empty region of the UI,
+ * which reads as "my attachment is a blank white square" rather than as a
+ * crop. contain shows the whole frame, letterboxed against the tile. */
 .message-attachment img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
+}
+
+/* The tile is a button now: even at 72px a thumbnail cannot answer "is that
+ * the right screenshot?", so clicking it opens the full image. */
+.message-attachment-open {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: zoom-in;
 }
 
 .message-attachment-remove {
@@ -4084,6 +4131,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 .message-attachment-remove:hover {
   background: $C-RED-51-A95;
+}
+
+/* Full-size attachment preview. Wider than the default modal box because the
+ * whole point is seeing detail the tile cannot show. */
+.image-preview-modal {
+  width: min(1100px, 92vw);
+}
+
+.image-preview-full {
+  display: block;
+  max-width: 100%;
+  max-height: 78vh;
+  margin: 0 auto;
+  object-fit: contain;
 }
 
 /* The textarea — no visible chrome inside the glass capsule.
@@ -9081,8 +9142,16 @@ $FILES-PANE-INSET: $SPACE-6;
  * the text is readable (13px) and shows up fast (120ms delay). Native
  * tooltips on non-button elements (like the status dot ``<span>``)
  * are left alone — they're cheap and good enough for static labels.
+ *
+ * ``:where()`` so this is a BASE, not a winner. The tooltip only needs a
+ * positioned ancestor for its ::before / ::after, and sticky / absolute /
+ * fixed are all positioned already. As a bare ``[data-tooltip]`` it carried
+ * (0,1,0) — a tie with any single class, settled by source order — so it
+ * silently turned ``.event-log-scroll-bottom`` (sticky) and
+ * ``.chat-sticky-prompt-comment-jump`` (absolute) into ``relative``, and the
+ * jump-to-latest button scrolled away with the messages instead of floating.
  */
-[data-tooltip] {
+:where([data-tooltip]) {
   position: relative;
 }
 
@@ -11693,6 +11762,47 @@ button.settings-prompt-editor-head {
   font: inherit;
   font-size: $TEXT-12;
   cursor: pointer;
+}
+
+/* A model pinned to something OTHER than the configured default.
+ *
+ * The menu used to render an override and a default identically, so the only
+ * way to know a task was on a non-default tier was to remember picking it.
+ * One task ran ~18h on a gated model unnoticed. Amber, not red: picking a
+ * different model is legitimate — it just must not be silent. */
+.composer-actions-row.is-override .composer-actions-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: $SPACE-6;
+}
+
+.composer-actions-override-flag {
+  color: $C-ORANGE-50;
+  font-size: $TEXT-11;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.composer-actions-row.is-override .composer-actions-select {
+  border-color: $C-ORANGE-50-A35;
+  background: $C-ORANGE-50-A10;
+}
+
+/* Also marked on the CLOSED trigger. Marking it only inside the popover
+ * would repeat the original failure: you had to already suspect something
+ * to go looking. */
+.composer-actions-trigger {
+  position: relative;
+}
+
+.composer-actions-trigger-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: $RADIUS-CIRCLE;
+  background: $C-ORANGE-50;
 }
 
 /* Context meter — ambient, not an alarm.

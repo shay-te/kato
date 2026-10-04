@@ -5,7 +5,7 @@ Every agent CLI distributed through npm installs as ``<name>.cmd`` on Windows
 instead of the program it wraps costs two things:
 
 * **cmd.exe caps its command line at ~8K chars.** An ``--append-system-prompt``
-  carrying an architecture document overflows it and raises ``[WinError 206]
+  carrying a long system prompt overflows it and raises ``[WinError 206]
   The filename or extension is too long``.
 * **cmd.exe SILENTLY truncates at the first raw newline.** A multi-line prompt
   value made every later argument vanish — including ``--resume`` /

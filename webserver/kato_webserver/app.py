@@ -1359,12 +1359,52 @@ def create_app(
             separator = '&' if '?' in url else '?'
             return f'{url}{separator}v={version}'
 
-        return {'asset_url': asset_url}
+        return {
+            'asset_url': asset_url,
+            'ui_build_id': lambda: ui_build_id(static_root),
+        }
+
+    # The cache-bust above only helps a page that is RELOADED. A window that
+    # is simply left open keeps running the bundle it loaded, however many
+    # times the bundle is rebuilt underneath it — every UI fix needed someone
+    # to remember to reload before it existed for them. So the page is told
+    # which build it loaded (a <meta> in index.html) and every API response
+    # says which build is current; when the two part ways, the UI reloads
+    # itself (stores/uiBuildStore.js).
+    @app.after_request
+    def _stamp_ui_build(response):  # noqa: WPS430
+        if request.path.startswith('/api/'):
+            response.headers[UI_BUILD_HEADER] = ui_build_id(static_root)
+        return response
 
     _register_http_routes(app)
     _register_streaming_routes(app)
     _register_status_routes(app)
     return app
+
+
+#: The files a page load pulls in. Their mtimes, together, identify the build
+#: a window is running — the same files ``asset_url`` cache-busts.
+_UI_BUILD_FILES = ('build/app.js', 'build/app.css', 'css/app.css')
+
+#: Response header naming the build currently on disk.
+UI_BUILD_HEADER = 'X-Kato-UI-Build'
+
+
+def ui_build_id(static_root: Path) -> str:
+    """An id that changes whenever any file of the UI bundle is rewritten.
+
+    A missing file contributes ``0`` rather than failing: before the first
+    build there is nothing to compare, and the id only has to be EQUAL for the
+    same files and different for different ones.
+    """
+    parts: list[str] = []
+    for filename in _UI_BUILD_FILES:
+        try:
+            parts.append(str(int((static_root / filename).stat().st_mtime)))
+        except OSError:
+            parts.append('0')
+    return '-'.join(parts)
 
 
 # ----- HTTP routes -----
@@ -3964,6 +4004,10 @@ def _register_http_routes(app: Flask) -> None:
                     'failed to drop registry state for deleted task %s '
                     '(workspace/session removal still applies)', task_id,
                 )
+        # ...and the lesson candidates it staged. Nothing else ever removes
+        # them once the task is gone: promotion needs a finished push or an
+        # addressed comment, and a deleted task can have neither.
+        _release_task_lesson_candidates(app, task_id, validated=mark_done)
         # 2. Wipe the per-task workspace clone(s). ``delete``
         #    silently swallows ``OSError``; we VERIFY after.
         try:
@@ -4516,6 +4560,23 @@ def _register_post_message_route(app: Flask) -> None:
         # ``resume_session_for_chat`` API. Defer until the operator
         # actually hits the idle-respawn-with-images case.
         return _spawn_or_reject_chat_session(app, task_id, text)
+
+
+def _release_task_lesson_candidates(
+    app: Flask, task_id: str, *, validated: bool,
+) -> None:
+    """Best-effort: settle a deleted task's staged lesson candidates."""
+    service = app.config.get('AGENT_SERVICE')
+    release = _agent_method(service, 'lessons.release_task_candidates')
+    if not callable(release):
+        return
+    try:
+        release(task_id, validated=validated)
+    except Exception:
+        app.logger.exception(
+            'failed to release lesson candidates for deleted task %s',
+            task_id,
+        )
 
 
 def _capture_prompt_lesson_candidate(app: Flask, task_id: str, text: str) -> None:

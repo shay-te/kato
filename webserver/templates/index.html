@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <title>Kato — Planning UI</title>
+  <!-- The build this page loaded. API responses carry the build currently on
+       disk (X-Kato-UI-Build); when they differ the UI reloads itself. -->
+  <meta name="kato-ui-build" content="{{ ui_build_id() }}" />
   <!-- SVG favicon first — modern browsers prefer it, scales perfectly,
        renders correctly on light AND dark tabs (uses currentColor). PNG
        fallback for browsers that don't support SVG favicons. -->

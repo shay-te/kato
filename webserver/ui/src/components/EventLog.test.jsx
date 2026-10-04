@@ -1079,6 +1079,10 @@ describe('EventLog — scroll-to-latest button', () => {
     fireEvent.scroll(log);
     const btn = screen.getByRole('button', { name: 'Scroll to latest' });
     expect(btn).toBeInTheDocument();
+    // Bottom-right corner, right above the composer: the tooltip has to open
+    // upward and grow leftward or it lands on the input / off the pane.
+    expect(btn.className).toContain('tooltip-above');
+    expect(btn.className).toContain('tooltip-end');
     scrollToBottom.mockClear();
     fireEvent.click(btn);
     expect(scrollToBottom).toHaveBeenCalled();

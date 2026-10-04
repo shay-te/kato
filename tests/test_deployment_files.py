@@ -375,7 +375,6 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_OPERATOR_EMAIL',
                 'KATO_CLAUDE_TIMEOUT_SECONDS',
                 'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',
-                'KATO_ARCHITECTURE_DOC_PATH',
                 'KATO_TASK_PUBLISH_MAX_RETRIES',
                 'KATO_WORKSPACE_REVIEW_TTL_SECONDS',
             ],

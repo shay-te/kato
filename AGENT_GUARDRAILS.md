@@ -64,8 +64,8 @@ Two detectors (`claude_core_lib/.../helpers/sandbox_scope.py`):
   future escape. (Allow *once* still works for a one-off, e.g. a JFR
   validation run.)
 
-**Exempt (never warns):** paths inside the task, the configured
-`lessons.md`/`architecture.md` (the agent is *meant* to touch those), system
+**Exempt (never warns):** paths inside the task, the configured lessons file
+(`KATO_LESSONS_PATH` — the one document the agent is *meant* to read and maintain), system
 trees (`/usr`,`/etc`,…), URLs (`//host/…`), and glob/regex fragments
 (`*/main/*`). This keeps `git`/`ls`/`mvn` from drowning you in false alarms.
 A command that merely *mentions* `docker` in text (`echo "use docker"`) or

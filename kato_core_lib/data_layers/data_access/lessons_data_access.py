@@ -3,36 +3,27 @@
 File layout under ``state_dir``:
 
     state_dir/
-      lessons.md                  <- compacted "core" lessons (the file
-                                     injected into the Claude system
-                                     prompt on every spawn)
+      lessons.md                  <- THE lessons document: the one file the
+                                     agent reads at the start of every task
+                                     and edits at the end of one. Every write
+                                     to it is an AI edit; this layer only
+                                     replaces it wholesale for a restore or
+                                     the one-time adoption of a legacy file.
       lessons/
-        <task-id>.md              <- per-task pending lesson, one file
-                                     per task. Overwritten every time
-                                     the task is marked done. Deleted
-                                     during compaction.
+        <id>.md                   <- validated lessons waiting to be filed
+                                     into the document. Deleted once they are.
       lesson-candidates/
         <source-id>.md            <- untrusted lessons extracted early
                                      from prompts/comments. Promoted to
                                      lessons/ only after validation.
 
-The global file's first line is a compaction timestamp:
-
-    <!-- last_compacted: 2026-05-04T12:33:00Z -->
-
-Used by ``LessonsService`` to decide whether to run the periodic
-compact. The header is stripped before injection into the system
-prompt — Claude doesn't need it.
-
-This data-access layer is policy-free: it does not call any LLM, does
-not decide what counts as a lesson, and does not enforce the compaction
-schedule. Those decisions live in ``LessonsService``.
+This data-access layer is policy-free: it does not call any LLM and does not
+decide what counts as a lesson. Those decisions live in ``LessonsService``.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 from kato_core_lib.helpers.atomic_text_utils import atomic_write_text
@@ -43,12 +34,11 @@ from kato_core_lib.helpers.lessons_path_utils import (
 from kato_core_lib.helpers.logging_utils import configure_logger
 
 
-_TIMESTAMP_PREFIX = '<!-- last_compacted: '
-_TIMESTAMP_SUFFIX = ' -->'
+# The first line the retired compaction step used to stamp on the file. Nothing
+# writes it any more; it is still recognised so a file from before reads clean.
 _TIMESTAMP_PATTERN = re.compile(
     r'^<!--\s*last_compacted:\s*([0-9TZ:.\-+]+)\s*-->'
 )
-
 
 class LessonsDataAccess(object):
     """Read and write per-task and global lesson files."""
@@ -56,6 +46,7 @@ class LessonsDataAccess(object):
     def __init__(self, state_dir: Path) -> None:
         self._state_dir = Path(state_dir)
         self._global_path = self._state_dir / 'lessons.md'
+        self._adopted_marker_path = self._state_dir / 'lessons.adopted'
         self._per_task_dir = self._state_dir / LESSONS_PER_TASK_DIRNAME
         self._candidate_dir = self._state_dir / LESSON_CANDIDATES_DIRNAME
         self.logger = configure_logger(self.__class__.__name__)
@@ -63,6 +54,10 @@ class LessonsDataAccess(object):
     @property
     def state_dir(self) -> Path:
         return self._state_dir
+
+    @property
+    def global_path(self) -> Path:
+        return self._global_path
 
     # ----- global lessons file -----
 
@@ -77,47 +72,57 @@ class LessonsDataAccess(object):
             return ''
 
     def read_global_body(self) -> str:
-        """Return global lessons with the timestamp header stripped."""
+        """Return the lessons document without a legacy timestamp header."""
         return strip_timestamp_header(self.read_global())
 
-    def write_global(
-        self,
-        body: str,
-        *,
-        compacted_at: datetime | None = None,
-    ) -> bool:
-        """Write the global file with a fresh timestamp header.
-
-        ``body`` is the lesson content. Any existing timestamp header in
-        ``body`` is stripped before writing so consecutive compactions
-        don't accumulate headers.
-        """
-        timestamp = (compacted_at or datetime.now(timezone.utc)).isoformat(
-            timespec='seconds',
-        )
-        cleaned = strip_timestamp_header(body).lstrip()
-        composed = f'{_TIMESTAMP_PREFIX}{timestamp}{_TIMESTAMP_SUFFIX}\n\n{cleaned}'
-        if not composed.endswith('\n'):
-            composed += '\n'
+    def write_global(self, body: str) -> bool:
+        """Replace the lessons document with ``body``, atomically."""
+        composed = body if body.endswith('\n') else body + '\n'
         return atomic_write_text(
             self._global_path,
             composed,
             logger=self.logger,
-            label='global lessons',
+            label='lessons document',
         )
 
-    def last_compacted_at(self) -> datetime | None:
-        """Parse the timestamp header from the global file, or None."""
-        if not self._global_path.is_file():
+    def backup_global(self, suffix: str) -> Path | None:
+        """Copy the lessons document aside as ``lessons.md.<suffix>``.
+
+        ``None`` when there is nothing to keep or the copy failed. Taken
+        before the one write that replaces the file wholesale, so what was
+        there is never the price of a migration.
+        """
+        current = self.read_global()
+        if not current.strip():
             return None
-        first_line = self._read_first_line(self._global_path)
-        match = _TIMESTAMP_PATTERN.match(first_line)
-        if not match:
+        target = self._global_path.with_name(f'{self._global_path.name}.{suffix}')
+        if not atomic_write_text(
+            target, current, logger=self.logger, label='lessons backup',
+        ):
             return None
+        return target
+
+    # ----- one-time adoption of a legacy document -----
+
+    def adopted_legacy_path(self) -> str:
+        """The legacy document already merged into the lessons file, or ''.
+
+        Recorded in a sidecar rather than inside ``lessons.md`` on purpose:
+        the agent edits that file, and a marker it tidied away would have the
+        whole legacy document merged in a second time.
+        """
         try:
-            return datetime.fromisoformat(match.group(1))
-        except ValueError:
-            return None
+            return self._adopted_marker_path.read_text(encoding='utf-8').strip()
+        except OSError:
+            return ''
+
+    def mark_legacy_adopted(self, legacy_path: str) -> bool:
+        return atomic_write_text(
+            self._adopted_marker_path,
+            f'{legacy_path}\n',
+            logger=self.logger,
+            label='lessons adoption marker',
+        )
 
     # ----- per-task lessons -----
 
@@ -273,14 +278,6 @@ class LessonsDataAccess(object):
             if forbidden in normalized:
                 return ''
         return normalized
-
-    @staticmethod
-    def _read_first_line(path: Path) -> str:
-        try:
-            with path.open('r', encoding='utf-8') as fh:
-                return fh.readline()
-        except OSError:
-            return ''
 
 
 def strip_timestamp_header(text: str) -> str:

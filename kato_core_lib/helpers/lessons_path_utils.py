@@ -26,6 +26,13 @@ from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 LESSONS_FILENAME = 'lessons.md'
 
+# Where a SECOND document used to be configured: a hand-maintained
+# "architecture doc" the agent read alongside the lessons file. There is one
+# document now, so this setting configures nothing — it is read exactly once,
+# at boot, to find the old file and fold it into the lessons document
+# (``LessonsService.adopt_legacy_document``). Nothing else may read it.
+LEGACY_ARCHITECTURE_DOC_ENV = 'KATO_ARCHITECTURE_DOC_PATH'
+
 # Subdirectories the lessons subsystem creates inside its state_dir — which
 # DEFAULTS to ``KATO_WORKSPACES_ROOT`` (see ``default_lessons_path``), so they
 # sit right next to the per-task workspace clones. They are kato state, NOT

@@ -18,6 +18,7 @@ import threading
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.lesson_candidate_utils import (
+    all_task_lesson_candidate_prefixes,
     task_lesson_candidate_id,
     task_lesson_candidate_prefix,
 )
@@ -92,28 +93,76 @@ class TaskLessonService(object):
             )
         ))
 
-    def promote_candidates(self, prefix: str, *, compact: bool = True) -> list[str]:
+    def promote_candidates(self, prefix: str, *, file: bool = True) -> list[str]:
         """Promote every candidate staged under ``prefix`` to a real lesson.
 
-        Runs inline (the caller is already off the request path) and returns
-        the promoted ids. ``compact=False`` leaves compaction to a caller that
-        is about to write more lessons anyway.
+        Promotion runs inline — it is a few file moves — and returns the
+        promoted ids. FILING them into the lessons document does not: it is
+        an AI run that takes minutes, and the caller is the comment queue,
+        which dispatches the next comment as soon as this returns. So it goes
+        to a background thread. ``file=False`` leaves filing to a caller that
+        is about to promote more anyway.
         """
         if not self.enabled:
             return []
         try:
             promoted = self._lessons_service.promote_candidates(prefix)
-            if promoted and compact:
-                self._lessons_service.compact()
+            if promoted and file:
+                self._in_background(
+                    'lesson-filing', self._lessons_service.file_pending,
+                )
             return promoted
         except Exception:
             self.logger.exception('failed to promote lesson candidates')
             return []
 
+    def discard_candidates(self, prefix: str) -> list[str]:
+        """Drop every candidate staged under ``prefix`` without promoting it.
+
+        For work that was abandoned rather than validated. Inline: it is a
+        handful of file deletes, with no LLM call behind it.
+        """
+        if not self.enabled:
+            return []
+        try:
+            return self._lessons_service.discard_candidates(prefix)
+        except Exception:
+            self.logger.exception('failed to discard lesson candidates')
+            return []
+
+    def release_task_candidates(self, task_id: str, *, validated: bool) -> None:
+        """The task is being deleted: settle every candidate it staged.
+
+        ``validated`` is the operator saying "this task is done" as they
+        delete it — the same signal a finished push gives — so its candidates
+        are promoted and filed. Otherwise the work was abandoned and they
+        are discarded. Either way none is left behind: a deleted task can
+        never be finished or have a comment addressed, so nothing else would
+        ever remove them.
+        """
+        if not self.enabled:
+            return
+        prefixes = all_task_lesson_candidate_prefixes(task_id)
+        if not validated:
+            for prefix in prefixes:
+                self.discard_candidates(prefix)
+            return
+
+        def _run() -> None:
+            promoted = [
+                candidate_id
+                for prefix in prefixes
+                for candidate_id in self.promote_candidates(prefix, file=False)
+            ]
+            if promoted:
+                self._lessons_service.file_pending()
+
+        self._in_background(f'lesson-release-{task_id}', _run)
+
     def capture_task_lesson(self, task_id: str, task_context: str) -> None:
         """Wrap up a finished task: promote its candidates, then mine the task itself.
 
-        One background pass, one compaction at the end — the candidates staged
+        One background pass, one write to the document at the end — the candidates staged
         during the task and the lesson extracted from its outcome land
         together.
         """
@@ -122,11 +171,11 @@ class TaskLessonService(object):
 
         def _run() -> None:
             promoted = self.promote_candidates(
-                task_lesson_candidate_prefix(task_id), compact=False,
+                task_lesson_candidate_prefix(task_id), file=False,
             )
             lesson = self._lessons_service.extract_and_save(task_id, task_context)
             if lesson or promoted:
-                self._lessons_service.compact()
+                self._lessons_service.file_pending()
 
         self._in_background(f'lesson-extract-{task_id}', _run)
 

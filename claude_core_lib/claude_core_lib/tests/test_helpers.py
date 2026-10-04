@@ -1,7 +1,7 @@
 """Comprehensive tests for all claude_core_lib helper modules.
 
 Covers: text_utils, logging_utils, atomic_write, result_utils,
-architecture_doc_utils, lessons_doc_utils, agents_instruction_utils,
+lessons_doc_utils, agents_instruction_utils,
 agent_prompt_utils, wire_protocol (constants).
 """
 from __future__ import annotations
@@ -21,21 +21,16 @@ from agent_core_lib.agent_core_lib.helpers.result_utils import (
     openhands_session_id,
     openhands_success_flag,
 )
-from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import (
-    read_architecture_doc,
-)
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import (
     read_lessons_file,
     _strip_timestamp_header,
 )
-# architecture + lessons docs now share one stat-keyed cache in
-# cached_file_render (keyed by str(path)), so both aliases point at it.
+# The lessons doc is cached by the stat-keyed cache in
+# cached_file_render (keyed by str(path)).
 from agent_core_lib.agent_core_lib.helpers.cached_file_render import (
-    _cache as _arch_cache,
-    _cache_lock as _arch_cache_lock,
+    _cache as _lessons_cache,
+    _cache_lock as _lessons_cache_lock,
 )
-_lessons_cache = _arch_cache
-_lessons_cache_lock = _arch_cache_lock
 from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
     AGENTS_FILE_NAME,
     agents_instructions_for_path,
@@ -286,73 +281,6 @@ class BuildOpenhandsResultTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# architecture_doc_utils
-# ---------------------------------------------------------------------------
-
-class ReadArchitectureDocTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        with _arch_cache_lock:
-            _arch_cache.clear()
-
-    def test_empty_path_returns_empty(self) -> None:
-        self.assertEqual(read_architecture_doc(''), '')
-        self.assertEqual(read_architecture_doc(None), '')
-
-    def test_missing_file_returns_empty(self) -> None:
-        result = read_architecture_doc('/nonexistent/arch.md')
-        self.assertEqual(result, '')
-
-    def test_missing_file_logs_warning_when_logger_provided(self) -> None:
-        logger = logging.getLogger('test.arch_doc')
-        with self.assertLogs('test.arch_doc', level='WARNING') as cm:
-            read_architecture_doc('/nonexistent/arch.md', logger=logger)
-        self.assertTrue(any('architecture doc' in line.lower() for line in cm.output))
-
-    def test_valid_file_returns_directive_text(self) -> None:
-        path = Path(self._tmp.name) / 'arch.md'
-        path.write_text('# Architecture\n', encoding='utf-8')
-        result = read_architecture_doc(str(path))
-        self.assertIn('Project architecture document:', result)
-        self.assertIn(str(path), result)
-        self.assertIn('Read tool', result)
-
-    def test_cache_hit_returns_same_value(self) -> None:
-        path = Path(self._tmp.name) / 'arch2.md'
-        path.write_text('# Arch\n', encoding='utf-8')
-        first = read_architecture_doc(str(path))
-        second = read_architecture_doc(str(path))
-        self.assertEqual(first, second)
-        # Only one cache entry added
-        with _arch_cache_lock:
-            self.assertIn(str(path), _arch_cache)
-
-    def test_the_directive_never_promises_the_edit_gets_committed(self) -> None:
-        # It used to say the orchestration layer "commits and pushes the
-        # file". Nothing does: the doc path is operator-configured and may
-        # sit outside every repo, so the agent was told its edit would be
-        # published when it might never be. What must survive is the hard
-        # rule (never run git) without the false promise attached.
-        path = Path(self._tmp.name) / 'arch3.md'
-        path.write_text('# A\n', encoding='utf-8')
-
-        result = read_architecture_doc(str(path))
-
-        self.assertIn('NEVER run git', result)
-        self.assertNotIn('commits and pushes', result)
-        self.assertNotIn('orchestrator commits', result)
-
-    def test_directory_path_returns_empty(self) -> None:
-        # Line 44: stat() succeeds for a directory but ``is_file()`` is
-        # False → raise OSError → caught + return ''. Locks the rule that
-        # the architecture-doc path must be a file, not a folder.
-        directory = Path(self._tmp.name) / 'arch_dir'
-        directory.mkdir()
-        self.assertEqual(read_architecture_doc(str(directory)), '')
-
-
-# ---------------------------------------------------------------------------
 # lessons_doc_utils
 # ---------------------------------------------------------------------------
 
@@ -408,7 +336,10 @@ class ReadLessonsFileTests(unittest.TestCase):
         path = Path(self._tmp.name) / 'long_lessons.md'
         path.write_text('x' * 200_000, encoding='utf-8')
         result = read_lessons_file(str(path))
-        self.assertLess(len(result), 1_000)
+        # A few thousand characters whatever the file holds: the directive
+        # now also hands the agent the upkeep of the file, but none of that
+        # text grows with it.
+        self.assertLess(len(result), 4_000)
         self.assertIn(str(path), result)
 
     def test_directive_does_not_mention_orchestrator(self) -> None:

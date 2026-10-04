@@ -352,6 +352,19 @@ class PlanningSpawnDefaultsTests(unittest.TestCase):
         self.assertEqual(result['model'], 'haiku')
         self.assertEqual(result['max_turns'], 8)
 
+    def test_a_resumed_session_is_given_the_lessons_document(self) -> None:
+        # A session resumed at boot goes through this hand-copied field list
+        # instead of the runner's own spawn path. ``lessons_path`` was not on
+        # it, so those sessions started with no lessons directive.
+        defaults = SimpleNamespace(
+            binary='claude', model='', permission_mode='', max_turns=None,
+            lessons_path='/state/lessons.md',
+        )
+        result = main_module._planning_spawn_defaults(
+            SimpleNamespace(_defaults=defaults),
+        )
+        self.assertEqual(result['lessons_path'], '/state/lessons.md')
+
 
 class ResumePromptForWorkspaceTests(unittest.TestCase):
     def test_continue_prompt_when_resume_on_startup_true(self) -> None:

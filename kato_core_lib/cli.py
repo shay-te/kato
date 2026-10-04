@@ -20,6 +20,7 @@ Windows operators get the one command from ``pip install -e .`` with no
 from __future__ import annotations
 
 from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+from utils_core_lib.utils_core_lib.process_utils import run_leaving_ctrl_c_to_child
 import argparse
 import os
 import subprocess
@@ -45,7 +46,12 @@ def _venv_python() -> str:
 
 
 def _run(cmd: list[str]) -> int:
-    return subprocess.call(cmd, cwd=str(REPO_ROOT))
+    # NOT ``subprocess.call``. On Ctrl+C that waits 0.25s and SIGKILLs the
+    # child — and the child (kato itself, behind ``run_local.py``) was given
+    # the same Ctrl+C by the terminal and is busy shutting down. That race is
+    # why Ctrl+C on ``kato up`` either killed kato mid-shutdown or left it
+    # running behind the prompt, out of reach of a second Ctrl+C.
+    return run_leaving_ctrl_c_to_child(cmd, cwd=str(REPO_ROOT))
 
 
 def _script(name: str, *args: str) -> int:

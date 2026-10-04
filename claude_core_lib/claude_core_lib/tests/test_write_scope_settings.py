@@ -192,6 +192,24 @@ class LessonsGateWiringTests(unittest.TestCase):
         gate = next(h for h in hooks if 'lessons_gate' in h['hooks'][0]['command'])
         self.assertEqual(gate['matcher'], '*')
 
+    def test_the_gate_is_told_what_each_read_returned(self) -> None:
+        # ``PreToolUse`` sees a read being ASKED for; only ``PostToolUse``
+        # carries the lines that came back. Without it the gate opened on the
+        # first call that named the file — a failed read, or page one of five.
+        with patch.dict(os.environ, {'AGENT_LESSONS_PATH': '/ws/lessons.md'}):
+            settings = out_of_workspace_write_settings('/ws', ('/ws',))
+        after = settings['hooks']['PostToolUse']
+        self.assertEqual([h['matcher'] for h in after], ['Read'])
+        self.assertIn('lessons_gate', after[0]['hooks'][0]['command'])
+        # The same module on both events: one record, two feeds.
+        before = next(
+            h for h in settings['hooks']['PreToolUse']
+            if 'lessons_gate' in h['hooks'][0]['command']
+        )
+        self.assertEqual(
+            after[0]['hooks'][0]['command'], before['hooks'][0]['command'],
+        )
+
     def test_no_lessons_file_means_no_hook(self) -> None:
         # ``read_lessons_file`` injects no directive for a missing or blank
         # file; a gate without that directive would deny every tool while
@@ -202,6 +220,7 @@ class LessonsGateWiringTests(unittest.TestCase):
             settings = out_of_workspace_write_settings('/ws', ('/ws',))
         hooks = settings.get('hooks', {}).get('PreToolUse', [])
         self.assertFalse(any('lessons_gate' in h['hooks'][0]['command'] for h in hooks))
+        self.assertNotIn('PostToolUse', settings.get('hooks', {}))
 
     def test_both_hooks_survive_together(self) -> None:
         # Two ``settings.update({'hooks': ...})`` calls would leave only the

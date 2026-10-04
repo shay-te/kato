@@ -234,3 +234,67 @@ describe('ComposerActionsMenu', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 });
+
+
+// A per-task model override used to be invisible: the menu rendered "pinned
+// to a gated tier" and "on your configured default" identically, so the only
+// way to know was to remember picking it. One task ran ~18h on a gated model
+// unnoticed and the spend surfaced days later on the usage page.
+describe('ComposerActionsMenu — non-default model', () => {
+  const DEFAULTED = [
+    { id: 'opus', label: 'Opus 5.5', default: true },
+    { id: 'fable', label: 'Fable 5.1' },
+  ];
+
+  test('a non-default model is called out in the row', () => {
+    open({ models: DEFAULTED, selectedModel: 'fable', modelIsNonDefault: true });
+    expect(screen.getByText(/not your default/i)).toBeInTheDocument();
+  });
+
+  test('the configured default says nothing at all', () => {
+    // Flagging the default too would train the operator to ignore the flag.
+    open({ models: DEFAULTED, selectedModel: 'opus' });
+    expect(screen.queryByText(/not your default/i)).toBeNull();
+  });
+
+  test('the marker shows on the CLOSED trigger', () => {
+    // The whole failure was having to already suspect something to go
+    // looking, so marking it only inside the popover fixes nothing.
+    const { container } = render(
+      <ComposerActionsMenu onRun={vi.fn()} models={DEFAULTED} modelIsNonDefault />,
+    );
+    expect(container.querySelector('.composer-actions-trigger-dot')).not.toBeNull();
+  });
+
+  test('no dot on the trigger when the default is what runs', () => {
+    const { container } = render(
+      <ComposerActionsMenu onRun={vi.fn()} models={DEFAULTED} />,
+    );
+    expect(container.querySelector('.composer-actions-trigger-dot')).toBeNull();
+  });
+
+  test('the trigger tooltip names the problem', () => {
+    render(
+      <ComposerActionsMenu onRun={vi.fn()} models={DEFAULTED} modelIsNonDefault />,
+    );
+    const trigger = screen.getByRole('button', { name: /actions/i });
+    expect(trigger.getAttribute('data-tooltip')).toMatch(/NOT your default/);
+  });
+
+  test('flagging does not block the pick — the select still works', () => {
+    // Deliberately choosing another model is legitimate; this is a label,
+    // not a lock.
+    const onModelChange = vi.fn();
+    open({
+      models: DEFAULTED,
+      selectedModel: 'fable',
+      modelIsNonDefault: true,
+      onModelChange,
+    });
+    fireEvent.change(
+      screen.getByRole('combobox', { name: /select model/i }),
+      { target: { value: 'opus' } },
+    );
+    expect(onModelChange).toHaveBeenCalledWith('opus');
+  });
+});

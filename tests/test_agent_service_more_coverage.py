@@ -864,11 +864,15 @@ class MarkCommentAddressedRemoteSyncTests(unittest.TestCase):
 
         self.assertTrue(result['ok'])
         lessons.promote_candidates.assert_called_once_with('comment__T1__c1__')
-        lessons.compact.assert_called_once_with()
+        # Filed on a background thread, so the comment queue is not held up.
+        deadline = time.time() + 2
+        while not lessons.file_pending.called and time.time() < deadline:
+            time.sleep(0.005)
+        lessons.file_pending.assert_called_once_with()
 
 
 class CommentLessonCandidateCaptureTests(unittest.TestCase):
-    def test_add_task_comment_stages_candidate_without_compacting(self) -> None:
+    def test_add_task_comment_stages_candidate_without_filing_it(self) -> None:
         lessons = MagicMock()
         lessons.extract_candidate_and_save.return_value = '- candidate'
         service = AgentService(**_kwargs(lessons_service=lessons))
@@ -899,7 +903,7 @@ class CommentLessonCandidateCaptureTests(unittest.TestCase):
         lessons.extract_candidate_and_save.assert_called_once()
         candidate_id = lessons.extract_candidate_and_save.call_args.args[0]
         self.assertTrue(candidate_id.startswith('comment__T1__c1__'))
-        lessons.compact.assert_not_called()
+        lessons.file_pending.assert_not_called()
 
 
 class SyncRemoteCommentsTests(unittest.TestCase):
@@ -1721,9 +1725,9 @@ class KickLessonExtractionTests(unittest.TestCase):
         # Worker fires async — give it a moment.
         import time
         time.sleep(0.05)
-        lessons.compact.assert_not_called()
+        lessons.file_pending.assert_not_called()
 
-    def test_prompt_candidate_extraction_is_staged_not_compacted(self) -> None:
+    def test_prompt_candidate_extraction_is_staged_not_filed(self) -> None:
         lessons = MagicMock()
         lessons.extract_candidate_and_save.return_value = '- candidate'
         service = AgentService(**_kwargs(lessons_service=lessons))
@@ -1735,7 +1739,7 @@ class KickLessonExtractionTests(unittest.TestCase):
         lessons.extract_candidate_and_save.assert_called_once()
         candidate_id = lessons.extract_candidate_and_save.call_args.args[0]
         self.assertTrue(candidate_id.startswith('task__T1__prompt__'))
-        lessons.compact.assert_not_called()
+        lessons.file_pending.assert_not_called()
 
     def test_trivial_prompt_skips_candidate_extraction(self) -> None:
         # Continuation/ack prompts spawn no throwaway claude -p — the wart that
@@ -1757,7 +1761,7 @@ class KickLessonExtractionTests(unittest.TestCase):
         time.sleep(0.05)
         lessons.extract_candidate_and_save.assert_not_called()
 
-    def test_compacts_after_successful_lesson_extraction(self) -> None:
+    def test_files_after_successful_lesson_extraction(self) -> None:
         lessons = MagicMock()
         lessons.extract_and_save.return_value = '- concrete rule'
         service = AgentService(**_kwargs(lessons_service=lessons))
@@ -1767,9 +1771,9 @@ class KickLessonExtractionTests(unittest.TestCase):
         import time
         time.sleep(0.05)
         lessons.extract_and_save.assert_called()
-        lessons.compact.assert_called_once_with()
+        lessons.file_pending.assert_called_once_with()
 
-    def test_finish_promotes_prompt_candidates_then_compacts_once(self) -> None:
+    def test_finish_promotes_prompt_candidates_then_files_once(self) -> None:
         lessons = MagicMock()
         lessons.promote_candidates.return_value = ['task__T1__prompt__a']
         lessons.extract_and_save.return_value = ''
@@ -1781,9 +1785,9 @@ class KickLessonExtractionTests(unittest.TestCase):
         time.sleep(0.05)
         lessons.promote_candidates.assert_called_once_with('task__T1__')
         lessons.extract_and_save.assert_called()
-        lessons.compact.assert_called_once_with()
+        lessons.file_pending.assert_called_once_with()
 
-    def test_does_not_compact_when_no_lesson_was_extracted(self) -> None:
+    def test_does_not_file_when_no_lesson_was_extracted(self) -> None:
         lessons = MagicMock()
         lessons.extract_and_save.return_value = ''
         lessons.promote_candidates.return_value = []
@@ -1794,7 +1798,7 @@ class KickLessonExtractionTests(unittest.TestCase):
         import time
         time.sleep(0.05)
         lessons.extract_and_save.assert_called()
-        lessons.compact.assert_not_called()
+        lessons.file_pending.assert_not_called()
 
 
 class TaskPublishStateTests(unittest.TestCase):

@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -42,6 +43,7 @@ import {
   writeUltracode,
 } from '../utils/composerDraft.js';
 import { readUltracodeByDefault } from '../utils/ultracodeDefaultPref.js';
+import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import {
   readImageDraft,
   writeImageDraft,
@@ -49,6 +51,7 @@ import {
 } from '../utils/composerImageDraft.js';
 import { fetchDraft, saveDraft, uploadAttachment } from '../api.js';
 import ComposerActionsMenu from './ComposerActionsMenu.jsx';
+import ModalShell from './ModalShell.jsx';
 import ComposerModeMenu from './ComposerModeMenu.jsx';
 import ContextMeter from './ContextMeter.jsx';
 import ChatCostDot from './ChatCostDot.jsx';
@@ -129,6 +132,10 @@ const MessageForm = forwardRef(function MessageForm({
   // a tab switch and a full page reload, just like the text draft. Hydration
   // is async (IDB), so the initial state is empty and an effect fills it.
   const [attachments, setAttachments] = useState([]);
+  // Which attachment the full-size preview is showing (null = closed). A 72px
+  // tile cannot answer "is that the right screenshot?" — the operator has to
+  // be able to open the thing they attached.
+  const [previewIndex, setPreviewIndex] = useState(null);
   // ``imagesSettledRef`` means "the live attachments now own the draft" — set
   // true once the async hydrate has run OR the operator has touched
   // attachments (paste / remove / send / clear), whichever comes first. It does
@@ -680,7 +687,18 @@ const MessageForm = forwardRef(function MessageForm({
   function removeAttachment(index) {
     markDraftSettled(); // live state owns the draft
     setAttachments((prev) => prev.filter((_, i) => i !== index));
+    // Indices shift under a removal, so a still-open preview would jump to a
+    // DIFFERENT image rather than the one the operator was looking at.
+    setPreviewIndex(null);
   }
+
+  // Resolved defensively: a hydrate or a send can empty the list while the
+  // preview is open, and indexing a gone attachment would crash the composer.
+  const previewAttachment = previewIndex == null
+    ? null
+    : (attachments[previewIndex] || null);
+  const closePreview = useCallback(() => setPreviewIndex(null), []);
+  useEscapeKey(closePreview, previewAttachment != null);
 
   return (
     <form
@@ -697,7 +715,15 @@ const MessageForm = forwardRef(function MessageForm({
         <div className="message-attachments">
           {attachments.map((attachment, index) => (
             <div key={index} className="message-attachment">
-              <img src={attachment.previewUrl} alt="" />
+              <button
+                type="button"
+                className="message-attachment-open"
+                onClick={() => setPreviewIndex(index)}
+                aria-label={`Preview image ${index + 1}`}
+                title="Click to preview"
+              >
+                <img src={attachment.previewUrl} alt="" />
+              </button>
               <button
                 type="button"
                 className="message-attachment-remove"
@@ -759,6 +785,7 @@ const MessageForm = forwardRef(function MessageForm({
             disabled={disabled}
             models={availableModels}
             selectedModel={effectiveModelId(availableModels, selectedModel)}
+            modelIsNonDefault={isNonDefaultModel(availableModels, selectedModel)}
             onModelChange={onModelChange}
             effortLevels={effortLevels}
             selectedEffort={effectiveEffort(effortLevels, selectedEffort, effortDefault)}
@@ -811,6 +838,20 @@ const MessageForm = forwardRef(function MessageForm({
           )}
         </div>
       </div>
+      {previewAttachment && (
+        <ModalShell
+          ariaLabel="Image preview"
+          title="Attachment preview"
+          extraClass="image-preview-modal"
+          onClose={closePreview}
+        >
+          <img
+            className="image-preview-full"
+            src={previewAttachment.previewUrl}
+            alt="Attachment preview"
+          />
+        </ModalShell>
+      )}
     </form>
   );
 });
@@ -834,6 +875,19 @@ function effectiveModelId(models, selected) {
   }
   const flagged = models.find((m) => m.default);
   return (flagged || models[0] || {}).id || '';
+}
+
+
+// Is the model that will actually run something OTHER than the configured
+// default? The menu renders an override and a default identically, so the
+// only way to know a task sat on a different tier was to remember picking
+// it — one task ran ~18h on a gated model unnoticed, and the spend only
+// surfaced days later on the usage page. Flagged, never blocked: choosing a
+// different model is legitimate, it just must not be silent.
+function isNonDefaultModel(models, selected) {
+  const effective = effectiveModelId(models, selected);
+  const configured = (models.find((m) => m.default) || {}).id || '';
+  return Boolean(effective && configured && effective !== configured);
 }
 
 

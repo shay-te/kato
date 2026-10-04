@@ -34,6 +34,11 @@ const EXEMPT = [
   /files-tab-text-btn/, /bubble-tool-details-toggle/, /setup-wizard-btn/,
   /settings-drawer-action/, /settings-drawer-perm-clear/,
   /diff-context-expander-inner/,
+  // Not a button: a 7px corner marker ON the actions trigger, flagging that
+  // the task is pinned to a non-default model. It has to sit inside the 28px
+  // trigger without covering the glyph, so neither icon box size fits — and
+  // it is decoration, which is what this ratchet is not about.
+  /composer-actions-trigger-dot/,
 ];
 
 function rules() {

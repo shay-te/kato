@@ -193,10 +193,6 @@ kato:
     bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
     timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
-    # Optional path to an architecture / project-context document that
-    # kato appends to Claude's system prompt on every spawn (autonomous
-    # runs, planning sessions, and review-fix retries). Empty disables.
-    architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
     # Path to the global compacted lessons file. Re-read on every
     # Claude spawn so newly-extracted lessons (after a "done" click or
     # a periodic compact) take effect on the next turn without
@@ -222,7 +218,6 @@ kato:
     bypass_permissions: ${oc.decode:${oc.env:KATO_CODEX_BYPASS_PERMISSIONS,"false"}}
     timeout_seconds: ${oc.decode:${oc.env:KATO_CODEX_TIMEOUT_SECONDS,"1800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CODEX_MODEL_SMOKE_TEST_ENABLED,"false"}}
-    architecture_doc_path: ${oc.env:KATO_ARCHITECTURE_DOC_PATH,""}
     lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
     # Seconds between autonomous scans. 0 = manual-only.

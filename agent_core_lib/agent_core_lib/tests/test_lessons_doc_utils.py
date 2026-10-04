@@ -3,9 +3,9 @@
 Locks the spawn-time injection contract:
   * Empty / missing path returns ''.
   * Empty file returns ''.
-  * Populated file returns the body wrapped in the directive template.
-  * Timestamp header is stripped before injection.
-  * Body cap protects the system-prompt budget.
+  * Populated file returns a directive naming the file, never its body.
+  * The same directive hands the agent the upkeep of the file and — past
+    the size budget — requires the edit to shrink it.
   * Defensive read_text OSError branches degrade to '' (logged / silent).
 """
 
@@ -17,7 +17,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import read_lessons_file
+from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import (
+    LESSONS_BUDGET_CHARS,
+    read_lessons_file,
+)
 
 
 class ReadLessonsFileTests(unittest.TestCase):
@@ -74,7 +77,7 @@ class ReadLessonsFileTests(unittest.TestCase):
 
     def test_the_prompt_stays_small_however_big_the_lessons_get(self) -> None:
         # The property that actually fixes the bug: prompt size no longer
-        # tracks the lessons file at all, so it cannot grow back into the
+        # tracks the lessons file, so it cannot grow back into the
         # command-line limit. The old cap merely deferred it — and silently
         # dropped everything past 50K.
         # Two DIFFERENT files: ``read_lessons_file`` caches per path+mtime, so
@@ -83,17 +86,59 @@ class ReadLessonsFileTests(unittest.TestCase):
         small_path = self.tmp_dir / 'small.md'
         small_path.write_text('- one lesson\n', encoding='utf-8')
         huge_path = self.tmp_dir / 'huge.md'
-        huge_path.write_text('- ' + ('x' * 200_000) + '\n', encoding='utf-8')
+        huge_path.write_text('- ' + ('x' * 2_000_000) + '\n', encoding='utf-8')
 
         small = read_lessons_file(str(small_path))
         huge = read_lessons_file(str(huge_path))
 
-        self.assertLess(len(huge), 1_000)
-        # The only difference is the path itself — size is FIXED, not merely
-        # bounded, so it can never grow back into the command-line limit.
-        self.assertEqual(
-            len(huge) - len(str(huge_path)), len(small) - len(str(small_path)),
+        # Bounded, not proportional: a file 150,000 times the size adds only
+        # the two sentences that say it is too big.
+        self.assertLess(len(huge), 4_000)
+        self.assertLess(len(huge) - len(small), 600)
+
+    def test_the_agent_is_told_to_keep_the_file_not_only_read_it(self) -> None:
+        # ONE document. The agent that just did the work is the editor of
+        # what the work taught, so the same directive that orders the read
+        # also hands over the upkeep — there is no second document for that.
+        result = read_lessons_file(str(self._write('- a rule\n')))
+        self.assertIn('keep it accurate AND small', result)
+        self.assertIn('the operator corrected you', result)
+        self.assertIn('REPLACE it', result)
+        self.assertIn('Edit at most once per task', result)
+        self.assertIn('NEVER run git', result)
+
+    def test_within_budget_the_edit_may_be_net_neutral(self) -> None:
+        result = read_lessons_file(str(self._write('- a rule\n')))
+        self.assertIn('net-neutral or net-shorter', result)
+        self.assertNotIn('OVER its size budget', result)
+        self.assertNotIn('consecutive chunks', result)
+
+    def test_over_budget_the_edit_must_shrink_the_file(self) -> None:
+        # The file is re-read in full by every task, so size is the one thing
+        # that makes every later task worse. Nothing used to bound it.
+        path = self.tmp_dir / 'big.md'
+        path.write_text('x' * (LESSONS_BUDGET_CHARS + 1), encoding='utf-8')
+        result = read_lessons_file(str(path))
+        self.assertIn('OVER its size budget (80 KB against 80 KB)', result)
+        self.assertIn('must leave it SMALLER', result)
+        self.assertNotIn('net-neutral', result)
+        # More than one Read returns: say so, or the first page passes for
+        # the whole file.
+        self.assertIn('read ALL of it, in consecutive chunks', result)
+
+    def test_exactly_at_budget_is_still_within_it(self) -> None:
+        path = self.tmp_dir / 'edge.md'
+        path.write_text('x' * LESSONS_BUDGET_CHARS, encoding='utf-8')
+        self.assertNotIn('OVER its size budget', read_lessons_file(str(path)))
+
+    def test_a_legacy_header_does_not_count_toward_the_budget(self) -> None:
+        path = self.tmp_dir / 'stamped.md'
+        path.write_text(
+            '<!-- last_compacted: 2026-05-04T12:00:00+00:00 -->\n\n'
+            + 'x' * LESSONS_BUDGET_CHARS,
+            encoding='utf-8',
         )
+        self.assertNotIn('OVER its size budget', read_lessons_file(str(path)))
 
     def test_unreadable_file_logs_and_returns_empty(self) -> None:
         # Path points at a directory — stat OK but not a regular file.

@@ -632,14 +632,7 @@ export function reducer(state, action) {
       // ``working: false`` means idle in every sense, and the transient
       // ``turnHas*`` flags must go too — otherwise the next RESULT re-derives
       // the background wait from a turn that is long over.
-      return {
-        ...state,
-        turnInFlight: !!action.working,
-        awaitingBackground: false,
-        backgroundIsWorkflow: false,
-        turnHasBackgroundWait: false,
-        turnHasWorkflow: false,
-      };
+      return withServerBusyState(state, action.working);
     default:
       return state;
   }
@@ -886,14 +879,61 @@ function unwrapSessionEvent(event) {
   return { envelope, raw };
 }
 
-export function useSessionStream(taskId, onIncomingEvent) {
+// The whole busy state, as the SERVER reports it. ``working`` is the
+// subprocess's own ``is_working``: true for an in-flight turn AND for a closed
+// turn still blocked on background work, so false means idle in every sense
+// and the inferred flags must all go. See ACTION_SESSION_TURN_STATE.
+function withServerBusyState(state, working) {
+  return {
+    ...state,
+    turnInFlight: !!working,
+    awaitingBackground: false,
+    backgroundIsWorkflow: false,
+    turnHasBackgroundWait: false,
+    turnHasWorkflow: false,
+  };
+}
+
+// A cached snapshot's busy flags are what was true when the operator last
+// LOOKED at this task — possibly an hour ago. Restored verbatim, a task left
+// mid-turn that had since finished came back "working": gold dot, working
+// chip and the in-chat animation, on a session doing nothing, until the whole
+// transcript had replayed and the server's ``session_turn_state`` corrected
+// it. On a long chat that is many seconds — "I see the task is working only
+// when its tab is focused". The reverse was true too: a task left idle that
+// had since started a turn lost its gold dot the moment it was opened.
+//
+// ``serverWorking`` is the session list's ``working`` for this task: the same
+// server property the corrective frame carries, read a few seconds ago rather
+// than whenever the tab was last open. It is also exactly what the tab showed
+// while unfocused, so opening a task no longer changes its status. Not a
+// boolean (no record yet) leaves the snapshot as it is.
+function withSeededBusyState(state, serverWorking) {
+  return typeof serverWorking === 'boolean'
+    ? withServerBusyState(state, serverWorking)
+    : state;
+}
+
+export function useSessionStream(taskId, onIncomingEvent, { serverWorking } = {}) {
   const [state, dispatch] = useReducer(
     reducer,
     taskId,
-    (id) => readCachedState(id),
+    // Seeded here as well as in the hydrate below: this is the state the
+    // FIRST render paints, before any effect has run.
+    (id) => withSeededBusyState(readCachedState(id), serverWorking),
   );
   const [streamGeneration, setStreamGeneration] = useState(0);
   const taskIdRef = useRef(taskId);
+  // Read at hydrate time, never a dependency: the poll flipping must not
+  // tear down and reopen the stream.
+  const serverWorkingRef = useRef(serverWorking);
+  serverWorkingRef.current = serverWorking;
+  // The task whose busy state this hook instance has already seeded. A
+  // RECONNECT for the same task (after a send, or an idle retry) must carry
+  // the live flags it already has — the operator's ``markTurnBusy`` is newer
+  // than any poll, and reseeding there would drop the working indicator the
+  // instant a message was sent.
+  const seededTaskRef = useRef(null);
   const idleRetryRef = useRef(IDLE_RETRY_MIN_MS);
 
   // Persist every state transition into the module-level cache so a
@@ -926,6 +966,11 @@ export function useSessionStream(taskId, onIncomingEvent) {
     )
       ? cached.lifecycle
       : SESSION_LIFECYCLE.CONNECTING;
+    const openedFresh = seededTaskRef.current !== taskId;
+    seededTaskRef.current = taskId;
+    const hydrated = openedFresh
+      ? withSeededBusyState(cached, serverWorkingRef.current)
+      : cached;
     dispatch({
       // Reset the activity clock to NOW on (re)hydrate. The cached
       // ``lastEventAt`` is when the OPERATOR last watched this tab, not when
@@ -936,7 +981,7 @@ export function useSessionStream(taskId, onIncomingEvent) {
       // shows phantom silence; a genuinely stalled session still trips the
       // warning once it's been quiet for the threshold AFTER the switch.
       type: ACTION_HYDRATE,
-      value: { ...cached, lifecycle: carriedLifecycle, lastEventAt: Date.now() },
+      value: { ...hydrated, lifecycle: carriedLifecycle, lastEventAt: Date.now() },
     });
 
     const stream = new EventSource(

@@ -1,4 +1,5 @@
 import os
+import time
 
 from omegaconf import DictConfig
 
@@ -59,9 +60,11 @@ from kato_core_lib.data_layers.data_access.lessons_data_access import (
 )
 from kato_core_lib.data_layers.service.lessons_service import LessonsService
 from kato_core_lib.helpers.lessons_path_utils import (
+    LEGACY_ARCHITECTURE_DOC_ENV,
     lesson_extraction_cwd,
     resolve_and_sync_lessons_path,
 )
+from claude_core_lib.claude_core_lib.helpers.file_editor_utils import make_file_editor
 from claude_core_lib.claude_core_lib.helpers.one_shot_utils import make_one_shot
 from kato_core_lib.helpers.runtime_identity_utils import runtime_source_fingerprint
 from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
@@ -174,11 +177,23 @@ def _export_agent_workspaces_root(workspace_manager) -> None:
         os.environ.setdefault(WORKSPACES_ROOT_ENV, root)
 
 
-# Budget for the lessons compaction one-shot. Deliberately far above the
-# shared interactive default: nothing waits on this call, and the prompt grows
-# with the operator's lesson history, so a too-small budget makes it fail
-# silently and permanently (see the call site).
-_LESSONS_ONE_SHOT_TIMEOUT_SECONDS = 900
+# Budget for one run of the lessons document editor. Deliberately far above
+# the shared interactive default: nothing waits on it, and a run searches the
+# document and makes an edit per lesson, so it is minutes, not seconds.
+# Measured: a full batch of 25 lessons filed into a 215 KB document took 708s
+# (and left the document 4.5 KB smaller). Too small a budget and it times out
+# on every run — which fails silently, in the background, and means the agent
+# quietly stops learning.
+_LESSONS_EDITOR_TIMEOUT_SECONDS = 1800
+
+# How long the boot filing waits after a batch fails before trying again, and
+# the most it backs off to. A failed batch used to end the filing for good:
+# the rest of the backlog then sat until the next restart or the next
+# promoted lesson. On the operator's machine that stranded six of ten
+# batches for a day and a half after a run failed at 03:43 — most likely the
+# laptop asleep or offline, which is exactly the failure that clears itself.
+_LESSONS_FILING_RETRY_SECONDS = 300
+_LESSONS_FILING_MAX_RETRY_SECONDS = 3600
 
 
 class KatoCoreLib(CoreLib):
@@ -373,7 +388,7 @@ class KatoCoreLib(CoreLib):
         # Before anything can spawn an agent: every session's memory setting
         # and scope prompt resolve the task folder against this root.
         _export_agent_workspaces_root(self.workspace_manager)
-        # Lessons subsystem: per-task capture + periodic compact. Claude clients
+        # Lessons subsystem: per-task capture + AI filing into the document. Claude clients
         # re-read ``lessons_path`` per spawn so fresh lessons apply next turn.
         self.lessons_service = self._build_lessons_service(open_cfg)
         if self.session_manager is not None and self.workspace_manager is not None:
@@ -797,13 +812,13 @@ class KatoCoreLib(CoreLib):
         )
 
     def _build_lessons_service(self, open_cfg: DictConfig) -> LessonsService:
-        """Construct ``LessonsService`` and kick off a startup compact if due.
+        """Construct ``LessonsService`` and bring the lessons document up to date.
 
         Resolves the lessons file path: explicit ``KATO_LESSONS_PATH``
         wins, else defaults under ``KATO_WORKSPACES_ROOT``. The state-dir
         for per-task pending files is the parent of that file.
         ``KATO_CLAUDE_BINARY`` and ``KATO_CLAUDE_MODEL`` thread into
-        the one-shot LLM helper so extract / compact reuse the
+        the one-shot LLM helper so extraction reuses the
         operator-configured Claude install.
         """
         claude_cfg = getattr(open_cfg, 'claude', None)
@@ -814,20 +829,6 @@ class KatoCoreLib(CoreLib):
         # the reader with '' → the agent saw no
         # lessons and kept repeating mistakes.
         lessons_path = resolve_and_sync_lessons_path(claude_cfg)
-        # Tell the lessons GATE which file it is guarding. Set only when the
-        # file has content, matching ``read_lessons_file``: it injects its
-        # "read this first" directive on the same condition, so the gate and
-        # the instruction for satisfying it are never out of step. A gate with
-        # no directive would deny every tool while nothing said why.
-        try:
-            if lessons_path.is_file() and lessons_path.read_text(
-                encoding='utf-8',
-            ).strip():
-                os.environ['AGENT_LESSONS_PATH'] = str(lessons_path)
-            else:
-                os.environ.pop('AGENT_LESSONS_PATH', None)
-        except OSError:
-            os.environ.pop('AGENT_LESSONS_PATH', None)
         state_dir = lessons_path.parent
         data_access = LessonsDataAccess(state_dir)
         binary = ''
@@ -848,56 +849,106 @@ class KatoCoreLib(CoreLib):
             # Best-effort: an uncreatable scratch dir degrades to kato's own
             # cwd (the one-shot still runs; its transcript just lands there).
             cwd = ''
-        # The lessons one-shot gets its OWN, much longer budget.
-        #
-        # The shared 120s default is sized for an INTERACTIVE one-shot, where
-        # a human is waiting. Compaction is neither: it merges the whole
-        # lessons file with every pending per-task lesson, so its prompt grows
-        # with the operator's history — and once it outgrew 120s it began
-        # timing out on every run:
-        #
-        #   OneShotError: claude one-shot did not finish within 120s
-        #   compact LLM call failed; leaving lesson files untouched
-        #
-        # Which is the worst shape of failure: it fails silently in the
-        # background, the pending lessons never merge, the prompt gets BIGGER
-        # next time, and the agent quietly stops learning. Nothing waits on
-        # this call, so the budget only has to be larger than a real merge.
-        llm_one_shot = make_one_shot(
-            binary=binary, model=model, cwd=cwd,
-            timeout_seconds=_LESSONS_ONE_SHOT_TIMEOUT_SECONDS,
+        # Extraction is one prompt in, one line out: the shared one-shot
+        # budget is enough for it.
+        llm_one_shot = make_one_shot(binary=binary, model=model, cwd=cwd)
+        # Filing is the AI run that WRITES the lessons document. It is given
+        # that one file and three tools — read, search, edit — and nothing
+        # else; ``cwd`` stays the scratch dir, so the file is reached through
+        # its allow rule and nothing near it comes along.
+        document_editor = make_file_editor(
+            str(lessons_path), binary=binary, model=model, cwd=cwd,
+            timeout_seconds=_LESSONS_EDITOR_TIMEOUT_SECONDS,
         )
-        service = LessonsService(data_access, llm_one_shot)
-        self._kick_startup_compact(service)
+        service = LessonsService(
+            data_access, llm_one_shot, document_editor=document_editor,
+        )
+        self._bring_lessons_document_up_to_date(service)
+        self._point_lessons_gate_at(lessons_path)
         return service
 
     @staticmethod
-    def _kick_startup_compact(service: LessonsService) -> None:
-        """Run a compact in the background if one is due.
+    def _bring_lessons_document_up_to_date(service: LessonsService) -> None:
+        """Settle the lessons document at boot.
 
-        Non-blocking: kato boot finishes regardless. If the compact
-        fails the previous lessons file is preserved (the service
-        catches its own exceptions).
+        * A legacy second document, if this install still names one, becomes
+          the lessons document — once. That is a plain file copy, done inline
+          so the gate below already sees the result.
+        * Lessons that were validated but never filed — kato stopped before
+          the editor ran, or they were just queued by the adoption above —
+          are filed now. That is an AI run per batch, minutes each, so it
+          goes to a background thread and the boot does not wait for it.
+
+        Never allowed to stop a boot: lessons make the agent better, they are
+        not what makes kato run.
         """
         import threading
 
-        if not service.should_compact():
+        try:
+            service.adopt_legacy_document(
+                os.environ.get(LEGACY_ARCHITECTURE_DOC_ENV, ''),
+            )
+        except Exception:
+            service.logger.exception(
+                'failed to adopt the legacy document into the lessons document',
+            )
+
+        threading.Thread(
+            target=KatoCoreLib._keep_filing, args=(service,),
+            name='kato-lessons-startup-filing', daemon=True,
+        ).start()
+
+    @staticmethod
+    def _keep_filing(service: LessonsService, *, sleep=time.sleep) -> None:
+        """File the pending lessons, retrying with backoff until none are left.
+
+        One failed batch must not end the filing: the run that failed is
+        usually one that will work later (the machine slept, the network
+        dropped, the CLI was mid-upgrade). The wait doubles from
+        ``_LESSONS_FILING_RETRY_SECONDS`` up to the hourly cap, and resets
+        after a call that made progress. Without an editor there is nothing
+        that could ever succeed, so it does not loop at all.
+        """
+        if not service.can_file:
             return
-
-        def _run() -> None:
+        delay = _LESSONS_FILING_RETRY_SECONDS
+        while True:
             try:
-                service.compact()
+                progressed = service.file_pending()
             except Exception:
-                # Service already logs; swallow so the worker thread
-                # never crashes the orchestrator.
-                pass
+                # The service logs its own failures; a worker that dies must
+                # never take the orchestrator with it.
+                progressed = False
+            if not service.has_pending():
+                return
+            if progressed:
+                delay = _LESSONS_FILING_RETRY_SECONDS
+            sleep(delay)
+            if not progressed:
+                delay = min(delay * 2, _LESSONS_FILING_MAX_RETRY_SECONDS)
 
-        worker = threading.Thread(
-            target=_run,
-            name='kato-lessons-startup-compact',
-            daemon=True,
-        )
-        worker.start()
+    @staticmethod
+    def _point_lessons_gate_at(lessons_path) -> None:
+        """Tell the lessons GATE which file it is guarding.
+
+        Set only when the file has content, matching ``read_lessons_file``: it
+        injects its "read this first" directive on the same condition, so the
+        gate and the instruction for satisfying it are never out of step. A
+        gate with no directive would deny every tool while nothing said why.
+
+        Runs AFTER the document is brought up to date: an install whose only
+        knowledge was the legacy document has an empty lessons file until the
+        merge, and checking first would leave the gate off for that boot.
+        """
+        try:
+            if lessons_path.is_file() and lessons_path.read_text(
+                encoding='utf-8',
+            ).strip():
+                os.environ['AGENT_LESSONS_PATH'] = str(lessons_path)
+            else:
+                os.environ.pop('AGENT_LESSONS_PATH', None)
+        except OSError:
+            os.environ.pop('AGENT_LESSONS_PATH', None)
 
     def _validate_runtime_source_fingerprint(self, open_cfg: DictConfig) -> None:
         expected_source_fingerprint = text_from_mapping(open_cfg, 'source_fingerprint')

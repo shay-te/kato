@@ -33,7 +33,6 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from agent_core_lib.agent_core_lib.helpers.command_floor import (
     prompt_floor_rules,
 )
-from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import read_architecture_doc
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import read_lessons_file
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import (
@@ -113,7 +112,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
         model_smoke_test_enabled: bool = False,
         extra_args: list[str] | None = None,
         effort: str = '',
-        architecture_doc_path: str = '',
         lessons_path: str = '',
         workspace_refusal_guidance: str = '',
         self_reply_prefixes: tuple = (),
@@ -142,7 +140,6 @@ class CodexCliClient(CliAgentSharedBehaviour):
         self._model_smoke_test_enabled = bool(model_smoke_test_enabled)
         self._model_access_smoke_test_ran = False
         self._extra_args = list(extra_args or [])
-        self._architecture_doc_path = normalized_text(architecture_doc_path)
         self._lessons_path = normalized_text(lessons_path)
         # Product-specific refusal guidance appended to the generic
         # workspace scope block; supplied by the spawner ('' otherwise).
@@ -362,7 +359,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         # EVERY spawn uniformly) — every Codex prompt builder must splice it
         # into the prompt text individually. The implementation/testing
         # builders already did; the review builders did not, which meant a
-        # review-fix/-answer spawn got no architecture doc, no lessons, and
+        # review-fix/-answer spawn got no lessons, and
         # (once the untrusted-workspace-content explanation became always-on
         # rather than docker-gated) no explanation of what the
         # UNTRUSTED_WORKSPACE_FILE tags around comment.body even mean.
@@ -414,18 +411,14 @@ class CodexCliClient(CliAgentSharedBehaviour):
 
     def _system_prompt_addendum(self) -> str:
         """Codex has no ``--append-system-prompt`` flag, so the
-        architecture-doc + lessons text is prepended to the user
+        lessons text is prepended to the user
         prompt instead. Same payload Claude gets through
         ``--append-system-prompt``."""
-        architecture_doc = read_architecture_doc(
-            self._architecture_doc_path, logger=self.logger,
-        )
         lessons_text = read_lessons_file(
             self._lessons_path, logger=self.logger,
         )
         from sandbox_core_lib.sandbox_core_lib.system_prompt import compose_system_prompt
         return compose_system_prompt(
-            architecture_doc,
             docker_mode_on=self._docker_mode_on,
             lessons=lessons_text,
         )

@@ -456,7 +456,6 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
     read_only = is_read_only_tools_enabled(source)
     running_root = is_running_as_root()
     allowed_tools = str(source.get('KATO_CLAUDE_ALLOWED_TOOLS', '')).strip()
-    arch_doc = str(source.get('KATO_ARCHITECTURE_DOC_PATH', '')).strip()
     backend = str(source.get('KATO_AGENT_BACKEND', 'openhands')).strip()
 
     extra_tools: list[str] = []
@@ -497,7 +496,6 @@ def print_security_posture(*, env: dict | None = None, stderr=None) -> None:
         + ('   ⚠ per-tool prompts OFF' if bypass else ''),
         f'  read-only pre-approval: {read_only_label}{read_only_suffix}',
         f'  running as root       : {"yes" if running_root else "no"}',
-        f'  architecture doc      : {arch_doc or "(not set)"}',
         f'  allowed-tools (extra) : {", ".join(extra_tools) if extra_tools else "(safe default only)"}',
         f'  git operations by Claude: BLOCKED (Bash(git:*) on every spawn)',
     ]

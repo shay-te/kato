@@ -160,42 +160,37 @@ UNTRUSTED_WORKSPACE_CONTENT_ADDENDUM = (
 
 
 def compose_system_prompt(
-    architecture_doc: str,
     *,
     docker_mode_on: bool,
     lessons: str = '',
     task_boundary: str = '',
 ) -> str:
-    """Combine architecture doc, learned lessons, workspace-scope, and sandbox.
+    """Combine learned lessons, workspace-scope, and sandbox.
 
     The Claude CLI accepts a single ``--append-system-prompt`` value;
     we join the present pieces with a blank-line separator so the
-    agent reads each as a distinct section. Order matters — operator-
-    authored content first (most authoritative), then kato-curated
-    learnings, then always-on guidance, then sandbox boilerplate
-    (docker only). Any piece may be empty.
+    agent reads each as a distinct section. Order matters — the
+    kato-curated learnings first, then always-on guidance, then
+    sandbox boilerplate (docker only). Any piece may be empty.
 
     ``task_boundary`` is the caller's per-session task-folder rule (concrete
     paths). It goes FIRST: it is the one section that has to be read before
-    anything else — including the architecture doc, which names a file
+    anything else — including the lessons directive, which names a file
     outside the task folder — and the system prompt is the only place that
     survives a resumed or summarised conversation.
 
     Order:
       0. Task-folder boundary                    (per session — when given)
-      1. Architecture doc                        (operator-authored)
-      2. Lessons                                 (kato-curated, learned over time)
-      3. Workspace-scope addendum                (always)
-      4. Resumed-session addendum                (always — applies on adoption / chat respawn)
-      5. Untrusted-workspace-content addendum     (always — every transport wraps unconditionally)
-      6. Sandbox addendum                        (docker only)
+      1. Lessons                                 (kato-curated, learned over time)
+      2. Workspace-scope addendum                (always)
+      3. Resumed-session addendum                (always — applies on adoption / chat respawn)
+      4. Untrusted-workspace-content addendum     (always — every transport wraps unconditionally)
+      5. Sandbox addendum                        (docker only)
     """
-    arch = architecture_doc or ''
     lesson_text = lessons or ''
     parts = [
         p for p in (
             task_boundary or '',
-            arch,
             lesson_text,
             WORKSPACE_SCOPE_ADDENDUM,
             RESUMED_SESSION_ADDENDUM,

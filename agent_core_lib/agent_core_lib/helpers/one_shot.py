@@ -62,7 +62,7 @@ def run_one_shot(
     # command name (``claude``), and on Windows ``CreateProcess`` does not
     # apply ``PATHEXT`` — so the real ``claude.cmd`` was never found and every
     # one-shot died with ``[WinError 2] The system cannot find the file
-    # specified``. That is silent for the operator: lessons compaction, triage
+    # specified``. That is silent for the operator: lesson extraction, triage
     # and the PR helpers simply never worked on Windows.
     argv = list(command)
     if argv:

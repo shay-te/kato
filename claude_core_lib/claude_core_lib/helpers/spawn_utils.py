@@ -62,7 +62,6 @@ def append_model_effort_flags(
 
 def build_appended_system_prompt(
     *,
-    architecture_doc_path: str,
     lessons_path: str,
     docker_mode_on: bool,
     logger,
@@ -70,8 +69,8 @@ def build_appended_system_prompt(
 ) -> str:
     """Compose the single ``--append-system-prompt`` value.
 
-    Joins the task-folder boundary, the architecture doc, learned lessons,
-    and (when docker mode is on) the sandbox addendum into one string — the
+    Joins the task-folder boundary, the learned lessons, and (when docker
+    mode is on) the sandbox addendum into one string — the
     Claude CLI takes a single ``--append-system-prompt``. Returns ``''`` when
     the composer produces nothing. Identical wiring for both spawn paths.
 
@@ -86,32 +85,22 @@ def build_appended_system_prompt(
         task_boundary_system_block,
         task_folder_for,
     )
-    from agent_core_lib.agent_core_lib.helpers.architecture_doc_utils import (
-        read_architecture_doc,
-    )
     from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import (
         read_lessons_file,
     )
     from sandbox_core_lib.sandbox_core_lib.system_prompt import compose_system_prompt
 
-    architecture_doc = read_architecture_doc(architecture_doc_path, logger=logger)
     lessons_text = read_lessons_file(lessons_path, logger=logger)
-    # Named as exceptions only when their directive was actually emitted, so
-    # the boundary never lists a file the agent was not told to open. These
-    # live OUTSIDE the task folder by design (the architecture doc is shared
-    # and edited across tasks), and exact-path tool access to them is exactly
-    # what the host's scope checks exempt — entering their folder is not.
-    outside_files = [
-        path for path, emitted in (
-            (architecture_doc_path, architecture_doc),
-            (lessons_path, lessons_text),
-        ) if emitted
-    ]
+    # Named as an exception only when its directive was actually emitted, so
+    # the boundary never lists a file the agent was not told to open. It
+    # lives OUTSIDE the task folder by design (the lessons file is shared
+    # across tasks), and exact-path tool access to it is exactly
+    # what the host's scope checks exempt — entering its folder is not.
+    outside_files = [lessons_path] if lessons_text else []
     task_boundary = task_boundary_system_block(
         task_folder_for(cwd), outside_files=outside_files,
     )
     return compose_system_prompt(
-        architecture_doc,
         docker_mode_on=docker_mode_on,
         lessons=lessons_text,
         task_boundary=task_boundary,

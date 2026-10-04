@@ -22,6 +22,7 @@ import {
   clearTaskStreamCache,
   reducer,
 } from './useSessionStream.js';
+import { deriveAgentStatus } from '../utils/agentStatus.js';
 
 
 // A controllable EventSource fake. Captures listeners so tests
@@ -1040,5 +1041,136 @@ describe('useSessionStream — the host correction covers the background wait', 
     emitLive(monitorCall);
     emitLive(resultEvent('r3'));
     expect(result.current.awaitingBackground).toBe(true);
+  });
+});
+
+
+// Opening a task must not change its status.
+//
+// The hook keeps a per-task snapshot so a tab switch restores the transcript
+// instantly. That snapshot also held the BUSY flags, from whenever the task was
+// last focused, and they were restored verbatim. Leave a task mid-turn, let it
+// finish in the background, come back: the strip had it idle (polled, correct)
+// and focusing it painted it working — gold dot, working chip, the in-chat
+// animation — until the whole transcript had replayed and the server's
+// ``session_turn_state`` arrived. On a long chat that is many seconds, and it
+// is the report: "I see the task is working only when its tab is focused".
+//
+// The hook now opens on ``serverWorking`` — the session list's ``working`` for
+// the task, i.e. the same server property the corrective frame carries and the
+// very value the tab was showing while unfocused.
+describe('useSessionStream — a task opens on the server\'s busy state, not a stale snapshot', () => {
+  function mount(serverWorking) {
+    return renderHook(
+      (props) => useSessionStream('T1', undefined, props),
+      { initialProps: { serverWorking } },
+    );
+  }
+  function latestStream() {
+    return FakeEventSource.instances[FakeEventSource.instances.length - 1];
+  }
+  function emitTurnState(working) {
+    act(() => { latestStream().emit('session_turn_state', { working }); });
+  }
+  const assistantText = {
+    type: 'assistant',
+    message: { id: 'm1', content: [{ type: 'text', text: 'working on it' }] },
+  };
+  const monitorCall = {
+    type: 'assistant',
+    message: { id: 'm-bg', content: [{ type: 'tool_use', name: 'Monitor', input: {} }] },
+  };
+  // What the tab strip shows for the same task while it is NOT focused.
+  const session = (working) => ({ task_id: 'T1', status: 'active', live: true, working });
+  function kindWhenFocused(hook) {
+    const { lifecycle, turnInFlight, awaitingBackground, backgroundIsWorkflow } = hook.current;
+    return deriveAgentStatus(
+      session(false), { lifecycle, turnInFlight, awaitingBackground, backgroundIsWorkflow },
+    ).kind;
+  }
+
+  test('a task left mid-turn that has since finished does not open as working', () => {
+    const first = mount(true);
+    act(() => { latestStream().emit('session_event', { event: { raw: assistantText } }); });
+    expect(first.result.current.turnInFlight).toBe(true);
+    first.unmount();   // the operator switches to another task; this one finishes
+
+    const { result } = mount(false);
+    // The FIRST render, before any frame has arrived from the new stream.
+    expect(result.current.turnInFlight).toBe(false);
+    expect(kindWhenFocused(result)).toBe(deriveAgentStatus(session(false)).kind);
+  });
+
+  test('a task left idle that has since started a turn opens as working', () => {
+    const first = mount(false);
+    emitTurnState(false);
+    first.unmount();
+
+    const { result } = mount(true);
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('a stale background wait is dropped with the rest of the busy state', () => {
+    const first = mount(true);
+    act(() => {
+      latestStream().emit('session_event', { event: { raw: monitorCall } });
+      latestStream().emit('session_event', { event: { raw: { type: 'result', uuid: 'r1', subtype: 'success' } } });
+    });
+    expect(first.result.current.awaitingBackground).toBe(true);
+    first.unmount();
+
+    const { result } = mount(false);
+    expect(result.current.awaitingBackground).toBe(false);
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('the transcript still comes back from the snapshot', () => {
+    // Only the busy flags are replaced — the point of the snapshot is that the
+    // chat is on screen at once.
+    const first = mount(true);
+    act(() => { latestStream().emit('session_event', { event: { raw: assistantText } }); });
+    const shown = first.result.current.events.length;
+    expect(shown).toBeGreaterThan(0);
+    first.unmount();
+
+    const { result } = mount(false);
+    expect(result.current.events.length).toBe(shown);
+  });
+
+  test('the server frame still has the last word over the seed', () => {
+    // The poll can be a few seconds behind; the frame cannot.
+    const { result } = mount(true);
+    emitTurnState(false);
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('a reconnect for the same task keeps the flags it already has', () => {
+    // Sending a message marks the turn busy and reconnects. The poll has not
+    // caught up yet, so reseeding here would drop the working indicator the
+    // instant the operator hit send.
+    const { result } = mount(false);
+    act(() => { result.current.markTurnBusy(true); });
+    act(() => { result.current.reconnect(); });
+    expect(result.current.turnInFlight).toBe(true);
+  });
+
+  test('the poll changing mid-session neither reopens the stream nor moves the state', () => {
+    const { result, rerender } = mount(false);
+    emitTurnState(false);
+    const opened = FakeEventSource.instances.length;
+
+    rerender({ serverWorking: true });   // a stale tick
+
+    expect(FakeEventSource.instances.length).toBe(opened);
+    expect(result.current.turnInFlight).toBe(false);
+  });
+
+  test('with no record to read, the snapshot is left as it is', () => {
+    const first = mount(undefined);
+    emitTurnState(true);
+    first.unmount();
+
+    const { result } = mount(undefined);
+    expect(result.current.turnInFlight).toBe(true);
   });
 });

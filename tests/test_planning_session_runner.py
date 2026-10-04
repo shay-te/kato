@@ -530,7 +530,6 @@ class PlanningSessionRunnerDockerModeTests(unittest.TestCase):
         cfg.max_turns = None
         cfg.timeout_seconds = overrides.get('timeout_seconds', None)
         cfg.effort = ''
-        cfg.architecture_doc_path = ''
         return cfg
 
     def test_build_defaults_picks_up_docker_mode_on(self) -> None:
