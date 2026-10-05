@@ -1842,9 +1842,16 @@ def _register_http_routes(app: Flask) -> None:
         review — ``mtime`` drives the "a NEW plan just landed" detection so
         the view only auto-opens on a fresh plan, never on every refresh.
 
-        Always 200: ``{ exists, content, mtime }``. ``exists=false`` (empty
-        content, ``mtime=0``) for a task with no plan yet, no workspace, or
-        any read error — the UI treats all of those the same.
+        Always 200: ``{ exists, content, mtime, captured_mtime }``.
+        ``{exists: false, content: '', mtime: 0}`` for a task with no plan
+        yet, no workspace, or any read error — the UI treats all of those the
+        same.
+
+        ``mtime`` moves on EVERY write, including the agent ticking a box in
+        the plan's progress checklist; ``captured_mtime`` moves only when kato
+        captures a NEW plan. The UI refreshes the content off the first and
+        auto-opens off the second — otherwise every finished milestone would
+        yank the centre pane onto the plan.
 
         ``?known_mtime=`` is the client echoing the timestamp of the plan it
         already holds. A match answers ``{exists, mtime, unchanged: True}``
@@ -1855,7 +1862,10 @@ def _register_http_routes(app: Flask) -> None:
         """
         from pathlib import Path
 
-        from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
+        from kato_core_lib.helpers.plan_writer import (
+            PLAN_FILENAME,
+            plan_captured_mtime,
+        )
 
         empty = {'exists': False, 'content': '', 'mtime': 0}
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
@@ -1879,7 +1889,15 @@ def _register_http_routes(app: Flask) -> None:
             content = plan_path.read_text(encoding='utf-8')
         except (OSError, ValueError, UnicodeDecodeError):
             return jsonify(empty)
-        return jsonify({'exists': True, 'content': content, 'mtime': mtime})
+        # No marker (a plan written before it existed) → the file's own
+        # mtime, which for such a plan only ever moved on a capture.
+        captured = plan_captured_mtime(workspace_dir) or mtime
+        return jsonify({
+            'exists': True,
+            'content': content,
+            'mtime': mtime,
+            'captured_mtime': captured,
+        })
 
     @app.post('/api/scan/trigger')
     def trigger_scan():

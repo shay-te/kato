@@ -253,6 +253,7 @@ class StreamingClaudeSession(object):
         docker_mode_on: bool = False,
         sandbox_root: str = '',
         additional_dirs: list[str] | None = None,
+        extra_system_prompt: str = '',
         done_callback=None,
         done_sentinel: str = '',
     ) -> None:
@@ -344,6 +345,9 @@ class StreamingClaudeSession(object):
         self._sandbox_allowed_paths = (
             (self._lessons_path,) if self._lessons_path else ()
         )
+        # The host's standing guidance, appended to the system prompt on EVERY
+        # launch of this session (a respawn rebuilds the command from it).
+        self._extra_system_prompt = str(extra_system_prompt or '')
         # Extra directories Claude is allowed to read/edit beyond
         # ``cwd``. For multi-repo tasks the chat path uses this to
         # surface sibling repo clones (e.g. all task repos under
@@ -1688,6 +1692,7 @@ class StreamingClaudeSession(object):
             # Resolves the task folder for the persistent boundary — this
             # spawn may be a resume, which never sees the first message.
             cwd=self._cwd,
+            extra_system_prompt=self._extra_system_prompt,
         )
         if appended_system_prompt:
             # The one multiline, unbounded-length value — deliberately

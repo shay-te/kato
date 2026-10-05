@@ -39,7 +39,7 @@ from agent_core_lib.agent_core_lib.helpers.resume_prompt_utils import (
     build_inputs_from_session,
     render_resume_prompt,
 )
-from kato_core_lib.helpers.plan_writer import write_plan
+from kato_core_lib.helpers.plan_writer import adopt_uncaptured_plan, write_plan
 from kato_core_lib.helpers.resume_prompt_writer import write_resume_prompt
 
 
@@ -142,6 +142,9 @@ class ResumePromptWatcher(object):
             # Plan capture is independent of the resume-prompt turn-end
             # gate — it has its own seen-state keyed on the plan text.
             written += self._write_plan_if_new(seen_key, workspace_path, events)
+            # A plan.md the AGENT wrote (its plan never reached kato) gets a
+            # capture marker at first sight, so its ticks don't auto-open it.
+            adopt_uncaptured_plan(workspace_path, logger=self.logger)
             if _is_fresh_turn_end(prev, last_result_index):
                 written += self._write_resume_prompt(
                     task_id, seen_key, workspace_path, events, records_by_task,

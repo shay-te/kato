@@ -42,6 +42,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
     resolve_explain_spawn,
 )
 from kato_core_lib.helpers.plan_mode_store import task_permission_mode
+from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
 from kato_core_lib.helpers.planning_hold_store import held_permission_mode
 from kato_core_lib.helpers.remote_control_store import (
     schedule_remote_control_for_spawn,
@@ -124,6 +125,12 @@ class StreamingSessionDefaults(object):
     # Docker sandbox. Independent of ``permission_mode`` — docker is
     # the *containment* layer; permission_mode is the *prompt* layer.
     docker_mode_on: bool = False
+    # Kato's standing guidance, appended to the system prompt of every spawn
+    # — today the plan progress checklist, so EVERY plan the agent presents
+    # ends with one and gets ticked as it works. The default, not a
+    # ``_build_defaults`` argument, so no defaults object can be built
+    # without it.
+    extra_system_prompt: str = PLAN_PROGRESS_GUIDANCE
 
 
 class PlanningSessionRunner(object):
@@ -783,6 +790,7 @@ class PlanningSessionRunner(object):
             expected_branch=branch_name,
             lessons_path=defaults.lessons_path,
             docker_mode_on=defaults.docker_mode_on,
+            extra_system_prompt=defaults.extra_system_prompt,
             # The docker sandbox mounts THIS, not cwd: cwd is one repo
             # clone, so mounting it hides every sibling repo in the same
             # task. Empty ⇒ previous cwd-only mount.

@@ -6,10 +6,15 @@ import { usePolling } from './usePolling.js';
 // pane can auto-open it for review when the agent presents a NEW plan.
 //
 // Auto-open rule (respects "no UI shift while reading"): fire
-// ``onFreshPlan`` ONLY when the plan's ``mtime`` advances past the value
-// first observed for that task this session. The first observation just
+// ``onFreshPlan`` ONLY when the plan's ``captured_mtime`` advances past the
+// value first observed for that task this session. The first observation just
 // records a baseline — so switching to a task that ALREADY has a plan does
 // NOT yank the centre pane; only a plan produced while you watch does.
+//
+// ``captured_mtime``, not ``mtime``: the agent ticks the plan's progress
+// checklist in the same file as it finishes each milestone, which moves
+// ``mtime`` every time. Those edits refresh the content (an open pane shows
+// the new ticks) but never open the pane — only a NEW plan from kato does.
 //
 // Returns ``{ content, available }`` for the centre pane + a manual
 // "View plan" affordance. ``onFreshPlan`` is read through a ref so an
@@ -46,14 +51,15 @@ export function usePlanWatch(taskId, onFreshPlan) {
     const content = String(res?.content || '');
     const exists = !!res?.exists;
     setPlan({ taskId, content, exists });
+    const captured = Number(res?.captured_mtime || mtime);
     const prev = seenRef.current[taskId];
     if (prev === undefined) {
       // First look at this task — baseline only, never auto-open.
-      seenRef.current[taskId] = mtime;
+      seenRef.current[taskId] = captured;
       return;
     }
-    if (exists && mtime > prev) {
-      seenRef.current[taskId] = mtime;
+    if (exists && captured > prev) {
+      seenRef.current[taskId] = captured;
       if (typeof onFreshRef.current === 'function') {
         onFreshRef.current(taskId);
       }

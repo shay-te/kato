@@ -365,6 +365,19 @@ class PlanningSpawnDefaultsTests(unittest.TestCase):
         )
         self.assertEqual(result['lessons_path'], '/state/lessons.md')
 
+    def test_a_resumed_session_is_given_the_plan_progress_rule(self) -> None:
+        # Same hand-copied list: a session resumed at boot must still be told
+        # to end every plan with a checklist and tick it as it works.
+        from kato_core_lib.data_layers.service.planning_session_runner import (
+            StreamingSessionDefaults,
+        )
+        from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
+
+        result = main_module._planning_spawn_defaults(
+            SimpleNamespace(_defaults=StreamingSessionDefaults()),
+        )
+        self.assertEqual(result['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE)
+
 
 class ResumePromptForWorkspaceTests(unittest.TestCase):
     def test_continue_prompt_when_resume_on_startup_true(self) -> None:

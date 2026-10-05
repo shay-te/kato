@@ -214,6 +214,7 @@ class ClaudeSessionManager(object):
         docker_mode_on: bool = False,
         sandbox_root: str = '',
         additional_dirs: list[str] | None = None,
+        extra_system_prompt: str = '',
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
 
@@ -241,6 +242,9 @@ class ClaudeSessionManager(object):
             # cwd-only mount. See StreamingClaudeSession._sandbox_mount.
             'sandbox_root': sandbox_root,
             'additional_dirs': list(additional_dirs or []),
+            # The host's standing system-prompt guidance; see
+            # StreamingClaudeSession._extra_system_prompt.
+            'extra_system_prompt': extra_system_prompt,
             'done_callback': self._done_callback,
             'done_sentinel': self._done_sentinel,
         }

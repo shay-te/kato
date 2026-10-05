@@ -16,6 +16,7 @@ from kato_core_lib.data_layers.service.planning_session_runner import (
     SessionStoppedByUserError,
     StreamingSessionDefaults,
 )
+from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
 from tests.utils import build_task
 
 
@@ -721,6 +722,73 @@ class BackendGateTests(unittest.TestCase):
         self.assertIsNone(PlanningSessionRunner.from_config(
             self._cfg(claude=SimpleNamespace(binary='claude')), 'claude', None,
         ))
+
+
+
+class PlanProgressGuidanceReachesEverySpawnTests(unittest.TestCase):
+    """Every plan kato ever captures has to end with a progress checklist the
+    agent ticks — so the rule rides in EVERY spawn's system prompt, whichever
+    entrypoint started it."""
+
+    def _runner(self, manager, defaults=None):
+        return PlanningSessionRunner(
+            session_manager=manager,
+            defaults=defaults or StreamingSessionDefaults(
+                binary='claude', permission_mode='acceptEdits',
+            ),
+        )
+
+    def test_defaults_carry_the_guidance_without_being_asked(self) -> None:
+        self.assertEqual(
+            StreamingSessionDefaults().extra_system_prompt, PLAN_PROGRESS_GUIDANCE,
+        )
+
+    def test_configured_defaults_carry_it_for_every_backend(self) -> None:
+        cfg = SimpleNamespace(
+            binary='claude', model='', bypass_permissions=False,
+            allowed_tools='', disallowed_tools='', max_turns=None,
+            effort='', lessons_path='',
+        )
+        self.assertEqual(
+            PlanningSessionRunner._build_defaults(cfg).extra_system_prompt,
+            PLAN_PROGRESS_GUIDANCE,
+        )
+
+    def test_the_chat_spawn_forwards_it(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        self._runner(manager).resume_session_for_chat(
+            task_id='PROJ-1', message='plan this', cwd='/tmp/client',
+            task_summary='summary',
+        )
+        self.assertEqual(
+            manager.start_kwargs['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE,
+        )
+
+    def test_the_autonomous_spawn_forwards_it(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        self._runner(manager).implement_task(
+            build_task(), prepared_task=_FakePrepared([_FakeRepo('client', '/tmp/client')]),
+        )
+        self.assertEqual(
+            manager.start_kwargs['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE,
+        )
+
+    def test_a_planning_hold_spawn_forwards_it(self) -> None:
+        # The kato:wait-planning tag forces plan mode on the spawn; the plan
+        # it produces is exactly the one that has to carry the checklist.
+        manager = _FakeManager(_terminal(result='ok'))
+        with patch(
+            'kato_core_lib.data_layers.service.planning_session_runner.held_permission_mode',
+            return_value='plan',
+        ):
+            self._runner(manager).start_session(
+                task_id='PROJ-1', task_summary='s', initial_prompt='plan it',
+                cwd='/tmp/client',
+            )
+        self.assertEqual(manager.start_kwargs['permission_mode'], 'plan')
+        self.assertEqual(
+            manager.start_kwargs['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE,
+        )
 
 
 if __name__ == '__main__':

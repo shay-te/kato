@@ -1005,6 +1005,8 @@ def _planning_spawn_defaults(runner) -> dict[str, object]:
         # other spawn is required to read first. The field list is copied by
         # hand, and this one was simply never on it.
         'lessons_path',
+        # Same trap: the plan progress-checklist rule rides here.
+        'extra_system_prompt',
     )
     result: dict[str, object] = {
         field: (getattr(defaults, field, '') or '') for field in fields

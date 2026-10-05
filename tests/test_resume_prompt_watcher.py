@@ -8,6 +8,7 @@ exact contract the watcher consumes.
 """
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 import unittest.mock
@@ -329,6 +330,47 @@ class ResumePromptWatcherTickTests(unittest.TestCase):
         self.workspaces.add('T1', ['client'])
         self.assertEqual(self.watcher.tick(), 1)  # only resume_prompt
         self.assertFalse(self._plan_path('T1').exists())
+
+    def test_a_plan_the_agent_wrote_itself_is_marked_once(self) -> None:
+        # The plan never reached kato (an empty ExitPlanMode), so the agent
+        # created plan.md itself. Its first appearance is the "new plan";
+        # every box it ticks afterwards must not be.
+        from kato_core_lib.helpers.plan_writer import plan_captured_mtime
+        session = _FakeSession([
+            _Event('assistant', {'message': {'content': [
+                {'type': 'tool_use', 'name': 'ExitPlanMode', 'input': {}},
+            ]}}),
+        ])
+        self.sessions.add('T1', session)
+        workspace = self.workspaces.add('T1', ['client'])
+        plan = self._plan_path('T1')
+        plan.write_text('# Plan\n## Progress\n- [ ] a\n- [ ] b')
+        self.watcher.tick()
+        created = plan.stat().st_mtime_ns
+        self.assertEqual(plan_captured_mtime(workspace), created)
+
+        plan.write_text('# Plan\n## Progress\n- [x] a\n- [ ] b')
+        os.utime(plan, ns=(created + 10**9, created + 10**9))
+        session.append(_Event('result', {'is_error': False, 'result': 'ticked'}))
+        self.watcher.tick()
+        self.assertEqual(plan_captured_mtime(workspace), created)
+
+    def test_a_captured_plan_is_not_re_marked_by_adoption(self) -> None:
+        from kato_core_lib.helpers.plan_writer import plan_captured_mtime
+        session = _FakeSession([
+            _exit_plan_event('# Plan\n## Progress\n- [ ] a'),
+            _Event('result', {'is_error': False, 'result': 'planned'}),
+        ])
+        self.sessions.add('T1', session)
+        workspace = self.workspaces.add('T1', ['client'])
+        self.watcher.tick()
+        captured = plan_captured_mtime(workspace)
+        plan = self._plan_path('T1')
+        plan.write_text('# Plan\n## Progress\n- [x] a')
+        os.utime(plan, ns=(captured + 10**9, captured + 10**9))
+        session.append(_Event('user', {'message': {'role': 'user', 'content': 'go'}}))
+        self.watcher.tick()
+        self.assertEqual(plan_captured_mtime(workspace), captured)
 
     def test_records_by_task_indexes_multiple_records(self) -> None:
         # Two records with task ids → the indexing loop iterates (blank ids skip).

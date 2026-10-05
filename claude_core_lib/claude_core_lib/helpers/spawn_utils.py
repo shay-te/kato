@@ -66,6 +66,7 @@ def build_appended_system_prompt(
     docker_mode_on: bool,
     logger,
     cwd: str = '',
+    extra_system_prompt: str = '',
 ) -> str:
     """Compose the single ``--append-system-prompt`` value.
 
@@ -80,6 +81,10 @@ def build_appended_system_prompt(
     used to ride only in the first user message, which a resumed session never
     receives and a long conversation summarises away, so the operator had to
     keep re-explaining it by hand.
+
+    ``extra_system_prompt`` is the host's own standing guidance, appended
+    last. It rides here for the same reason as the boundary: a rule that must
+    hold for the whole task cannot live in a first message.
     """
     from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
         task_boundary_system_block,
@@ -100,11 +105,13 @@ def build_appended_system_prompt(
     task_boundary = task_boundary_system_block(
         task_folder_for(cwd), outside_files=outside_files,
     )
-    return compose_system_prompt(
+    composed = compose_system_prompt(
         docker_mode_on=docker_mode_on,
         lessons=lessons_text,
         task_boundary=task_boundary,
     )
+    extra = str(extra_system_prompt or '').strip()
+    return '\n\n'.join(part for part in (composed, extra) if part)
 
 
 def append_additional_dirs(command: list[str], additional_dirs) -> None:

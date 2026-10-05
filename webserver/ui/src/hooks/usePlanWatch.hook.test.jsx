@@ -118,4 +118,59 @@ describe('usePlanWatch', () => {
       vi.useRealTimers();
     }
   });
+
+  test('the agent ticking a milestone refreshes the plan but never opens it', async () => {
+    // The agent ticks the plan's progress checklist in plan.md as it works.
+    // That moves ``mtime`` every milestone; following it would yank the
+    // centre pane onto the plan each time. Only a NEW capture opens it.
+    vi.useFakeTimers();
+    try {
+      const onFresh = vi.fn();
+      fetchSessionPlan
+        .mockResolvedValueOnce({
+          exists: true, content: '- [ ] a\n- [ ] b', mtime: 10, captured_mtime: 10,
+        })
+        .mockResolvedValueOnce({
+          exists: true, content: '- [x] a\n- [ ] b', mtime: 20, captured_mtime: 10,
+        })
+        .mockResolvedValue({
+          exists: true, content: '- [x] a\n- [x] b', mtime: 30, captured_mtime: 10,
+        });
+      const { result } = renderHook(() => usePlanWatch('T1', onFresh));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(result.current.content).toBe('- [x] a\n- [ ] b');
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(result.current.content).toBe('- [x] a\n- [x] b');
+      expect(onFresh).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a new plan captured after ticks still auto-opens', async () => {
+    vi.useFakeTimers();
+    try {
+      const onFresh = vi.fn();
+      fetchSessionPlan
+        .mockResolvedValueOnce({
+          exists: true, content: '- [ ] a', mtime: 10, captured_mtime: 10,
+        })
+        .mockResolvedValueOnce({
+          exists: true, content: '- [x] a', mtime: 20, captured_mtime: 10,
+        })
+        .mockResolvedValue({
+          exists: true, content: '# Revised\n- [x] a\n- [ ] c', mtime: 30, captured_mtime: 30,
+        });
+      renderHook(() => usePlanWatch('T1', onFresh));
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(onFresh).not.toHaveBeenCalled();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+      expect(onFresh).toHaveBeenCalledTimes(1);
+      expect(onFresh).toHaveBeenCalledWith('T1');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

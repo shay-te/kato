@@ -1587,6 +1587,50 @@ class PlanFileRouteTests(unittest.TestCase):
 
         self.assertEqual(body['content'], '# Plan')
 
+    def _captured_workspace(self, plan_text):
+        """A workspace whose plan was written the way kato writes one."""
+        import tempfile
+        from kato_core_lib.helpers.plan_writer import write_plan
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        ws = Path(td.name) / 'PROJ-1'
+        write_plan(ws, plan_text)
+        workspace = _FakeWorkspaceManager(workspace_path_for={'PROJ-1': str(ws)})
+        app = create_app(session_manager=_FakeManager(), workspace_manager=workspace)
+        return ws, app.test_client()
+
+    def test_a_captured_plan_reports_its_capture(self):
+        ws, client = self._captured_workspace('# Plan\n## Progress\n- [ ] a')
+        body = client.get('/api/sessions/PROJ-1/plan').get_json()
+        self.assertEqual(body['captured_mtime'], body['mtime'])
+
+    def test_the_agent_ticking_a_box_moves_mtime_but_not_the_capture(self):
+        # The UI refreshes the content off ``mtime`` and auto-opens off
+        # ``captured_mtime`` — a ticked milestone must do the first only.
+        import os
+        from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
+        ws, client = self._captured_workspace('# Plan\n## Progress\n- [ ] a')
+        first = client.get('/api/sessions/PROJ-1/plan').get_json()
+        plan = ws / PLAN_FILENAME
+        plan.write_text('# Plan\n## Progress\n- [x] a', encoding='utf-8')
+        later = first['mtime'] + 10**9
+        os.utime(plan, ns=(later, later))
+
+        body = client.get(
+            f'/api/sessions/PROJ-1/plan?known_mtime={first["mtime"]}',
+        ).get_json()
+
+        self.assertEqual(body['content'], '# Plan\n## Progress\n- [x] a')
+        self.assertEqual(body['mtime'], later)
+        self.assertEqual(body['captured_mtime'], first['captured_mtime'])
+
+    def test_a_plan_without_a_capture_marker_falls_back_to_its_mtime(self):
+        # A plan.md written before the marker existed only ever changed on a
+        # capture, so its own mtime is the right answer.
+        body = self._client_with_plan('# Plan').get(
+            '/api/sessions/PROJ-1/plan').get_json()
+        self.assertEqual(body['captured_mtime'], body['mtime'])
+
 
 class PlanningHoldReleaseRouteTests(unittest.TestCase):
     """``POST /api/sessions/<id>/planning-hold/release`` — leaving Plan from kato.
