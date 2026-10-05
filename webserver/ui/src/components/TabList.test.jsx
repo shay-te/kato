@@ -233,6 +233,112 @@ describe('TabList — pinned tab ordering', () => {
     expect(readPinnedIds(window.localStorage)).toEqual([]);
   });
 
+  // jsdom never moves a scroller, a real browser does. The harness gives the
+  // strip a live scrollLeft and makes ``scrollIntoView`` jump it the way a
+  // browser would, so "the strip did not move" is something a test can see.
+  function withStripScroll(container, run) {
+    const scroller = container.querySelector('.tabs-scroller');
+    let left = 120;
+    Object.defineProperty(scroller, 'scrollLeft', {
+      configurable: true,
+      get: () => left,
+      set: (value) => { left = value; },
+    });
+    const frames = [];
+    vi.stubGlobal('requestAnimationFrame', (fn) => { frames.push(fn); return frames.length; });
+    const origSIV = window.HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn(() => { left = 900; });
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    try {
+      run({
+        scroller,
+        scrollIntoView,
+        flushFrames: () => frames.splice(0).forEach((fn) => fn(0)),
+        shift: (value) => { left = value; },
+      });
+    } finally {
+      window.HTMLElement.prototype.scrollIntoView = origSIV;
+      vi.unstubAllGlobals();
+    }
+  }
+
+  test('unpinning several tabs in a row leaves the strip where it was', () => {
+    // The operator clears pins from the pinned block one after another.
+    // Following each unpinned tab out to the unpinned group dragged the strip
+    // away, so they had to scroll back to the pins after every click.
+    window.localStorage.setItem(
+      PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-1', 'A-2']),
+    );
+    const { container } = render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3'), _session('A-4')]}
+        onSelect={() => {}}
+      />,
+    );
+    withStripScroll(container, ({ scroller, scrollIntoView, flushFrames }) => {
+      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-1
+      flushFrames();
+      expect(tabOrder(container)).toEqual(['A-2', 'A-1', 'A-3', 'A-4']);
+      expect(scroller.scrollLeft).toBe(120);
+
+      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-2
+      flushFrames();
+      expect(tabOrder(container)).toEqual(['A-1', 'A-2', 'A-3', 'A-4']);
+      expect(readPinnedIds(window.localStorage)).toEqual([]);
+      expect(scroller.scrollLeft).toBe(120);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+  });
+
+  test('an unpin holds the strip even when the re-sort itself shifts it', () => {
+    // The pill is moved in the DOM; a browser may nudge the scroller while it
+    // lays the strip out again. The pre-unpin offset wins.
+    window.localStorage.setItem(
+      PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-1', 'A-2']),
+    );
+    const { container } = render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        onSelect={() => {}}
+      />,
+    );
+    withStripScroll(container, ({ scroller, flushFrames, shift }) => {
+      const list = container.querySelector('#tab-list');
+      const origInsertBefore = list.insertBefore;
+      const origAppendChild = list.appendChild;
+      list.insertBefore = function insertBefore(...args) {
+        const out = origInsertBefore.apply(this, args);
+        shift(640);
+        return out;
+      };
+      list.appendChild = function appendChild(...args) {
+        const out = origAppendChild.apply(this, args);
+        shift(640);
+        return out;
+      };
+      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-1
+      flushFrames();
+      expect(tabOrder(container)).toEqual(['A-2', 'A-1', 'A-3']);
+      expect(scroller.scrollLeft).toBe(120);
+    });
+  });
+
+  test('pinning still follows the tab to the pinned block', () => {
+    const { container } = render(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        onSelect={() => {}}
+      />,
+    );
+    withStripScroll(container, ({ scrollIntoView, flushFrames }) => {
+      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[2]); // pin A-3
+      flushFrames();
+      expect(tabOrder(container)).toEqual(['A-3', 'A-1', 'A-2']);
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView.mock.contexts[0].dataset.taskId).toBe('A-3');
+    });
+  });
+
   test('pinned tab gets is-pinned class so it sorts to the front of the strip', () => {
     window.localStorage.setItem(
       PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-2']),

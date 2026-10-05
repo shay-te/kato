@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+} from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
@@ -82,13 +84,27 @@ export default function TabList({
       return next;
     });
   }
+  // The strip's scrollLeft at the moment of an UNPIN, restored once the
+  // re-sorted strip commits (layout effect below). ``null`` = nothing pending.
+  const keepScrollLeftRef = useRef(null);
   const handleTogglePin = useCallback((taskId) => {
+    const unpinning = pinnedIds.includes(taskId);
     setPinnedIds((prev) => {
       const next = togglePinned(taskId, prev);
       writePinnedIds(next);
       return next;
     });
-    // Follow the tab to its new home.
+    // Unpinning STAYS PUT. The operator unpins from the pinned block and
+    // usually clears several in a row; following each tab out to the
+    // unpinned group dragged the strip away and they had to scroll back to
+    // the pins after every click. The pill moves; the view does not.
+    if (unpinning) {
+      keepScrollLeftRef.current = scrollRef.current
+        ? scrollRef.current.scrollLeft
+        : null;
+      return;
+    }
+    // Pinning follows the tab to its new home.
     //
     // Pinning MOVES the pill to the pinned block at the front, and the strip
     // scrolls horizontally — so on a right-scrolled strip the tab the
@@ -115,7 +131,15 @@ export default function TabList({
     } else {
       follow();
     }
-  }, []);
+  }, [pinnedIds]);
+  // Before paint, so an unpin never shows a frame at any other offset.
+  useLayoutEffect(() => {
+    const left = keepScrollLeftRef.current;
+    keepScrollLeftRef.current = null;
+    const node = scrollRef.current;
+    if (left === null || !node || node.scrollLeft === left) { return; }
+    node.scrollLeft = left;
+  }, [pinnedIds]);
   // ``orderByPinned`` is a pure sort; memoise on the inputs so we
   // don't reshuffle the list on unrelated re-renders.
   const orderedSessions = useMemo(
