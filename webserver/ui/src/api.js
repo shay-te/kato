@@ -714,6 +714,38 @@ export function fetchSessionPlan(taskId, { knownMtime = 0 } = {}) {
     .catch(() => ({ exists: false, content: '', mtime: 0 }));
 }
 
+// The task's review loop. Where it is right now rides the 5-second session
+// list (``session.review_loop``); these serve the view: the whole loop with
+// every round, start / stop, and one round's saved text (``kind`` is
+// ``diff`` | ``review`` | ``prompt``).
+function reviewLoopUrl(taskId, suffix = '') {
+  return `/api/sessions/${encodeURIComponent(taskId)}/review-loop${suffix}`;
+}
+
+export function fetchReviewLoop(taskId) {
+  if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
+  return requestEnvelopeStrict(reviewLoopUrl(taskId));
+}
+
+// ``maxRounds``: how many reviews at most; omitted, kato's default applies.
+export function startReviewLoop(taskId, { maxRounds = 0 } = {}) {
+  if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
+  return postEnvelope(reviewLoopUrl(taskId), maxRounds ? { max_rounds: maxRounds } : {});
+}
+
+export function stopReviewLoop(taskId) {
+  if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
+  return requestEnvelope(reviewLoopUrl(taskId, '/stop'), { method: 'POST' });
+}
+
+export function fetchReviewLoopArtifact(taskId, loopId, round, kind) {
+  if (!taskId || !loopId) { return Promise.resolve({ ok: false, error: 'no loop' }); }
+  return requestEnvelopeStrict(reviewLoopUrl(
+    taskId,
+    `/${encodeURIComponent(loopId)}/rounds/${Number(round)}/${encodeURIComponent(kind)}`,
+  ));
+}
+
 export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }

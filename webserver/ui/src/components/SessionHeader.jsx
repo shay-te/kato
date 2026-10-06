@@ -9,6 +9,8 @@ import {
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import FastPromptButtons from './FastPromptButtons.jsx';
+import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
+import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
@@ -461,11 +463,17 @@ export default function SessionHeader({
           />
           <strong id="session-task-id">{session.task_id}</strong>
           <span id="session-task-summary">{taskSummary}</span>
+          {/* Where the task's review loop is right now. In the title area, not
+              among the actions: the title truncates to make room, so the
+              buttons never move when a loop starts or ends. */}
+          <ReviewLoopChip loop={session.review_loop || null} taskId={session.task_id} />
         </div>
         <div className="session-header-actions">
           {/* No status chip here. It lives ON each agent tab now, beside the
               name it describes — a chip up here could only ever describe one
               agent, and duplicated what the tab already says. */}
+          <ReviewLoopButton session={session} />
+          <HeaderSeparator />
           <FastPromptButtons agentName={agentName} onSendPrompt={onSendPrompt} />
           {searchSlot}
           {/* Git operations, fenced on both sides: push / merge / pull / PR /
@@ -615,9 +623,11 @@ export function SessionHeaderPlaceholder() {
           Select a task
         </span>
       </div>
-      {/* Same three groups as the live header, or the bar rearranges itself
-          the moment a task is picked. */}
+      {/* Same groups as the live header, or the bar rearranges itself the
+          moment a task is picked. */}
       <div className="session-header-actions" aria-hidden="true">
+        <ReviewLoopButton disabled />
+        <HeaderSeparator />
         <FastPromptButtons disabled />
         {buttons.slice(0, 1).map(placeholderButton)}
         <HeaderSeparator />

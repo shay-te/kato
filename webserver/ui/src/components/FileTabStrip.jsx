@@ -8,6 +8,7 @@ import {
   canToggleView,
   markdownViewFor,
 } from '../utils/markdownView.js';
+import { buildReviewLoopTabModels } from './reviewLoop/reviewLoopHelpers.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -22,6 +23,14 @@ const NO_DRAG = { key: '', over: '' };
 export default function FileTabStrip({
   tabs, activeKey, onSelect, onClose, onToggleView, onToggleMarkdownView,
   onCloseAll, onCloseOthers, onTogglePin, onReorder,
+  // Review-loop tabs share this strip so they and file tabs live together —
+  // opening a file no longer hides the loops. They are APP-level (one per
+  // task, spanning task switches), appended after the per-task file tabs and
+  // visually set apart (loop glyph + indigo accent). ``{ taskId, tone }`` each.
+  reviewLoopTabs = [],
+  activeReviewLoopTab = '',
+  onSelectReviewLoop = () => {},
+  onCloseReviewLoop = () => {},
   // Bumped ONLY when the operator opened a file from the tree. Scrolling
   // the tab into view is a response to that click and nothing else — see
   // the effect below.
@@ -71,8 +80,25 @@ export default function FileTabStrip({
     };
   }, [menu]);
 
-  if (!tabs || tabs.length === 0) { return null; }
-  const draggedTab = drag.key ? tabs.find((tab) => tab.key === drag.key) : null;
+  const fileTabs = tabs || [];
+  const loopTabs = reviewLoopTabs || [];
+  if (fileTabs.length === 0 && loopTabs.length === 0) { return null; }
+  const draggedTab = drag.key ? fileTabs.find((tab) => tab.key === drag.key) : null;
+  const loopTabModels = buildReviewLoopTabModels(loopTabs, {
+    activeTaskId: activeReviewLoopTab,
+    hasFileTabs: fileTabs.length > 0,
+  });
+  const loopTabEls = loopTabModels.map((loop) => (
+    <ReviewLoopFileTab
+      key={`loop:${loop.taskId}`}
+      taskId={loop.taskId}
+      tone={loop.tone}
+      active={loop.active}
+      groupStart={loop.groupStart}
+      onSelect={onSelectReviewLoop}
+      onClose={onCloseReviewLoop}
+    />
+  ));
   return (
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
@@ -116,6 +142,7 @@ export default function FileTabStrip({
             }}
           />
         ))}
+        {loopTabEls}
       </ul>
       {menu && (
         <FileTabMenu
@@ -129,6 +156,34 @@ export default function FileTabStrip({
         />
       )}
     </nav>
+  );
+}
+
+
+// A review loop's tab in the shared strip. Set apart from a file tab by a
+// loop glyph tinted with the loop's state (running = indigo, clean = green,
+// …) and an indigo active underline — so the two kinds never read alike.
+function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose }) {
+  return (
+    <li
+      className={cx('file-tab', 'is-review-loop', active && 'active', groupStart && 'is-group-start')}
+      data-review-loop-task={taskId}
+      title={`Review loop — ${taskId}`}
+      onClick={() => onSelect(taskId)}
+    >
+      <span className={cx('file-tab-loop-icon', `is-${tone || 'idle'}`)} aria-hidden="true">
+        <Icon name="loop" />
+      </span>
+      <span className="file-tab-label">{taskId}</span>
+      <button
+        type="button"
+        className="file-tab-close-btn"
+        aria-label={`Close the ${taskId} review loop tab`}
+        onClick={(event) => { event.stopPropagation(); onClose(taskId); }}
+      >
+        <Icon name="xmark" />
+      </button>
+    </li>
   );
 }
 

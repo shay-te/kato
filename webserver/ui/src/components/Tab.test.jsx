@@ -62,6 +62,26 @@ describe('Tab', () => {
     expect(container.querySelector('li')).toHaveClass('needs-attention');
   });
 
+  test('a running review loop rings the pill, without touching the status dot', () => {
+    const running = _session({
+      review_loop: { loop_id: 'a'.repeat(32), status: 'running', phase: 'reviewing', round: 1, max_rounds: 3 },
+    });
+    const { container, rerender } = render(<Tab session={running} onSelect={() => {}} />);
+    const li = container.querySelector('li');
+    expect(li).toHaveClass('has-review-loop');
+    // The ring is a SEPARATE axis — the status dot keeps its own classes.
+    const dotClass = container.querySelector('.status-dot')?.className;
+    expect(dotClass).toBeTruthy();
+
+    // A finished loop no longer rings the pill (the ring means "running").
+    rerender(<Tab session={_session({
+      review_loop: { loop_id: 'a'.repeat(32), status: 'clean', phase: 'done', round: 2, max_rounds: 3 },
+    })} onSelect={() => {}} />);
+    expect(container.querySelector('li')).not.toHaveClass('has-review-loop');
+    // The status dot did not change because of the loop.
+    expect(container.querySelector('.status-dot')?.className).toBe(dotClass);
+  });
+
   test('status dot reflects the resolved status (attention overrides base)', () => {
     const { container } = render(
       <Tab

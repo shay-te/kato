@@ -304,6 +304,22 @@ class AgentService(MissionStepLoggerMixin, Service):
             logger=later(self, 'logger'),
         )
 
+        # The review loop: an independent reviewer over the task's whole
+        # change, its findings posted into the chat, again and again until a
+        # review is clean. The loop is ``review_loop_core_lib``; the adapters
+        # wire it to kato — and to the comment runs' OWN chat sender, so the
+        # two share one per-task lock.
+        from kato_core_lib.data_layers.service.review_loop_adapters import (
+            build_review_loop_service,
+        )
+        self._review_loop_service = build_review_loop_service(
+            comment_runs=self._task_comment_run_service,
+            session_manager=later(self, '_session_manager'),
+            workspace_manager=later(self, '_workspace_manager'),
+            implementation_service=later(self, '_implementation_service'),
+            logger=later(self, 'logger'),
+        )
+
         # Comments (operator diff comments + provider PR review comments) are
         # their own subsystem: one store, one queue, one scheduler. They were
         # 42% of this class; the logic lives in TaskCommentService now and
@@ -366,6 +382,34 @@ class AgentService(MissionStepLoggerMixin, Service):
             ),
             logger=later(self, 'logger'),
         )
+
+    @property
+    def review_loops(self):
+        """Every task's review loops — start / stop / state / summaries.
+
+        See ``review_loop_core_lib`` (the loop) and ``review_loop_adapters``
+        (kato's chat, reviewer and rules behind it).
+        """
+        return self._review_loop_service
+
+    def finish_from_done_marker(self, task_id: str):
+        """The ``<KATO_TASK_DONE>`` callback: publish — unless a loop is mid-cycle.
+
+        A review loop's fix turn is not the end of the task, and the fixer is
+        told never to print the marker there. If it does anyway, publishing
+        now would push a change the loop is about to review again, so it is
+        ignored (loudly) while the task's loop runs. The operator's own Done
+        button calls ``publish.finish_task_planning_session`` directly and is
+        never held back by this.
+        """
+        if self._review_loop_service.is_running(str(task_id or '')):
+            self.logger.warning(
+                'task %s printed the done marker during a review loop — not '
+                'publishing; the loop is still reviewing the change',
+                task_id,
+            )
+            return None
+        return self.publish.finish_task_planning_session(task_id)
 
     @property
     def comment_runs(self):
@@ -463,6 +507,15 @@ class AgentService(MissionStepLoggerMixin, Service):
         guarded so a single failure can't block the rest of the cleanup.
         Idempotent — safe to call twice.
         """
+        # First: a running loop must stop before the sessions it is waiting
+        # on go away, or it would record them as having crashed.
+        try:
+            from kato_core_lib.data_layers.service.review_loop_adapters import (
+                shut_down_review_loops,
+            )
+            shut_down_review_loops(self._review_loop_service)
+        except Exception:
+            self.logger.exception('error stopping review loops')
         if self._parallel_task_runner is not None:
             try:
                 # DO NOT WAIT. ``wait=True`` blocks until every in-flight scan

@@ -43,6 +43,7 @@ _MAX_KATO_LINES = {
     'gitlab_core_lib': 0,
     'jira_core_lib': 0,
     'openrouter_core_lib': 0,
+    'review_loop_core_lib': 0,
     'task_core_lib': 0,
     # ---- known debt — clean these up; lower the number, never raise it ----
     'agent_provider_contracts': 18,

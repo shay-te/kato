@@ -239,7 +239,7 @@ class ClaudeSessionManager(object):
             'lessons_path': lessons_path,
             'docker_mode_on': docker_mode_on,
             # Task folder for the docker bind mount; '' keeps the old
-            # cwd-only mount. See StreamingClaudeSession._sandbox_mount.
+            # cwd-only mount. See spawn_utils.sandbox_mount_for.
             'sandbox_root': sandbox_root,
             'additional_dirs': list(additional_dirs or []),
             # The host's standing system-prompt guidance; see

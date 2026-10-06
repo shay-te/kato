@@ -19,7 +19,6 @@ Two invariants this code exists to hold:
 
 from __future__ import annotations
 
-import threading
 import time
 import uuid
 
@@ -35,9 +34,9 @@ from sandbox_core_lib.sandbox_core_lib.workspace_delimiter import (
 )
 
 from kato_core_lib.helpers.comment_store_utils import comment_store_for
-from kato_core_lib.helpers.late_binding import provider_for
+from kato_core_lib.data_layers.service.main_chat_delivery import MainChatDelivery
+from kato_core_lib.helpers.late_binding import later, provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
 
 # Stamped on every dispatch so a result can be matched to the run that asked
 # for it — see ``_comment_result_belongs_to_run``.
@@ -67,9 +66,22 @@ class TaskCommentRunService(object):
         self._logger_getter = provider_for(
             logger if logger is not None else configure_logger('TaskCommentRunService'),
         )
-        # Per-task lock serialising busy-check → IN_PROGRESS flip → send.
-        self._comment_dispatch_locks: dict[str, threading.Lock] = {}
-        self._comment_dispatch_locks_lock = threading.Lock()
+        # Getting a prompt into the task's chat (busy/stalled checks, the
+        # per-task send lock, send-or-respawn). One instance, shared with every
+        # other kato sender through ``chat_delivery`` so they all hold the
+        # SAME per-task lock.
+        self._chat_delivery = MainChatDelivery(
+            session_manager=later(self, '_session_manager'),
+            workspace_manager=later(self, '_workspace_manager'),
+            parallel_task_runner=later(self, '_parallel_task_runner'),
+            planning_session_runner=later(self, '_planning_session_runner'),
+            logger=later(self, 'logger'),
+        )
+
+    @property
+    def chat_delivery(self) -> MainChatDelivery:
+        """The process's one sender into task chats — see ``MainChatDelivery``."""
+        return self._chat_delivery
 
     @property
     def logger(self):
@@ -253,7 +265,7 @@ class TaskCommentRunService(object):
                     session = None
             if session is not None and getattr(session, 'is_alive', False):
                 continue
-            if self._task_has_busy_turn(task_id):
+            if self._chat_delivery.has_busy_turn(task_id):
                 continue
             store = self._comment_store_for(task_id)
             if store is None:
@@ -336,7 +348,7 @@ class TaskCommentRunService(object):
         # IN_PROGRESS — the live RESULT for this comment's own turn, or
         # the scan-loop fallback once the turn truly ends, completes it
         # with the right answer.
-        if self._task_has_busy_turn(task_id):
+        if self._chat_delivery.has_busy_turn(task_id):
             return []
 
         store = self._comment_store_for(task_id)
@@ -352,7 +364,7 @@ class TaskCommentRunService(object):
         # INSIDE the lock means the second caller sees the first's flip and
         # skips. The drain stays OUTSIDE the lock — it acquires this same
         # non-reentrant lock itself (``trigger_comment_run``).
-        with self._comment_dispatch_lock_for(task_id):
+        with self._chat_delivery.dispatch_lock_for(task_id):
             completed = self._complete_in_progress_comments_locked(
                 store, task_id, success,
                 result_text=result_text,
@@ -492,13 +504,13 @@ class TaskCommentRunService(object):
                 continue
             # A stalled session is alive but no longer consuming stdin
             # (the classic post-restart ``--resume`` respawn that never
-            # picked up the piped message). ``_task_has_busy_turn``
+            # picked up the piped message). ``MainChatDelivery.has_busy_turn``
             # reports it busy (``sent > received``), which would
             # otherwise pin the comment IN_PROGRESS forever — the scan
             # loop's safety net never fires, and the operator sees kato
             # ignore the comment after a restart. Requeue so the next
             # drain force-respawns a fresh session for it.
-            if self._task_session_is_stalled(task_id):
+            if self._chat_delivery.is_stalled(task_id):
                 advanced.extend(
                     self._requeue_in_progress_comments(
                         store, task_id, in_progress, reason='session stalled',
@@ -506,7 +518,7 @@ class TaskCommentRunService(object):
                 )
                 continue
             # Leave comments alone while the session is mid-turn.
-            if self._task_has_busy_turn(task_id):
+            if self._chat_delivery.has_busy_turn(task_id):
                 continue
             session = None
             if self._session_manager is not None:
@@ -609,7 +621,7 @@ class TaskCommentRunService(object):
         can retry by reopening the comment or running the queue
         drain manually.
 
-        Serialized per-task via ``_comment_dispatch_lock_for`` so
+        Serialized per-task via ``MainChatDelivery.dispatch_lock_for`` so
         the busy-check → IN_PROGRESS flip → ``send_user_message``
         sequence is atomic. Two concurrent triggers (scan-tick drain
         + browser POST) used to each pass the busy check before
@@ -627,19 +639,13 @@ class TaskCommentRunService(object):
             return False
         # A review-fix batch (or the task's implementation run) may be actively
         # operating this task's workspace clone via the parallel runner. That
-        # path uses a DIFFERENT lock than ``_comment_dispatch_lock_for`` here,
+        # path uses a DIFFERENT lock than ``MainChatDelivery.dispatch_lock_for`` here,
         # so spawning a local comment agent now would run concurrent git ops on
         # the SAME on-disk checkout. Stay QUEUED; the scan-loop drain
         # redispatches once the runner frees the task.
-        runner = self._parallel_task_runner
-        if runner is not None:
-            try:
-                in_flight = runner.is_in_flight(task_id)
-            except Exception:
-                in_flight = False
-            if in_flight:
-                return False
-        with self._comment_dispatch_lock_for(task_id):
+        if self._chat_delivery.runner_in_flight(task_id):
+            return False
+        with self._chat_delivery.dispatch_lock_for(task_id):
             # Strict one-at-a-time: never dispatch a comment while another
             # is already IN_PROGRESS for this task. The session busy-checks
             # below can under-report — a respawned/resumed turn does not
@@ -655,8 +661,8 @@ class TaskCommentRunService(object):
             # stuck; the post-turn drain releases the next one.
             if self._task_has_in_progress_comment(store, exclude_id=comment_id):
                 return False
-            stalled = self._task_session_is_stalled(task_id)
-            live_turn_busy = self._task_has_busy_turn(task_id) and not stalled
+            stalled = self._chat_delivery.is_stalled(task_id)
+            live_turn_busy = self._chat_delivery.has_busy_turn(task_id) and not stalled
             if live_turn_busy:
                 # Stay queued; the queue drain (called from the
                 # ``RESULT`` event handler) picks it up on the next
@@ -698,7 +704,7 @@ class TaskCommentRunService(object):
                 start_run(
                     comment_id,
                     started_at_epoch=time.time(),
-                    result_count_before=self._task_result_count(task_id),
+                    result_count_before=self._chat_delivery.result_count(task_id),
                     run_marker=run_marker,
                 )
             else:
@@ -734,21 +740,6 @@ class TaskCommentRunService(object):
             if getattr(comment, 'kato_status', '') == KatoCommentStatus.IN_PROGRESS.value:
                 return True
         return False
-
-    def _task_result_count(self, task_id: str) -> int:
-        """Number of result events currently known for a task session."""
-        if self._session_manager is None:
-            return 0
-        try:
-            session = self._session_manager.get_session(task_id)
-        except Exception:
-            return 0
-        if session is None:
-            return 0
-        try:
-            return int(getattr(session, 'result_events_received', 0) or 0)
-        except (TypeError, ValueError):
-            return 0
 
     @staticmethod
     def _comment_run_marker() -> str:
@@ -808,80 +799,8 @@ class TaskCommentRunService(object):
             return result_received_at_epoch > started_at
 
         if result_count_before >= 0:
-            return self._task_result_count(task_id) > result_count_before
+            return self._chat_delivery.result_count(task_id) > result_count_before
         return True
-
-    def _task_has_busy_turn(self, task_id: str) -> bool:
-        """True when the live streaming session has any work in flight.
-
-        "In flight" covers TWO states the dispatch path must treat as
-        busy, because each one used to let a queued comment slip into
-        a turn it didn't own and then be marked ADDRESSED by that
-        turn's RESULT:
-
-        1. Mid-turn (``is_working``): Claude has spoken at least one
-           event for the current message but no RESULT yet.
-        2. Sent-but-unacked: ``send_user_message`` has written to the
-           CLI's stdin but Claude has not yet emitted its first event
-           for that message. ``is_working`` walks ``_recent_events``,
-           so during this race window it returns False even though
-           there is a queued message waiting to be processed. Without
-           this second check, a comment dispatched in that gap would
-           fire its OWN ``send_user_message`` onto a "false-idle"
-           session, and the PRIOR message's RESULT would then mark the
-           comment ``ADDRESSED`` before its work had even started
-           (visible symptom: kato's reply quoted prior-turn work and
-           the chat panel was still ``thinking`` on the comment).
-        """
-        if self._session_manager is None:
-            return False
-        try:
-            session = self._session_manager.get_session(task_id)
-        except Exception:
-            return False
-        if session is None or not getattr(session, 'is_alive', False):
-            return False
-        if bool(getattr(session, 'is_working', False)):
-            return True
-        sent = int(getattr(session, 'user_messages_sent', 0) or 0)
-        received = int(getattr(session, 'result_events_received', 0) or 0)
-        return sent > received
-
-    def _task_session_is_stalled(self, task_id: str) -> bool:
-        """True when the task's session is alive but no longer processing input.
-
-        A stalled session has a sent user message that never produced a
-        ``result`` (``user_messages_sent > result_events_received``),
-        is NOT actively mid-turn (``is_working`` is False), and the last
-        send was longer ago than ``_COMMENT_SEND_ACK_GRACE_SECONDS``.
-        That combination means the subprocess is alive but its turn loop
-        has ended — writing another ``send_user_message`` would vanish
-        into the void. ``_task_has_busy_turn`` reports such a session as
-        busy (``sent > received``), which is what kept queued comments
-        ``pending`` forever; dispatch uses this to age that gap out and
-        force a fresh respawn instead. Deliberately conservative: an
-        unknown last-send time (``0``) is NOT treated as stalled.
-        """
-        if self._session_manager is None:
-            return False
-        try:
-            session = self._session_manager.get_session(task_id)
-        except Exception:
-            return False
-        if session is None or not getattr(session, 'is_alive', False):
-            return False
-        if bool(getattr(session, 'is_working', False)):
-            return False
-        sent = int(getattr(session, 'user_messages_sent', 0) or 0)
-        received = int(getattr(session, 'result_events_received', 0) or 0)
-        if sent <= received:
-            return False
-        last_sent = float(
-            getattr(session, 'last_user_message_sent_epoch', 0.0) or 0.0,
-        )
-        if last_sent <= 0:
-            return False
-        return (time.time() - last_sent) >= _COMMENT_SEND_ACK_GRACE_SECONDS
 
     def _run_comment_agent(
         self,
@@ -890,145 +809,24 @@ class TaskCommentRunService(object):
         force_respawn: bool = False,
         run_marker: str = '',
     ) -> bool:
-        """Hand the comment off to the streaming session as a user message.
+        """Hand the comment off to the task's main chat as a user message.
 
-        Sends the prompt into the live chat session when one exists and
-        is healthy; otherwise (no session, dead session, or — when
-        ``force_respawn`` is set — a stalled session that won't consume
-        stdin) respawns Claude so the comment actually runs. The
-        operator workflow is "comment lands → kato works on it".
-
-        ``force_respawn`` is set by the dispatcher when the alive
-        session is stalled: we terminate the dead-but-alive subprocess
-        first so the session manager spawns a genuinely fresh one
-        (``start_session`` returns the existing session untouched while
-        it is still ``is_alive``), preserving the ``--resume`` id on the
-        record so conversation history carries over.
+        Building the comment's prompt is this service's job; getting it into
+        the chat — live send, respawn of a dead session, terminate-and-respawn
+        of a stalled one when ``force_respawn`` is set — is
+        ``MainChatDelivery.deliver``. The operator workflow is "comment lands
+        → kato works on it".
         """
         prompt = self._comment_agent_prompt(
             task_id, record, run_marker=run_marker,
         )
-        if self._session_manager is None:
-            return self._spawn_comment_agent(task_id, record, prompt)
-        session = self._session_manager.get_session(task_id)
-        if session is None or not getattr(session, 'is_alive', False):
-            return self._spawn_comment_agent(task_id, record, prompt)
-        if force_respawn:
-            self._terminate_stalled_session(task_id)
-            return self._spawn_comment_agent(task_id, record, prompt)
-        send = getattr(session, 'send_user_message', None)
-        if not callable(send):
-            return False
-        send(prompt)
-        return True
-
-    def _terminate_stalled_session(self, task_id: str) -> None:
-        """Kill a stalled-but-alive subprocess so a fresh one can spawn.
-
-        Keeps the session RECORD (``remove_record=False``) so the
-        respawn can still ``--resume`` the prior conversation id.
-        Best-effort: a failure here just means the respawn may reuse the
-        stalled session, which is no worse than before.
-        """
-        if self._session_manager is None:
-            return
-        terminate = getattr(self._session_manager, 'terminate_session', None)
-        if not callable(terminate):
-            return
-        try:
-            terminate(task_id, remove_record=False)
-            self.logger.info(
-                'terminated stalled session for task %s before respawn',
-                task_id,
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to terminate stalled session for task %s', task_id,
-            )
-
-    def _warn_if_comment_has_no_resumable_session(self, task_id: str, record) -> None:
-        """Flag a comment respawn that will carry ZERO prior conversation.
-
-        The respawn path (``resume_session_for_chat``) already resumes via
-        the task's persisted ``agent_session_id`` whenever one is on file —
-        this only covers the one case that's genuinely a context loss: no
-        record, or a record with no session id, meaning the agent that
-        answers this comment has never seen the task's implementation
-        history at all. Diagnostic only — never blocks the run — but a
-        report of kato "not aware of what happened before" should show up
-        HERE in the logs, distinguishable from a resumed-but-under-specified
-        prompt (the case the snippet/guardrail above actually fixes).
-        """
-        if self._session_manager is None:
-            return
-        try:
-            record_on_file = self._session_manager.get_record(task_id)
-        except Exception:
-            return
-        if record_on_file is not None and getattr(record_on_file, 'agent_session_id', ''):
-            return
-        self.logger.warning(
-            'comment %s on task %s: no prior agent session on file — this '
-            'respawn starts with NO conversation history from the task\'s '
-            'implementation or earlier comments',
-            getattr(record, 'id', '<unknown>'), task_id,
+        return self._chat_delivery.deliver(
+            task_id,
+            prompt,
+            label=f"comment {getattr(record, 'id', '<unknown>')}",
+            cwd_for=lambda: self._comment_agent_cwd(task_id, record),
+            force_respawn=force_respawn,
         )
-
-    def _spawn_comment_agent(self, task_id: str, record, prompt: str) -> bool:
-        """Respawn Claude for a queued local diff comment when no subprocess is alive."""
-        runner = self._planning_session_runner
-        if runner is None:
-            # The prime "Claude is idle, not working on my comment"
-            # cause: nothing can respawn the session, so the comment
-            # ping-pongs QUEUED↔IN_PROGRESS every scan tick forever.
-            # Make it loud instead of a silent False.
-            self.logger.warning(
-                'comment %s on task %s cannot start: no planning session '
-                'runner wired — Claude will stay idle until a session is '
-                'spawned another way',
-                getattr(record, 'id', '<unknown>'), task_id,
-            )
-            return False
-        self._warn_if_comment_has_no_resumable_session(task_id, record)
-        cwd = self._comment_agent_cwd(task_id, record)
-        summary = ''
-        description = ''
-        workspace_root = ''
-        if self._workspace_manager is not None:
-            workspace = self._workspace_manager.get(task_id)
-            summary = str(getattr(workspace, 'task_summary', '') or '')
-            description = str(getattr(workspace, 'task_description', '') or '')
-            # Task folder: scopes the prompt boundary and the docker mount.
-            try:
-                workspace_root = str(
-                    self._workspace_manager.workspace_path(task_id) or '',
-                )
-            except Exception:
-                workspace_root = ''
-        # Expose the task's OTHER repo clones too. Without this a
-        # comment-driven respawn spawned a single-repo session that
-        # couldn't read across repos (the cross-repo "that repo is
-        # forbidden" refusal) and made every sibling-repo path look
-        # outside the sandbox. Mirrors the chat-send route's --add-dir set.
-        additional_dirs = sibling_repository_dirs(
-            self._workspace_manager, task_id,
-        )
-        self.logger.info(
-            'comment %s on task %s: respawning Claude to work on it '
-            '(cwd=%s, +%d repo(s))',
-            getattr(record, 'id', '<unknown>'), task_id, cwd or '<none>',
-            len(additional_dirs),
-        )
-        runner.resume_session_for_chat(
-            task_id=task_id,
-            message=prompt,
-            cwd=cwd,
-            task_summary=summary,
-            task_description=description,
-            workspace_root=workspace_root,
-            additional_dirs=additional_dirs,
-        )
-        return True
 
     def _comment_agent_cwd(self, task_id: str, record) -> str:
         """Prefer the commented repo clone, fallback to another repo
@@ -1132,15 +930,6 @@ class TaskCommentRunService(object):
             f'without committing.{marker_instruction}'
         )
 
-    def _comment_dispatch_lock_for(self, task_id: str):
-        """Return the per-task lock that serializes comment dispatch."""
-        with self._comment_dispatch_locks_lock:
-            lock = self._comment_dispatch_locks.get(task_id)
-            if lock is None:
-                lock = threading.Lock()
-                self._comment_dispatch_locks[task_id] = lock
-            return lock
-
     def has_local_comment_in_progress(self, task_id: str) -> bool:
         """True when a local diff-comment agent run currently owns this task's
         workspace clone. The review-comment dispatch (which runs through the
@@ -1153,6 +942,27 @@ class TaskCommentRunService(object):
             return False
         try:
             return self._task_has_in_progress_comment(store)
+        except Exception:
+            return False
+
+    def has_local_comment_pending(self, task_id: str) -> bool:
+        """True while a local diff comment is queued or being worked on.
+
+        Another kato sender into the chat (the review loop) waits for these:
+        the operator's own comments go first, and a send landing between two
+        queued comments would split them across turns. Best-effort: a store
+        read failure reports "nothing pending" so it can't wedge a sender.
+        """
+        from kato_core_lib.comment_core_lib import KatoCommentStatus
+
+        store = self._comment_store_for(task_id)
+        if store is None:
+            return False
+        pending = {KatoCommentStatus.QUEUED.value, KatoCommentStatus.IN_PROGRESS.value}
+        try:
+            return any(
+                getattr(comment, 'kato_status', '') in pending for comment in store.list()
+            )
         except Exception:
             return False
 

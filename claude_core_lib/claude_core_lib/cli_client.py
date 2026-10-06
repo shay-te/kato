@@ -4,10 +4,15 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from agent_core_lib.agent_core_lib.helpers.cancellable_process import (
+    ProcessCancelled,
+    run_cancellable,
+)
 from agent_core_lib.agent_core_lib.helpers.command_floor import (
     FLOOR_DENY_PROGRAMS,
     GIT_MUTATING_SUBCOMMANDS,
@@ -33,6 +38,7 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     append_model_effort_flags,
     build_appended_system_prompt,
     build_claude_subprocess_env,
+    sandbox_mount_for,
     wrap_spawn_for_docker,
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
@@ -263,14 +269,34 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             'tool that mutates the workspace.\n'
         )
 
-    def investigate(self, prompt: str, *, cwd: str = '') -> str:
+    def investigate(
+        self,
+        prompt: str,
+        *,
+        cwd: str = '',
+        additional_dirs: list[str] | None = None,
+        sandbox_root: str = '',
+        task_id: str = '',
+        log_label: str = '',
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         """Run a single read-only Claude turn and return the raw text.
 
-        Used by the triage flow: the orchestrator hands Claude a task description
-        and a list of valid triage outcome tags, asks Claude to pick
-        one. No file edits, no PR work — disallowedTools blocks all
-        write paths (Edit, Write, Bash, etc.) so even a confused turn
-        can't damage the repo.
+        A FRESH turn — no ``--resume``, and nothing persisted, so it never
+        shows up as a conversation to adopt — with every write path (Edit,
+        Write, Bash, …) denied, so even a confused turn can't damage the repo.
+        Used by triage (pick an outcome tag) and by an independent review that
+        reads a task's repos and reports what it finds.
+
+        The read-only tool split is passed to THIS run only. It used to be
+        written onto the client for the length of the call, and the client is
+        shared: a second run starting meanwhile spawned with the wrong tools,
+        or put the wrong ones back when it finished.
+
+        ``additional_dirs`` / ``sandbox_root`` widen what the run can read (and,
+        in docker mode, what is mounted) to a whole multi-repo task.
+        ``cancel_event`` makes the run stoppable mid-way: setting it kills the
+        CLI and raises ``ProcessCancelled``.
         """
         normalized_prompt = normalized_text(prompt)
         if not normalized_prompt:
@@ -278,22 +304,18 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         normalized_cwd = normalized_text(cwd)
         if not normalized_cwd:
             normalized_cwd = self._repository_root_path or os.getcwd()
-        # Strict tool denylist: triage is read-only by definition.
-        original_disallowed = self._disallowed_tools
-        original_allowed = self._allowed_tools
-        try:
-            self._disallowed_tools = READ_ONLY_DISALLOWED_TOOLS
-            self._allowed_tools = READ_ONLY_ALLOWED_TOOLS
-            payload = self._run_prompt(
-                prompt=normalized_prompt,
-                cwd=normalized_cwd,
-                additional_dirs=[],
-                log_label='triage investigation',
-                task_id='triage',
-            )
-        finally:
-            self._disallowed_tools = original_disallowed
-            self._allowed_tools = original_allowed
+        payload = self._run_prompt(
+            prompt=normalized_prompt,
+            cwd=normalized_cwd,
+            additional_dirs=list(additional_dirs or []),
+            log_label=log_label or 'triage investigation',
+            task_id=task_id or 'triage',
+            allowed_tools=READ_ONLY_ALLOWED_TOOLS,
+            disallowed_tools=READ_ONLY_DISALLOWED_TOOLS,
+            persist_session=False,
+            sandbox_root=sandbox_root,
+            cancel_event=cancel_event,
+        )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
 
@@ -431,12 +453,20 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         agent_session_id: str = '',
         log_label: str = '',
         task_id: str = '',
+        allowed_tools: str | None = None,
+        disallowed_tools: str | None = None,
+        persist_session: bool = True,
+        sandbox_root: str = '',
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, str | bool]:
         command = self._build_command(
             additional_dirs=additional_dirs,
             agent_session_id=agent_session_id,
             cwd=cwd,
             resolve_binary=not self._docker_mode_on,
+            allowed_tools=allowed_tools,
+            disallowed_tools=disallowed_tools,
+            persist_session=persist_session,
         )
         env = self._build_subprocess_env()
         log_label = log_label or 'Claude CLI'
@@ -451,29 +481,54 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         container_name = ''
         if self._docker_mode_on:
             workspace_path = cwd or self._repository_root_path or os.getcwd()
+            # ``sandbox_root`` mounts the whole task folder (every repo) while
+            # keeping the working directory on ``cwd`` — same as a chat session.
+            mount_root, workdir_subpath = sandbox_mount_for(
+                workspace_path, sandbox_root,
+            )
             command, container_name = wrap_spawn_for_docker(
                 command,
-                workspace_path=workspace_path,
+                workspace_path=mount_root,
                 task_id=task_id or 'unknown',
                 logger=self.logger,
+                workdir_subpath=workdir_subpath,
             )
             # Docker sets the container WORKDIR to /workspace; the host
             # cwd is irrelevant for the docker client itself.
             spawn_cwd = None
         self.logger.info('Mission %s: invoking Claude CLI', log_label)
         try:
-            completed = subprocess.run(
-                command,
-                input=prompt,
-                cwd=spawn_cwd,
-                env=env,
-                capture_output=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                check=False,
-                timeout=self._timeout_seconds,
-            )
+            if cancel_event is None:
+                completed = subprocess.run(
+                    command,
+                    input=prompt,
+                    cwd=spawn_cwd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    check=False,
+                    timeout=self._timeout_seconds,
+                )
+            else:
+                completed = run_cancellable(
+                    command,
+                    input_text=prompt,
+                    cwd=spawn_cwd,
+                    env=env,
+                    timeout_seconds=self._timeout_seconds,
+                    cancel_event=cancel_event,
+                    logger=self.logger,
+                    label=log_label,
+                )
+        except ProcessCancelled:
+            if container_name:
+                # Killing the ``docker run`` client never reaches the
+                # container; stop it explicitly, as the timeout path does.
+                from sandbox_core_lib.sandbox_core_lib.manager import kill_container
+                kill_container(container_name, logger=self.logger)
+            raise
         except subprocess.TimeoutExpired as exc:
             if container_name:
                 # subprocess.run's own TimeoutExpired handling SIGKILLs the
@@ -501,7 +556,14 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         cwd: str = '',
         resolve_binary: bool = True,
         include_system_prompt: bool = True,
+        allowed_tools: str | None = None,
+        disallowed_tools: str | None = None,
+        persist_session: bool = True,
     ) -> list[str]:
+        """``allowed_tools`` / ``disallowed_tools`` replace the client's own
+        lists for this command only (``None`` keeps them); the non-overridable
+        floors are merged in either way. ``persist_session=False`` adds
+        ``--no-session-persistence`` so a throwaway run leaves no transcript."""
         command: list[str] = [
             *(self._host_binary_argv() if resolve_binary else [self._binary]),
             '-p',
@@ -510,6 +572,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             '--permission-mode',
             self._permission_mode,
         ]
+        if not persist_session:
+            command.append('--no-session-persistence')
         # Force out-of-workspace file writes (e.g. /tmp scratch) back through
         # the permission path — acceptEdits otherwise auto-accepts them with no
         # approval. Shared with the streaming builder; see write_scope_settings.
@@ -525,11 +589,13 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             max_turns=self._max_turns,
             effort=self._effort,
         )
-        merged_allowed = self._merge_allowed_with_read_only_allowlist(self._allowed_tools)
+        merged_allowed = self._merge_allowed_with_read_only_allowlist(
+            self._allowed_tools if allowed_tools is None else allowed_tools,
+        )
         if merged_allowed:
             command.extend(['--allowedTools', merged_allowed])
         merged_disallowed = self._merge_disallowed_with_floor(
-            self._disallowed_tools,
+            self._disallowed_tools if disallowed_tools is None else disallowed_tools,
             bypass_permissions=self._bypass_permissions,
         )
         command.extend(['--disallowedTools', merged_disallowed])

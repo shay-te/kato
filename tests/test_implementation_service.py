@@ -38,5 +38,40 @@ class ImplementationServiceTests(unittest.TestCase):
         )
 
 
+
+class ImplementationServiceInvestigateTests(unittest.TestCase):
+    """The one fresh read-only turn a feature like the review loop runs."""
+
+    def test_forwards_every_argument_to_the_client(self) -> None:
+        import threading
+
+        class _RecordingClient(object):
+            def __init__(self) -> None:
+                self.calls: list[tuple] = []
+
+            def investigate(self, prompt, **kwargs):
+                self.calls.append((prompt, kwargs))
+                return 'report'
+
+        client = _RecordingClient()
+        service = ImplementationService(client)
+        cancel = threading.Event()
+        text = service.investigate(
+            'review', cwd='/w/T/api', additional_dirs=['/w/T'],
+            sandbox_root='/w/T', task_id='T', log_label='review', cancel_event=cancel,
+        )
+        self.assertEqual(text, 'report')
+        self.assertEqual(client.calls, [('review', dict(
+            cwd='/w/T/api', additional_dirs=['/w/T'], sandbox_root='/w/T',
+            task_id='T', log_label='review', cancel_event=cancel,
+        ))])
+        self.assertTrue(service.supports_investigation)
+
+    def test_a_backend_without_it_is_refused_with_a_reason(self) -> None:
+        service = ImplementationService(object())
+        self.assertFalse(service.supports_investigation)
+        with self.assertRaisesRegex(RuntimeError, 'read-only investigation'):
+            service.investigate('review')
+
 if __name__ == '__main__':
     unittest.main()

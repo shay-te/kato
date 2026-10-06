@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
+import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
+import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
@@ -292,6 +294,10 @@ export default function Tab({
     hasCustomWidth && 'has-custom-width',
     dragging && 'dragging',
     dropTarget && 'drop-target',
+    // A running review loop rings the whole pill in its own colour. A
+    // SEPARATE axis from the status dot (``dotClass``), which the single
+    // agent-status derivation owns — this never touches that dot.
+    isReviewLoopRunning(session.review_loop) && 'has-review-loop',
   );
 
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
@@ -406,6 +412,7 @@ export default function Tab({
         tabIndex={0}
       >
         <span className={dotClass} />
+        <ReviewLoopTabBadge loop={session.review_loop || null} />
         <span
           ref={labelRef}
           className={cx('tab-label', renaming && 'is-renaming')}
@@ -572,6 +579,10 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
       tone: 'warn',
     });
   }
+  // Where the task's review loop is (or how its last one ended). The loop's
+  // own sentence, separate from the agent's status row above.
+  const loopLine = reviewLoopSentence(session?.review_loop || null, Date.now() / 1000);
+  if (loopLine) { rows.push({ label: 'Review loop', value: loopLine }); }
   const pushedPr = String(
     session?.pr_url || session?.pull_request_url || '',
   ).trim();

@@ -1613,13 +1613,13 @@ class EditTaskCommentTests(unittest.TestCase):
 class TaskHasBusyTurnTests(unittest.TestCase):
     def test_returns_false_when_no_session_manager(self) -> None:
         service = AgentService(**_kwargs())
-        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
     def test_returns_false_on_session_exception(self) -> None:
         session = MagicMock()
         session.get_session.side_effect = RuntimeError('fail')
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
     def test_returns_false_when_session_dead(self) -> None:
         session = MagicMock()
@@ -1627,7 +1627,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             is_alive=False, is_working=True,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
     def test_returns_true_when_session_working(self) -> None:
         session = MagicMock()
@@ -1635,7 +1635,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             is_alive=True, is_working=True,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertTrue(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertTrue(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
     def test_returns_true_when_user_message_sent_but_no_result_yet(self) -> None:
         # Regression: there is a real race window between
@@ -1648,7 +1648,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
         # PRIOR turn's RESULT then marked the comment ``ADDRESSED``
         # before its work even began (kato's reply quoted prior-turn
         # work and the chat panel was still ``thinking`` on the
-        # comment). ``_task_has_busy_turn`` must treat
+        # comment). ``has_busy_turn`` must treat
         # ``user_messages_sent > result_events_received`` as busy so
         # the comment stays QUEUED until the queue drains.
         session = MagicMock()
@@ -1659,7 +1659,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             result_events_received=0,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertTrue(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertTrue(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
     def test_returns_false_when_sends_match_results(self) -> None:
         # Truly idle: every sent message has been answered with a
@@ -1672,7 +1672,7 @@ class TaskHasBusyTurnTests(unittest.TestCase):
             result_events_received=3,
         )
         service = AgentService(**_kwargs(session_manager=session))
-        self.assertFalse(service.comment_runs._task_has_busy_turn('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.has_busy_turn('T1'))
 
 
 class TaskPullRequestIdTests(unittest.TestCase):

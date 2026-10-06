@@ -40,6 +40,11 @@ const LINE_ICONS = {
     + 'M12 11.1a.9.9 0 1 0 0 1.8.9.9 0 0 0 0-1.8z',
   'check': 'M20 6L9 17l-5-5',
   'check-double': 'M2 12l5 5L17 7M13 17l1 1L22 10',
+  // Loop — two arrows chasing each other round a rounded rectangle (the
+  // "repeat" mark). The review loop's glyph; distinct from ``refresh``'s
+  // circular arrows, which mean "reload this now".
+  'loop': 'M17 2l4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4'
+    + 'M21 13v1a4 4 0 0 1-4 4H3',
   'reply': 'M9 17l-6-6 6-6M3 11h11a6 6 0 0 1 6 6v3',
   'refresh': 'M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6'
     + 'M21 12a9 9 0 0 1-15 6.7L3 16',

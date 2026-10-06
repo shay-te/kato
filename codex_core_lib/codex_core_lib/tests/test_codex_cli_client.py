@@ -491,6 +491,38 @@ class ImplementTaskTests(unittest.TestCase):
         idx = cmd.index('--sandbox')
         self.assertEqual(cmd[idx + 1], 'read-only')
 
+    def test_a_bypass_client_still_runs_investigate_read_only(self) -> None:
+        # The read-only sandbox is passed to the run, not written onto the
+        # shared client: bypass stays on for everyone else, and is never on
+        # for this run.
+        client = CodexCliClient(binary='codex', bypass_permissions=True)
+        seen_commands: list[list[str]] = []
+        during: list[bool] = []
+
+        def fake_run(command, **kwargs):
+            seen_commands.append(list(command))
+            during.append(client._bypass_permissions)
+            return _completed(returncode=0)
+
+        with patch(
+            'codex_core_lib.codex_core_lib.cli_client.subprocess.run',
+            side_effect=fake_run,
+        ):
+            client.investigate('review this', cwd='/repos/api', additional_dirs=['/repos'])
+        cmd = seen_commands[0]
+        self.assertNotIn('--dangerously-bypass-approvals-and-sandbox', cmd)
+        self.assertEqual(cmd[cmd.index('--sandbox') + 1], 'read-only')
+        self.assertEqual(cmd[cmd.index('--add-dir') + 1], '/repos')
+        self.assertEqual(during, [True])
+
+    def test_a_bypass_client_keeps_bypass_for_its_normal_runs(self) -> None:
+        client = CodexCliClient(binary='codex', bypass_permissions=True)
+        cmd = client._build_command(
+            additional_dirs=[], agent_session_id='', cwd='/repos/api',
+        )
+        self.assertIn('--dangerously-bypass-approvals-and-sandbox', cmd)
+        self.assertNotIn('--sandbox', cmd)
+
 
 # ---------------------------------------------------------------------------
 # JSONL parsing

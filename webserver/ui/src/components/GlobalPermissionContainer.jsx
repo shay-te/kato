@@ -65,7 +65,8 @@ export default function GlobalPermissionContainer({
   timedGrantOutsideWorkspace = false,
 }) {
   const { list } = usePendingPermissions();
-  // Where the ask is drawn. A setting, because neither answer is right for
+  // Where the ask is drawn. The operator's choice, switched from the ask
+  // itself (ApprovalPlacementToggle), because neither answer is right for
   // everyone: an interrupting dialog costs you your place in another task,
   // and a quiet in-chat card costs a blocked agent some of your attention.
   // See utils/approvalModePref.js.

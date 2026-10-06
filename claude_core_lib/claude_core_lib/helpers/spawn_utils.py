@@ -122,6 +122,39 @@ def append_additional_dirs(command: list[str], additional_dirs) -> None:
             command.extend(['--add-dir', normalized_dir])
 
 
+def sandbox_mount_for(cwd: str, sandbox_root: str) -> tuple[str, str]:
+    """``(bind_mount_root, workdir_subpath)`` for the docker sandbox.
+
+    Without a ``sandbox_root`` this is the old behaviour: mount ``cwd``,
+    WORKDIR at the mount root. With one, mount the task folder so every
+    repo in the task is reachable, and keep the agent's working directory
+    on the SAME repo it would have had — widening the mount must not
+    silently relocate the agent.
+
+    Falls back to mounting ``cwd`` if ``cwd`` is not actually inside
+    ``sandbox_root``; a mount root that doesn't contain the working
+    directory would put the agent outside its own sandbox.
+
+    Shared by the streaming session and the one-shot client, so a one-shot
+    run that needs the whole task (a reviewer reading every repo) is mounted
+    exactly like a chat session.
+    """
+    if not sandbox_root:
+        return cwd, ''
+    root = os.path.normpath(sandbox_root)
+    normalized_cwd = os.path.normpath(cwd) if cwd else ''
+    if not normalized_cwd or normalized_cwd == root:
+        return root, ''
+    try:
+        relative = os.path.relpath(normalized_cwd, root)
+    except ValueError:
+        # Different drives on Windows — no containment relationship.
+        return cwd, ''
+    if relative.startswith(os.pardir) or os.path.isabs(relative):
+        return cwd, ''
+    return root, relative.replace(os.sep, '/')
+
+
 def wrap_spawn_for_docker(
     command: list[str],
     *,

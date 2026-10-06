@@ -1695,7 +1695,7 @@ class InvestigateTests(unittest.TestCase):
         )
         captured = {}
 
-        def fake_run(*, prompt, cwd, additional_dirs, log_label, task_id):
+        def fake_run(*, prompt, cwd, additional_dirs, log_label, task_id, **_overrides):
             captured['cwd'] = cwd
             return {'result': 'investigation answer'}
 

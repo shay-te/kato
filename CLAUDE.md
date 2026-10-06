@@ -75,6 +75,10 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 │                                 provider_client_base)
 ├── codex_core_lib             ← Codex CLI transport    (same three-lib allowance as above)
 ├── openhands_core_lib         ← OpenHands transport    (same three-lib allowance as above)
+├── review_loop_core_lib       ← review loop: an independent read-only reviewer, findings into
+│                                 the main chat, repeat until clean. Generic + kato-free: imports
+│                                 only stdlib + utils_core_lib; the host implements its ports
+│                                 (kato: data_layers/service/review_loop_adapters.py)
 ├── git_core_lib               ← GitClientMixin, git subprocess engine, repo discovery utils
 ├── repository_core_lib        ← provider utils (URL parsing, token messages); imports
 │                                 git_core_lib's pure URL-parsing helpers directly (module
@@ -248,6 +252,32 @@ the same kind of thing in two places, and the regeneration only ever grew the fi
 to preserve every rule) until it outgrew its own timeout and silently stopped.
 `KATO_ARCHITECTURE_DOC_PATH` is read exactly once, at boot, to adopt an old file as the lessons
 document (`LessonsService.adopt_legacy_document`); its earlier lessons are queued for the editor.
+
+### Review loop (operator-started, from the review loop view)
+```
+start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → ReviewLoopService
+  (review_loop_core_lib) thread per task
+  round n: wait for the chat to be free → fresh READ-ONLY reviewer over the WHOLE diff
+           (ImplementationService.investigate: no --resume, no session persistence, Bash/Edit denied)
+     no BLOCKER/MAJOR → CLEAN │ claimed fixes all still there → STUCK │ n == max → MAX_ROUNDS
+     else → findings (ids R<n>-<k> + invariants) posted into the MAIN chat (MainChatDelivery —
+            the comment runs' own sender and per-task lock) → wait for that fix turn to end →
+            parse its <review-response> into the DECISION LEDGER → round n+1, whose reviewer is
+            told the ledger
+```
+**Decision ledger:** the fixer answers each finding fixed (+ regression test) / rejected /
+out_of_scope (+ evidence). A rejection WITH evidence settles the finding: a later reviewer
+re-raising it without `new_evidence` gets it marked settled (shown, not sent, not blocking).
+A bare disagreement settles nothing; a missing response block = "unanswered", never a failure.
+Modelled on reviewed-in-rounds PRs where the implementer rejects a wrong finding with proof.
+The loop never commits or pushes; `<KATO_TASK_DONE>` is ignored while it runs
+(`AgentService.finish_from_done_marker`). Rounds live in `~/.kato/review_loops/` (outside
+every clone). The chat's Stop, a task delete, and kato shutdown end it; a restart marks
+it interrupted (never resumed). A fix paused on a permission ask shows "waiting for your
+approval" and is never treated as stalled. UI: `webserver/ui/src/components/reviewLoop/` —
+header button (opens the view; nothing starts from it) + "where is it now" chip, tab badge,
+centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
+transcript label.
 
 ### PR review comment
 ```

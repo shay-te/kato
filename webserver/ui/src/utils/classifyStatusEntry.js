@@ -1,5 +1,15 @@
 import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 
+// How each way a review loop can end is announced.
+const REVIEW_LOOP_OUTCOMES = {
+  clean: { title: 'Review loop: clean', kind: NOTIFICATION_KIND.COMPLETED },
+  max_rounds: { title: 'Review loop: issues left after the last round', kind: NOTIFICATION_KIND.ATTENTION },
+  stuck: { title: 'Review loop: stuck on the same issues', kind: NOTIFICATION_KIND.ATTENTION },
+  failed: { title: 'Review loop failed', kind: NOTIFICATION_KIND.ERROR },
+  stopped: { title: 'Review loop stopped', kind: NOTIFICATION_KIND.STATUS_CHANGE },
+  interrupted: { title: 'Review loop interrupted', kind: NOTIFICATION_KIND.STATUS_CHANGE },
+};
+
 const PATTERNS = [
   {
     re: /^task (\S+) tagged kato:wait-planning/,
@@ -146,6 +156,22 @@ const PATTERNS = [
         body: `${m[1]}: ${updated} repo(s) updated${failedSuffix}`,
         taskId: m[1],
         kind: NOTIFICATION_KIND.SOURCE_UPDATE,
+      };
+    },
+  },
+  {
+    // A review loop ended — announced even when the operator is on another
+    // task (the task on screen also gets a toast from useReviewLoop).
+    // Emitted by kato's review-loop logger (review_loop_adapters.py). Groups:
+    // task, final status, rounds, reason.
+    re: /^Mission (\S+): review loop finished \((\w+)\) after (\d+) round\(s\): (.*)/,
+    build: (m) => {
+      const outcome = REVIEW_LOOP_OUTCOMES[m[2]] || REVIEW_LOOP_OUTCOMES.stopped;
+      return {
+        title: outcome.title,
+        body: `${m[1]}: ${m[4]}`,
+        taskId: m[1],
+        kind: outcome.kind,
       };
     },
   },

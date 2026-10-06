@@ -13,6 +13,13 @@ import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
 import PanelCard from './components/PanelCard.jsx';
 import PlanPane from './components/PlanPane.jsx';
+import ReviewLoopPane from './components/reviewLoop/ReviewLoopPane.jsx';
+import { reviewLoopTabEntries } from './components/reviewLoop/reviewLoopHelpers.js';
+import {
+  readReviewLoopTabs,
+  reviewLoopView,
+  writeReviewLoopTabs,
+} from './components/reviewLoop/reviewLoopViewStore.js';
 import RightPane from './components/RightPane.jsx';
 import FileTabStrip from './components/FileTabStrip.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
@@ -67,6 +74,10 @@ import {
   closeTab, findTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
 } from './utils/fileTabs.js';
 import { markdownViewFor } from './utils/markdownView.js';
+
+// The centre-pane overlay is the plan only now. The review loop is no longer
+// an overlay — it rides the shared file-tab strip as a tab (``activeReviewLoopTab``).
+const CENTER_OVERLAY = Object.freeze({ PLAN: 'plan' });
 
 const RIGHT_PANE_DEFAULT_WIDTH = 380;
 const RIGHT_PANE_MIN_WIDTH = 220;
@@ -301,7 +312,16 @@ export default function App() {
   // to empty.
   const [openTabs, setOpenTabs] = useState([]);
   const [activeTabKey, setActiveTabKey] = useState(null);
-  const [planOpen, setPlanOpen] = useState(false);
+  // What covers the centre pane instead of the file/diff view: the agent's
+  // plan or the task's review loop. ONE value, so the two can never both be
+  // "open" and fight over the column.
+  const [centerOverlay, setCenterOverlay] = useState(null);
+  // The open review-loop tabs: task ids, App-level (NOT per task) so several
+  // tasks' loops stay open at once and switching the active task leaves them
+  // alone. ``activeReviewLoopTab`` is the one the centre pane shows. Seeded
+  // from localStorage so a reload restores the set.
+  const [reviewLoopTabs, setReviewLoopTabs] = useState(() => readReviewLoopTabs().tabs);
+  const [activeReviewLoopTab, setActiveReviewLoopTab] = useState(() => readReviewLoopTabs().active);
   const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
   const openTabsRef = useRef([]);
   const activeTabKeyRef = useRef(null);
@@ -620,7 +640,10 @@ export default function App() {
     activeTabKeyRef.current = restoredActiveKey;
     setOpenTabs(tabs);
     setActiveTabKey(restoredActiveKey);
-    setPlanOpen(false);
+    // The plan overlay is per task, so it closes on a switch. A loop tab is
+    // NOT per task (``activeReviewLoopTab`` is left alone), so the loop the
+    // operator was watching keeps showing across the switch.
+    setCenterOverlay(null);
     setFileTreeFocusTarget(null);
   }, [activeTaskId]);
   function rememberTabsView(taskId, tabs, activeKey) {
@@ -643,12 +666,12 @@ export default function App() {
       setActiveTabKey(null);
       return;
     }
-    // Opening a file must take over the centre column. If the
-    // operator had the orchestrator-activity feed (or the plan) open,
-    // close it so the file actually shows instead of staying hidden
-    // behind it.
+    // Opening a file must take over the centre column. If the operator had the
+    // orchestrator-activity feed, the plan, or a review-loop tab showing, drop
+    // back to the file view so the file actually shows.
     setOrchestratorOpen(false);
-    setPlanOpen(false);
+    setCenterOverlay(null);
+    setActiveReviewLoopTab('');
     openFileRequestRef.current += 1;
     // The operator just asked for this file — that is the one moment the
     // strip is allowed to move itself.
@@ -722,7 +745,8 @@ export default function App() {
   // scroll/cursor position needs to actually become visible state.
   const handleSelectFileTab = useCallback((key) => {
     setOrchestratorOpen(false);
-    setPlanOpen(false);
+    setCenterOverlay(null);
+    setActiveReviewLoopTab('');
     activeTabKeyRef.current = key;
     rememberTabsView(activeTaskId, openTabsRef.current, key);
     setOpenTabs(openTabsRef.current);
@@ -744,12 +768,67 @@ export default function App() {
   const handleOpenPlan = useCallback(() => {
     if (!activeTaskId) { return; }
     setOrchestratorOpen(false);
-    setPlanOpen(true);
+    setCenterOverlay(CENTER_OVERLAY.PLAN);
   }, [activeTaskId]);
   // Dismiss it. ``usePlanWatch`` re-opens only on a strictly-newer plan
   // mtime, so closing sticks until the agent writes a NEW plan — it does not
   // fight the operator by springing back on the next poll.
-  const handleClosePlan = useCallback(() => { setPlanOpen(false); }, []);
+  const handleCloseOverlay = useCallback(() => { setCenterOverlay(null); }, []);
+  // The review-loop pane's ✕ returns the centre to the file view; the loop tab
+  // stays in the strip to reopen.
+  const handleCloseReviewLoopView = useCallback(() => { setActiveReviewLoopTab(''); }, []);
+  // Open (or focus) a task's review loop as a tab in the SHARED strip (the
+  // one that also holds the file tabs, so the two live together). The tab is
+  // added to the App-level set if new and made the active centre view — so a
+  // loop on ANY task opens here, not only the one on screen, and the set
+  // survives task switches (persisted for a reload too). ``activeReviewLoopTab``
+  // being set is what makes the centre show the loop instead of a file.
+  const openReviewLoopTab = useCallback((taskId) => {
+    const id = String(taskId || '');
+    if (!id) { return; }
+    setOrchestratorOpen(false);
+    setCenterOverlay(null);
+    setReviewLoopTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setActiveReviewLoopTab(id);
+  }, []);
+  const selectReviewLoopTab = useCallback((taskId) => {
+    setOrchestratorOpen(false);
+    setCenterOverlay(null);
+    setActiveReviewLoopTab(String(taskId || ''));
+  }, []);
+  // Close one loop tab. Dropping the active one moves to a neighbour (the tab
+  // that slid into its slot, else the one before it); the empty string means
+  // the centre falls back to the file view.
+  const closeReviewLoopTab = useCallback((taskId) => {
+    const id = String(taskId || '');
+    setReviewLoopTabs((prev) => {
+      const index = prev.indexOf(id);
+      if (index === -1) { return prev; }
+      const next = prev.filter((item) => item !== id);
+      setActiveReviewLoopTab((active) => (
+        active !== id ? active : (next[index] || next[index - 1] || '')
+      ));
+      return next;
+    });
+  }, []);
+  // One place persists the set (task switches and reload survive from here),
+  // so the handlers above only touch state.
+  useEffect(() => {
+    writeReviewLoopTabs(reviewLoopTabs, activeReviewLoopTab);
+  }, [reviewLoopTabs, activeReviewLoopTab]);
+  // The review loop view is opened from the header chip / button and from the
+  // loop's messages in the chat (``reviewLoopView.open``). ``''`` means "the
+  // task on screen" (the chat transcript only ever shows that one); a real id
+  // opens that task's loop even when it is not the active task. ``seq`` tells
+  // a new request from the replay every subscribe gets.
+  const lastLoopViewRequestRef = useRef(0);
+  useEffect(() => reviewLoopView.subscribe((request) => {
+    if (request.seq === lastLoopViewRequestRef.current) { return; }
+    lastLoopViewRequestRef.current = request.seq;
+    const taskId = request.taskId || activeTaskId;
+    if (!taskId) { return; }
+    openReviewLoopTab(taskId);
+  }), [activeTaskId, openReviewLoopTab]);
   const { content: planContent, available: planAvailable } = usePlanWatch(
     activeTaskId, handleOpenPlan,
   );
@@ -813,9 +892,27 @@ export default function App() {
     [openTabs, activeTaskId],
   );
   const activeOpenFile = tabsForActiveTask.find((tab) => tab.key === activeTabKey) || null;
-  // The centre column swaps between three bodies (activity feed, plan,
-  // file/diff view); all three go through the shared PanelCard so the
-  // card chrome is identical no matter which one is showing.
+  // The review-loop tabs ride in the SAME strip as the file tabs. ``tone`` per
+  // tab is the loop's state colour, read from the polled session list here so
+  // the strip gets ready-to-render entries.
+  const reviewLoopSummaryFor = (taskId) => (
+    sessions.find((s) => s.task_id === taskId)?.review_loop || null
+  );
+  const reviewLoopTabList = reviewLoopTabEntries(reviewLoopTabs, reviewLoopSummaryFor);
+  // A loop tab is the active centre view when ``activeReviewLoopTab`` is set;
+  // otherwise the file tab is. The loop's session carries ``review_loop`` for
+  // the pane — once a task has left the polled list a bare ``{ task_id }`` is
+  // enough (the pane fetches the rounds by id).
+  const showingReviewLoop = !!activeReviewLoopTab;
+  const reviewLoopSession = showingReviewLoop
+    ? (sessions.find((s) => s.task_id === activeReviewLoopTab) || { task_id: activeReviewLoopTab })
+    : null;
+  // While a loop tab is active no file tab is "active", so the file tabs stay
+  // unhighlighted behind it.
+  const activeFileTabKey = showingReviewLoop ? null : activeTabKey;
+  // The centre column swaps between three bodies (activity feed, plan, and the
+  // shared file/loop tab view); all go through the shared PanelCard so the card
+  // chrome is identical no matter which is showing.
   let centerBody;
   let centerContentClassName = '';
   if (orchestratorOpen) {
@@ -825,8 +922,8 @@ export default function App() {
         onClose={toggleOrchestrator}
       />
     );
-  } else if (planOpen) {
-    centerBody = <PlanPane content={planContent} onClose={handleClosePlan} />;
+  } else if (centerOverlay === CENTER_OVERLAY.PLAN) {
+    centerBody = <PlanPane content={planContent} onClose={handleCloseOverlay} />;
   } else {
     const filePane = activeOpenFile?.view === 'diff' ? (
       <DiffPane
@@ -849,15 +946,19 @@ export default function App() {
         onOpenFile={handleOpenFile}
       />
     );
-    // The open-file tab strip stacks directly above the pane, so this
-    // body opts the card's content wrapper into the tab-strip rules
-    // rather than adding another nested flex column.
+    // The shared tab strip (file tabs + loop tabs) stacks directly above the
+    // pane, so this body opts the card's content wrapper into the tab-strip
+    // rules rather than adding another nested flex column. Below it, the loop
+    // pane when a loop tab is active, otherwise the file/diff pane.
+    const underStripPane = showingReviewLoop
+      ? <ReviewLoopPane session={reviewLoopSession} onClose={handleCloseReviewLoopView} />
+      : filePane;
     centerContentClassName = 'center-pane-with-tabs';
     centerBody = (
       <>
         <FileTabStrip
           tabs={tabsForActiveTask}
-          activeKey={activeTabKey}
+          activeKey={activeFileTabKey}
           onSelect={handleSelectFileTab}
           onClose={handleCloseFileTab}
           onToggleView={handleToggleTabView}
@@ -866,11 +967,15 @@ export default function App() {
           onCloseOthers={handleCloseOtherFileTabs}
           onTogglePin={handleToggleFileTabPin}
           onReorder={handleReorderFileTabs}
+          reviewLoopTabs={reviewLoopTabList}
+          activeReviewLoopTab={activeReviewLoopTab}
+          onSelectReviewLoop={selectReviewLoopTab}
+          onCloseReviewLoop={closeReviewLoopTab}
           // Only a tree click bumps this, so the strip scrolls the tab
           // into view then and never while the operator is scrolling.
           revealRequestId={tabRevealRequest}
         />
-        {filePane}
+        {underStripPane}
       </>
     );
   }

@@ -13,6 +13,8 @@ import {
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { parseCommentRunPrompt } from '../utils/commentRunPrompt.js';
+import { parseReviewLoopPrompt, stickyPromptLabel } from './reviewLoop/reviewLoopPrompt.js';
+import { reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
 import { commentStatusKey } from '../utils/commentStatus.js';
 import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
@@ -972,6 +974,10 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   // comment's live kato_status (waiting / queued / in_progress /
   // addressed / failed) so the chat and the diff badge agree at a glance.
   const commentRef = parseCommentRunPrompt(promptText);
+  // The review loop's findings arrive as a user turn too — labelled as
+  // kato's, never as "You asked", with a way into the loop view.
+  const loopRef = parseReviewLoopPrompt(promptText);
+  const promptLabel = stickyPromptLabel(promptText);
   const commentStatus = commentRef && commentStatusMap
     ? String(commentStatusMap.get(commentStatusKey(commentRef.file, commentRef.line)) || '')
     : '';
@@ -985,6 +991,7 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
     // When expanded the collapse toggle pins top-right; this lets the CSS
     // step it left of the top-right jump-to-comment icon so they don't stack.
     hasCommentJump && 'has-comment-jump',
+    loopRef && 'is-review-loop',
   );
   const textWrapClass = cx(
     'chat-sticky-prompt-text-wrap',
@@ -1045,6 +1052,17 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
       <Icon name="crosshair" />
     </button>
   );
+  const openLoop = loopRef ? (
+    <button
+      type="button"
+      className="chat-sticky-prompt-open-loop tooltip-start"
+      data-tooltip="Open the review loop — every round, what the reviewer found, and where it is now."
+      aria-label="Open the review loop"
+      onClick={() => reviewLoopView.open('')}
+    >
+      <Icon name="loop" />
+    </button>
+  ) : null;
   const jumpToComment = hasCommentJump ? (
     <button
       type="button"
@@ -1071,7 +1089,8 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
       <div className="chat-sticky-prompt-toggle">
         <span className="chat-sticky-prompt-meta">
           <span className="chat-sticky-prompt-label-row">
-            <span className="chat-sticky-prompt-label">You asked</span>
+            <span className="chat-sticky-prompt-label">{promptLabel}</span>
+            {openLoop}
             {jumpToStart}
           </span>
           {promptTime && (

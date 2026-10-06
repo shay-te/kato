@@ -9,6 +9,7 @@ import {
 } from '../utils/permissionEnvelope.js';
 import { extractAnswerableQuestions } from '../utils/answerableQuestion.js';
 import { backendLabel } from './AgentBackendChip.jsx';
+import ApprovalPlacementToggle from './ApprovalPlacementToggle.jsx';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
 import ExitPlanModeForm from './ExitPlanModeForm.jsx';
@@ -214,6 +215,8 @@ export default function PermissionModal({
     ? `${queuedCount} more request${queuedCount > 1 ? 's' : ''} waiting — `
       + 'you\'ll see them after this one'
     : '';
+  // Popup ⇄ chat, switched from the request itself (no longer a setting).
+  const placementToggle = <ApprovalPlacementToggle inline={inline} />;
   const title = (
     <span className="permission-modal-title-stack">
       <span className="permission-modal-title-line">
@@ -254,6 +257,7 @@ export default function PermissionModal({
         subtitle={queuedNote}
         subtitleId="permission-queued-note"
         inline={inline}
+        headerAction={placementToggle}
       >
         <AskUserQuestionForm
           // Keyed by the ask so a NEW question always starts blank, and its
@@ -289,6 +293,7 @@ export default function PermissionModal({
         subtitle={queuedNote}
         subtitleId="permission-queued-note"
         inline={inline}
+        headerAction={placementToggle}
       >
         <ExitPlanModeForm
           key={requestId}
@@ -326,6 +331,7 @@ export default function PermissionModal({
       subtitle={queuedNote}
       subtitleId="permission-queued-note"
       inline={inline}
+      headerAction={placementToggle}
     >
       {sandboxWarning}
       {actionGuardBanner}

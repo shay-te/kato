@@ -312,7 +312,7 @@ class RequeueOrphanedInProgressCommentsTests(unittest.TestCase):
         sm.get_session.return_value = alive
         service, ws = self._service(session_manager=sm)
         self._seed_in_progress(ws, 'UNA-1')
-        with patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False):
+        with patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False):
             self.assertEqual(service.comment_runs.requeue_orphaned_in_progress_comments(), [])
 
     def test_recent_run_within_grace_is_not_requeued(self) -> None:
@@ -325,7 +325,7 @@ class RequeueOrphanedInProgressCommentsTests(unittest.TestCase):
     def test_busy_turn_is_not_requeued(self) -> None:
         service, ws = self._service(session_manager=None)
         self._seed_in_progress(ws, 'UNA-1')
-        with patch.object(service.comment_runs, '_task_has_busy_turn', return_value=True):
+        with patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=True):
             self.assertEqual(service.comment_runs.requeue_orphaned_in_progress_comments(), [])
 
 
@@ -1144,7 +1144,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
     """``_maybe_trigger_comment_run`` against REAL on-disk stores.
 
     Only the actual Claude spawn (``_run_comment_agent``) and the busy-turn
-    check (``_task_has_busy_turn`` — needs a live session manager) get
+    check (``has_busy_turn`` — needs a live session manager) get
     patched; the store, the workspace listing, and the kato-status writes
     all run through real code.
     """
@@ -1158,7 +1158,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
         # Default: no live turn for any task. Tests that need busy=True
         # override per-call.
         self._busy_patch = patch.object(
-            self.service.comment_runs, '_task_has_busy_turn', return_value=False,
+            self.service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False,
         )
         self._busy_patch.start()
         self.addCleanup(self._busy_patch.stop)
@@ -1217,7 +1217,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
 
     def test_returns_false_when_turn_busy(self) -> None:
         comment_id = self._seed_comment('T1')
-        with patch.object(self.service.comment_runs, '_task_has_busy_turn', return_value=True):
+        with patch.object(self.service.comment_runs.chat_delivery, 'has_busy_turn', return_value=True):
             self.assertFalse(
                 self.service.comment_runs.trigger_comment_run('T1', comment_id),
             )
@@ -1300,7 +1300,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
         dispatch_lock = threading.Lock()
         # Once the first run claims the dispatch lock, simulate a
         # ``send_user_message`` that hasn't yet produced a Claude event
-        # by bumping a busy flag the patched ``_task_has_busy_turn``
+        # by bumping a busy flag the patched ``has_busy_turn``
         # reads. The second concurrent run must see "busy" and bail.
         busy_after_first = {'flag': False}
 
@@ -1315,7 +1315,7 @@ class MaybeTriggerCommentRunTests(unittest.TestCase):
             return busy_after_first['flag']
 
         with patch.object(self.service.comment_runs, '_run_comment_agent', side_effect=fake_run), \
-             patch.object(self.service.comment_runs, '_task_has_busy_turn', side_effect=busy_check):
+             patch.object(self.service.comment_runs.chat_delivery, 'has_busy_turn', side_effect=busy_check):
             t1 = threading.Thread(
                 target=self.service.comment_runs.trigger_comment_run,
                 args=('T1', first_id),
@@ -2667,7 +2667,7 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments',
                           return_value=[{'task_id': 'T1', 'comment_id': 'c1',
                                          'kato_status': 'addressed'}]) as complete:
@@ -2694,7 +2694,7 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments') as complete:
             results = service.comment_runs.advance_finished_comment_runs()
 
@@ -2718,7 +2718,7 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments',
                           return_value=[]) as complete:
             service.comment_runs.advance_finished_comment_runs()
@@ -2729,14 +2729,14 @@ class AdvanceFinishedCommentRunsTests(unittest.TestCase):
         )
 
     def test_skips_mid_turn_sessions(self) -> None:
-        """_task_has_busy_turn=True → never advance."""
+        """has_busy_turn=True → never advance."""
         service = AgentService(**_kwargs())
         store = _FakeCommentStore([self._comment('c1', 'in_progress')])
 
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=True), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=True), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments') as complete:
             results = service.comment_runs.advance_finished_comment_runs()
 
@@ -2827,7 +2827,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False):
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False):
             # Must not raise even though get_session does.
             result = service.comment_runs.advance_finished_comment_runs()
         # No session → fall to terminal_event branch (None) → requeue path.
@@ -2849,7 +2849,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments') as complete:
             service.comment_runs.advance_finished_comment_runs()
         complete.assert_not_called()
@@ -2870,7 +2870,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service.comment_runs, 'complete_in_progress_task_comments',
                           return_value=[{'comment_id': 'c1'}]) as complete:
             results = service.comment_runs.advance_finished_comment_runs()
@@ -2895,7 +2895,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False):
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False):
             results = service.comment_runs.advance_finished_comment_runs()
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['action'], 'requeued')
@@ -2914,7 +2914,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
         with patch.object(service.comment_runs, '_workspace_records',
                           return_value=[SimpleNamespace(task_id='T1')]), \
              patch.object(service.comments, 'comment_store', return_value=bad_store), \
-             patch.object(service.comment_runs, '_task_has_busy_turn', return_value=False), \
+             patch.object(service.comment_runs.chat_delivery, 'has_busy_turn', return_value=False), \
              patch.object(service, 'logger', MagicMock()) as mock_logger:
             results = service.comment_runs.advance_finished_comment_runs()
         # Exception logged, requeue skipped for this comment.
@@ -2923,7 +2923,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
 
     def test_stalled_session_requeues_instead_of_pinning(self) -> None:
         # A post-restart ``--resume`` session that's alive but no longer
-        # consuming stdin reports busy via ``_task_has_busy_turn`` (sent
+        # consuming stdin reports busy via ``has_busy_turn`` (sent
         # > received). The scan-loop fallback must detect the stall and
         # requeue the comment so the next drain force-respawns — NOT skip
         # it as busy (the "kato ignores comments after restart" symptom).
@@ -2953,7 +2953,7 @@ class AdvanceFinishedCommentRunsDefensiveBranches(unittest.TestCase):
 
 
 class TaskSessionIsStalledTests(unittest.TestCase):
-    """``_task_session_is_stalled``: alive-but-not-consuming-stdin detection.
+    """``is_stalled``: alive-but-not-consuming-stdin detection.
 
     Also a regression guard for the ``_COMMENT_SEND_ACK_GRACE_SECONDS``
     module constant — the aged-out path dereferences it, so a missing
@@ -2981,45 +2981,45 @@ class TaskSessionIsStalledTests(unittest.TestCase):
 
     def test_true_when_aged_unacked_and_idle(self) -> None:
         service = self._service_with_session(self._session())
-        self.assertTrue(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertTrue(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_send_is_recent(self) -> None:
         service = self._service_with_session(
             self._session(last_user_message_sent_epoch=time.time()),
         )
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_mid_turn(self) -> None:
         service = self._service_with_session(self._session(is_working=True))
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_all_messages_acked(self) -> None:
         service = self._service_with_session(
             self._session(user_messages_sent=2, result_events_received=2),
         )
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_last_sent_unknown(self) -> None:
         service = self._service_with_session(
             self._session(last_user_message_sent_epoch=0.0),
         )
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_session_dead(self) -> None:
         service = self._service_with_session(self._session(is_alive=False))
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_no_session_manager(self) -> None:
         service = AgentService(**_kwargs())
         service._session_manager = None
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
     def test_false_when_get_session_raises(self) -> None:
         service = AgentService(**_kwargs())
         mgr = MagicMock()
         mgr.get_session.side_effect = RuntimeError('mgr down')
         service._session_manager = mgr
-        self.assertFalse(service.comment_runs._task_session_is_stalled('T1'))
+        self.assertFalse(service.comment_runs.chat_delivery.is_stalled('T1'))
 
 
 class CommentAgentCwdBranchTests(unittest.TestCase):

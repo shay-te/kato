@@ -661,6 +661,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * bring their own inner flex column (``.center-pane-with-tabs``) sit
  * ON the content wrapper instead and need nothing here. */
 .panel-card-content > #plan-pane,
+.panel-card-content > #review-loop-pane,
 .panel-card-content > .orchestrator-feed {
   flex: 1;
   min-height: 0;
@@ -2488,7 +2489,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * icon in the top-right corner. That corner already holds the collapse toggle
  * and the comment-jump, on a wide chat pane it is a long way from the text
  * being read, and every addition there needs another hand-tuned offset. */
-.chat-sticky-prompt-jump-start {
+.chat-sticky-prompt-jump-start,
+.chat-sticky-prompt-open-loop {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2507,7 +2509,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.chat-sticky-prompt-jump-start:hover {
+.chat-sticky-prompt-jump-start:hover,
+.chat-sticky-prompt-open-loop:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #f5f5f7;
 }
@@ -4373,6 +4376,14 @@ code {
   padding-bottom: 10px;
 }
 
+/* The permission ask's popup ⇄ chat switch: the header's trailing corner,
+ * level with the title's first line. Same bare-glyph button as the panes'
+ * close buttons (grouped with them above). */
+.approval-placement-toggle {
+  margin-left: auto;
+  align-self: flex-start;
+}
+
 /* "2 more requests waiting" — the asks queued behind the open dialog. They
    stay hidden until this one is answered (so a half-filled answer form is
    never torn away), which is exactly why their existence has to be visible:
@@ -4968,6 +4979,58 @@ code {
   border-right: 0;
 }
 
+/* The review-loop view uses the same strip-above-pane layout as the file
+ * tabs, so its pane fills the space under the loop-tab strip the same way. */
+.center-pane-with-tabs > #review-loop-pane {
+  flex: 1;
+  min-height: 0;
+  border-left: 0;
+  border-right: 0;
+}
+
+/* A review loop's tab lives in the SAME strip as the file tabs (so opening a
+ * file never hides the loops), but reads as its own kind: a loop glyph tinted
+ * by the loop's state, an indigo active underline (not the files' cyan), and a
+ * divider before the group. */
+.file-tab.is-review-loop {
+  gap: 4px;
+}
+
+.file-tab.is-review-loop.is-group-start {
+  border-left: 1px solid #2a2a2a;
+}
+
+.file-tab.is-review-loop.active {
+  border-bottom-color: #a78bfa;
+}
+
+.file-tab-loop-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #a3a3a3;
+}
+
+.file-tab-loop-icon svg {
+  width: 10px;
+  height: 10px;
+}
+
+.file-tab-loop-icon.is-running {
+  color: #a78bfa;
+}
+
+.file-tab-loop-icon.is-good {
+  color: #34d399;
+}
+
+.file-tab-loop-icon.is-warn {
+  color: #f59e0b;
+}
+
+.file-tab-loop-icon.is-bad {
+  color: #ef4444;
+}
+
 .file-tab-strip {
   flex-shrink: 0;
   overflow-x: auto;
@@ -5150,7 +5213,8 @@ code {
   color: rgba(245, 245, 247, 0.42);
 }
 
-#plan-pane {
+#plan-pane,
+#review-loop-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -5160,7 +5224,8 @@ code {
    * and gutter, so they would paint a second hairline just inside it. */
 }
 
-.plan-pane-header {
+.plan-pane-header,
+.review-loop-pane-header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -5171,12 +5236,25 @@ code {
   backdrop-filter: blur(20px) saturate(180%);
 }
 
-.plan-pane-title {
-  flex: 1;
-  min-width: 0;
+.plan-pane-title,
+.review-loop-pane-title {
   font-size: 12px;
   font-weight: 600;
   color: #f5f5f7;
+}
+
+/* The plan pane's title is the flexible part of its header. */
+.plan-pane-title {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The review loop pane's is not: its status sentence takes the slack and
+ * truncates. A shrinking title wrapped to "Review / loop" and the status ran
+ * over it. */
+.review-loop-pane-title {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .plan-pane-pill {
@@ -5191,7 +5269,8 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.plan-pane-body {
+.plan-pane-body,
+.review-loop-pane-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -8543,7 +8622,9 @@ body.kato-resizing {
 /* The plan pane's dismiss button shares this rule rather than restating it —
  * two centre-pane bodies, one close affordance. */
 .orchestrator-feed-close,
-.plan-pane-close {
+.plan-pane-close,
+.review-loop-pane-close,
+.approval-placement-toggle {
   /* Bare glyph, circle on hover — same treatment as .session-action and the
    * files/changes toolbar buttons. Kept in step with them deliberately: a
    * strip where some icons carry chrome and others do not reads as a
@@ -8551,8 +8632,6 @@ body.kato-resizing {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
   border-radius: 50%;
   border: 1px solid transparent;
   background: transparent;
@@ -8562,8 +8641,26 @@ body.kato-resizing {
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 
+/* Sizes apart from the look. The panes' close buttons keep their own 26px
+ * (pinned by HeaderButtonBaseCss.test.js); the popup's minimize / expand
+ * switch stands alone in the dialog header, so it takes the LG icon box
+ * (constants.scss) like every other standalone header button. */
+.orchestrator-feed-close,
+.plan-pane-close,
+.review-loop-pane-close {
+  width: 26px;
+  height: 26px;
+}
+
+.approval-placement-toggle {
+  width: 28px;
+  height: 28px;
+}
+
 .orchestrator-feed-close:hover,
-.plan-pane-close:hover {
+.plan-pane-close:hover,
+.review-loop-pane-close:hover,
+.approval-placement-toggle:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.06);
   color: #f5f5f7;
@@ -12294,4 +12391,534 @@ button.settings-prompt-editor-head {
 .bulk-forget-buttons {
   display: inline-flex;
   gap: 8px;
+}
+
+/* ---------- Review loop (components/reviewLoop/) ----------
+ * The pane shares the plan pane's frame (header / title / body / close are
+ * grouped with those rules above). What is here is the loop's own: where it
+ * is now (tracker), its rounds, and its marks in the header, tabs and chat.
+ * Tones: running = cyan, good = green, warn = orange, bad = red. A separate
+ * axis from the agent's status colours — this is the loop, not the agent. */
+.review-loop-pane-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.review-loop-pane-status.is-running {
+  color: #93c5fd;
+}
+
+.review-loop-pane-status.is-good {
+  color: #34d399;
+}
+
+.review-loop-pane-status.is-warn {
+  color: #f59e0b;
+}
+
+.review-loop-pane-status.is-bad {
+  color: #ef4444;
+}
+
+.review-loop-pane-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.review-loop-pane-action:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.review-loop-pane-action.is-stop {
+  border-color: rgba(185, 28, 28, 0.35);
+  color: #ef4444;
+}
+
+/* Stop, or the round limit + Start / Run again: one group on the trailing
+ * edge, so the controls sit in the same place whether a loop runs or not. */
+.review-loop-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* "Up to [5 rounds]" — the round limit, picked before Start / Run again.
+ * Not ``.review-loop-rounds``: that is the list of rounds below (a column),
+ * and sharing the name stacked "Up to" above the select. */
+.review-loop-round-limit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.review-loop-round-limit-select {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+  font: inherit;
+  cursor: pointer;
+}
+
+.review-loop-round-limit-select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.review-loop-pane-empty {
+  max-width: 520px;
+  padding: 24px;
+  line-height: 1.5;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+/* Where the loop is right now: the current round's steps. */
+.review-loop-tracker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 16px 20px;
+  list-style: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.review-loop-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-step-mark {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+
+.review-loop-step.is-done {
+  color: #34d399;
+}
+
+.review-loop-step.is-done .review-loop-step-mark {
+  background: currentColor;
+}
+
+.review-loop-step.is-current {
+  font-weight: 600;
+  color: #93c5fd;
+}
+
+.review-loop-step.is-current .review-loop-step-mark {
+  background: currentColor;
+  animation: review-loop-pulse 1.6s ease-in-out infinite;
+}
+
+.review-loop-step-detail {
+  font-weight: 400;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+@keyframes review-loop-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+/* Every round, oldest first. */
+.review-loop-rounds {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 10px 12px 20px;
+  list-style: none;
+}
+
+.review-loop-round {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+}
+
+.review-loop-round-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: #f5f5f7;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-loop-round-name {
+  font-weight: 600;
+}
+
+.review-loop-round-counts {
+  flex: 1;
+  min-width: 0;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.review-loop-round-outcome {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-round.is-clean .review-loop-round-outcome {
+  color: #34d399;
+}
+
+.review-loop-round.is-stuck .review-loop-round-outcome,
+.review-loop-round.is-max_rounds .review-loop-round-outcome {
+  color: #f59e0b;
+}
+
+.review-loop-round.is-failed .review-loop-round-outcome {
+  color: #ef4444;
+}
+
+.review-loop-round-body {
+  padding: 0 14px 12px;
+}
+
+.review-loop-findings h4 {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-findings ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-loop-finding {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12.5px;
+  color: #f5f5f7;
+}
+
+.review-loop-severity {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.review-loop-severity.is-blocker {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.review-loop-severity.is-major {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.review-loop-severity.is-minor {
+  color: #93c5fd;
+}
+
+.review-loop-severity.is-nit {
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-finding-location {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+/* Under a finding: its detail, the invariant it breaks, new evidence, and
+ * what settled it — each on its own full-width line. */
+.review-loop-finding-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.review-loop-finding-id {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+/* What the chat decided about a finding it was sent (the decision ledger).
+ * Tones match the loop's outcomes: fixed = good, rejected = warn,
+ * out of scope = neutral, not answered = bad. */
+.review-loop-decision {
+  display: flex;
+  flex-basis: 100%;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.review-loop-decision.is-good {
+  border-left-color: #34d399;
+}
+
+.review-loop-decision.is-good b {
+  color: #34d399;
+}
+
+.review-loop-decision.is-warn {
+  border-left-color: #f59e0b;
+}
+
+.review-loop-decision.is-warn b {
+  color: #f59e0b;
+}
+
+.review-loop-decision.is-bad {
+  border-left-color: #ef4444;
+}
+
+.review-loop-decision.is-bad b {
+  color: #ef4444;
+}
+
+.review-loop-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.review-loop-artifact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #93c5fd;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.review-loop-artifact-body {
+  max-height: 420px;
+  margin: 6px 0 8px;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #f5f5f7;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.review-loop-artifact-body.is-markdown {
+  white-space: normal;
+}
+
+.review-loop-artifact-note {
+  margin: 4px 0;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-artifact-note.is-error {
+  color: #ef4444;
+}
+
+/* Beside the task title: where the loop is, at a glance. */
+.review-loop-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  margin-left: 10px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 245, 247, 0.65);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.review-loop-chip-name {
+  font-weight: 600;
+  color: #f5f5f7;
+}
+
+.review-loop-chip.is-running {
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.22);
+}
+
+.review-loop-chip.is-running svg {
+  animation: review-loop-spin 2.4s linear infinite;
+}
+
+.review-loop-chip.is-good {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.16);
+}
+
+.review-loop-chip.is-warn {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.review-loop-chip.is-bad {
+  color: #ef4444;
+  border-color: rgba(185, 28, 28, 0.35);
+}
+
+@keyframes review-loop-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Header button: a dot over its corner, never extra width. */
+.review-loop-button {
+  position: relative;
+}
+
+.review-loop-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #a3a3a3;
+  pointer-events: none;
+}
+
+/* Tab: a mark over the pill's corner, never extra width. */
+.tab-review-loop-badge {
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #2a2a2a;
+  color: #a3a3a3;
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.review-loop-dot.is-running {
+  background: #93c5fd;
+}
+
+.review-loop-dot.is-good {
+  background: #34d399;
+}
+
+.review-loop-dot.is-warn {
+  background: #f59e0b;
+}
+
+.review-loop-dot.is-bad {
+  background: #ef4444;
+}
+
+/* Running = indigo, the review-loop accent (same as the chat label and the
+ * pill ring below) — NOT cyan, which is the active-tab fill the corner badge
+ * would vanish against. */
+.tab-review-loop-badge.is-running {
+  color: #a78bfa;
+}
+
+.tab-review-loop-badge.is-good {
+  color: #34d399;
+}
+
+.tab-review-loop-badge.is-warn {
+  color: #f59e0b;
+}
+
+.tab-review-loop-badge.is-bad {
+  color: #ef4444;
+}
+
+/* A running review loop rings the whole task pill in indigo, so an active loop
+ * is visible from any tab — a SEPARATE axis from the status dot. Drawn as an
+ * overlay ring (::after) so it layers over the active-tab cyan fill and the
+ * orange needs-attention state without fighting their own box-shadows. The
+ * pill is already ``position: relative`` for the corner badge. */
+.tabs-pane-top .tab.has-review-loop::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid #a78bfa;
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.55);
+  pointer-events: none;
+  animation: kato-review-loop-ring 1.8s ease-in-out infinite;
+}
+
+@keyframes kato-review-loop-ring {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* The loop's findings in the chat: kato's message, labelled as such. */
+.chat-sticky-prompt.is-review-loop .chat-sticky-prompt-label {
+  color: #a78bfa;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-loop-step.is-current .review-loop-step-mark,
+  .review-loop-chip.is-running svg,
+  .tabs-pane-top .tab.has-review-loop::after {
+    animation: none;
+  }
 }

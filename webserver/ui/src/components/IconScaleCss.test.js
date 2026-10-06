@@ -34,6 +34,9 @@ const EXEMPT = [
   /files-tab-text-btn/, /bubble-tool-details-toggle/, /setup-wizard-btn/,
   /settings-drawer-action/, /settings-drawer-perm-clear/,
   /diff-context-expander-inner/,
+  // The review loop view's Stop / Start / Run again and its "Reviewer's
+  // report" / "Sent to the chat" toggles: a glyph beside a word.
+  /review-loop-pane-action/, /review-loop-artifact-toggle/,
   // Not a button: a 7px corner marker ON the actions trigger, flagging that
   // the task is pinned to a non-default model. It has to sit inside the 28px
   // trigger without covering the glyph, so neither icon box size fits — and

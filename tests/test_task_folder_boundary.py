@@ -17,17 +17,14 @@ import os
 import unittest
 
 from sandbox_core_lib.sandbox_core_lib.manager import _container_workdir
-from claude_core_lib.claude_core_lib.session.streaming import StreamingClaudeSession
+from claude_core_lib.claude_core_lib.helpers.spawn_utils import sandbox_mount_for
 
 TASK_FOLDER = os.path.normpath('/w/UNA-2981')
 PRIMARY_REPO = os.path.join(TASK_FOLDER, 'backend')
 
 
 def _mount(sandbox_root: str, cwd: str):
-    session = StreamingClaudeSession.__new__(StreamingClaudeSession)
-    session._sandbox_root = sandbox_root
-    session._cwd = cwd
-    return session._sandbox_mount()
+    return sandbox_mount_for(cwd, sandbox_root)
 
 
 class SandboxMountTests(unittest.TestCase):

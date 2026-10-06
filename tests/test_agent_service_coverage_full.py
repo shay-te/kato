@@ -278,7 +278,7 @@ class CompleteCommentsChainingTests(unittest.TestCase):
                 status=CommentStatus.OPEN.value,
                 kato_status=KatoCommentStatus.IN_PROGRESS.value,
             ))
-            # No session manager -> _task_has_busy_turn is False, so the
+            # No session manager -> has_busy_turn is False, so the
             # method proceeds to complete the in-progress comment.
             service.logger = MagicMock()
             # Make the chain step (drain) raise -> lines 1133-1134.
@@ -326,8 +326,8 @@ class AdvanceFinishedRunsSessionLookupTests(unittest.TestCase):
                 kato_status=KatoCommentStatus.IN_PROGRESS.value,
             ))
             # not stalled, not busy -> reaches the get_session try/except.
-            service.comment_runs._task_session_is_stalled = MagicMock(return_value=False)
-            service.comment_runs._task_has_busy_turn = MagicMock(return_value=False)
+            service.comment_runs.chat_delivery.is_stalled = MagicMock(return_value=False)
+            service.comment_runs.chat_delivery.has_busy_turn = MagicMock(return_value=False)
 
             advanced = service.comment_runs.advance_finished_comment_runs()
 
@@ -355,8 +355,8 @@ class AdvanceFinishedRunsSessionLookupTests(unittest.TestCase):
                 status=CommentStatus.OPEN.value,
                 kato_status=KatoCommentStatus.IN_PROGRESS.value,
             ))
-            service.comment_runs._task_session_is_stalled = MagicMock(return_value=False)
-            service.comment_runs._task_has_busy_turn = MagicMock(return_value=False)
+            service.comment_runs.chat_delivery.is_stalled = MagicMock(return_value=False)
+            service.comment_runs.chat_delivery.has_busy_turn = MagicMock(return_value=False)
 
             advanced = service.comment_runs.advance_finished_comment_runs()
 
@@ -457,8 +457,8 @@ class TaskHasInProgressCommentTests(unittest.TestCase):
 
 # --------------------------------------------------------------------------
 # _run_comment_agent force_respawn  (lines 1905-1906)
-# + _terminate_stalled_session  (1921-1933)
-# + _spawn_comment_agent workspace summary branch (1954 -> 1957)
+# + MainChatDelivery.terminate_stalled
+# + MainChatDelivery.spawn workspace summary branch
 # --------------------------------------------------------------------------
 
 
@@ -478,9 +478,9 @@ class RunCommentAgentForceRespawnTests(unittest.TestCase):
 
     def test_force_respawn_terminates_then_spawns(self) -> None:
         # lines 1905-1906: force_respawn=True kills the live session and
-        # routes to _spawn_comment_agent instead of send_user_message.
+        # routes to MainChatDelivery.spawn instead of send_user_message.
         service, session_manager, live = self._service_with_live_session()
-        service.comment_runs._spawn_comment_agent = MagicMock(return_value=True)
+        service.comment_runs.chat_delivery.spawn = MagicMock(return_value=True)
         record = SimpleNamespace(id='c1')
 
         result = service.comment_runs._run_comment_agent('PROJ-1', record, force_respawn=True)
@@ -489,7 +489,7 @@ class RunCommentAgentForceRespawnTests(unittest.TestCase):
         session_manager.terminate_session.assert_called_once_with(
             'PROJ-1', remove_record=False,
         )
-        service.comment_runs._spawn_comment_agent.assert_called_once()
+        service.comment_runs.chat_delivery.spawn.assert_called_once()
         live.send_user_message.assert_not_called()
 
 
@@ -497,13 +497,13 @@ class TerminateStalledSessionTests(unittest.TestCase):
     def test_no_session_manager_is_noop(self) -> None:
         # line 1921-1922
         service = _bare_service(session_manager=None)
-        service.comment_runs._terminate_stalled_session('PROJ-1')  # no raise
+        service.comment_runs.chat_delivery.terminate_stalled('PROJ-1')  # no raise
 
     def test_terminate_not_callable_is_noop(self) -> None:
         # lines 1923-1925: terminate_session missing/not callable
         session_manager = SimpleNamespace(terminate_session=None)
         service = _bare_service(session_manager=session_manager)
-        service.comment_runs._terminate_stalled_session('PROJ-1')  # no raise
+        service.comment_runs.chat_delivery.terminate_stalled('PROJ-1')  # no raise
 
     def test_terminate_called_and_logged(self) -> None:
         # lines 1926-1931 happy path
@@ -511,7 +511,7 @@ class TerminateStalledSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(terminate_session=terminate)
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._terminate_stalled_session('PROJ-1')
+        service.comment_runs.chat_delivery.terminate_stalled('PROJ-1')
         terminate.assert_called_once_with('PROJ-1', remove_record=False)
         service.logger.info.assert_called_once()
 
@@ -521,7 +521,7 @@ class TerminateStalledSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(terminate_session=terminate)
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._terminate_stalled_session('PROJ-1')
+        service.comment_runs.chat_delivery.terminate_stalled('PROJ-1')
         service.logger.exception.assert_called_once()
 
 
@@ -537,10 +537,9 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
             workspace_manager=wm,
         )
         service.logger = MagicMock()
-        service.comment_runs._comment_agent_cwd = MagicMock(return_value='/tmp/ws')
-        record = SimpleNamespace(id='c1')
-
-        result = service.comment_runs._spawn_comment_agent('PROJ-1', record, 'prompt text')
+        result = service.comment_runs.chat_delivery.spawn(
+            'PROJ-1', 'prompt text', label='comment c1', cwd_for=lambda: '/tmp/ws',
+        )
 
         self.assertTrue(result)
         runner.resume_session_for_chat.assert_called_once()
@@ -562,17 +561,16 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
             workspace_manager=None,
         )
         service.logger = MagicMock()
-        service.comment_runs._comment_agent_cwd = MagicMock(return_value='')
-        record = SimpleNamespace(id='c1')
-
-        result = service.comment_runs._spawn_comment_agent('PROJ-1', record, 'prompt text')
+        result = service.comment_runs.chat_delivery.spawn(
+            'PROJ-1', 'prompt text', label='comment c1', cwd_for=lambda: '',
+        )
 
         self.assertTrue(result)
         runner.resume_session_for_chat.assert_called_once()
 
 
 # --------------------------------------------------------------------------
-# _warn_if_comment_has_no_resumable_session — operator ask: "make sure
+# MainChatDelivery._warn_if_no_resumable_session — operator ask: "make sure
 # it's always the same session." The respawn path already resumes via the
 # task's persisted agent_session_id whenever one exists (test_flow_multi_
 # turn_continuity.py covers that machinery). What was missing was a signal
@@ -586,8 +584,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
     def test_no_session_manager_is_silent(self) -> None:
         service = _bare_service(session_manager=None)
         service.logger = MagicMock()
-        service.comment_runs._warn_if_comment_has_no_resumable_session(
-            'PROJ-1', SimpleNamespace(id='c1'),
+        service.comment_runs.chat_delivery._warn_if_no_resumable_session(
+            'PROJ-1', 'comment c1',
         )
         service.logger.warning.assert_not_called()
 
@@ -595,8 +593,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=None))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._warn_if_comment_has_no_resumable_session(
-            'PROJ-1', SimpleNamespace(id='c1'),
+        service.comment_runs.chat_delivery._warn_if_no_resumable_session(
+            'PROJ-1', 'comment c1',
         )
         service.logger.warning.assert_called_once()
         args = service.logger.warning.call_args.args
@@ -607,8 +605,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._warn_if_comment_has_no_resumable_session(
-            'PROJ-1', SimpleNamespace(id='c1'),
+        service.comment_runs.chat_delivery._warn_if_no_resumable_session(
+            'PROJ-1', 'comment c1',
         )
         service.logger.warning.assert_called_once()
 
@@ -618,8 +616,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         session_manager = SimpleNamespace(get_record=MagicMock(return_value=record))
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._warn_if_comment_has_no_resumable_session(
-            'PROJ-1', SimpleNamespace(id='c1'),
+        service.comment_runs.chat_delivery._warn_if_no_resumable_session(
+            'PROJ-1', 'comment c1',
         )
         service.logger.warning.assert_not_called()
 
@@ -629,8 +627,8 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
         )
         service = _bare_service(session_manager=session_manager)
         service.logger = MagicMock()
-        service.comment_runs._warn_if_comment_has_no_resumable_session(
-            'PROJ-1', SimpleNamespace(id='c1'),
+        service.comment_runs.chat_delivery._warn_if_no_resumable_session(
+            'PROJ-1', 'comment c1',
         )  # must not raise
         service.logger.warning.assert_not_called()
 
@@ -642,8 +640,9 @@ class WarnIfCommentHasNoResumableSessionTests(unittest.TestCase):
             planning_session_runner=runner, session_manager=session_manager,
         )
         service.logger = MagicMock()
-        service.comment_runs._comment_agent_cwd = MagicMock(return_value='')
-        service.comment_runs._spawn_comment_agent('PROJ-1', SimpleNamespace(id='c1'), 'prompt')
+        service.comment_runs.chat_delivery.spawn(
+            'PROJ-1', 'prompt', label='comment c1', cwd_for=lambda: '',
+        )
         service.logger.warning.assert_called_once()
 
 

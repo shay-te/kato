@@ -236,7 +236,7 @@ class KatoCoreLib(CoreLib):
                 KATO_TASK_DONE_SENTINEL,
             )
             self.session_manager.set_done_callback(
-                self.service.publish.finish_task_planning_session,
+                self.service.finish_from_done_marker,
                 KATO_TASK_DONE_SENTINEL,
             )
         # ``defer_validation``: build the service but SKIP the network
@@ -308,7 +308,7 @@ class KatoCoreLib(CoreLib):
                 KATO_TASK_DONE_SENTINEL,
             )
             self.session_manager.set_done_callback(
-                service.publish.finish_task_planning_session,
+                service.finish_from_done_marker,
                 KATO_TASK_DONE_SENTINEL,
             )
         self.service = service

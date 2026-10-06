@@ -26,10 +26,15 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 
 from agent_core_lib.agent_core_lib.cli_agent_shared import CliAgentSharedBehaviour
 from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
+from agent_core_lib.agent_core_lib.helpers.cancellable_process import (
+    ProcessCancelled,
+    run_cancellable,
+)
 from agent_core_lib.agent_core_lib.helpers.command_floor import (
     prompt_floor_rules,
 )
@@ -297,35 +302,47 @@ class CodexCliClient(CliAgentSharedBehaviour):
         """Codex exposes generic tooling, so the rule names the MODE."""
         return '- Do NOT modify any files. Stay in read-only mode.\n'
 
-    def investigate(self, prompt: str, *, cwd: str = '') -> str:
-        """Read-only single turn — used by the triage flow.
+    def investigate(
+        self,
+        prompt: str,
+        *,
+        cwd: str = '',
+        additional_dirs: list[str] | None = None,
+        sandbox_root: str = '',
+        task_id: str = '',
+        log_label: str = '',
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """Read-only single turn — triage, and an independent review.
 
         Codex's ``--sandbox read-only`` policy enforces the read-only
         contract at the sandbox layer, which is stronger than
-        Claude's allow/deny tool list.
+        Claude's allow/deny tool list. The read-only sandbox is passed to
+        THIS run (``sandbox_override`` outranks bypass in ``_build_command``)
+        instead of flipping the shared client's bypass flag for the length of
+        the call, which a concurrent run could observe.
+
+        ``sandbox_root`` is accepted for parity with the Claude client; the
+        Codex docker wrap mounts ``cwd`` only, so a multi-repo caller should
+        hand the run what it needs to read rather than rely on the mount.
+        ``cancel_event`` makes the run stoppable (``ProcessCancelled``).
         """
+        del sandbox_root  # see docstring
         normalized_prompt = normalized_text(prompt)
         if not normalized_prompt:
             raise ValueError('prompt is required to run an investigation')
         normalized_cwd = normalized_text(cwd)
         if not normalized_cwd:
             normalized_cwd = self._repository_root_path or os.getcwd()
-        # Temporarily flip the sandbox to read-only so we cannot
-        # accidentally mutate the workspace during triage. Restore
-        # whatever was in place on the way out.
-        original_bypass = self._bypass_permissions
-        try:
-            self._bypass_permissions = False  # never bypass on triage
-            payload = self._run_prompt(
-                prompt=normalized_prompt,
-                cwd=normalized_cwd,
-                additional_dirs=[],
-                log_label='triage investigation',
-                task_id='triage',
-                sandbox_override='read-only',
-            )
-        finally:
-            self._bypass_permissions = original_bypass
+        payload = self._run_prompt(
+            prompt=normalized_prompt,
+            cwd=normalized_cwd,
+            additional_dirs=list(additional_dirs or []),
+            log_label=log_label or 'triage investigation',
+            task_id=task_id or 'triage',
+            sandbox_override='read-only',
+            cancel_event=cancel_event,
+        )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
 
@@ -476,6 +493,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         log_label: str = '',
         task_id: str = '',
         sandbox_override: str = '',
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, str | bool]:
         # ``--output-last-message <file>`` is the cleanest way to get
         # the agent's final reply text from a non-interactive run —
@@ -568,18 +586,37 @@ class CodexCliClient(CliAgentSharedBehaviour):
                 spawn_cwd = None
             self.logger.info('Mission %s: invoking Codex CLI', log_label)
             try:
-                completed = subprocess.run(
-                    command,
-                    input=prompt,
-                    cwd=spawn_cwd,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    check=False,
-                    timeout=self._timeout_seconds,
-                )
+                if cancel_event is None:
+                    completed = subprocess.run(
+                        command,
+                        input=prompt,
+                        cwd=spawn_cwd,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        check=False,
+                        timeout=self._timeout_seconds,
+                    )
+                else:
+                    completed = run_cancellable(
+                        command,
+                        input_text=prompt,
+                        cwd=spawn_cwd,
+                        env=env,
+                        timeout_seconds=self._timeout_seconds,
+                        cancel_event=cancel_event,
+                        logger=self.logger,
+                        label=log_label,
+                    )
+            except ProcessCancelled:
+                if container_name:
+                    # Killing the ``docker run`` client never reaches the
+                    # container; stop it explicitly, as the timeout path does.
+                    from sandbox_core_lib.sandbox_core_lib.manager import kill_container
+                    kill_container(container_name, logger=self.logger)
+                raise
             except subprocess.TimeoutExpired as exc:
                 if container_name:
                     # subprocess.run's own TimeoutExpired handling SIGKILLs
@@ -664,7 +701,9 @@ class CodexCliClient(CliAgentSharedBehaviour):
         # Bypass is a single flag that works on both exec and resume
         # and overrides everything else. Conflicts with --sandbox so
         # don't emit that alongside it.
-        if self._bypass_permissions:
+        # An explicit ``sandbox_override`` (a read-only run) outranks bypass:
+        # the caller asked for THAT sandbox, for this run only.
+        if self._bypass_permissions and not normalized_text(sandbox_override):
             command.append('--dangerously-bypass-approvals-and-sandbox')
         elif not is_resume:
             # --sandbox is ONLY accepted on fresh ``codex exec``; the

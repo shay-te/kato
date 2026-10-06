@@ -33,6 +33,9 @@ export default function DialogShell({
   onClose,
   backdropClose = false,
   inline = false,
+  // Optional control in the header's corner (the permission ask's
+  // popup ⇄ chat toggle). Absent for every other dialog.
+  headerAction = null,
   children,
 }) {
   function handleBackdropClick(event) {
@@ -46,6 +49,7 @@ export default function DialogShell({
       <header className="modal-head">
         <h2 id={ariaLabelledBy}>{title}</h2>
         <span id={subtitleId}>{subtitle}</span>
+        {headerAction}
       </header>
       {children}
     </div>

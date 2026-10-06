@@ -12,9 +12,13 @@
 //     operators would rather be pulled out of what they are doing than risk
 //     a background task sitting idle.
 //
-// Neither is right for everyone, which is why it is a setting rather than a
-// default someone has to live with. The ask, the submit path and the audit
-// bubble are identical either way — only where it is drawn changes.
+// Neither is right for everyone, so the operator switches it — from the ask
+// itself (components/ApprovalPlacementToggle.jsx: a popup "minimizes to the
+// chat", an in-chat ask "expands to a popup"). It used to be a Settings
+// option; the moment someone cares where an ask is drawn is when one is in
+// front of them. The choice is global and sticks. The ask, the submit path
+// and the audit bubble are identical either way — only where it is drawn
+// changes.
 //
 // A pure client-side UI preference (like the composer-steer / permission-sound
 // prefs), backed by localStorage so it survives reloads. It never touches the

@@ -320,6 +320,7 @@ def _run_boot_reconciliation(app) -> None:
     _reconcile_workspace_branches(app)
     _reset_stuck_workspace_statuses(app)
     _requeue_stuck_comments(app)
+    _mark_interrupted_review_loops(app)
     _log_known_session_ids(app)
     _cleanup_done_tasks_at_boot(app)
 
@@ -1500,6 +1501,32 @@ def _register_shutdown_hook(app) -> None:
         app.logger.debug(
             'SIGTERM handler not installable on this platform; '
             'relying on SIGINT for graceful shutdown',
+        )
+
+
+def _mark_interrupted_review_loops(app) -> None:
+    """Close review loops the previous kato process left running.
+
+    A loop's thread dies with its process, so its saved state still says
+    "running" — and the header would show a loop that is not happening. It is
+    recorded as interrupted, never resumed: the chat it was waiting on is gone,
+    and running again is the operator's call. Best-effort: never aborts boot.
+    """
+    service = getattr(app, 'service', None)
+    loops = getattr(service, 'review_loops', None)
+    if loops is None:
+        return
+    from kato_core_lib.data_layers.service.review_loop_adapters import (
+        mark_interrupted_review_loops,
+    )
+    try:
+        closed = mark_interrupted_review_loops(loops)
+    except Exception:
+        app.logger.exception('failed to close interrupted review loops at boot')
+        return
+    if closed:
+        app.logger.info(
+            'marked %d review loop(s) interrupted by the restart', closed,
         )
 
 

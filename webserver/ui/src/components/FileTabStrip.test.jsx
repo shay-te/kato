@@ -31,6 +31,17 @@ describe('FileTabStrip', () => {
     expect(container.firstChild).toBeNull();
   });
 
+  test('renders the strip for loop tabs alone, even with no file tabs open', () => {
+    const { container } = render(
+      <FileTabStrip
+        tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}}
+        reviewLoopTabs={[{ taskId: 'UNA-9', tone: 'running' }]}
+      />,
+    );
+    expect(container.querySelector('.file-tab-strip')).not.toBeNull();
+    expect(screen.getByText('UNA-9')).toBeInTheDocument();
+  });
+
   test('renders one tab per open file, showing the basename', () => {
     render(
       <FileTabStrip
@@ -534,5 +545,70 @@ describe('FileTabStrip — markdown preview toggle', () => {
       />,
     );
     expect(screen.queryByLabelText(/markdown source|rendered preview/)).toBeNull();
+  });
+});
+
+
+describe('FileTabStrip — review-loop tabs share the strip with file tabs', () => {
+  function renderWithLoops(extra = {}) {
+    const onSelectReviewLoop = vi.fn();
+    const onCloseReviewLoop = vi.fn();
+    const result = render(
+      <FileTabStrip
+        tabs={[tab(), tab({ key: 'client::src/other.py', relativePath: 'src/other.py' })]}
+        activeKey="client::src/auth.py"
+        onSelect={() => {}}
+        onClose={() => {}}
+        reviewLoopTabs={[
+          { taskId: 'UNA-1', tone: 'running' },
+          { taskId: 'UNA-2', tone: 'good' },
+        ]}
+        activeReviewLoopTab=""
+        onSelectReviewLoop={onSelectReviewLoop}
+        onCloseReviewLoop={onCloseReviewLoop}
+        {...extra}
+      />,
+    );
+    return { ...result, onSelectReviewLoop, onCloseReviewLoop };
+  }
+
+  test('file tabs and loop tabs are both in the one strip, loops last', () => {
+    const { container } = renderWithLoops();
+    const all = [...container.querySelectorAll('.file-tab')];
+    expect(all).toHaveLength(4);
+    const loops = all.filter((el) => el.classList.contains('is-review-loop'));
+    expect(loops.map((el) => el.dataset.reviewLoopTask)).toEqual(['UNA-1', 'UNA-2']);
+    // The loop group follows the file tabs and the first of it draws a divider.
+    expect(all[2]).toHaveClass('is-review-loop');
+    expect(all[2]).toHaveClass('is-group-start');
+    expect(all[3]).not.toHaveClass('is-group-start');
+    // Each loop tab carries the loop glyph, tinted by its state.
+    expect(loops[0].querySelector('.file-tab-loop-icon.is-running [data-icon="loop"]')).not.toBeNull();
+    expect(loops[1].querySelector('.file-tab-loop-icon.is-good')).not.toBeNull();
+  });
+
+  test('the active loop tab is marked, and no file tab is active meanwhile', () => {
+    const { container } = renderWithLoops({ activeReviewLoopTab: 'UNA-2', activeKey: null });
+    const active = [...container.querySelectorAll('.file-tab.active')];
+    expect(active).toHaveLength(1);
+    expect(active[0].dataset.reviewLoopTask).toBe('UNA-2');
+  });
+
+  test('selecting and closing a loop tab report its task', () => {
+    const { onSelectReviewLoop, onCloseReviewLoop } = renderWithLoops();
+    fireEvent.click(screen.getByText('UNA-1'));
+    expect(onSelectReviewLoop).toHaveBeenCalledWith('UNA-1');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the UNA-2 review loop tab' }));
+    expect(onCloseReviewLoop).toHaveBeenCalledWith('UNA-2');
+  });
+
+  test('a loop tab leading the strip draws no divider', () => {
+    const { container } = render(
+      <FileTabStrip
+        tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}}
+        reviewLoopTabs={[{ taskId: 'UNA-1', tone: 'running' }]}
+      />,
+    );
+    expect(container.querySelector('.file-tab.is-review-loop')).not.toHaveClass('is-group-start');
   });
 });

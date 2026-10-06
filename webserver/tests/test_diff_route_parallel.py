@@ -3,7 +3,8 @@
 It ran one repository after another on every 5-second poll: a six-repo task
 spent 1.5 s per poll in this route (6.6 s measured with the slower git wrapper).
 The repositories are independent, so they are built concurrently — while the
-response keeps the order the task lists them in.
+response keeps the order the task lists them in — alphabetical, whatever order
+the repositories were attached in.
 
 A barrier that every repository's build must reach before any may finish proves
 the builds overlap: run one at a time, the first would wait forever. Fakes are
@@ -22,7 +23,10 @@ from unittest.mock import patch
 from kato_webserver import app as app_module
 from kato_webserver.app import create_app
 
+# Attached out of alphabetical order on purpose: the response must list them
+# A→Z (``LISTED``), not in the order the task happened to collect them.
 REPOS = ['ob-love-admin-client', 'ob-love-admin-backend', 'core-lib']
+LISTED = sorted(REPOS, key=str.casefold)
 
 
 class _Workspace:
@@ -81,7 +85,7 @@ class DiffRouteBuildsReposInParallelTests(_DiffRouteHarness):
         with patch.object(app_module, '_compute_repo_diff', side_effect=compute):
             response = self._get()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([d['repo_id'] for d in response.get_json()['diffs']], REPOS)
+        self.assertEqual([d['repo_id'] for d in response.get_json()['diffs']], LISTED)
 
     def test_the_task_order_is_kept_whichever_repository_finishes_first(self) -> None:
         delays = {REPOS[0]: 0.15, REPOS[1]: 0.0, REPOS[2]: 0.05}
@@ -93,7 +97,8 @@ class DiffRouteBuildsReposInParallelTests(_DiffRouteHarness):
 
         with patch.object(app_module, '_compute_repo_diff', side_effect=compute):
             body = self._get().get_json()
-        self.assertEqual(body['repository_ids'], REPOS)
+        self.assertEqual(body['repository_ids'], LISTED)
+        self.assertEqual([d['repo_id'] for d in body['diffs']], LISTED)
 
     def test_the_first_repository_is_not_repeated_at_the_top_level(self) -> None:
         def compute(repo_id, cwd, **_kwargs):
@@ -182,13 +187,13 @@ class DiffRouteUnchangedChangesetTests(_DiffRouteHarness):
         self.assertEqual(response.headers.get('Content-Encoding'), 'gzip')
         self.assertEqual(response.headers.get('Vary'), 'Accept-Encoding')
         body = json.loads(gzip.decompress(response.get_data()))
-        self.assertEqual([d['repo_id'] for d in body['diffs']], REPOS)
+        self.assertEqual([d['repo_id'] for d in body['diffs']], LISTED)
 
     def test_a_client_that_does_not_accept_gzip_gets_plain_json(self) -> None:
         response = self._fetch(headers={'Accept-Encoding': 'identity'})
         self.assertIsNone(response.headers.get('Content-Encoding'))
         self.assertEqual(
-            [d['repo_id'] for d in response.get_json()['diffs']], REPOS,
+            [d['repo_id'] for d in response.get_json()['diffs']], LISTED,
         )
 
 

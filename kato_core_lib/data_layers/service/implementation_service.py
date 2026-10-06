@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.agent_client_service import _AgentClientService
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
@@ -10,6 +12,46 @@ class ImplementationService(_AgentClientService):
 
     def delete_conversation(self, conversation_id: str) -> None:
         self._client.delete_conversation(conversation_id)
+
+    @property
+    def supports_investigation(self) -> bool:
+        """Can the active backend run a fresh, read-only, one-off turn?
+
+        Claude and Codex can; OpenHands cannot. Features that need an
+        independent reader (an automated code review) check this up front and
+        refuse with a reason instead of failing half-way.
+        """
+        return callable(getattr(self._client, 'investigate', None))
+
+    def investigate(
+        self,
+        prompt: str,
+        *,
+        cwd: str = '',
+        additional_dirs: list[str] | None = None,
+        sandbox_root: str = '',
+        task_id: str = '',
+        log_label: str = '',
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+        """One fresh read-only turn on the active backend; returns its text.
+
+        See the client's ``investigate``: no ``--resume``, every write path
+        denied, nothing persisted, stoppable through ``cancel_event``.
+        """
+        if not self.supports_investigation:
+            raise RuntimeError(
+                'the active agent backend cannot run a read-only investigation',
+            )
+        return self._client.investigate(
+            prompt,
+            cwd=cwd,
+            additional_dirs=additional_dirs,
+            sandbox_root=sandbox_root,
+            task_id=task_id,
+            log_label=log_label,
+            cancel_event=cancel_event,
+        )
 
     def implement_task(
         self,

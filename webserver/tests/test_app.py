@@ -1272,16 +1272,17 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
         response = self.client.get('/api/sessions/PROJ-1/files')
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertEqual(payload['repository_ids'], ['client', 'backend'])
+        # Attached as client, backend — listed A→Z.
+        self.assertEqual(payload['repository_ids'], ['backend', 'client'])
         repo_ids_in_trees = [entry['repo_id'] for entry in payload['trees']]
-        self.assertEqual(repo_ids_in_trees, ['client', 'backend'])
+        self.assertEqual(repo_ids_in_trees, ['backend', 'client'])
         # Every tree carries the change-colouring inputs the Files
         # tab needs (same shape the conflict markers use).
         for entry in payload['trees']:
             self.assertIsInstance(entry['conflicted_files'], list)
             self.assertIsInstance(entry['changed_files'], list)
         # The first repo is not repeated at the top level.
-        self.assertEqual(payload['trees'][0]['cwd'], str(self.repo_a))
+        self.assertEqual(payload['trees'][0]['cwd'], str(self.repo_b))
         self.assertNotIn('cwd', payload)
         self.assertNotIn('tree', payload)
 
@@ -1321,9 +1322,9 @@ class MultiRepoEndpointShapeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
-        self.assertEqual(payload['repository_ids'], ['client', 'backend'])
+        self.assertEqual(payload['repository_ids'], ['backend', 'client'])
         repo_ids_in_diffs = [entry['repo_id'] for entry in payload['diffs']]
-        self.assertEqual(repo_ids_in_diffs, ['client', 'backend'])
+        self.assertEqual(repo_ids_in_diffs, ['backend', 'client'])
         self.assertEqual(payload['diffs'][0]['base'], 'master')
         self.assertEqual(payload['diffs'][0]['head'], 'UNA-1')
         for duplicate in ('repo_id', 'base', 'head', 'diff'):
@@ -1423,6 +1424,42 @@ class TaskRepositoryIdsTests(unittest.TestCase):
             result = _task_repository_ids(manager, 'TASK-1')
             self.assertEqual(result[:2], ['backend', 'client'])
             self.assertIn('new-repo', result)
+
+    def test_repositories_are_listed_alphabetically(self) -> None:
+        # Metadata is just the order repos were attached in; a 20-repo task
+        # listed "security-checks, ob-love-admin-client, …, core-lib, …".
+        # Every view reads this list, so it is sorted here, A→Z, ignoring case.
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            for repo in ('zeta', 'Alpha', 'mid', 'beta'):
+                (task_dir / repo / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(
+                record=_RepoIdsRecord(repository_ids=['zeta', 'Alpha', 'mid']),
+                workspace_path=task_dir,
+            )
+            self.assertEqual(
+                _task_repository_ids(manager, 'TASK-1'),
+                ['Alpha', 'beta', 'mid', 'zeta'],
+            )
+
+    def test_the_disk_only_fallback_is_alphabetical_too(self) -> None:
+        import tempfile, pathlib
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = pathlib.Path(tmp) / 'TASK-1'
+            task_dir.mkdir()
+            # Byte order would put ``Zeta`` first; A→Z ignoring case does not.
+            for repo in ('beta', 'Zeta', 'alpha'):
+                (task_dir / repo / '.git').mkdir(parents=True)
+            manager = _RepoIdsWorkspaceManager(
+                record=_RepoIdsRecord(repository_ids=[]),
+                workspace_path=task_dir,
+            )
+            self.assertEqual(
+                _task_repository_ids(manager, 'TASK-1'),
+                ['alpha', 'beta', 'Zeta'],
+            )
 
     def test_falls_back_to_disk_when_metadata_has_no_ids(self) -> None:
         import tempfile, pathlib

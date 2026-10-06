@@ -12,8 +12,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from unittest.mock import patch
-
 from kato_core_lib.helpers import plan_writer
 from kato_core_lib.helpers.plan_writer import (
     PLAN_CAPTURED_MARKER_FILENAME,
@@ -116,33 +114,28 @@ class PlanCaptureMarkerTests(unittest.TestCase):
             (Path(td) / PLAN_CAPTURED_MARKER_FILENAME).write_text('not a number')
             self.assertEqual(plan_captured_mtime(td), 0)
 
-    def test_a_marker_that_cannot_be_written_is_removed_not_left_stale(self) -> None:
-        # A stale marker would hide the new plan from the auto-open; no marker
-        # falls back to the file's mtime, which still shows it.
-        real_write = plan_writer.atomic_write_text
-
-        def plan_ok_marker_fails(path, content, **kwargs):
-            if path.name == PLAN_CAPTURED_MARKER_FILENAME:
-                return False
-            return real_write(path, content, **kwargs)
-
+    def test_a_marker_that_cannot_be_written_never_hides_the_new_plan(self) -> None:
+        # A directory squatting on the marker's name: the marker write fails
+        # for real. The plan still lands, and the capture reads as "unknown"
+        # (0) — the UI then falls back to the file's own mtime and still
+        # shows the new plan, rather than trusting a stale capture time.
         with tempfile.TemporaryDirectory() as td:
             ws = Path(td)
-            write_plan(ws, '# Plan one')
-            with patch.object(plan_writer, 'atomic_write_text', plan_ok_marker_fails):
-                self.assertTrue(write_plan(ws, '# Plan two'))
-            self.assertFalse((ws / PLAN_CAPTURED_MARKER_FILENAME).exists())
+            (ws / PLAN_CAPTURED_MARKER_FILENAME).mkdir()
+            self.assertTrue(write_plan(ws, '# Plan two'))
+            self.assertEqual((ws / PLAN_FILENAME).read_text(), '# Plan two')
             self.assertEqual(plan_captured_mtime(ws), 0)
 
     def test_a_failed_plan_write_leaves_the_marker_alone(self) -> None:
         with tempfile.TemporaryDirectory() as td:
-            ws = Path(td)
+            ws = Path(td) / 'one'
             write_plan(ws, '# Plan one')
             captured = plan_captured_mtime(ws)
-            with patch.object(plan_writer, 'atomic_write_text', return_value=False):
-                self.assertFalse(write_plan(ws, '# Plan two'))
-            self.assertEqual(plan_captured_mtime(ws), captured)
-
+            other = Path(td) / 'two'
+            (other / PLAN_FILENAME).mkdir(parents=True)  # plan.md can't be replaced
+            (other / PLAN_CAPTURED_MARKER_FILENAME).write_text(str(captured))
+            self.assertFalse(write_plan(other, '# Plan two'))
+            self.assertEqual(plan_captured_mtime(other), captured)
 
 class AdoptUncapturedPlanTests(unittest.TestCase):
 

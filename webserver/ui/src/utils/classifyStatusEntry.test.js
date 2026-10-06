@@ -286,3 +286,55 @@ test('classifyStatusEntry: clone-failure rule is anchored, not substring', funct
     null,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Review loop finished — a desktop notification even when the operator is on
+// another task. The messages are the exact lines kato's review-loop logger
+// writes (pinned in tests/test_review_loop_adapters.py → LogLineTests).
+// ---------------------------------------------------------------------------
+
+test('classifyStatusEntry: a review loop that ended clean is a completion', function () {
+  const r = classifyStatusEntry(_entry(
+    'Mission UNA-3166: review loop finished (clean) after 2 round(s): round 2 found no blocking issues',
+  ));
+  assert.equal(r.kind, NOTIFICATION_KIND.COMPLETED);
+  assert.equal(r.title, 'Review loop: clean');
+  assert.equal(r.taskId, 'UNA-3166');
+  assert.equal(r.body, 'UNA-3166: round 2 found no blocking issues');
+});
+
+test('classifyStatusEntry: a loop that needs the operator asks for attention', function () {
+  for (const [status, title] of [
+    ['stuck', 'Review loop: stuck on the same issues'],
+    ['max_rounds', 'Review loop: issues left after the last round'],
+  ]) {
+    const r = classifyStatusEntry(_entry(
+      `Mission UNA-1: review loop finished (${status}) after 5 round(s): 1 blocking issue(s) left`,
+    ));
+    assert.equal(r.kind, NOTIFICATION_KIND.ATTENTION);
+    assert.equal(r.title, title);
+  }
+});
+
+test('classifyStatusEntry: a failed loop is an error; a stopped one a status change', function () {
+  const failed = classifyStatusEntry(_entry(
+    'Mission UNA-1: review loop finished (failed) after 1 round(s): the review run failed: timeout',
+  ));
+  assert.equal(failed.kind, NOTIFICATION_KIND.ERROR);
+  for (const status of ['stopped', 'interrupted', 'some_future_status']) {
+    const r = classifyStatusEntry(_entry(
+      `Mission UNA-1: review loop finished (${status}) after 1 round(s): the chat was stopped`,
+    ));
+    assert.equal(r.kind, NOTIFICATION_KIND.STATUS_CHANGE);
+  }
+});
+
+test('classifyStatusEntry: a loop\'s progress lines do NOT notify', function () {
+  for (const line of [
+    'Mission UNA-1: review loop started (up to 5 reviews)',
+    'Mission UNA-1: review loop round 2: findings sent to the chat',
+    'Mission UNA-1: review loop round 2: 1 blocker, 0 major, 0 minor, 0 nit',
+  ]) {
+    assert.equal(classifyStatusEntry(_entry(line)), null);
+  }
+});

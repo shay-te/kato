@@ -188,11 +188,17 @@ def _record_cwd_or_none(manager, task_id: str) -> str | None:
 def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
     """Repository ids for the task, merging metadata with what is on disk.
 
-    Metadata order is preserved. Any repo directory found on disk that
-    is not in the metadata list (e.g. manually cloned after the workspace
-    was created, or added via a new YouTrack tag before sync ran) is
-    appended at the end so the Files / Changes tabs pick it up immediately
-    without requiring a sync or a reload.
+    Any repo directory found on disk that is not in the metadata list (e.g.
+    manually cloned after the workspace was created, or added via a new
+    YouTrack tag before sync ran) is included so the Files / Changes tabs pick
+    it up immediately without requiring a sync or a reload.
+
+    Returned in ALPHABETICAL order (case-insensitive). Metadata order is just
+    the order the repos happened to be attached to the task, and every list
+    built from this — the Files trees, the Changes accordions, the "All repos"
+    picker — showed that order: "security-checks, ob-love-admin-client, …,
+    core-lib, …" on a 20-repo task, with no way to find a repo by name. One
+    sort here orders every view the same way.
 
     Falls back to the disk scan entirely when no workspace record exists —
     which happens after publish when the in-memory record is cleared but
@@ -213,10 +219,10 @@ def _task_repository_ids(workspace_manager, task_id: str) -> list[str]:
         ]
     disk_ids = _enumerate_repo_ids_from_disk(workspace_manager, task_id)
     if not meta_ids:
-        return disk_ids
+        return sorted(disk_ids, key=str.casefold)
     meta_lower = {rid.lower() for rid in meta_ids}
     extras = [rid for rid in disk_ids if rid.lower() not in meta_lower]
-    return meta_ids + extras
+    return sorted(meta_ids + extras, key=str.casefold)
 
 
 def _enumerate_repo_ids_from_disk(workspace_manager, task_id: str) -> list[str]:
@@ -686,6 +692,25 @@ def _compute_repo_diff(
     """
     if task_id:
         ensure_branch_checked_out(cwd, task_id)
+    return _read_repo_diff(
+        repo_id, cwd, agent_service=agent_service, full_paths=full_paths,
+    )
+
+
+def _read_repo_diff(
+    repo_id: str,
+    cwd: str,
+    *,
+    agent_service=None,
+    full_paths=(),
+) -> dict[str, Any]:
+    """``_compute_repo_diff`` without the branch self-heal: READ-ONLY.
+
+    The Changes tab may check the task branch out first (an operator looking
+    at a drifted clone wants it fixed); a background reader — the review
+    loop's reviewer, mid-way through someone else's turn — must never touch
+    git state, so it calls this half alone.
+    """
     base = _resolve_diff_base(repo_id, cwd, agent_service)
     ref, is_local = resolve_base_ref(cwd, base)
     # A repo WITH an origin remote but no resolvable base is a genuine config
@@ -1380,6 +1405,10 @@ def create_app(
     _register_http_routes(app)
     _register_streaming_routes(app)
     _register_status_routes(app)
+    from kato_webserver.review_loop_routes import register_review_loop_routes
+    register_review_loop_routes(
+        app, collect_diffs=lambda task_id: _collect_review_diffs(app, task_id),
+    )
     return app
 
 
@@ -2255,6 +2284,8 @@ def _register_http_routes(app: Flask) -> None:
         # watcher respawns it — so the message doesn't suggest that.)
         if _task_has_active_comment_run(app, task_id):
             return jsonify({'error': _COMMENT_RUN_BLOCKS_CHAT_SWITCH}), 409
+        if _task_review_loop_running(app, task_id):
+            return jsonify({'error': _REVIEW_LOOP_BLOCKS_CHAT_SWITCH}), 409
         if agent_session_id:
             known = {read_session_id_from(record)}
             known.update(getattr(record, 'previous_session_ids', []) or [])
@@ -2313,6 +2344,8 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'error': f'no session record for task {task_id}'}), 404
         if _task_has_active_comment_run(app, task_id):
             return jsonify({'error': _COMMENT_RUN_BLOCKS_CHAT_SWITCH}), 409
+        if _task_review_loop_running(app, task_id):
+            return jsonify({'error': _REVIEW_LOOP_BLOCKS_CHAT_SWITCH}), 409
         summary = handoff_summary_from_events(_current_chat_events(app, task_id))
         if not summary:
             return jsonify({
@@ -2352,6 +2385,8 @@ def _register_http_routes(app: Flask) -> None:
         backend = _requested_chat_backend(request.get_json(silent=True) or {})
         if not backend:
             return jsonify({'error': 'unknown agent backend'}), 400
+        if _task_review_loop_running(app, task_id):
+            return jsonify({'error': _REVIEW_LOOP_BLOCKS_CHAT_SWITCH}), 409
         manager = app.config['SESSION_MANAGER']
         available = getattr(manager, 'available_backends', None)
         wired = list(available()) if callable(available) else []
@@ -3975,6 +4010,15 @@ def _register_http_routes(app: Flask) -> None:
                     'error': done_error,
                 }), 502
         errors: list[str] = []
+        # 0. A review loop on this task: stop it and delete its rounds first,
+        #    so it can neither send into the chat being torn down nor write
+        #    its folder back after the task is gone.
+        loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
+        if loops is not None:
+            try:
+                loops.forget(task_id)
+            except Exception as exc:
+                errors.append(f'review loop: {exc}')
         # 1. Kill the live subprocess + wipe the session record /
         #    Claude JSONL transcript. Best-effort: a missing session
         #    or terminate failure shouldn't block the workspace
@@ -4615,6 +4659,15 @@ def _capture_prompt_lesson_candidate(app: Flask, task_id: str, text: str) -> Non
 def _register_stop_session_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/stop')
     def stop_session(task_id: str):
+        # The chat's Stop ends the review loop too — first, and even when the
+        # chat has no session yet (the loop may be mid-review): the operator
+        # pressed Stop, so nothing kato started on this task keeps going.
+        loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
+        if loops is not None:
+            try:
+                loops.stop(task_id, reason='the chat was stopped')
+            except Exception:
+                app.logger.exception('failed to stop the review loop for %s', task_id)
         manager = app.config['SESSION_MANAGER']
         if manager.get_record(task_id) is None:
             return jsonify({'error': 'session not found'}), 404
@@ -5910,6 +5963,61 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     return jsonify({'status': 'spawned', 'text': text})
 
 
+_REVIEW_LOOP_BLOCKS_CHAT_SWITCH = (
+    'a review loop is running on this task and posts its findings into the '
+    'current chat; stop the loop before switching chats or agents'
+)
+
+
+def _task_review_loop_running(app, task_id: str) -> bool:
+    """Is a review loop driving this task's chat right now?
+
+    Switching chats (or agents) mid-loop would hand the loop's next findings
+    to a different conversation than the one fixing the last ones. False on
+    any failure: a broken loop service must not brick chat switching.
+    """
+    loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
+    try:
+        # Only an explicit True blocks: anything else (no service, a stub) is
+        # "no loop", never a reason to refuse the operator's switch.
+        return loops is not None and loops.is_running(task_id) is True
+    except Exception:
+        return False
+
+
+def _collect_review_diffs(app, task_id: str) -> list:
+    """Every repository's diff for a review round — read-only, in parallel.
+
+    Same base resolution and per-file elision as the Changes tab, but never a
+    checkout: a review runs in the background, possibly while the agent is
+    mid-turn in those very clones.
+    """
+    from review_loop_core_lib.review_loop_core_lib.ports import RepoDiff
+
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    agent_service = app.config.get('AGENT_SERVICE')
+    repo_cwds = [
+        (repo_id, _repository_cwd(workspace_manager, task_id, repo_id))
+        for repo_id in _task_repository_ids(workspace_manager, task_id)
+    ]
+
+    def read(entry):
+        repo_id, cwd = entry
+        if not cwd:
+            return None
+        payload = _read_repo_diff(repo_id, cwd, agent_service=agent_service)
+        return RepoDiff(
+            repo_id=repo_id,
+            diff=str(payload.get('diff', '') or ''),
+            base=str(payload.get('base', '') or ''),
+            head=str(payload.get('head', '') or ''),
+            cwd=cwd,
+            error=str(payload.get('error', '') or ''),
+        )
+
+    return build_in_parallel(repo_cwds, read)
+
+
 _COMMENT_RUN_BLOCKS_CHAT_SWITCH = (
     'kato is working on (or has queued) a review comment for this task; wait '
     'for it to finish before switching chats'
@@ -6768,6 +6876,7 @@ def _records_as_dicts(
     session_ids_by_task = _session_ids_by_task(session_manager)
     backend_by_task = _backend_by_task(session_manager, workspace_records)
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
+    review_loop_by_task = _review_loop_summaries(agent_service)
     return [
         _workspace_record_to_dict(
             record,
@@ -6778,9 +6887,27 @@ def _records_as_dicts(
             pending_permission_session_ids=pending_permission_session_ids,
             pending_permission_tool_by_task=pending_permission_tool_by_task,
             backend_by_task=backend_by_task,
+            review_loop_by_task=review_loop_by_task,
         )
         for record in workspace_records
     ]
+
+
+def _review_loop_summaries(agent_service) -> dict[str, dict]:
+    """``task_id -> review-loop summary`` for the tab list — memory only.
+
+    Where each task's loop is (round, phase, since when, what it waits for)
+    and how its last one ended. Rides the existing 5-second poll, so the
+    header chip and tab badge need no timer of their own.
+    """
+    loops = getattr(agent_service, 'review_loops', None)
+    if loops is None:
+        return {}
+    try:
+        summaries = loops.summaries()
+    except Exception:
+        return {}
+    return summaries if isinstance(summaries, dict) else {}
 
 
 #: Record fields the tab list does NOT send. Nothing in the UI reads them, and
@@ -7056,8 +7183,10 @@ def _workspace_record_to_dict(
     pending_permission_session_ids: set[str] | None = None,
     pending_permission_tool_by_task: dict[str, str] | None = None,
     backend_by_task: dict[str, str] | None = None,
+    review_loop_by_task: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
+    payload['review_loop'] = (review_loop_by_task or {}).get(record.task_id)
     # WORKSPACE records carry no backend — they predate agent tabs and are
     # about the clone on disk, not the chat. Without this the UI had nothing
     # to name the agent with and fell back to the literal word "Agent" on the
