@@ -578,6 +578,9 @@ def _restart_in_place(app) -> None:
     os.environ.pop('WERKZEUG_SERVER_FD', None)
     if os.environ.get('KATO_SUPERVISED_RESTART') == '1':
         app.logger.warning('restarting kato (supervised relaunch)…')
+        # Hand the terminal back before the relaunch, so the gap between this
+        # process and its replacement never shows a raw-mode shell.
+        _restore_terminal()
         os._exit(_RESTART_EXIT_CODE)
         return  # unreachable in production; keeps mocked-_exit tests honest
     argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
@@ -1355,6 +1358,63 @@ def _emit_raw(text: str) -> None:
         pass
 
 
+#: The terminal's line settings as they were BEFORE kato (or any child) touched
+#: them: ``(fd, termios_attrs)`` or ``None``. An agent CLI puts the terminal
+#: into raw / no-echo mode for its own UI; on a clean exit it restores it, but a
+#: killed-abruptly child cannot — leaving the operator's shell with no echo
+#: until they run ``reset``. kato owns the terminal for the whole run, so it
+#: snapshots the pristine mode once at boot and restores it on EVERY exit path,
+#: however kato stops. Reported as "the terminal is broken — I don't see what I
+#: type" after a forced shutdown.
+_ORIGINAL_TERMINAL: tuple[int, object] | None = None
+
+
+def _snapshot_terminal(fd: int | None = None) -> None:
+    """Remember the terminal's line settings, once, before anything changes them.
+
+    ``fd`` is for tests; in production it scans the real std streams for the
+    controlling terminal.
+    """
+    global _ORIGINAL_TERMINAL
+    if os.name == 'nt':
+        return  # POSIX termios only; Windows consoles don't break this way.
+    try:
+        import termios  # noqa: PLC0415 - optional, POSIX-only
+        if fd is not None:
+            if os.isatty(fd):
+                _ORIGINAL_TERMINAL = (fd, termios.tcgetattr(fd))
+            return
+        for stream in (sys.__stdin__, sys.__stderr__, sys.__stdout__):
+            candidate = getattr(stream, 'fileno', lambda: -1)()
+            if candidate is not None and candidate >= 0 and os.isatty(candidate):
+                _ORIGINAL_TERMINAL = (candidate, termios.tcgetattr(candidate))
+                return
+    except Exception:
+        _ORIGINAL_TERMINAL = None
+
+
+def _restore_terminal() -> None:
+    """Put the terminal back the way it was at boot — best-effort, never raises.
+
+    Called from every exit path. Restores the saved line discipline (so echo
+    and cooked-mode input return) and re-shows the cursor + clears any pending
+    SGR, which an interrupted agent UI may have left off.
+    """
+    if _ORIGINAL_TERMINAL is None:
+        return
+    fd, attrs = _ORIGINAL_TERMINAL
+    try:
+        import termios  # noqa: PLC0415 - optional, POSIX-only
+        termios.tcsetattr(fd, termios.TCSADRAIN, attrs)
+    except Exception:
+        pass
+    try:
+        # Show the cursor and reset colours, in case the killed UI hid them.
+        os.write(fd, b'\x1b[?25h\x1b[0m')
+    except Exception:
+        pass
+
+
 def _exit_now(code: int) -> None:
     """Leave the process without waiting for interpreter teardown.
 
@@ -1379,6 +1439,7 @@ def _exit_now(code: int) -> None:
     mid-write would hold the exit open indefinitely. Losing the last few log
     lines is strictly better than not exiting.
     """
+    _restore_terminal()
     run_with_deadline(
         _flush_log_handlers,
         seconds=FLUSH_GRACE_SECONDS,
@@ -1409,6 +1470,11 @@ def _flush_log_handlers() -> None:
 
 
 def _register_shutdown_hook(app) -> None:
+    # Remember the terminal's pristine line settings before any agent CLI puts
+    # it into raw mode, so every exit path can hand the operator's shell back
+    # with echo intact (see ``_restore_terminal``). Registered once, at boot,
+    # before chat sessions spawn.
+    _snapshot_terminal()
     #: Set by the first signal. A second one means the operator is still
     #: pressing Ctrl+C at a process that has not died — they get an immediate
     #: exit rather than a longer wait.
@@ -1444,6 +1510,10 @@ def _register_shutdown_hook(app) -> None:
                 'second shutdown signal — exiting immediately, '
                 'cleanup skipped.\n',
             )
+            # Still put the terminal back, even on the escape hatch — it is one
+            # best-effort syscall, so it cannot reintroduce the hang this path
+            # exists to bypass.
+            _restore_terminal()
             os._exit(130)
             # Unreachable in production — os._exit does not return. Explicit
             # so the escalation cannot fall through into the graceful path it
