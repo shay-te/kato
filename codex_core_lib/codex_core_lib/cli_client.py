@@ -312,6 +312,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         task_id: str = '',
         log_label: str = '',
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int = 0,
     ) -> str:
         """Read-only single turn — triage, and an independent review.
 
@@ -342,6 +343,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
             task_id=task_id or 'triage',
             sandbox_override='read-only',
             cancel_event=cancel_event,
+            timeout_seconds=timeout_seconds,
         )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
@@ -494,7 +496,11 @@ class CodexCliClient(CliAgentSharedBehaviour):
         task_id: str = '',
         sandbox_override: str = '',
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int = 0,
     ) -> dict[str, str | bool]:
+        # 0 = the client's configured default. A per-call override lets a long
+        # read-only run (a big task's review) get more than the default.
+        effective_timeout = int(timeout_seconds) if timeout_seconds else self._timeout_seconds
         # ``--output-last-message <file>`` is the cleanest way to get
         # the agent's final reply text from a non-interactive run —
         # the alternative is parsing the JSONL event stream for the
@@ -597,7 +603,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
                         encoding='utf-8',
                         errors='replace',
                         check=False,
-                        timeout=self._timeout_seconds,
+                        timeout=effective_timeout,
                     )
                 else:
                     completed = run_cancellable(
@@ -605,7 +611,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
                         input_text=prompt,
                         cwd=spawn_cwd,
                         env=env,
-                        timeout_seconds=self._timeout_seconds,
+                        timeout_seconds=effective_timeout,
                         cancel_event=cancel_event,
                         logger=self.logger,
                         label=log_label,
@@ -628,7 +634,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
                     from sandbox_core_lib.sandbox_core_lib.manager import kill_container
                     kill_container(container_name, logger=self.logger)
                 raise TimeoutError(
-                    f'Codex CLI did not finish within {self._timeout_seconds}s for {log_label}'
+                    f'Codex CLI did not finish within {effective_timeout}s for {log_label}'
                 ) from exc
             except OSError as exc:
                 raise RuntimeError(

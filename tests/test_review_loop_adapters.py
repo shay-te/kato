@@ -47,13 +47,17 @@ from kato_core_lib.data_layers.service.planning_session_runner import (
     StreamingSessionDefaults,
 )
 from kato_core_lib.data_layers.service.review_loop_adapters import (
+    DEFAULT_REVIEW_TIMEOUT_SECONDS,
+    KatoReviewer,
     REVIEW_LOOPS_DIR_ENV,
+    REVIEW_TIMEOUT_ENV,
     build_review_loop_service,
     chat_mode_refusal,
     log_review_loop_event,
     mark_interrupted_review_loops,
     review_loop_refusal,
     review_loops_root,
+    review_timeout_seconds,
     shut_down_review_loops,
 )
 from kato_core_lib.data_layers.service.task_comment_run_service import (
@@ -393,3 +397,53 @@ class BootAndShutdownTests(_ModeIsolation):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReviewTimeoutTests(unittest.TestCase):
+    """A big task's review needs more than the implementation default — the
+    per-review timeout is generous and configurable, and reaches the client."""
+
+    def test_the_env_is_parsed_clamped_and_defaults(self) -> None:
+        cases = {
+            '': DEFAULT_REVIEW_TIMEOUT_SECONDS,
+            '   ': DEFAULT_REVIEW_TIMEOUT_SECONDS,
+            'oops': DEFAULT_REVIEW_TIMEOUT_SECONDS,
+            '10': 60,            # clamped up to the 60s floor
+            '5400': 5400,
+            '3600.0': 3600,
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw), patch.dict(os.environ, {REVIEW_TIMEOUT_ENV: raw}):
+                self.assertEqual(review_timeout_seconds(), expected)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(REVIEW_TIMEOUT_ENV, None)
+            self.assertEqual(review_timeout_seconds(), DEFAULT_REVIEW_TIMEOUT_SECONDS)
+
+    def test_the_reviewer_passes_its_timeout_to_the_investigation(self) -> None:
+        class _RecordingImpl(object):
+            supports_investigation = True
+
+            def __init__(self) -> None:
+                self.kwargs = {}
+
+            def investigate(self, prompt, **kwargs):
+                self.kwargs = kwargs
+                return 'report'
+
+        impl = _RecordingImpl()
+
+        class _Workspaces(object):
+            def workspace_path(self, task_id):
+                return '/w/T'
+
+        reviewer = KatoReviewer(
+            implementation_service=impl,
+            workspace_manager=_Workspaces(),
+            timeout_seconds=5400,
+        )
+        reviewer.review('check it', task_id='T', cancel_event=threading.Event())
+        self.assertEqual(impl.kwargs['timeout_seconds'], 5400)
+
+    def test_the_built_service_wires_the_configured_timeout(self) -> None:
+        with patch.dict(os.environ, {REVIEW_TIMEOUT_ENV: '5400'}):
+            self.assertEqual(review_timeout_seconds(), 5400)

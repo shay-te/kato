@@ -33,6 +33,7 @@ class ImplementationService(_AgentClientService):
         task_id: str = '',
         log_label: str = '',
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int = 0,
     ) -> str:
         """One fresh read-only turn on the active backend; returns its text.
 
@@ -51,6 +52,7 @@ class ImplementationService(_AgentClientService):
             task_id=task_id,
             log_label=log_label,
             cancel_event=cancel_event,
+            timeout_seconds=timeout_seconds,
         )
 
     def implement_task(

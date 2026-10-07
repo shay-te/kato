@@ -117,6 +117,22 @@ class StoppableTurnTests(unittest.TestCase):
             client.investigate('review', cwd=tempfile.gettempdir(), cancel_event=cancel)
         self.assertLess(time.monotonic() - started, 10)
 
+    def test_a_per_call_timeout_overrides_the_client_default(self) -> None:
+        # The client's own timeout is huge, but THIS review gets a tiny one —
+        # a big task's review can need far more than the default, so the loop
+        # passes its own. A run that overruns it is killed with a message that
+        # names the effective timeout, not the client default.
+        binary, _record = _fake_cli(self, sleep=30)
+        client = ClaudeCliClient(binary=binary, timeout_seconds=100000)
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError) as caught:
+            client.investigate(
+                'review', cwd=tempfile.gettempdir(),
+                cancel_event=threading.Event(), timeout_seconds=1,
+            )
+        self.assertIn('within 1s', str(caught.exception))
+        self.assertLess(time.monotonic() - started, 10)
+
 
 class DockerMountTests(unittest.TestCase):
 

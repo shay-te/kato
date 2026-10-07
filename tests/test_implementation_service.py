@@ -59,13 +59,30 @@ class ImplementationServiceInvestigateTests(unittest.TestCase):
         text = service.investigate(
             'review', cwd='/w/T/api', additional_dirs=['/w/T'],
             sandbox_root='/w/T', task_id='T', log_label='review', cancel_event=cancel,
+            timeout_seconds=5400,
         )
         self.assertEqual(text, 'report')
         self.assertEqual(client.calls, [('review', dict(
             cwd='/w/T/api', additional_dirs=['/w/T'], sandbox_root='/w/T',
             task_id='T', log_label='review', cancel_event=cancel,
+            timeout_seconds=5400,
         ))])
         self.assertTrue(service.supports_investigation)
+
+    def test_the_timeout_defaults_to_the_clients_own(self) -> None:
+        class _RecordingClient(object):
+            def __init__(self) -> None:
+                self.kwargs: dict = {}
+
+            def investigate(self, prompt, **kwargs):
+                self.kwargs = kwargs
+                return 'ok'
+
+        client = _RecordingClient()
+        ImplementationService(client).investigate('review')
+        # 0 = "use the client's configured default" — the per-call override
+        # is opt-in, so an ordinary call never changes the client's timeout.
+        self.assertEqual(client.kwargs['timeout_seconds'], 0)
 
     def test_a_backend_without_it_is_refused_with_a_reason(self) -> None:
         service = ImplementationService(object())

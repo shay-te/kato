@@ -274,7 +274,11 @@ The loop never commits or pushes; `<KATO_TASK_DONE>` is ignored while it runs
 (`AgentService.finish_from_done_marker`). Rounds live in `~/.kato/review_loops/` (outside
 every clone). The chat's Stop, a task delete, and kato shutdown end it; a restart marks
 it interrupted (never resumed). A fix paused on a permission ask shows "waiting for your
-approval" and is never treated as stalled. UI: `webserver/ui/src/components/reviewLoop/` —
+approval" and is never treated as stalled. Each review run (a fresh one-shot `claude -p`)
+gets its OWN timeout — `KATO_REVIEW_LOOP_TIMEOUT_SECONDS` (default 7200, clamp ≥60), passed
+per-call to `investigate(timeout_seconds=)` — NOT the transport's 1800s implementation default,
+which a big multi-repo task's review (slower on Windows) overruns, failing the whole loop. UI:
+`webserver/ui/src/components/reviewLoop/` —
 header button (opens the view; nothing starts from it) + "where is it now" chip, tab badge,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.

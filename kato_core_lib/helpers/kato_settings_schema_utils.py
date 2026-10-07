@@ -211,6 +211,13 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_TASK_PUBLISH_MAX_RETRIES', 'number',
              'Publish max retries',
              'Retries for the publish step (PR + move-to-review).', {}),
+            ('KATO_REVIEW_LOOP_TIMEOUT_SECONDS', 'number',
+             'Review loop: per-review timeout (s)',
+             'How long one independent review run may take before it is '
+             'killed (and the loop fails). Default 7200 (2h) — a big '
+             'multi-repo task\'s review is slow, more so on Windows. Raise '
+             'it for very large tasks; the Stop button ends a review early '
+             'regardless.', {}),
             ('KATO_AUTO_PUSH_ENABLED', 'bool',
              'Autonomous push + PR',
              'Off by default. Kato finishes a task, then parks it and '

@@ -279,6 +279,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         task_id: str = '',
         log_label: str = '',
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int = 0,
     ) -> str:
         """Run a single read-only Claude turn and return the raw text.
 
@@ -315,6 +316,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             persist_session=False,
             sandbox_root=sandbox_root,
             cancel_event=cancel_event,
+            timeout_seconds=timeout_seconds,
         )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
@@ -458,7 +460,12 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         persist_session: bool = True,
         sandbox_root: str = '',
         cancel_event: threading.Event | None = None,
+        timeout_seconds: int = 0,
     ) -> dict[str, str | bool]:
+        # 0 = the client's configured default. A per-call override lets a long
+        # read-only run (a big task's review) get more than the default, which
+        # is sized for a normal implementation turn.
+        effective_timeout = int(timeout_seconds) if timeout_seconds else self._timeout_seconds
         command = self._build_command(
             additional_dirs=additional_dirs,
             agent_session_id=agent_session_id,
@@ -509,7 +516,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
                     encoding='utf-8',
                     errors='replace',
                     check=False,
-                    timeout=self._timeout_seconds,
+                    timeout=effective_timeout,
                 )
             else:
                 completed = run_cancellable(
@@ -517,7 +524,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
                     input_text=prompt,
                     cwd=spawn_cwd,
                     env=env,
-                    timeout_seconds=self._timeout_seconds,
+                    timeout_seconds=effective_timeout,
                     cancel_event=cancel_event,
                     logger=self.logger,
                     label=log_label,
@@ -539,7 +546,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
                 from sandbox_core_lib.sandbox_core_lib.manager import kill_container
                 kill_container(container_name, logger=self.logger)
             raise TimeoutError(
-                f'Claude CLI did not finish within {self._timeout_seconds}s for {log_label}'
+                f'Claude CLI did not finish within {effective_timeout}s for {log_label}'
             ) from exc
         except OSError as exc:
             raise RuntimeError(

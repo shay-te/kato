@@ -16,6 +16,7 @@ lib's ports with kato's own machinery and builds the service:
 
 from __future__ import annotations
 
+import os
 import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -52,6 +53,25 @@ from kato_core_lib.helpers.workspace_repo_utils import (
 )
 
 REVIEW_LOOPS_DIR_ENV = 'KATO_REVIEW_LOOPS_DIR'
+
+# How long one review run (a fresh read-only ``claude -p`` / ``codex``) may take
+# before it is killed. The transport's own default is sized for a normal
+# implementation turn (30 min); a big multi-repo task's review legitimately
+# takes longer, and on Windows the one-shot is slower still — a review that
+# times out fails the whole loop. Generous by default (2h, matching the fix
+# turn), lowerable via ``KATO_REVIEW_LOOP_TIMEOUT_SECONDS``.
+REVIEW_TIMEOUT_ENV = 'KATO_REVIEW_LOOP_TIMEOUT_SECONDS'
+DEFAULT_REVIEW_TIMEOUT_SECONDS = 7200
+
+
+def review_timeout_seconds() -> int:
+    """The configured per-review timeout (seconds), clamped to >= 60."""
+    raw = os.environ.get(REVIEW_TIMEOUT_ENV, '')
+    try:
+        value = int(float(raw)) if raw.strip() else DEFAULT_REVIEW_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        value = DEFAULT_REVIEW_TIMEOUT_SECONDS
+    return max(60, value)
 _RESTART_REASON = 'kato restarted while the loop was running'
 _SHUTDOWN_REASON = 'kato shut down while the loop was running'
 
@@ -165,9 +185,11 @@ class KatoChatChannel(object):
 class KatoReviewer(object):
     """A fresh, read-only review of one task by the configured agent backend."""
 
-    def __init__(self, *, implementation_service, workspace_manager) -> None:
+    def __init__(self, *, implementation_service, workspace_manager,
+                 timeout_seconds: int = 0) -> None:
         self._get_implementation_service = provider_for(implementation_service)
         self._get_workspace_manager = provider_for(workspace_manager)
+        self._timeout_seconds = int(timeout_seconds or 0)
 
     def review(self, prompt: str, *, task_id: str, cancel_event: threading.Event) -> str:
         workspace_manager = self._get_workspace_manager()
@@ -183,6 +205,7 @@ class KatoReviewer(object):
             task_id=task_id,
             log_label=f'{task_id} review loop',
             cancel_event=cancel_event,
+            timeout_seconds=self._timeout_seconds,
         )
 
 
@@ -255,6 +278,7 @@ def build_review_loop_service(
         reviewer=KatoReviewer(
             implementation_service=implementation_service,
             workspace_manager=workspace_manager,
+            timeout_seconds=review_timeout_seconds(),
         ),
         wording=LoopWording(
             wrap_untrusted=lambda text, source: wrap_untrusted_workspace_content(
