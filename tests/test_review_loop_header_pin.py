@@ -13,13 +13,21 @@ import re
 import unittest
 from pathlib import Path
 
+from review_loop_core_lib.review_loop_core_lib.chat_prompts import (
+    build_self_check_prompt,
+    build_tests_fix_prompt,
+    build_tests_prompt,
+)
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
     build_findings_prompt,
 )
 from review_loop_core_lib.review_loop_core_lib.ports import LoopWording
 from review_loop_core_lib.review_loop_core_lib.verdict import parse_review_verdict
 
-from kato_core_lib.helpers.review_loop_guidance import REVIEW_LOOP_FINDINGS_HEADER
+from kato_core_lib.helpers.review_loop_guidance import (
+    REVIEW_LOOP_FINDINGS_HEADER,
+    REVIEW_LOOP_STAGE_HEADER,
+)
 
 _JS = (
     Path(__file__).resolve().parents[1]
@@ -27,10 +35,10 @@ _JS = (
 )
 
 
-def _ui_pattern() -> re.Pattern:
+def _ui_pattern(name: str = 'REVIEW_LOOP_HEADER_PATTERN') -> re.Pattern:
     source = _JS.read_text(encoding='utf-8')
-    match = re.search(r'REVIEW_LOOP_HEADER_PATTERN = /(.+)/m;', source)
-    assert match, 'REVIEW_LOOP_HEADER_PATTERN not found in reviewLoopPrompt.js'
+    match = re.search(name + r' = /(.+)/m;', source)
+    assert match, f'{name} not found in reviewLoopPrompt.js'
     return re.compile(match.group(1), re.MULTILINE)
 
 
@@ -55,6 +63,23 @@ class HeaderPinTests(unittest.TestCase):
         )
         respawned = 'WORKSPACE SCOPE — STRICT BOUNDARY\n...\n\n' + message
         self.assertEqual(_ui_pattern().search(respawned).groups(), ('2', '5'))
+
+
+    def test_the_ui_recognises_every_stage_message_python_writes(self) -> None:
+        wording = LoopWording(
+            wrap_untrusted=lambda text, source: text,
+            stage_header=REVIEW_LOOP_STAGE_HEADER,
+        )
+        pattern = _ui_pattern('REVIEW_LOOP_STAGE_PATTERN')
+        for message, stage in (
+            (build_self_check_prompt(turn=2, max_turns=3, wording=wording), 'self-check 2 of 3'),
+            (build_tests_prompt(wording=wording), 'run the tests'),
+            (build_tests_fix_prompt(task_id='T-1', failures=['x'], wording=wording),
+             'fix the failing tests'),
+        ):
+            with self.subTest(stage=stage):
+                respawned = 'WORKSPACE SCOPE — STRICT BOUNDARY\n...\n\n' + message
+                self.assertEqual(pattern.search(respawned).group(1), stage)
 
 
 if __name__ == '__main__':

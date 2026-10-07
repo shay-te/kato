@@ -41,6 +41,7 @@ def wrap(text: str, source: str) -> str:
 WORDING = LoopWording(
     wrap_untrusted=wrap,
     findings_header='Host review loop — round {round} of {max_rounds}',
+    stage_header='Host review loop — {stage}',
     reviewer_guidance='Read the rules file first.',
     findings_guidance='Never print the done marker.',
 )

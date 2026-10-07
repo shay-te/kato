@@ -16,6 +16,12 @@ from kato_core_lib.data_layers.data.sentinels import KATO_TASK_DONE_SENTINEL
 # the two together).
 REVIEW_LOOP_FINDINGS_HEADER = 'Kato review loop — round {round} of {max_rounds}'
 
+# The FIRST line of the loop's other chat messages — the self-check and the
+# test run ("Kato review loop — self-check 1 of 3", "… — run the tests",
+# "… — fix the failing tests"). Same reason as the findings header: the UI
+# labels them as kato's, not "You asked". Pinned to the same JS pattern.
+REVIEW_LOOP_STAGE_HEADER = 'Kato review loop — {stage}'
+
 # For the agent fixing the findings. The done marker matters most: printed
 # here it would start kato's publish flow in the middle of a review cycle.
 REVIEW_LOOP_FIXER_GUIDANCE = (

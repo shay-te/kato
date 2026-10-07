@@ -27,6 +27,7 @@ Each test below asserts the three things that must ALL hold after pickup:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -1076,7 +1077,24 @@ class GuardsHoldOnADefaultInstallTests(TaskPickupEndToEndTests):
     environment. Reading the raw variable made BOTH guards return "not in
     the source tree" for every path on a normal install — the protection was
     believed to be on and was not. The tests missed it by setting both vars.
+
+    The default root is ``~/.kato/workspaces``, and the guard only applies
+    when it exists. Each test gets its own home, so the outcome depends on
+    the install being simulated, not on whether the machine running the
+    tests has a real ``~/.kato`` (a developer's Mac does; a CI runner does
+    not — these passed locally and failed in CI).
     """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.home = self.root / 'home'
+        # A default install in workspace mode: kato created its default
+        # root the first time it provisioned a task.
+        self.default_workspaces = self.home / '.kato' / 'workspaces'
+        self.default_workspaces.mkdir(parents=True)
+        home = mock.patch.object(Path, 'home', return_value=self.home)
+        home.start()
+        self.addCleanup(home.stop)
 
     def test_the_guard_fires_with_only_the_source_root_configured(self) -> None:
         with mock.patch.dict(os.environ, {
@@ -1100,15 +1118,31 @@ class GuardsHoldOnADefaultInstallTests(TaskPickupEndToEndTests):
         self.assertEqual(_branches(self.source), before)
 
     def test_the_default_workspaces_root_is_not_treated_as_source(self) -> None:
-        # A clone under the DEFAULT workspaces root must stay allowed.
-        default_clone = Path.home() / '.kato' / 'workspaces' / 'T1' / 'repo'
+        # A clone under the DEFAULT workspaces root must stay allowed, even
+        # with the source root above it.
+        default_clone = self.default_workspaces / 'T1' / 'repo'
         with mock.patch.dict(os.environ, {
-            'REPOSITORY_ROOT_PATH': str(Path.home()),
+            'REPOSITORY_ROOT_PATH': str(self.home),
             'KATO_WORKSPACES_ROOT': '',
         }):
             self.assertIsNone(
                 self.service._source_tree_containing(str(default_clone)),
             )
+            # ...while the same root still guards everything else in it.
+            self.assertEqual(
+                self.service._source_tree_containing(str(self.home / 'dev' / 'repo')),
+                self.home.resolve(),
+            )
+
+    def test_a_legacy_install_without_the_default_root_is_not_guarded(self) -> None:
+        # Legacy single-clone: no per-task clones, so no default root on
+        # disk, and the operator's checkout IS the working copy to branch.
+        shutil.rmtree(self.home / '.kato')
+        with mock.patch.dict(os.environ, {
+            'REPOSITORY_ROOT_PATH': str(self.source_root),
+            'KATO_WORKSPACES_ROOT': '',
+        }):
+            self.assertIsNone(self.service._source_tree_containing(str(self.source)))
 
 
 class AFailedWipePutsTheWorkBackTests(TaskPickupEndToEndTests):

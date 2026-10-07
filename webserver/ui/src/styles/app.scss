@@ -12782,10 +12782,109 @@ button.settings-prompt-editor-head {
 
 .review-loop-round.is-clean .review-loop-round-outcome { color: $C-GREEN-52; }
 .review-loop-round.is-stuck .review-loop-round-outcome,
+.review-loop-round.is-changed .review-loop-round-outcome,
 .review-loop-round.is-max_rounds .review-loop-round-outcome { color: $C-ORANGE-50; }
 .review-loop-round.is-failed .review-loop-round-outcome { color: $C-RED-60; }
 
 .review-loop-round-body { padding: 0 $SPACE-14 $SPACE-12; }
+
+/* "Clean-room" — a sweep round: a reviewer told nothing of the fixes,
+ * confirming the clean round before it. Indigo, the loop's accent. */
+.review-loop-round-tag {
+  flex-shrink: 0;
+  padding: $SPACE-1 $SPACE-6;
+  border-radius: $RADIUS-PILL;
+  background: $C-INDIGO-66-A12;
+  color: $C-INDIGO-76;
+  font-size: $TEXT-10;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The test run the main chat reported for a clean round. */
+.review-loop-tests {
+  margin: $SPACE-8 0 $SPACE-4;
+  padding-left: $SPACE-8;
+  border-left: 2px solid $C-NEUTRAL-100-A10;
+}
+
+.review-loop-tests.is-good { border-left-color: $C-GREEN-52; }
+.review-loop-tests.is-bad { border-left-color: $C-RED-60; }
+
+.review-loop-tests-summary {
+  margin: 0;
+  font-size: $TEXT-12_5;
+  color: $C-NEUTRAL-96;
+}
+
+.review-loop-tests-failures {
+  margin: $SPACE-4 0 0;
+  padding-left: $SPACE-16;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-11_5;
+  color: $C-NEUTRAL-96-A65;
+}
+
+/* The main chat's own review of its change, before the first round. */
+.review-loop-self-checks {
+  margin: 0 $SPACE-12 $SPACE-8;
+}
+
+.review-loop-self-checks h4 {
+  margin: $SPACE-8 0 $SPACE-4;
+  font-size: $TEXT-11;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $C-NEUTRAL-96-A42;
+}
+
+.review-loop-self-checks ul {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.review-loop-self-check-name { font-size: $TEXT-12_5; color: $C-NEUTRAL-96; }
+
+.review-loop-self-check-summary {
+  margin: $SPACE-2 0 0;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96-A65;
+}
+
+/* The loop's optional stages, ticked before Start / Run again. */
+.review-loop-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $SPACE-4 $SPACE-16;
+  margin: 0;
+  padding: $SPACE-8 $SPACE-14;
+  border: 0;
+  border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.review-loop-stages-legend {
+  float: left;
+  margin-right: $SPACE-4;
+  padding: 0;
+  font-size: $TEXT-11;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $C-NEUTRAL-96-A42;
+}
+
+.review-loop-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-6;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96-A85;
+  cursor: pointer;
+}
 
 .review-loop-findings h4 {
   margin: $SPACE-8 0 $SPACE-4;

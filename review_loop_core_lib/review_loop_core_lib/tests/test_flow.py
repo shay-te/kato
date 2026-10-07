@@ -105,7 +105,10 @@ class CleanAfterAFixTests(_Flow):
         reviewer = FakeReviewer(reply(finding('BLOCKER')), reply())
         service = self.service(chat, reviewer)
         state = self.run_to_end(service)
-        for kind in ArtifactKind:
+        # What a plain fix round leaves (the self-check / tests kinds only
+        # exist when those options are on — see test_stages.py).
+        for kind in (ArtifactKind.DIFF, ArtifactKind.REVIEW, ArtifactKind.PROMPT,
+                     ArtifactKind.RESPONSE):
             self.assertTrue(service.artifact('T-1', state.loop_id, 1, kind))
         self.assertIn('diff --git a/app.py', service.artifact('T-1', state.loop_id, 1, 'diff'))
         self.assertIsNone(service.artifact('T-1', state.loop_id, 2, ArtifactKind.PROMPT))

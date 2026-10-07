@@ -1,9 +1,14 @@
 """One review loop for one task, driven on its own thread.
 
+    [self_check] the main chat reviews + fixes its own change (≤ N turns)
     begin round n ─▶ wait for the chat to settle ─▶ review the whole diff
-                     (told the decisions so far; settled repeats don't block)
-      no blocking finding .................. done: CLEAN
-      same blocking issues as round n-1 .... done: STUCK       (nothing sent)
+                     (told the decisions so far; settled repeats don't block;
+                      a clean-room confirmation is told nothing)
+      no blocking finding:
+        [verify_tests] the chat runs the tests ─▶ failing: fix them, round n+1
+        [confirm_clean] the reviewer saw the ledger ─▶ clean-room round n+1
+        otherwise ........................... done: CLEAN
+      claimed fixes all still there ........ done: STUCK       (nothing sent)
       n is the last round .................. done: MAX_ROUNDS  (nothing sent)
       otherwise ─▶ wait for the chat ─▶ send the findings ─▶ wait for the fix
                  ─▶ read its decisions ─▶ begin round n+1
@@ -23,14 +28,22 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from review_loop_core_lib.review_loop_core_lib.chat_prompts import (
+    build_self_check_prompt,
+    build_tests_fix_prompt,
+    build_tests_prompt,
+)
 from review_loop_core_lib.review_loop_core_lib.data.state import (
     ReviewLoopPhase,
     ReviewLoopState,
     ReviewLoopStatus,
     ReviewRound,
+    SelfCheckTurn,
+    TestReport,
 )
 from review_loop_core_lib.review_loop_core_lib.diff import (
     DEFAULT_BUDGET_CHARS,
+    candidate_digest,
     render_review_diff,
 )
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
@@ -38,13 +51,18 @@ from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
 )
 from review_loop_core_lib.review_loop_core_lib.ports import (
     ChatChannel,
+    ChatTurnEnd,
     LoopObserver,
     LoopWording,
     Readiness,
     Reviewer,
     TaskDiffSource,
 )
-from review_loop_core_lib.review_loop_core_lib.response import parse_fix_response
+from review_loop_core_lib.review_loop_core_lib.response import (
+    parse_fix_response,
+    parse_self_check,
+    parse_test_report,
+)
 from review_loop_core_lib.review_loop_core_lib.reviewer_prompt import (
     build_reviewer_prompt,
 )
@@ -79,6 +97,8 @@ class RunnerOptions(object):
     # A chat with no session at all for this long during a fix has ended.
     session_gone_grace_seconds: float = 90.0
     diff_budget_chars: int = DEFAULT_BUDGET_CHARS
+    # The most self-check turns before the independent review starts anyway.
+    self_check_turns: int = 3
 
 
 class _Finish(Exception):
@@ -182,23 +202,71 @@ class ReviewLoopRunner(object):
 
     def _loop(self) -> None:
         """Rounds until one of them ends the loop — the last always does."""
+        if self._state.self_check:
+            self._self_check_phase()
         previous: set[str] | None = None
         max_rounds = self._state.max_rounds
         number = 0
+        # The next review withholds the decision ledger: a clean-room check.
+        confirm_next = False
+        # The exact change the tests last PASSED on; a clean review of any
+        # other code runs them again.
+        tests_digest = ''
         while True:
             number += 1
             review_round = self._begin_round(number)
             self._wait_for_chat(ReviewLoopPhase.WAITING_TO_REVIEW)
-            verdict = self._review(review_round)
+            # This round is the clean-room sweep asked for by the last one.
+            confirming = confirm_next
+            verdict = self._review(review_round, withhold_ledger=confirming)
+            confirm_next = False
             blocking = len(verdict.blocking)
             if verdict.is_clean:
-                self._close_round(review_round, 'clean')
-                settled = len(verdict.settled)
-                raise _Finish(
-                    ReviewLoopStatus.CLEAN,
-                    f'round {number} found no blocking issues'
-                    + (f' ({settled} raised again were settled earlier)' if settled else ''),
+                if self._state.verify_tests and tests_digest != review_round.diff_digest:
+                    report = self._verify_tests(review_round)
+                    if report.passed is False:
+                        if number == max_rounds:
+                            self._close_round(review_round, 'tests_failed')
+                            raise _Finish(
+                                ReviewLoopStatus.MAX_ROUNDS,
+                                f'the tests still fail after {number} reviews',
+                            )
+                        self._fix_tests(review_round, report)
+                        previous = None
+                        continue
+                    tests_digest = review_round.diff_digest
+                # A clean verdict from a reviewer told the fix ping-pong
+                # (``confirm_clean``) — or ANY clean verdict (``extra_sweep``) —
+                # needs one more reviewer, told nothing, to agree. The sweep it
+                # asks for is the last word.
+                wants_sweep = not confirming and (
+                    self._state.extra_sweep
+                    or (self._state.confirm_clean and not review_round.blind)
                 )
+                if wants_sweep and number < max_rounds:
+                    self._close_round(review_round, 'clean')
+                    confirm_next = True
+                    previous = None
+                    continue
+                # A clean verdict covers the code that reviewer saw — nothing
+                # else. If the tree moved on meanwhile, review it again (the
+                # same kind of review: a sweep is redone as a sweep).
+                if self._code_changed_since(review_round):
+                    self._close_round(review_round, 'changed')
+                    self._notify('changed')
+                    if number == max_rounds:
+                        raise _Finish(
+                            ReviewLoopStatus.MAX_ROUNDS,
+                            f'the code changed after round {number} found it clean, '
+                            'and no round was left to review it again',
+                        )
+                    confirm_next = confirming
+                    previous = None
+                    continue
+                self._close_round(review_round, 'clean')
+                raise _Finish(ReviewLoopStatus.CLEAN, self._clean_reason(
+                    review_round, verdict, confirmed=confirming, no_room=wants_sweep,
+                ))
             current = review_round.blocking_fingerprints
             if previous is not None and is_stuck(previous, current):
                 self._close_round(review_round, 'stuck')
@@ -218,6 +286,36 @@ class ReviewLoopRunner(object):
             # the loop is stuck: a finding it rejected with evidence is settled.
             previous = review_round.claimed_fixed_fingerprints
 
+    def _clean_reason(
+        self, review_round: ReviewRound, verdict: ReviewVerdict, *,
+        confirmed: bool, no_room: bool,
+    ) -> str:
+        """Why the loop ended clean, with what backs it up."""
+        reason = f'round {review_round.number} found no blocking issues'
+        settled = len(verdict.settled)
+        if settled:
+            reason += f' ({settled} raised again were settled earlier)'
+        notes = []
+        if confirmed:
+            notes.append('confirmed by a clean-room review')
+        elif no_room:
+            notes.append('no round left for a clean-room review')
+        tests = review_round.tests or self._latest_tests()
+        if self._state.verify_tests:
+            notes.append(_tests_note(tests))
+        return reason + ''.join(f'; {note}' for note in notes)
+
+    def _code_changed_since(self, review_round: ReviewRound) -> bool:
+        """Whether the task's change is no longer the one this round reviewed."""
+        return candidate_digest(self._diff_source(self._task_id)) != review_round.diff_digest
+
+    def _latest_tests(self) -> TestReport | None:
+        with self._lock:
+            for earlier in reversed(self._state.rounds):
+                if earlier.tests is not None:
+                    return earlier.tests
+        return None
+
     def _begin_round(self, number: int) -> ReviewRound:
         review_round = ReviewRound(number=number, started_at=self._clock())
         with self._lock:
@@ -225,7 +323,13 @@ class ReviewLoopRunner(object):
         self._save()
         return review_round
 
-    def _review(self, review_round: ReviewRound) -> ReviewVerdict:
+    def _review(self, review_round: ReviewRound, *, withhold_ledger: bool = False) -> ReviewVerdict:
+        """One independent review of the whole change.
+
+        ``withhold_ledger``: a clean-room check — the reviewer is told nothing
+        of the decisions so far. Settled findings stay settled either way: that
+        is the loop's call on the evidence, not something the reviewer decides.
+        """
         self._set_phase(ReviewLoopPhase.REVIEWING)
         self._notify('reviewing')
         diffs = self._diff_source(self._task_id)
@@ -234,11 +338,16 @@ class ReviewLoopRunner(object):
             review_round.diff_repos = rendered.repos
             review_round.diff_files = rendered.files
             review_round.diff_omitted = len(rendered.omitted_files)
+            review_round.diff_digest = candidate_digest(diffs)
         if rendered.is_empty:
             raise _Finish(ReviewLoopStatus.FAILED, 'there are no changes to review')
         state = self.snapshot()
         self._store.write_artifact(state, review_round.number, ArtifactKind.DIFF, rendered.text)
         ledger = state.ledger()
+        told = () if withhold_ledger else ledger
+        with self._lock:
+            review_round.blind = not told
+            review_round.sweep = withhold_ledger
         prompt = build_reviewer_prompt(
             task_id=self._task_id,
             task_summary=self._task_summary,
@@ -246,7 +355,7 @@ class ReviewLoopRunner(object):
             diffs=diffs,
             rendered=rendered,
             wording=self._wording,
-            ledger=ledger,
+            ledger=told,
         )
         try:
             reply = self._reviewer.review(
@@ -284,8 +393,106 @@ class ReviewLoopRunner(object):
         self._store.write_artifact(
             self.snapshot(), review_round.number, ArtifactKind.PROMPT, prompt,
         )
+        dispatched_at = self._deliver(
+            prompt, wait_phase=ReviewLoopPhase.WAITING_TO_SEND, label='findings',
+        )
+        with self._lock:
+            review_round.sent_at = dispatched_at
+            review_round.outcome = 'sent'
+        self._set_phase(ReviewLoopPhase.AWAITING_FIX)
+        self._notify('sent')
+        return prompt, dispatched_at
+
+    def _await_fix(self, review_round: ReviewRound, prompt: str, dispatched_at: float) -> None:
+        turn = self._await_turn(prompt, dispatched_at, what='fix')
+        self._record_responses(review_round, turn.text)
+        with self._lock:
+            review_round.fixed_at = turn.received_at
+        self._notify('fixed')
+
+    def _self_check_phase(self) -> None:
+        """The main chat reviews and fixes its own change, before any reviewer.
+
+        Up to ``self_check_turns`` turns, until the chat says this pass found
+        nothing more. A reply without a readable block ends the phase too — a
+        chat that cannot say it is done is not asked again and again; the
+        independent review that follows catches what is left.
+        """
+        max_turns = max(1, int(self._options.self_check_turns))
+        for number in range(1, max_turns + 1):
+            turn = SelfCheckTurn(number=number, started_at=self._clock())
+            with self._lock:
+                self._state.self_checks.append(turn)
+            self._save()
+            prompt = build_self_check_prompt(turn=number, max_turns=max_turns, wording=self._wording)
+            dispatched_at = self._deliver(
+                prompt, wait_phase=ReviewLoopPhase.SELF_CHECK, label='self-check request',
+            )
+            self._notify('self_check')
+            reply = self._await_turn(prompt, dispatched_at, what='self-check')
+            if reply.text:
+                self._store.write_artifact(
+                    self.snapshot(), number, ArtifactKind.SELF_CHECK, reply.text,
+                )
+            clean, fixed, summary = parse_self_check(reply.text)
+            with self._lock:
+                turn.finished_at = reply.received_at
+                turn.clean = clean
+                turn.fixed = fixed
+                turn.summary = summary
+            self._save()
+            self._notify('self_checked')
+            if clean is not False:
+                return
+
+    def _verify_tests(self, review_round: ReviewRound) -> TestReport:
+        """Have the main chat run the tests on the current tree, and report."""
+        prompt = build_tests_prompt(wording=self._wording)
+        dispatched_at = self._deliver(
+            prompt, wait_phase=ReviewLoopPhase.VERIFYING, label='test request',
+        )
+        self._notify('verifying')
+        reply = self._await_turn(prompt, dispatched_at, what='test run')
+        if reply.text:
+            self._store.write_artifact(
+                self.snapshot(), review_round.number, ArtifactKind.TESTS, reply.text,
+            )
+        report = parse_test_report(reply.text, now=reply.received_at)
+        with self._lock:
+            review_round.tests = report
+        self._save()
+        self._notify('verified')
+        return report
+
+    def _fix_tests(self, review_round: ReviewRound, report: TestReport) -> None:
+        """Send the failing tests back to the chat; the next review re-checks."""
+        failures = report.failures or [report.summary or 'the tests failed']
+        prompt = build_tests_fix_prompt(
+            task_id=self._task_id, failures=failures, wording=self._wording,
+        )
+        self._store.write_artifact(
+            self.snapshot(), review_round.number, ArtifactKind.PROMPT, prompt,
+        )
+        dispatched_at = self._deliver(
+            prompt, wait_phase=ReviewLoopPhase.WAITING_TO_SEND, label='failing tests',
+        )
+        with self._lock:
+            review_round.sent_at = dispatched_at
+            review_round.outcome = 'tests_failed'
+        self._set_phase(ReviewLoopPhase.AWAITING_FIX)
+        self._notify('sent')
+        turn = self._await_turn(prompt, dispatched_at, what='fix')
+        with self._lock:
+            review_round.fixed_at = turn.received_at
+        self._notify('fixed')
+
+    def _deliver(self, prompt: str, *, wait_phase: ReviewLoopPhase, label: str) -> float:
+        """Wait until the chat is free, then send ``prompt`` under its lock.
+
+        Returns when it was sent. ``label`` names the message in the failure.
+        """
         while True:
-            self._wait_for_chat(ReviewLoopPhase.WAITING_TO_SEND)
+            self._wait_for_chat(wait_phase)
             with self._chat.dispatch_lock(self._task_id):
                 # Re-checked under the lock every sender holds: another one
                 # may have taken the idle moment we waited for.
@@ -300,16 +507,16 @@ class ReviewLoopRunner(object):
             break
         if not delivered:
             raise _Finish(
-                ReviewLoopStatus.FAILED, 'the findings could not be delivered to the chat',
+                ReviewLoopStatus.FAILED, f'the {label} could not be delivered to the chat',
             )
-        with self._lock:
-            review_round.sent_at = dispatched_at
-            review_round.outcome = 'sent'
-        self._set_phase(ReviewLoopPhase.AWAITING_FIX)
-        self._notify('sent')
-        return prompt, dispatched_at
+        return dispatched_at
 
-    def _await_fix(self, review_round: ReviewRound, prompt: str, dispatched_at: float) -> None:
+    def _await_turn(self, prompt: str, dispatched_at: float, *, what: str) -> ChatTurnEnd:
+        """Wait for the chat turn that ``prompt`` started to end; return it.
+
+        ``what`` names the turn ("fix", "self-check", "test run") in the
+        failure reasons.
+        """
         options = self._options
         deadline = dispatched_at + options.fix_turn_timeout_seconds
         gone_since: float | None = None
@@ -320,21 +527,16 @@ class ReviewLoopRunner(object):
             if turn is not None:
                 if turn.is_error:
                     raise _Finish(
-                        ReviewLoopStatus.FAILED, 'the chat\'s fix turn ended with an error',
+                        ReviewLoopStatus.FAILED, f'the chat\'s {what} turn ended with an error',
                     )
                 readiness = self._chat.readiness(self._task_id)
                 if readiness.state is Readiness.READY:
-                    self._record_responses(review_round, turn.text)
-                    with self._lock:
-                        review_round.fixed_at = turn.received_at
                     self._set_waiting('')
-                    self._notify('fixed')
-                    return
+                    return turn
                 if readiness.state is Readiness.REFUSE:
                     raise _Finish(ReviewLoopStatus.STOPPED, readiness.reason)
-                # The fix turn ended but the chat is still busy (background
-                # work it started, or a message right behind it): the next
-                # review waits for all of it.
+                # The turn ended but the chat is still busy (background work
+                # it started, or a message right behind it): wait for all of it.
                 self._set_waiting(readiness.reason)
             elif not self._chat.session_alive(self._task_id):
                 now = self._clock()
@@ -342,7 +544,7 @@ class ReviewLoopRunner(object):
                 if now - gone_since >= options.session_gone_grace_seconds:
                     raise _Finish(
                         ReviewLoopStatus.FAILED,
-                        'the chat session ended before the fix finished',
+                        f'the chat session ended before the {what} finished',
                     )
             else:
                 gone_since = None
@@ -356,7 +558,7 @@ class ReviewLoopRunner(object):
                     if redelivered:
                         raise _Finish(
                             ReviewLoopStatus.FAILED,
-                            'the chat stopped reading its input twice during the fix',
+                            f'the chat stopped reading its input twice during the {what}',
                         )
                     redelivered = True
                     with self._chat.dispatch_lock(self._task_id):
@@ -364,7 +566,7 @@ class ReviewLoopRunner(object):
             if self._clock() >= deadline:
                 raise _Finish(
                     ReviewLoopStatus.FAILED,
-                    f'the fix took longer than {int(options.fix_turn_timeout_seconds)}s',
+                    f'the {what} took longer than {int(options.fix_turn_timeout_seconds)}s',
                 )
             self._sleep()
 
@@ -468,3 +670,10 @@ class ReviewLoopRunner(object):
     def _sleep(self) -> None:
         if self._cancel.wait(self._options.poll_seconds):
             self._raise_if_cancelled()
+
+
+def _tests_note(report: TestReport | None) -> str:
+    if report is None or report.passed is None:
+        return 'the tests were not reported'
+    detail = report.summary or report.command
+    return f'tests passed ({detail})' if detail else 'tests passed'

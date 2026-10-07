@@ -115,6 +115,11 @@ class LoopWording(object):
 
     wrap_untrusted: Callable[[str, str], str]
     findings_header: str = 'Review loop — round {round} of {max_rounds}'
+    # The first line of the loop's OTHER chat messages — the self-check and the
+    # test run — formatted with ``{stage}`` ("self-check 1 of 3", "run the
+    # tests", "fix the failing tests"), so a UI can tell them apart from the
+    # operator's own messages just like the findings.
+    stage_header: str = 'Review loop — {stage}'
     reviewer_guidance: str = ''
     findings_guidance: str = ''
 

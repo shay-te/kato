@@ -110,7 +110,10 @@ class ReviewLoopRouteTests(_RoutesBase):
     def test_start_runs_a_loop_over_the_real_diff(self) -> None:
         reviewer = FakeReviewer(reply(finding('MAJOR')), reply())
         client = self.client(reviewer)
-        response = client.post('/api/sessions/T-1/review-loop')
+        # The plain review/fix loop, every optional stage off.
+        response = client.post('/api/sessions/T-1/review-loop', json=dict.fromkeys(
+            ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep'), False,
+        ))
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.get_json()['loop']['status'], 'running')
         self.wait_finished()
@@ -134,6 +137,25 @@ class ReviewLoopRouteTests(_RoutesBase):
                 self.assertEqual(
                     client.get(f'/api/sessions/T-1/review-loop/{bad}').status_code, 404,
                 )
+
+    def test_every_stage_is_on_unless_the_request_turns_it_off(self) -> None:
+        client = self.client(FakeReviewer(block_until_cancelled=True))
+        loop = client.post('/api/sessions/T-1/review-loop').get_json()['loop']
+        self.assertEqual(
+            {k: loop[k] for k in ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep')},
+            dict.fromkeys(('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep'), True),
+        )
+        self.loops.stop('T-1')
+        self.wait_finished()
+        some_off = client.post('/api/sessions/T-1/review-loop', json={
+            'self_check': False, 'extra_sweep': False, 'verify_tests': 'yes',
+        }).get_json()['loop']
+        # Only an explicit false turns a stage off.
+        self.assertEqual(
+            (some_off['self_check'], some_off['verify_tests'], some_off['confirm_clean'],
+             some_off['extra_sweep']),
+            (False, True, True, False),
+        )
 
     def test_the_operator_picks_the_number_of_rounds(self) -> None:
         # A NEW blocking finding every review (a repeat would end it as stuck):

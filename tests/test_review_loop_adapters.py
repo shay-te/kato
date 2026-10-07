@@ -218,6 +218,40 @@ class WholeLoopTests(_ModeIsolation):
         self.assertTrue((world.root / 'review_loops' / 'T-1' / state.loop_id).is_dir())
 
 
+    def test_the_full_path_through_the_real_chat_and_reviewer(self) -> None:
+        # Self-check → review → fix → review (told the fixes) clean → tests →
+        # clean-room sweep clean. Each chat turn answers with ONE reply that
+        # carries every block; each parser reads only its own.
+        world = _KatoWorld(self)
+        world.cli.script_chat_reply(
+            'Done.\n<self-check>{"clean": true, "fixed": 1, "summary": "tidied"}</self-check>\n'
+            '<test-report>{"passed": true, "command": "pytest", "summary": "3 passed", '
+            '"failures": []}</test-report>\n'
+            '<review-response>{"decisions": [{"id": "R1-1", "decision": "fixed", '
+            '"test": "t::x"}]}</review-response>'
+        )
+        world.cli.script_replies(_verdict(_major()), _verdict(), _verdict())
+        world.service.start('T-1', diff_source=world.diffs, task_summary='Add login',
+                            self_check=True, verify_tests=True, confirm_clean=True,
+                            extra_sweep=True)
+        self.assertTrue(_wait(lambda: not world.service.is_running('T-1'), 30))
+        state = world.service.state('T-1')
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual([r.outcome for r in state.rounds], ['sent', 'clean', 'clean'])
+        self.assertEqual([r.sweep for r in state.rounds], [False, False, True])
+        self.assertEqual([(t.clean, t.fixed) for t in state.self_checks], [(True, 1)])
+        self.assertTrue(state.rounds[1].tests.passed)
+        self.assertEqual(state.reason, 'round 3 found no blocking issues; '
+                         'confirmed by a clean-room review; tests passed (3 passed)')
+        firsts = [m['text'].split('Kato review loop — ', 1)[1].splitlines()[0]
+                  for m in world.cli.chat_messages()]
+        self.assertEqual(firsts, ['self-check 1 of 3', 'round 1 of 5', 'run the tests'])
+        reviews = world.cli.oneshot_calls()
+        self.assertEqual(len(reviews), 3)
+        self.assertIn('## Decisions so far', reviews[1]['prompt'])
+        self.assertNotIn('## Decisions so far', reviews[2]['prompt'])
+
     def test_the_fix_turns_decisions_come_back_through_the_real_chat(self) -> None:
         # The chat's final reply (the stream-json ``result``) carries the
         # fixer's response block; a rejection with evidence settles its
@@ -357,7 +391,8 @@ class LogLineTests(unittest.TestCase):
         state.status = ReviewLoopStatus.STUCK
         state.reason = 'none of the blocking issues from round 1 were fixed'
         with self.assertLogs(logger, level='INFO') as logs:
-            for event in ('started', 'reviewing', 'reviewed', 'sent', 'fixed', 'finished', 'other'):
+            for event in ('started', 'reviewing', 'reviewed', 'sent', 'fixed', 'changed',
+                          'finished', 'other'):
                 log_review_loop_event(logger, state, event)
         self.assertEqual([record.getMessage() for record in logs.records], [
             'Mission T-1: review loop started (up to 5 reviews)',
@@ -365,6 +400,7 @@ class LogLineTests(unittest.TestCase):
             'Mission T-1: review loop round 2: 0 blocker, 0 major, 0 minor, 0 nit',
             'Mission T-1: review loop round 2: findings sent to the chat',
             'Mission T-1: review loop round 2: the chat finished its fixes',
+            'Mission T-1: review loop round 2: the code changed after this review found it clean',
             'Mission T-1: review loop finished (stuck) after 2 round(s): '
             'none of the blocking issues from round 1 were fixed',
         ])

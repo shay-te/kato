@@ -34,10 +34,12 @@ TERMINAL_STATUSES = frozenset(
 class ReviewLoopPhase(str, Enum):
     """Where a running loop is right now."""
 
+    SELF_CHECK = 'self_check'                # the main chat reviews + fixes its own change
     WAITING_TO_REVIEW = 'waiting_to_review'  # waiting for the chat to settle
     REVIEWING = 'reviewing'                  # the reviewer is reading the diff
     WAITING_TO_SEND = 'waiting_to_send'      # findings ready, chat not free yet
     AWAITING_FIX = 'awaiting_fix'            # the main agent is fixing
+    VERIFYING = 'verifying'                  # the main chat is running the tests
     DONE = 'done'
 
 
@@ -202,6 +204,73 @@ class FindingResponse(object):
         )
 
 
+@dataclass
+class SelfCheckTurn(object):
+    """One turn in which the main chat reviewed (and fixed) its own change.
+
+    Cheap — the chat already holds the whole context — so it catches the easy
+    bugs before the independent reviewer is paid to.
+    """
+
+    number: int
+    started_at: float
+    finished_at: float = 0.0
+    #: The chat's own verdict: True = found nothing more to fix; None = it
+    #: did not say (no readable block).
+    clean: bool | None = None
+    fixed: int = 0
+    summary: str = ''
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'number': self.number, 'started_at': self.started_at,
+            'finished_at': self.finished_at, 'clean': self.clean,
+            'fixed': self.fixed, 'summary': self.summary,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'SelfCheckTurn':
+        clean = data.get('clean')
+        return cls(
+            number=int(data.get('number', 0)),
+            started_at=float(data.get('started_at', 0.0)),
+            finished_at=float(data.get('finished_at', 0.0)),
+            clean=None if clean is None else bool(clean),
+            fixed=int(data.get('fixed', 0) or 0),
+            summary=str(data.get('summary', '')),
+        )
+
+
+@dataclass
+class TestReport(object):
+    """What the main chat reported after running the task's tests."""
+
+    #: True = all passed, False = something failed, None = it did not report.
+    passed: bool | None = None
+    command: str = ''
+    summary: str = ''
+    failures: list[str] = field(default_factory=list)
+    reported_at: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'passed': self.passed, 'command': self.command,
+            'summary': self.summary, 'failures': list(self.failures),
+            'reported_at': self.reported_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'TestReport':
+        passed = data.get('passed')
+        return cls(
+            passed=None if passed is None else bool(passed),
+            command=str(data.get('command', '')),
+            summary=str(data.get('summary', '')),
+            failures=[str(item) for item in data.get('failures', []) or []],
+            reported_at=float(data.get('reported_at', 0.0)),
+        )
+
+
 @dataclass(frozen=True)
 class LedgerEntry(object):
     """The latest decision on one issue, with the finding it answered."""
@@ -222,12 +291,25 @@ class ReviewRound(object):
     findings: list[ReviewFinding] = field(default_factory=list)
     # The fix turn's answer to each finding it was sent (empty until it ends).
     responses: list[FindingResponse] = field(default_factory=list)
+    # A "clean-room" review: the reviewer was NOT told the decision ledger, so
+    # it is a pair of eyes that never took part in the fix ping-pong. Round 1
+    # is blind by nature; a confirmation round withholds the ledger on purpose.
+    blind: bool = False
+    # Asked for as a clean-room SWEEP — a confirmation of the clean round
+    # before it (``confirm_clean`` / ``extra_sweep``). Always blind; a round
+    # after a test fix can be blind without being one.
+    sweep: bool = False
+    # The test run the main chat reported after this round came back clean.
+    tests: TestReport | None = None
     # What the review was given: repositories, changed files, and files whose
     # diffs were left out for size (the reviewer reads those itself).
     diff_repos: int = 0
     diff_files: int = 0
     diff_omitted: int = 0
-    outcome: str = ''            # clean | sent | stuck | max_rounds | stopped | failed
+    # Fingerprint of the exact change reviewed (``diff.candidate_digest``).
+    diff_digest: str = ''
+    # clean | sent | changed | tests_failed | stuck | max_rounds | stopped | failed
+    outcome: str = ''
 
     @property
     def blocking(self) -> list[ReviewFinding]:
@@ -257,10 +339,14 @@ class ReviewRound(object):
             'fixed_at': self.fixed_at,
             'findings': [finding.to_dict() for finding in self.findings],
             'responses': [response.to_dict() for response in self.responses],
+            'blind': self.blind,
+            'sweep': self.sweep,
+            'tests': self.tests.to_dict() if self.tests is not None else None,
             'counts': self.counts,
             'diff_repos': self.diff_repos,
             'diff_files': self.diff_files,
             'diff_omitted': self.diff_omitted,
+            'diff_digest': self.diff_digest,
             'outcome': self.outcome,
         }
 
@@ -274,9 +360,13 @@ class ReviewRound(object):
             fixed_at=float(data.get('fixed_at', 0.0)),
             findings=[ReviewFinding.from_dict(item) for item in data.get('findings', [])],
             responses=[FindingResponse.from_dict(item) for item in data.get('responses', [])],
+            blind=bool(data.get('blind', False)),
+            sweep=bool(data.get('sweep', False)),
+            tests=TestReport.from_dict(data['tests']) if data.get('tests') else None,
             diff_repos=int(data.get('diff_repos', 0)),
             diff_files=int(data.get('diff_files', 0)),
             diff_omitted=int(data.get('diff_omitted', 0)),
+            diff_digest=str(data.get('diff_digest') or ''),
             outcome=str(data.get('outcome', '')),
         )
 
@@ -298,15 +388,30 @@ class ReviewLoopState(object):
     waiting_for: str = ''
     reason: str = ''
     rounds: list[ReviewRound] = field(default_factory=list)
+    # The operator's options for this loop. All off by default here — a host
+    # opts in per loop.
+    self_check: bool = False      # the main chat reviews + fixes its own change first
+    verify_tests: bool = False    # "clean" also needs the tests to pass
+    confirm_clean: bool = False   # a ledger-informed "clean" needs a clean-room review to agree
+    extra_sweep: bool = False     # ANY "clean" needs one more clean-room review to agree
+    self_checks: list[SelfCheckTurn] = field(default_factory=list)
 
     @classmethod
-    def new(cls, task_id: str, *, max_rounds: int, now: float) -> 'ReviewLoopState':
+    def new(
+        cls, task_id: str, *, max_rounds: int, now: float,
+        self_check: bool = False, verify_tests: bool = False, confirm_clean: bool = False,
+        extra_sweep: bool = False,
+    ) -> 'ReviewLoopState':
         return cls(
             task_id=task_id,
             loop_id=uuid.uuid4().hex,
             max_rounds=max_rounds,
             started_at=now,
             phase_started_at=now,
+            self_check=self_check,
+            verify_tests=verify_tests,
+            confirm_clean=confirm_clean,
+            extra_sweep=extra_sweep,
         )
 
     @property
@@ -359,6 +464,12 @@ class ReviewLoopState(object):
             'waiting_for': self.waiting_for,
             'reason': self.reason,
             'counts': reviewed.counts if reviewed is not None else None,
+            'self_check': self.self_check,
+            'verify_tests': self.verify_tests,
+            'confirm_clean': self.confirm_clean,
+            'extra_sweep': self.extra_sweep,
+            'self_check_turn': len(self.self_checks),
+            'sweep': bool(self.rounds and self.rounds[-1].sweep),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -366,6 +477,7 @@ class ReviewLoopState(object):
             **self.summary(),
             'task_id': self.task_id,
             'rounds': [review_round.to_dict() for review_round in self.rounds],
+            'self_checks': [turn.to_dict() for turn in self.self_checks],
         }
 
     @classmethod
@@ -382,6 +494,11 @@ class ReviewLoopState(object):
             waiting_for=str(data.get('waiting_for', '')),
             reason=str(data.get('reason', '')),
             rounds=[ReviewRound.from_dict(item) for item in data.get('rounds', [])],
+            self_check=bool(data.get('self_check', False)),
+            verify_tests=bool(data.get('verify_tests', False)),
+            confirm_clean=bool(data.get('confirm_clean', False)),
+            extra_sweep=bool(data.get('extra_sweep', False)),
+            self_checks=[SelfCheckTurn.from_dict(item) for item in data.get('self_checks', [])],
         )
 
     def copy(self) -> 'ReviewLoopState':

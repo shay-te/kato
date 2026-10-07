@@ -22,14 +22,18 @@ export const REVIEW_LOOP_STATUS = Object.freeze({
 });
 
 export const REVIEW_LOOP_PHASE = Object.freeze({
+  SELF_CHECK: 'self_check',
   WAITING_TO_REVIEW: 'waiting_to_review',
   REVIEWING: 'reviewing',
   WAITING_TO_SEND: 'waiting_to_send',
   AWAITING_FIX: 'awaiting_fix',
+  VERIFYING: 'verifying',
   DONE: 'done',
 });
 
 const PHASE_SHORT = {
+  [REVIEW_LOOP_PHASE.SELF_CHECK]: 'self-check',
+  [REVIEW_LOOP_PHASE.VERIFYING]: 'testing',
   [REVIEW_LOOP_PHASE.WAITING_TO_REVIEW]: 'waiting',
   [REVIEW_LOOP_PHASE.REVIEWING]: 'reviewing',
   [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'findings ready',
@@ -37,6 +41,8 @@ const PHASE_SHORT = {
 };
 
 const PHASE_LONG = {
+  [REVIEW_LOOP_PHASE.SELF_CHECK]: 'the main chat is reviewing and fixing its own change',
+  [REVIEW_LOOP_PHASE.VERIFYING]: 'the main chat is running the tests',
   [REVIEW_LOOP_PHASE.WAITING_TO_REVIEW]: 'waiting for the chat before reviewing',
   [REVIEW_LOOP_PHASE.REVIEWING]: 'an independent reviewer is reading the whole change',
   [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'findings ready — they go to the chat when it is free',
@@ -55,6 +61,9 @@ const OUTCOMES = {
 
 const ROUND_OUTCOMES = {
   sent: 'sent to the chat',
+  tests_failed: 'tests failed — sent back',
+  // Clean, but the code changed after the reviewer read it: not accepted.
+  changed: 'code changed since — not accepted',
   clean: 'clean',
   stuck: 'same issues as before',
   max_rounds: 'last round',
@@ -217,10 +226,13 @@ const CURRENT_STEP = {
 // The live "where is it now" tracker for the current round:
 //   [✓ Reviewed (3 blocking · 2 minor)] → [✓ Sent to the chat] →
 //   [● Fixing in the main chat · 4m 12s] → [○ Review round 3]
+// The self-check and the test run have their own short tracks.
 // Each step: { key, label, state: 'done' | 'current' | 'todo', detail }.
 // Empty for a loop that is not running.
 export function reviewLoopSteps(loop, nowSeconds) {
   if (!isReviewLoopRunning(loop)) { return []; }
+  if (loop.phase === REVIEW_LOOP_PHASE.SELF_CHECK) { return selfCheckSteps(loop, nowSeconds); }
+  if (loop.phase === REVIEW_LOOP_PHASE.VERIFYING) { return verifyingSteps(loop, nowSeconds); }
   const current = CURRENT_STEP[loop.phase] || 'review';
   const currentIndex = STEP_ORDER.indexOf(current);
   const elapsed = phaseElapsed(loop, nowSeconds);
@@ -241,14 +253,77 @@ export function reviewLoopSteps(loop, nowSeconds) {
 }
 
 function reviewingLabel(loop) {
-  return loop.phase === REVIEW_LOOP_PHASE.REVIEWING ? 'Reviewing the whole change' : 'Waiting to review';
+  if (loop.phase !== REVIEW_LOOP_PHASE.REVIEWING) { return 'Waiting to review'; }
+  return loop.sweep ? 'Clean-room check' : 'Reviewing the whole change';
 }
 
-function stepDetail(key, state, loop, elapsed) {
-  if (state === 'current') {
-    const waiting = loop.waiting_for ? `${loop.waiting_for} · ` : '';
-    return `${waiting}${elapsed}`;
+function selfCheckSteps(loop, nowSeconds) {
+  const turn = Number(loop.self_check_turn || 1);
+  return [
+    { key: 'self', label: `Self-check in the main chat (turn ${turn})`, state: 'current', detail: currentDetail(loop, nowSeconds) },
+    { key: 'review', label: 'Independent review', state: 'todo', detail: '' },
+  ];
+}
+
+function verifyingSteps(loop, nowSeconds) {
+  const sweepNext = loop.extra_sweep || loop.confirm_clean;
+  return [
+    { key: 'review', label: 'Reviewed — no blocking issues', state: 'done', detail: countsText(loop.counts) },
+    { key: 'tests', label: 'Running the tests in the main chat', state: 'current', detail: currentDetail(loop, nowSeconds) },
+    { key: 'next', label: sweepNext ? 'Clean-room check' : 'Loop ends', state: 'todo', detail: '' },
+  ];
+}
+
+function currentDetail(loop, nowSeconds) {
+  return waitingThen(loop, phaseElapsed(loop, nowSeconds));
+}
+
+// "<what it waits for> · <elapsed>" — the detail of the step in progress.
+function waitingThen(loop, elapsed) {
+  const waiting = loop.waiting_for ? `${loop.waiting_for} · ` : '';
+  return `${waiting}${elapsed}`;
+}
+
+// "Tests passed — 41 passed (pytest)" · "Tests failed — 2 failing" ·
+// "Tests not reported"; '' when the round ran no tests.
+export function testsReportText(tests) {
+  if (!tests) { return ''; }
+  if (tests.passed === true) {
+    const detail = [tests.summary, tests.command && `(${tests.command})`].filter(Boolean).join(' ');
+    return detail ? `Tests passed — ${detail}` : 'Tests passed';
   }
+  if (tests.passed === false) {
+    const failing = (tests.failures || []).length;
+    return failing ? `Tests failed — ${failing} failing` : `Tests failed — ${tests.summary || 'see the report'}`;
+  }
+  return 'Tests not reported';
+}
+
+// The test result's colour family: good | bad | neutral (not reported).
+export function testsTone(tests) {
+  if (tests?.passed === true) { return 'good'; }
+  if (tests?.passed === false) { return 'bad'; }
+  return 'neutral';
+}
+
+// "Self-check 1 — fixed 2" · "Self-check 2 — clean" · "Self-check 1 — no verdict".
+export function selfCheckText(turn) {
+  let verdict = 'no verdict';
+  if (turn?.clean === true) { verdict = 'clean'; }
+  if (turn?.clean === false) { verdict = `fixed ${Number(turn.fixed || 0)}`; }
+  return `Self-check ${turn?.number || ''} — ${verdict}`;
+}
+
+// The view's options, as the labels its checkboxes show.
+export const REVIEW_LOOP_STAGE_LABELS = Object.freeze({
+  self_check: 'Self-check in the main chat first',
+  verify_tests: 'Tests must pass before clean',
+  confirm_clean: 'Clean-room check after the fixes',
+  extra_sweep: 'One more sweep after any clean review',
+});
+
+function stepDetail(key, state, loop, elapsed) {
+  if (state === 'current') { return waitingThen(loop, elapsed); }
   if (key === 'review' && state === 'done') { return countsText(loop.counts); }
   return '';
 }

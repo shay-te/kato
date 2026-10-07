@@ -9,6 +9,7 @@ import {
   reviewLoopSignature,
 } from '../components/reviewLoop/reviewLoopHelpers.js';
 import { readReviewLoopRounds } from '../components/reviewLoop/reviewLoopRoundsPref.js';
+import { readReviewLoopStages } from '../components/reviewLoop/reviewLoopStagesPref.js';
 import { reviewLoopView } from '../components/reviewLoop/reviewLoopViewStore.js';
 
 // A task's review loop, for the header, the tab and the centre-pane view.
@@ -45,10 +46,10 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
 
   useFinishAnnouncement(announceFinish ? summary : null, taskId, taskSummary);
 
-  // The round limit is read at click time: whatever the picker shows is what
-  // runs.
+  // The round limit and the stages are read at click time: whatever the view
+  // shows is what runs.
   const [starting, start] = useBusyAction(() => startReviewLoop(
-    taskId, { maxRounds: readReviewLoopRounds() },
+    taskId, { maxRounds: readReviewLoopRounds(), stages: readReviewLoopStages() },
   ), {
     onDone: (result) => { announceStart(result, taskId, taskSummary); },
   });

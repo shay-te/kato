@@ -7,6 +7,8 @@ import {
   findingLocation,
   isBlockingFinding,
   roundOutcomeLabel,
+  testsReportText,
+  testsTone,
 } from './reviewLoopHelpers.js';
 
 // One round of the loop: what the review found, what the chat decided about
@@ -19,8 +21,13 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
   const blockingTitle = round.sent_at ? 'Blocking — sent to the chat to fix' : 'Blocking';
   const summary = round.reviewed_at ? countsText(round.counts) : 'not reviewed yet';
   const chevron = expanded ? 'chevron-down' : 'chevron-right';
+  // A clean-room sweep: a reviewer told nothing of the fixes, confirming the
+  // clean round before it.
+  const sweepTag = round.sweep ? <span className="review-loop-round-tag">Clean-room</span> : null;
+  const tests = round.tests ? <RoundTests tests={round.tests} /> : null;
   const body = expanded ? (
     <div className="review-loop-round-body">
+      {tests}
       <FindingList title={blockingTitle} findings={blocking} round={round} />
       <FindingList title="Settled earlier — not sent again" findings={settled} round={round} />
       <FindingList title="Not blocking — reported only" findings={others} round={round} />
@@ -37,11 +44,25 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
       >
         <Icon name={chevron} />
         <span className="review-loop-round-name">Round {round.number}</span>
+        {sweepTag}
         <span className="review-loop-round-counts">{summary}</span>
         <span className="review-loop-round-outcome">{roundOutcomeLabel(round)}</span>
       </button>
       {body}
     </li>
+  );
+}
+
+// What the main chat reported after running the tests on this round's tree.
+function RoundTests({ tests }) {
+  const tone = testsTone(tests);
+  const failures = (tests.failures || []).map((failure) => <li key={failure}>{failure}</li>);
+  const failureList = failures.length ? <ul className="review-loop-tests-failures">{failures}</ul> : null;
+  return (
+    <section className={cx('review-loop-tests', `is-${tone}`)}>
+      <p className="review-loop-tests-summary">{testsReportText(tests)}</p>
+      {failureList}
+    </section>
   );
 }
 
@@ -95,30 +116,18 @@ function FindingItem({ finding, round }) {
 }
 
 function RoundArtifacts({ taskId, loopId, round }) {
-  const sent = round.sent_at ? (
-    <ReviewLoopArtifact taskId={taskId} loopId={loopId} round={round.number} kind="prompt" label="Message sent to the chat" />
-  ) : null;
-  const answered = round.fixed_at ? (
-    <ReviewLoopArtifact taskId={taskId} loopId={loopId} round={round.number} kind="response" label="The chat’s reply to the findings" />
-  ) : null;
-  const reviewed = round.reviewed_at ? (
-    <ReviewLoopArtifact taskId={taskId} loopId={loopId} round={round.number} kind="review" label="Reviewer’s full report" />
-  ) : null;
-  const diff = round.diff_files ? (
-    <ReviewLoopArtifact
-      taskId={taskId}
-      loopId={loopId}
-      round={round.number}
-      kind="diff"
-      label={`Diff the reviewer saw (${round.diff_files} file(s) in ${round.diff_repos} repo(s))`}
-    />
-  ) : null;
-  return (
-    <div className="review-loop-artifacts">
-      {reviewed}
-      {sent}
-      {answered}
-      {diff}
-    </div>
-  );
+  const diffLabel = `Diff the reviewer saw (${round.diff_files} file(s) in ${round.diff_repos} repo(s))`;
+  // Failing tests sent back carry no per-finding answers, so no reply file.
+  const answeredFindings = round.fixed_at && round.outcome !== 'tests_failed';
+  const shown = [
+    { kind: 'review', label: 'Reviewer’s full report', when: round.reviewed_at },
+    { kind: 'prompt', label: 'Message sent to the chat', when: round.sent_at },
+    { kind: 'response', label: 'The chat’s reply to the findings', when: answeredFindings },
+    { kind: 'tests', label: 'The chat’s test report', when: round.tests },
+    { kind: 'diff', label: diffLabel, when: round.diff_files },
+  ].filter((artifact) => artifact.when);
+  const artifacts = shown.map(({ kind, label }) => (
+    <ReviewLoopArtifact key={kind} taskId={taskId} loopId={loopId} round={round.number} kind={kind} label={label} />
+  ));
+  return <div className="review-loop-artifacts">{artifacts}</div>;
 }

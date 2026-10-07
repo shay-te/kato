@@ -25,13 +25,9 @@ from review_loop_core_lib.review_loop_core_lib.ports import LoopWording, RepoDif
 VERDICT_OPEN = '<review-verdict>'
 VERDICT_CLOSE = '</review-verdict>'
 
-REVIEWER_INSTRUCTIONS = f'''You are an independent code reviewer. You did not write this change and you
-have no history with it. Review the task's changes below and REPORT what you
-find. Do not fix anything: this run cannot edit files or run commands, and must
-not try.
-
-## What to check
-1. Correctness — wrong logic or conditions, off-by-one, unhandled empty/None,
+# What a review checks — shared by the independent reviewer and the main
+# chat's own self-check, so the two hold the change to the same bar.
+CHECKLIST = '''1. Correctness — wrong logic or conditions, off-by-one, unhandled empty/None,
    broken edge cases, behaviour that does not do what the task asks.
 2. Security — injection, path traversal, secrets in code or logs, missing
    authorization, untrusted input reaching a shell, SQL or the filesystem.
@@ -46,7 +42,15 @@ not try.
 8. Architecture — code in the wrong layer, a re-implemented existing helper,
    dead code left behind.
 9. Observability — failures that leave no log line, or a misleading one.
-10. Scope — changes the task did not ask for.
+10. Scope — changes the task did not ask for.'''
+
+REVIEWER_INSTRUCTIONS = f'''You are an independent code reviewer. You did not write this change and you
+have no history with it. Review the task's changes below and REPORT what you
+find. Do not fix anything: this run cannot edit files or run commands, and must
+not try.
+
+## What to check
+{CHECKLIST}
 
 The diff shows only what changed: read the files around it for context. Rules
 files in the repositories (AGENTS.md, CLAUDE.md, CONTRIBUTING, README) are

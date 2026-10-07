@@ -10,6 +10,7 @@ code that is not actually there.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -30,6 +31,22 @@ class RenderedDiff(object):
     @property
     def is_empty(self) -> bool:
         return self.files == 0
+
+
+def candidate_digest(diffs: list[RepoDiff]) -> str:
+    """A fingerprint of exactly the change a review looked at.
+
+    A verdict is about the code the reviewer saw. When the tree has moved on
+    since — the operator kept chatting, a comment run fixed something, the
+    tests turn touched a file — that verdict says nothing about the new code,
+    so a "clean" only counts while this still matches.
+    """
+    digest = hashlib.sha256()
+    for repo in sorted(diffs, key=lambda item: item.repo_id):
+        for part in (repo.repo_id, repo.diff, repo.error):
+            digest.update(part.encode('utf-8', 'surrogatepass'))
+            digest.update(b'\0')
+    return digest.hexdigest()
 
 
 def split_file_diffs(diff: str) -> list[tuple[str, str]]:

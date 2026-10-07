@@ -5,6 +5,8 @@ import { useReviewLoop } from '../../hooks/useReviewLoop.js';
 import Icon, { BusyIcon } from '../Icon.jsx';
 import ReviewLoopRoundList from './ReviewLoopRoundList.jsx';
 import ReviewLoopRoundsPicker from './ReviewLoopRoundsPicker.jsx';
+import ReviewLoopSelfChecks from './ReviewLoopSelfChecks.jsx';
+import ReviewLoopStagesPicker from './ReviewLoopStagesPicker.jsx';
 import ReviewLoopTracker from './ReviewLoopTracker.jsx';
 import {
   REVIEW_LOOP_EMPTY_TEXT,
@@ -44,9 +46,13 @@ export default function ReviewLoopPane({ session, onClose }) {
       </button>
     </>
   );
+  // The stages are picked with the round limit, before a loop starts; a
+  // running loop's were fixed when it started.
+  const stagesBar = running ? null : <ReviewLoopStagesPicker disabled={starting} />;
   const body = summary ? (
     <>
       <ReviewLoopTracker loop={summary} now={now} />
+      <ReviewLoopSelfChecks taskId={session?.task_id || ''} loop={detail} />
       <ReviewLoopRoundList taskId={session?.task_id || ''} loop={detail} />
     </>
   ) : (
@@ -68,6 +74,7 @@ export default function ReviewLoopPane({ session, onClose }) {
           <Icon name="xmark" />
         </button>
       </header>
+      {stagesBar}
       <div className="review-loop-pane-body">{body}</div>
     </section>
   );

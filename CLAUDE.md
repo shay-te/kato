@@ -265,6 +265,27 @@ start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → R
             parse its <review-response> into the DECISION LEDGER → round n+1, whose reviewer is
             told the ledger
 ```
+**Optional stages** (lib default OFF; kato turns all four ON unless the operator unticks one in
+the loop view — `kato.reviewLoopStages.v1`; route `POST .../review-loop {self_check, verify_tests,
+confirm_clean, extra_sweep}`, only an explicit `false` turns one off):
+- `self_check` — before round 1, the MAIN chat reviews + fixes its own change (≤3 turns, ends on
+  its `<self-check>{"clean": true}` block). Cheap: it already holds the context.
+- `verify_tests` — a clean review only ends the loop once the main chat ran the tests
+  (`<test-report>`); failures go back to fix ("fix the failing tests") and the loop goes on.
+  Not re-run on an unchanged tree.
+- `confirm_clean` — a clean verdict from a reviewer told the ledger gets a clean-room SWEEP
+  (fresh reviewer, ledger withheld; `round.sweep`) that must agree.
+- `extra_sweep` — ANY clean verdict gets that sweep ("it was clean, we ran it again, boom a
+  MAJOR": one clean review is not proof). A sweep that finds something sends it back.
+Messages carry `Kato review loop — {stage}` headers (pinned to `REVIEW_LOOP_STAGE_PATTERN`).
+
+**A clean verdict covers the exact code reviewed — nothing else.** Each round records
+`diff_digest` (`diff.candidate_digest`: sha256 of every repo's diff); before CLEAN is accepted the
+diff is read again, and if it moved (operator chatted during a long review, a comment run, the
+tests turn touched a file) the round closes `changed` and the same kind of review is redone
+(a sweep as a sweep; last round → MAX_ROUNDS, never CLEAN). "Tests passed" is bound the same
+way: re-run only when a clean review saw a different digest than the tests passed on.
+
 **Decision ledger:** the fixer answers each finding fixed (+ regression test) / rejected /
 out_of_scope (+ evidence). A rejection WITH evidence settles the finding: a later reviewer
 re-raising it without `new_evidence` gets it marked settled (shown, not sent, not blocking).

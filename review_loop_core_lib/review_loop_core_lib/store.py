@@ -38,6 +38,8 @@ class ArtifactKind(str, Enum):
     REVIEW = 'review'    # the reviewer's full reply
     PROMPT = 'prompt'    # the message posted into the chat
     RESPONSE = 'response'  # the fix turn's final reply (its decisions)
+    SELF_CHECK = 'self_check'  # the chat's reply to self-check turn N (N = turn number)
+    TESTS = 'tests'      # the chat's reply to the test run after round N
 
 
 class ReviewLoopStore(object):

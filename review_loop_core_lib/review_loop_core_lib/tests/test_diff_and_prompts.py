@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from review_loop_core_lib.review_loop_core_lib.diff import (
+    candidate_digest,
     render_review_diff,
     split_file_diffs,
 )
@@ -40,6 +41,30 @@ class SplitTests(unittest.TestCase):
 
     def test_no_diff_no_files(self) -> None:
         self.assertEqual(split_file_diffs(''), [])
+
+
+class CandidateDigestTests(unittest.TestCase):
+
+    def test_the_same_change_has_the_same_digest_in_any_repo_order(self) -> None:
+        api = RepoDiff(repo_id='api', diff='diff --git a/x b/x\n+1')
+        web = RepoDiff(repo_id='web', diff='diff --git a/y b/y\n+2')
+        self.assertEqual(candidate_digest([api, web]), candidate_digest([web, api]))
+        self.assertEqual(len(candidate_digest([api])), 64)
+
+    def test_any_change_to_the_code_or_a_repo_error_changes_it(self) -> None:
+        base = candidate_digest([RepoDiff(repo_id='api', diff='+1')])
+        self.assertNotEqual(base, candidate_digest([RepoDiff(repo_id='api', diff='+2')]))
+        self.assertNotEqual(base, candidate_digest([RepoDiff(repo_id='web', diff='+1')]))
+        self.assertNotEqual(
+            base, candidate_digest([RepoDiff(repo_id='api', diff='+1', error='no git')]),
+        )
+        # Parts are separated: moving text across a boundary is a change.
+        self.assertNotEqual(
+            candidate_digest([RepoDiff(repo_id='ap', diff='i+1')]), base,
+        )
+
+    def test_text_that_is_not_clean_unicode_still_hashes(self) -> None:
+        self.assertEqual(len(candidate_digest([RepoDiff(repo_id='api', diff='\udcff')])), 64)
 
 
 class RenderTests(unittest.TestCase):

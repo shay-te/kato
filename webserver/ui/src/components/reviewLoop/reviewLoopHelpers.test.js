@@ -19,6 +19,8 @@ import {
   reviewLoopSignature,
   reviewLoopSteps,
   roundOutcomeLabel,
+  selfCheckText,
+  testsReportText,
 } from './reviewLoopHelpers.js';
 
 const NOW = 10_000;
@@ -198,3 +200,52 @@ test('loop-tab models mark the active tab and the group divider', () => {
   assert.equal(buildReviewLoopTabModels(tabs, { hasFileTabs: false })[0].groupStart, false);
   assert.deepEqual(buildReviewLoopTabModels(null), []);
 });
+
+test('the self-check and the test run have their own short tracks', () => {
+  const base = { status: 'running', round: 1, max_rounds: 5, phase_started_at: NOW - 30 };
+  const self = reviewLoopSteps({ ...base, phase: 'self_check', self_check_turn: 2 }, NOW);
+  assert.deepEqual(self.map((s) => [s.label, s.state]), [
+    ['Self-check in the main chat (turn 2)', 'current'],
+    ['Independent review', 'todo'],
+  ]);
+  assert.equal(self[0].detail, '30s');
+
+  const testing = reviewLoopSteps({
+    ...base, phase: 'verifying', counts: { BLOCKER: 0, MAJOR: 0, MINOR: 1, NIT: 0 },
+    extra_sweep: true, waiting_for: 'the agent is mid-turn',
+  }, NOW);
+  assert.deepEqual(testing.map((s) => [s.label, s.state]), [
+    ['Reviewed — no blocking issues', 'done'],
+    ['Running the tests in the main chat', 'current'],
+    ['Clean-room check', 'todo'],
+  ]);
+  assert.equal(testing[0].detail, '1 minor');
+  assert.equal(testing[1].detail, 'the agent is mid-turn · 30s');
+  const noSweep = reviewLoopSteps({ ...base, phase: 'verifying', counts: null }, NOW);
+  assert.equal(noSweep[2].label, 'Loop ends');
+});
+
+test('a clean-room sweep says so while it reviews', () => {
+  const steps = reviewLoopSteps(
+    { status: 'running', phase: 'reviewing', round: 3, max_rounds: 5, sweep: true }, NOW,
+  );
+  assert.equal(steps[0].label, 'Clean-room check');
+  assert.equal(roundOutcomeLabel({ outcome: 'tests_failed' }), 'tests failed — sent back');
+  assert.equal(roundOutcomeLabel({ outcome: 'changed' }), 'code changed since — not accepted');
+});
+
+test('test reports and self-check turns read as words', () => {
+  assert.equal(testsReportText(null), '');
+  assert.equal(testsReportText({ passed: true, summary: '41 passed', command: 'pytest' }),
+    'Tests passed — 41 passed (pytest)');
+  assert.equal(testsReportText({ passed: true }), 'Tests passed');
+  assert.equal(testsReportText({ passed: false, failures: ['a', 'b'] }), 'Tests failed — 2 failing');
+  assert.equal(testsReportText({ passed: false, failures: [], summary: 'crashed' }), 'Tests failed — crashed');
+  assert.equal(testsReportText({ passed: false }), 'Tests failed — see the report');
+  assert.equal(testsReportText({ passed: null }), 'Tests not reported');
+
+  assert.equal(selfCheckText({ number: 1, clean: false, fixed: 2 }), 'Self-check 1 — fixed 2');
+  assert.equal(selfCheckText({ number: 2, clean: true }), 'Self-check 2 — clean');
+  assert.equal(selfCheckText({ number: 1, clean: null }), 'Self-check 1 — no verdict');
+});
+

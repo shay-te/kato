@@ -728,9 +728,12 @@ export function fetchReviewLoop(taskId) {
 }
 
 // ``maxRounds``: how many reviews at most; omitted, kato's default applies.
-export function startReviewLoop(taskId, { maxRounds = 0 } = {}) {
+// ``stages``: ``{ self_check, verify_tests, confirm_clean, extra_sweep }`` —
+// any left out stay on (the server's default).
+export function startReviewLoop(taskId, { maxRounds = 0, stages = {} } = {}) {
   if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
-  return postEnvelope(reviewLoopUrl(taskId), maxRounds ? { max_rounds: maxRounds } : {});
+  const body = maxRounds ? { ...stages, max_rounds: maxRounds } : { ...stages };
+  return postEnvelope(reviewLoopUrl(taskId), body);
 }
 
 export function stopReviewLoop(taskId) {

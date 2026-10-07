@@ -17,8 +17,14 @@ import {
   writeReviewLoopTabs,
 } from './reviewLoopViewStore.js';
 import { _resetReviewLoopRounds, readReviewLoopRounds } from './reviewLoopRoundsPref.js';
+import { _resetReviewLoopStages, readReviewLoopStages } from './reviewLoopStagesPref.js';
 
 const ROUNDS_KEY = 'kato.reviewLoopRounds.v1';
+const STAGES_KEY = 'kato.reviewLoopStages.v1';
+// Every stage is on unless the operator unticks it.
+const ALL_STAGES_ON = {
+  self_check: true, verify_tests: true, confirm_clean: true, extra_sweep: true,
+};
 
 const LOOP_ID = 'b'.repeat(32);
 const NOW = Date.now() / 1000;
@@ -74,7 +80,9 @@ let kato;
 beforeEach(() => {
   kato = fakeKato();
   window.localStorage.removeItem(ROUNDS_KEY);
+  window.localStorage.removeItem(STAGES_KEY);
   _resetReviewLoopRounds();
+  _resetReviewLoopStages();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -214,7 +222,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText(/finished clean after 2 rounds — round 2 found no blocking issues/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /run again/i }));
     await waitFor(() => expect(kato.requests).toContain('POST /api/sessions/UNA-1/review-loop'));
-    expect(kato.startBodies).toEqual([{ max_rounds: 5 }]);
+    expect(kato.startBodies).toEqual([{ ...ALL_STAGES_ON, max_rounds: 5 }]);
   });
 
   test('a task that never ran a loop explains it and offers Start', () => {
@@ -222,6 +230,87 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText(/independent reviewer reads the whole change/)).toBeInTheDocument();
     expect(screen.getByText(/Pick how many rounds above, then Start/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument();
+  });
+});
+
+describe('the stages — picked with the round limit, before a loop starts', () => {
+  test('all four are on by default, and an untick goes into the start request', async () => {
+    render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    const boxes = screen.getAllByRole('checkbox');
+    expect(boxes.map((box) => box.closest('label').textContent)).toEqual([
+      'Self-check in the main chat first',
+      'Tests must pass before clean',
+      'Clean-room check after the fixes',
+      'One more sweep after any clean review',
+    ]);
+    expect(boxes.every((box) => box.checked)).toBe(true);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Self-check in the main chat first' }));
+    expect(readReviewLoopStages().self_check).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    await waitFor(() => expect(kato.startBodies).toEqual([
+      { ...ALL_STAGES_ON, self_check: false, max_rounds: 5 },
+    ]));
+    expect(window.localStorage.getItem(STAGES_KEY)).toContain('"self_check":false');
+  });
+
+  test('a running loop shows no stage boxes — they were fixed when it started', () => {
+    kato.loop = { ...summary(), rounds: [] };
+    render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  test('a stage missing from storage (added later) starts on', () => {
+    window.localStorage.setItem(STAGES_KEY, '{"self_check":false}');
+    _resetReviewLoopStages();
+    expect(readReviewLoopStages()).toEqual({ ...ALL_STAGES_ON, self_check: false });
+  });
+});
+
+describe('the view shows the stages that ran', () => {
+  test('a clean-room sweep is tagged, and a round shows its test result', async () => {
+    const tested = round(1, {
+      outcome: 'tests_failed', findings: [], counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 },
+      tests: { passed: false, command: 'pytest', summary: '1 failed', failures: ['test_divide: ZeroDivisionError'] },
+    });
+    const sweep = round(2, {
+      outcome: 'clean', sweep: true, blind: true, sent_at: 0, findings: [],
+      counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 },
+    });
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = { ...finished, rounds: [tested, sweep] };
+    render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    const sweepRow = (await screen.findByText('Round 2')).closest('.review-loop-round');
+    expect(within(sweepRow).getByText('Clean-room')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Round 1'));
+    const roundOne = screen.getByText('Round 1').closest('.review-loop-round');
+    expect(within(roundOne).getByText('Tests failed — 1 failing')).toBeInTheDocument();
+    expect(within(roundOne).getByText('test_divide: ZeroDivisionError')).toBeInTheDocument();
+    expect(roundOne.querySelector('.review-loop-tests.is-bad')).not.toBeNull();
+    expect(within(roundOne).getByText('tests failed — sent back')).toBeInTheDocument();
+    // Failing tests sent back carry no per-finding reply, but do have a test report.
+    expect(within(roundOne).queryByText('The chat’s reply to the findings')).not.toBeInTheDocument();
+    expect(within(roundOne).getByText('The chat’s test report')).toBeInTheDocument();
+  });
+
+  test('the main chat\'s self-check turns are listed above the rounds', async () => {
+    const running = summary({ phase: 'self_check', round: 0, self_check_turn: 2 });
+    kato.loop = {
+      ...running, rounds: [],
+      self_checks: [
+        { number: 1, started_at: NOW - 100, finished_at: NOW - 60, clean: false, fixed: 2, summary: 'fixed the empty-list case' },
+        { number: 2, started_at: NOW - 50, finished_at: 0, clean: null, fixed: 0, summary: '' },
+      ],
+    };
+    render(<ReviewLoopPane session={session(running)} onClose={() => {}} />);
+    await screen.findByText('Self-check 1 — fixed 2');
+    expect(screen.getByText('fixed the empty-list case')).toBeInTheDocument();
+    expect(screen.getByText('Self-check 2 — no verdict')).toBeInTheDocument();
+    // Only a finished turn offers its reply.
+    expect(screen.getAllByText('The chat’s self-check reply')).toHaveLength(1);
+    // The tracker says where it is.
+    expect(screen.getByText('Self-check in the main chat (turn 2)')).toBeInTheDocument();
   });
 });
 
@@ -240,7 +329,7 @@ describe('the round limit — picked before a loop starts', () => {
     const { unmount } = render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
     fireEvent.change(picker(), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
-    await waitFor(() => expect(kato.startBodies).toEqual([{ max_rounds: 3 }]));
+    await waitFor(() => expect(kato.startBodies).toEqual([{ ...ALL_STAGES_ON, max_rounds: 3 }]));
     expect(window.localStorage.getItem(ROUNDS_KEY)).toBe('{"rounds":3}');
     unmount();
 
@@ -251,7 +340,9 @@ describe('the round limit — picked before a loop starts', () => {
     render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
     expect(picker()).toHaveValue('3');
     fireEvent.click(screen.getByRole('button', { name: /run again/i }));
-    await waitFor(() => expect(kato.startBodies).toEqual([{ max_rounds: 3 }, { max_rounds: 3 }]));
+    await waitFor(() => expect(kato.startBodies).toEqual([
+      { ...ALL_STAGES_ON, max_rounds: 3 }, { ...ALL_STAGES_ON, max_rounds: 3 },
+    ]));
   });
 
   test('a running loop has no picker — its limit was set when it started', () => {

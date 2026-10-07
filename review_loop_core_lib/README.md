@@ -20,6 +20,24 @@ A **review loop** runs on one task:
    (`ReviewRound.responses`) and the next round reviews the whole diff again —
    told the decisions so far.
 
+**Optional stages** (all off unless the host passes them to `start`):
+
+- `self_check` — before the first review, the main chat reviews and fixes its
+  own change (cheap: it holds the context), up to `self_check_turns`, until
+  its `<self-check>` block says clean.
+- `verify_tests` — a clean review ends the loop only once the main chat ran
+  the tests and its `<test-report>` passes; failures go back to be fixed.
+- `confirm_clean` — a clean verdict from a reviewer told the ledger needs a
+  clean-room **sweep** (a fresh reviewer told nothing) to agree.
+- `extra_sweep` — every clean verdict needs that sweep: two clean reviews in
+  a row, the second blind.
+
+**Clean means this exact code.** A round records a digest of the diff it
+reviewed (`candidate_digest`). A clean verdict is accepted only if the diff
+is still the same when the loop is about to finish; otherwise the round is
+closed `changed` and the review is redone on the new code. Tests count as
+passed only for the digest they ran on.
+
 **The ledger.** A rejection or out-of-scope ruling *with evidence* settles its
 finding. A later reviewer that raises the same issue again (same repository,
 file, symbol and category) without `new_evidence` gets it marked settled: shown,

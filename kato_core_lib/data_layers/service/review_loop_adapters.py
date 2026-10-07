@@ -41,6 +41,7 @@ from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 from kato_core_lib.helpers.plan_mode_store import PLAN_MODE, task_permission_mode
 from kato_core_lib.helpers.planning_hold_store import held_permission_mode
 from kato_core_lib.helpers.review_loop_guidance import (
+    REVIEW_LOOP_STAGE_HEADER,
     REVIEW_LOOP_FINDINGS_HEADER,
     REVIEW_LOOP_FIXER_GUIDANCE,
     REVIEW_LOOP_REVIEWER_GUIDANCE,
@@ -242,6 +243,8 @@ def _event_message(state: ReviewLoopState, event: str) -> str:
         return f'review loop round {number}: findings sent to the chat'
     if event == 'fixed':
         return f'review loop round {number}: the chat finished its fixes'
+    if event == 'changed':
+        return f'review loop round {number}: the code changed after this review found it clean'
     if event == 'finished':
         return (
             f'review loop finished ({state.status.value}) after {number} '
@@ -285,6 +288,7 @@ def build_review_loop_service(
                 text, source_path=source,
             ),
             findings_header=REVIEW_LOOP_FINDINGS_HEADER,
+            stage_header=REVIEW_LOOP_STAGE_HEADER,
             reviewer_guidance=REVIEW_LOOP_REVIEWER_GUIDANCE,
             findings_guidance=REVIEW_LOOP_FIXER_GUIDANCE,
         ),

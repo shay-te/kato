@@ -84,11 +84,21 @@ class ReviewLoopService(object):
         task_summary: str = '',
         task_description: str = '',
         max_rounds: int | None = None,
+        self_check: bool = False,
+        verify_tests: bool = False,
+        confirm_clean: bool = False,
+        extra_sweep: bool = False,
     ) -> ReviewLoopState:
         """Start a loop for ``task_id``; raises ``ReviewLoopError`` with a reason.
 
         ``max_rounds`` is the operator's choice for THIS loop (the service's
-        default when None), held to ``1..MAX_ROUNDS_LIMIT``.
+        default when None), held to ``1..MAX_ROUNDS_LIMIT``. The three stage
+        options are off unless the host turns them on: ``self_check`` (the
+        main chat reviews + fixes its own change first), ``verify_tests``
+        ("clean" also needs the tests to pass) and ``confirm_clean`` (a clean
+        verdict from a reviewer that saw the decision ledger needs a clean-room
+        review to agree). ``extra_sweep`` goes further: ANY clean verdict needs
+        one more clean-room review to agree — two clean reviews in a row.
         """
         if not self._store.is_valid_task_id(task_id):
             raise ReviewLoopError(f'not a task id that can be reviewed: {task_id!r}')
@@ -102,6 +112,8 @@ class ReviewLoopService(object):
             self._store.open(task_id)
             state = ReviewLoopState.new(
                 task_id, max_rounds=self._rounds_for(max_rounds), now=self._clock(),
+                self_check=bool(self_check), verify_tests=bool(verify_tests),
+                confirm_clean=bool(confirm_clean), extra_sweep=bool(extra_sweep),
             )
             runner = ReviewLoopRunner(
                 state,

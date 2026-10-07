@@ -42,9 +42,11 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
         loops = review_loops()
         if loops is None:
             return unavailable()
-        max_rounds, problem = _requested_rounds(request.get_json(silent=True))
+        body = request.get_json(silent=True)
+        max_rounds, problem = _requested_rounds(body)
         if problem:
             return jsonify({'error': problem}), 400
+        stages = _requested_stages(body)
         summary, description = _task_text(app, task_id)
         try:
             state = loops.start(
@@ -53,6 +55,7 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
                 task_summary=summary,
                 task_description=description,
                 max_rounds=max_rounds,
+                **stages,
             )
         except ReviewLoopError as exc:
             return jsonify({'error': str(exc)}), 409
@@ -93,6 +96,20 @@ def _requested_rounds(body: object) -> tuple[int | None, str]:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_ROUNDS_LIMIT:
         return None, f'max_rounds must be a whole number from 1 to {MAX_ROUNDS_LIMIT}'
     return value, ''
+
+
+# The loop's optional stages. ON unless the request turns one off: a
+# self-check in the main chat first (cheap — it holds the context), tests that
+# must pass before "clean", a clean-room reviewer confirming a clean verdict
+# that came from a reviewer who saw the fix ping-pong, and one more clean-room
+# sweep after ANY clean verdict ("it was clean, we ran it again, and it found a
+# MAJOR" — one clean review is not proof).
+_STAGES = ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep')
+
+
+def _requested_stages(body: object) -> dict[str, bool]:
+    source = body if isinstance(body, dict) else {}
+    return {name: source.get(name) is not False for name in _STAGES}
 
 
 def _task_text(app: Flask, task_id: str) -> tuple[str, str]:

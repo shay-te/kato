@@ -12,15 +12,26 @@
 // often not the opening line of the turn the transcript replays.
 export const REVIEW_LOOP_HEADER_PATTERN = /^Kato review loop — round (\d+) of (\d+)$/m;
 
+// The loop's OTHER messages: the main chat's self-check, the test run, and
+// failing tests sent back to fix. Same pinning as above, against
+// REVIEW_LOOP_STAGE_HEADER = 'Kato review loop — {stage}'.
+export const REVIEW_LOOP_STAGE_PATTERN = /^Kato review loop — (self-check \d+ of \d+|run the tests|fix the failing tests)$/m;
+
+// ``{ round, maxRounds }`` for a findings message, ``{ stage }`` for a
+// self-check / test message, or null for anything the operator wrote.
 export function parseReviewLoopPrompt(text) {
-  const match = REVIEW_LOOP_HEADER_PATTERN.exec(String(text || ''));
-  if (!match) { return null; }
-  return { round: Number(match[1]), maxRounds: Number(match[2]) };
+  const value = String(text || '');
+  const match = REVIEW_LOOP_HEADER_PATTERN.exec(value);
+  if (match) { return { round: Number(match[1]), maxRounds: Number(match[2]) }; }
+  const stage = REVIEW_LOOP_STAGE_PATTERN.exec(value);
+  return stage ? { stage: stage[1] } : null;
 }
 
 // The sticky prompt's label: kato's loop message says so; anything else is
 // what the operator asked.
 export function stickyPromptLabel(text) {
   const loop = parseReviewLoopPrompt(text);
-  return loop ? `Kato · review loop round ${loop.round}/${loop.maxRounds}` : 'You asked';
+  if (!loop) { return 'You asked'; }
+  if (loop.stage) { return `Kato · review loop · ${loop.stage}`; }
+  return `Kato · review loop round ${loop.round}/${loop.maxRounds}`;
 }

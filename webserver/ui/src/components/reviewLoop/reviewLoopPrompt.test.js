@@ -24,3 +24,17 @@ test('anything else is what the operator asked', () => {
     assert.equal(stickyPromptLabel(text), 'You asked');
   }
 });
+
+test('the self-check and test messages are kato\'s too', () => {
+  const cases = [
+    ['Kato review loop — self-check 1 of 3\n\nBefore an independent reviewer…', 'self-check 1 of 3'],
+    ['WORKSPACE SCOPE …\n\nKato review loop — run the tests\n\nThe independent review…', 'run the tests'],
+    ['Kato review loop — fix the failing tests\n\nThe task\'s tests are failing:', 'fix the failing tests'],
+  ];
+  for (const [text, stage] of cases) {
+    assert.deepEqual(parseReviewLoopPrompt(text), { stage });
+    assert.equal(stickyPromptLabel(text), `Kato · review loop · ${stage}`);
+  }
+  // An operator who TYPES the words mid-sentence is still "You asked".
+  assert.equal(stickyPromptLabel('please run the tests'), 'You asked');
+});
