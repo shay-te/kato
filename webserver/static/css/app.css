@@ -12922,3 +12922,79 @@ button.settings-prompt-editor-head {
     animation: none;
   }
 }
+/* Safeguard-flag banner: shown above the composer when the API's safeguards
+ * refused the latest turn, offering a one-click retry on the pinned fallback
+ * model. Amber alert styling — it needs attention but is recoverable. */
+.safeguard-flag-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #f5f5f7;
+}
+
+.safeguard-flag-banner > svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: #f59e0b;
+  margin-top: 1px;
+}
+
+.safeguard-flag-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.safeguard-flag-headline {
+  margin: 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.safeguard-flag-explain {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.65);
+}
+
+.safeguard-flag-request {
+  display: inline-block;
+  margin-top: 4px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.safeguard-flag-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  align-self: center;
+  padding: 6px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #f5f5f7;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.safeguard-flag-retry:hover {
+  background: rgba(245, 158, 11, 0.35);
+}
+
+.safeguard-flag-retry:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.safeguard-flag-retry svg {
+  width: 10px;
+  height: 10px;
+}

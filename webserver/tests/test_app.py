@@ -1486,6 +1486,85 @@ class TaskRepositoryIdsTests(unittest.TestCase):
         self.assertEqual(_task_repository_ids(None, 'TASK-1'), [])
 
 
+class SafeguardFallbackTests(unittest.TestCase):
+    """The 'retry on a lower version' offer when the API's safeguards flag a
+    turn: the fallback is exposed to the UI, and the retry pins it + respawns."""
+
+    def test_the_fallback_model_and_its_label_are_exposed(self):
+        app = create_app(session_manager=_FakeManager())
+        app.config['SAFEGUARD_FALLBACK_MODEL'] = 'claude-opus-4-8'
+        body = app.test_client().get('/api/safeguard-fallback').get_json()
+        self.assertEqual(body, {'model': 'claude-opus-4-8', 'label': 'Opus 4.8'})
+
+    def test_an_unmatched_id_is_shown_as_is_and_empty_disables_the_offer(self):
+        app = create_app(session_manager=_FakeManager())
+        app.config['SAFEGUARD_FALLBACK_MODEL'] = 'opus'
+        self.assertEqual(
+            app.test_client().get('/api/safeguard-fallback').get_json(),
+            {'model': 'opus', 'label': 'opus'},
+        )
+        app.config['SAFEGUARD_FALLBACK_MODEL'] = ''
+        self.assertEqual(
+            app.test_client().get('/api/safeguard-fallback').get_json(),
+            {'model': '', 'label': ''},
+        )
+
+    def test_absent_env_defaults_to_the_previous_opus(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('KATO_CLAUDE_FALLBACK_MODEL', None)
+            app = create_app(session_manager=_FakeManager())
+        self.assertEqual(app.config['SAFEGUARD_FALLBACK_MODEL'], 'claude-opus-4-8')
+
+    def test_an_explicit_empty_env_disables_it(self):
+        with patch.dict(os.environ, {'KATO_CLAUDE_FALLBACK_MODEL': ''}):
+            app = create_app(session_manager=_FakeManager())
+        self.assertEqual(app.config['SAFEGUARD_FALLBACK_MODEL'], '')
+
+    def test_retry_pins_the_fallback_then_respawns_and_resends(self):
+        class _RecordingRunner:
+            def __init__(self):
+                self.calls = []
+
+            def resume_session_for_chat(self, **kwargs):
+                self.calls.append(kwargs)
+
+        with tempfile.TemporaryDirectory() as state_dir:
+            from claude_core_lib.claude_core_lib.session.manager import (
+                ClaudeSessionManager,
+            )
+            manager = ClaudeSessionManager(
+                state_dir=state_dir, session_factory=lambda **_: None,
+            )
+            manager.adopt_session_id('PROJ-1', agent_session_id='pinned-id')
+            runner = _RecordingRunner()
+            app = create_app(session_manager=manager, planning_session_runner=runner)
+            app.config['SAFEGUARD_FALLBACK_MODEL'] = 'claude-opus-4-8'
+
+            response = app.test_client().post(
+                '/api/sessions/PROJ-1/retry-on-fallback',
+                json={'text': 'the flagged request'},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        # Pinned as the task's model override, and the respawn used it.
+        self.assertEqual(app.config['TASK_MODEL_OVERRIDES'].get('PROJ-1'), 'claude-opus-4-8')
+        self.assertEqual(runner.calls[0]['model'], 'claude-opus-4-8')
+        self.assertEqual(runner.calls[0]['message'], 'the flagged request')
+        self.assertEqual(runner.calls[0]['task_id'], 'PROJ-1')
+
+    def test_retry_needs_text_and_a_configured_fallback(self):
+        app = create_app(session_manager=_FakeManager())
+        app.config['SAFEGUARD_FALLBACK_MODEL'] = 'claude-opus-4-8'
+        no_text = app.test_client().post('/api/sessions/PROJ-1/retry-on-fallback', json={})
+        self.assertEqual(no_text.status_code, 400)
+
+        app.config['SAFEGUARD_FALLBACK_MODEL'] = ''
+        disabled = app.test_client().post(
+            '/api/sessions/PROJ-1/retry-on-fallback', json={'text': 'x'},
+        )
+        self.assertEqual(disabled.status_code, 503)
+
+
 class ModelEndpointTests(unittest.TestCase):
     def setUp(self):
         self.app = create_app(session_manager=_FakeManager())

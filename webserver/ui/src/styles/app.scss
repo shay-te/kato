@@ -13012,3 +13012,70 @@ button.settings-prompt-editor-head {
   .review-loop-chip.is-running svg,
   .tabs-pane-top .tab.has-review-loop::after { animation: none; }
 }
+
+/* Safeguard-flag banner: shown above the composer when the API's safeguards
+ * refused the latest turn, offering a one-click retry on the pinned fallback
+ * model. Amber alert styling — it needs attention but is recoverable. */
+.safeguard-flag-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-10;
+  margin: $SPACE-8 $SPACE-12;
+  padding: $SPACE-10 $SPACE-12;
+  border: 1px solid $C-ORANGE-50-A35;
+  border-radius: $RADIUS-8;
+  background: $C-ORANGE-50-A10;
+  color: $C-NEUTRAL-96;
+}
+
+.safeguard-flag-banner > svg {
+  flex-shrink: 0;
+  width: $ICON-GLYPH-LG;
+  height: $ICON-GLYPH-LG;
+  color: $C-ORANGE-50;
+  margin-top: $SPACE-1;
+}
+
+.safeguard-flag-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.safeguard-flag-headline {
+  margin: 0;
+  font-weight: 600;
+  font-size: $TEXT-13;
+}
+
+.safeguard-flag-explain {
+  margin: $SPACE-2 0 0;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-96-A65;
+}
+
+.safeguard-flag-request {
+  display: inline-block;
+  margin-top: $SPACE-4;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-96-A42;
+}
+
+.safeguard-flag-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-6;
+  flex-shrink: 0;
+  align-self: center;
+  padding: $SPACE-6 $SPACE-12;
+  border: 1px solid $C-ORANGE-50-A35;
+  border-radius: $RADIUS-PILL;
+  background: $C-ORANGE-50-A10;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-12;
+  cursor: pointer;
+}
+
+.safeguard-flag-retry:hover { background: $C-ORANGE-50-A35; }
+.safeguard-flag-retry:disabled { cursor: default; opacity: 0.6; }
+.safeguard-flag-retry svg { width: $ICON-GLYPH-SM; height: $ICON-GLYPH-SM; }

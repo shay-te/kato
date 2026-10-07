@@ -110,6 +110,9 @@ vi.mock('../api.js', () => ({
     { supported: true, enabled: false, live: false, session_url: '' },
   ),
   setSessionRemoteControl: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  // The safeguard-flag banner above the composer reads this on mount.
+  fetchSafeguardFallback: vi.fn().mockResolvedValue({ model: '', label: '' }),
+  retryOnFallbackModel: vi.fn().mockResolvedValue({ ok: true, body: {} }),
 }));
 vi.mock('../hooks/useSessionStream.js', async (importActual) => {
   const actual = await importActual();

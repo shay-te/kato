@@ -750,6 +750,22 @@ export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }
 
+// The pinned model (+ label) the chat offers to retry on when the API's
+// safeguards flag a turn. Empty ``model`` means no offer is configured.
+export function fetchSafeguardFallback() {
+  return fetchJson('/api/safeguard-fallback').catch(() => ({ model: '', label: '' }));
+}
+
+// Retry a safeguard-flagged turn on the fallback model: pins it for the task
+// and respawns + resends the flagged message (the last user turn) server-side.
+export function retryOnFallbackModel(taskId) {
+  if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
+  return requestEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/retry-on-fallback`,
+    { method: 'POST' },
+  );
+}
+
 // Is a scan running right now? ``triggerScan`` only ASKS for one — the scan
 // itself runs on kato's scan-loop thread — so this is the only way to know
 // when it is actually over. Degrades to "not scanning, not available" on any

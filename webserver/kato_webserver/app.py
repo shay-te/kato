@@ -1123,6 +1123,49 @@ def _get_task_override(app: Flask, key: str, task_id: str) -> str:
     return (app.config.get(key) or {}).get(_override_key(app, task_id), '')
 
 
+def _last_user_message(manager, task_id: str) -> str:
+    """The text of the task chat's most recent user message, or ''.
+
+    Reads the live session's event history (same source the turn-end detector
+    uses) without consuming it. Used to resend the flagged prompt on the
+    fallback model — read BEFORE the respawn, which drops the history.
+    """
+    if manager is None:
+        return ''
+    try:
+        session = manager.get_session(task_id)
+        events = list(session.recent_events() or []) if session is not None else []
+    except Exception:
+        return ''
+    for event in reversed(events):
+        raw = getattr(event, 'raw', None) or {}
+        if raw.get('type') != 'user':
+            continue
+        content = (raw.get('message') or {}).get('content')
+        if isinstance(content, str) and content.strip():
+            return content
+        if isinstance(content, list):
+            text = ' '.join(
+                block.get('text', '') for block in content
+                if isinstance(block, dict) and block.get('type') == 'text'
+            ).strip()
+            if text:
+                return text
+    return ''
+
+
+def _safeguard_fallback_label(model: str) -> str:
+    """Humanise a pinned fallback id for the UI: ``claude-opus-4-8`` → ``Opus 4.8``.
+
+    A best-effort label only — an id that doesn't match the usual
+    ``claude-<family>-<major>-<minor>`` shape is shown as-is.
+    """
+    match = re.match(r'claude-([a-z]+)-(\d+)-(\d+)$', str(model or '').strip())
+    if not match:
+        return str(model or '')
+    return f'{match.group(1).capitalize()} {match.group(2)}.{match.group(3)}'
+
+
 def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> bool:
     """Write (or clear) a per-task override; ``False`` when not wired.
 
@@ -1332,6 +1375,15 @@ def create_app(
     # start instead of silently claiming "all set".
     app.config['SETUP_ERROR'] = ''
     app.config['TASK_MODEL_OVERRIDES'] = {}
+    # The pinned model a flagged session retries on — the "go down a version"
+    # the chat offers when the API's safeguards reject a turn. A full id, not
+    # an alias (an alias always resolves to the LATEST, i.e. the version that
+    # was flagged). Configurable via KATO_CLAUDE_FALLBACK_MODEL; an ABSENT var
+    # defaults to the previous Opus, while an explicit empty value disables the
+    # offer.
+    app.config['SAFEGUARD_FALLBACK_MODEL'] = os.environ.get(
+        'KATO_CLAUDE_FALLBACK_MODEL', 'claude-opus-4-8',
+    ).strip()
     # Per-task chat effort override (Claude ``--effort`` level), set from
     # the composer's effort selector. Empty/absent => the configured
     # default. Applied on (re)spawn of the chat session.
@@ -1636,6 +1688,42 @@ def _register_http_routes(app: Flask) -> None:
         if not _set_task_override(app, 'TASK_MODEL_OVERRIDES', task_id, model):
             return jsonify({'error': 'not available'}), 503
         return jsonify({'model': model})
+
+    # The pinned fallback model (and its human label) the chat offers when a
+    # turn is flagged by the API's safeguards. Empty ``model`` → no offer.
+    @app.get('/api/safeguard-fallback')
+    def safeguard_fallback():
+        model = str(app.config.get('SAFEGUARD_FALLBACK_MODEL', '') or '')
+        return jsonify({'model': model, 'label': _safeguard_fallback_label(model)})
+
+    # Retry a safeguard-flagged turn on the pinned fallback model: pin it as
+    # the task's model override, then respawn the chat on it and resend the
+    # flagged message (the model change forces the respawn). The operator
+    # triggers this from the "retry on <fallback>" action on the flagged turn.
+    @app.post('/api/sessions/<task_id>/retry-on-fallback')
+    def retry_on_fallback_model(task_id: str):
+        fallback = str(app.config.get('SAFEGUARD_FALLBACK_MODEL', '') or '')
+        if not fallback:
+            return jsonify({'error': 'no safeguard fallback model is configured'}), 503
+        body = request.get_json(silent=True) or {}
+        manager = app.config.get('SESSION_MANAGER')
+        # The message to retry: whatever the caller passed, else the flagged
+        # turn's own prompt — the last user message, READ BEFORE the respawn
+        # terminates the session (recent_events dies with it).
+        text = text_from_mapping(body, 'text') or _last_user_message(manager, task_id)
+        if not text:
+            return jsonify({'error': 'nothing to retry (no message to resend)'}), 400
+        if not _set_task_override(app, 'TASK_MODEL_OVERRIDES', task_id, fallback):
+            return jsonify({'error': 'not available'}), 503
+        if manager is not None:
+            try:
+                manager.terminate_session(task_id, remove_record=False)
+            except Exception:
+                app.logger.exception(
+                    'failed to terminate session for safeguard-fallback respawn (task %s)',
+                    task_id,
+                )
+        return _spawn_or_reject_chat_session(app, task_id, text)
 
     # Composer draft (the in-progress prompt: text + pasted images), persisted
     # server-side in <workspace>/.kato-prompts.json so it survives a refresh, a

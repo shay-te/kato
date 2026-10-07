@@ -8,6 +8,7 @@ import ChatSearch from './ChatSearch.jsx';
 import EventLog from './EventLog.jsx';
 import MessageForm from './MessageForm.jsx';
 import QueuedMessageList from './QueuedMessageList.jsx';
+import SafeguardFlagBanner from './SafeguardFlagBanner.jsx';
 import PanelCard from './PanelCard.jsx';
 import SessionHeader, { SessionHeaderPlaceholder } from './SessionHeader.jsx';
 import WorkingIndicator from './WorkingIndicator.jsx';
@@ -1013,6 +1014,7 @@ export default function SessionDetail({
           onRemove={removeQueuedMessage}
           onEdit={editQueuedMessage}
         />
+        <SafeguardFlagBanner taskId={taskId} entries={stream.events} />
         <MessageForm
           ref={composerRef}
           taskId={taskId}

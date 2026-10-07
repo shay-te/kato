@@ -281,6 +281,12 @@ SETTINGS_SCHEMA: list[dict] = [
              'Alias (opus/sonnet/haiku → latest) or full name '
              '(e.g. claude-fable-5, claude-sonnet-4-6). '
              'Empty = Claude Code default.', {}),
+            ('KATO_CLAUDE_FALLBACK_MODEL', 'text', 'Safeguard fallback model',
+             'Pinned model to retry on when the API\'s safeguards flag a '
+             'session (the one-click "retry on a lower version" the chat '
+             'offers). A full id, not an alias — aliases always resolve to '
+             'the latest, which is the version that was flagged. '
+             'Empty = no retry offered.', {}),
             ('KATO_CLAUDE_MAX_TURNS', 'number', 'Max turns',
              'Cap on agent turns per task. Empty = no cap.', {}),
             ('KATO_CLAUDE_EFFORT', 'select', 'Reasoning effort',

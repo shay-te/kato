@@ -293,6 +293,22 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
 
 **`is_question_comment` heuristic:** requires `?` ending + question start word + no fix keywords + ≤400 chars. Conservative — defaults to fix-mode on ambiguity.
 
+### Safeguard-flag fallback (retry on a lower model version)
+When the API's safeguards refuse a turn (`... safeguards flagged this session ... Details:
+[cyber]` — a server-side AUP refusal, not a transport error; the SAME prompt fails the same way
+on that model), kato offers a one-click retry on a pinned LOWER model, like VS Code does.
+- Detector: `claude_core_lib/helpers/safeguard_error.py` (generic, kato-free) — matches the AUP
+  link + "flagged this session"; mirrored in `webserver/ui/src/utils/safeguardError.js` (keep
+  the anchors in step).
+- Fallback model: `KATO_CLAUDE_FALLBACK_MODEL` (default `claude-opus-4-8`; a PINNED id, NOT an
+  alias — an alias always resolves to the latest, i.e. the flagged version; empty disables the
+  offer). Bridged to `app.config['SAFEGUARD_FALLBACK_MODEL']`.
+- UI: `SafeguardFlagBanner` above the composer (shown only when the LATEST turn is a live flag
+  AND a fallback is configured) → `POST /api/sessions/<id>/retry-on-fallback`, which pins the
+  fallback as the task's model override and respawns + resends the flagged message (the last
+  user turn, read before the respawn). Operator-triggered, never automatic — it is a recovery
+  for a false-positive flag, not a silent safeguard bypass.
+
 ### False-success guards (important — previously bugs)
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
