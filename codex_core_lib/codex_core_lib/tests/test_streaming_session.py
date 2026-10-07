@@ -381,6 +381,15 @@ class TooOldCliIsRefusedUpFrontTests(unittest.TestCase):
     depended on.
     """
 
+    def setUp(self) -> None:
+        # Pin "on the host": a CI job running inside a container would
+        # otherwise be refused before the probe these tests are about.
+        from unittest.mock import patch
+        from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
+        on_host = patch.object(CodexCliClient, '_running_inside_docker', return_value=False)
+        on_host.start()
+        self.addCleanup(on_host.stop)
+
     def _client(self, help_output: str, help_returncode: int = 0):
         from unittest.mock import patch
         from codex_core_lib.codex_core_lib.cli_client import CodexCliClient

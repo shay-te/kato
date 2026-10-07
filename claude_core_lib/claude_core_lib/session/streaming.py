@@ -105,7 +105,8 @@ def _process_group_of(proc: subprocess.Popen) -> int | None:
         return None
     try:
         group_id = os.getpgid(proc.pid)
-        return group_id if group_id > 0 and group_id != os.getpgid(0) else None
+        # Never group 1, init's: nothing this session spawned lives there.
+        return group_id if group_id > 1 and group_id != os.getpgid(0) else None
     except (OSError, AttributeError, ProcessLookupError):
         return None
 
@@ -1324,7 +1325,7 @@ class StreamingClaudeSession(object):
         ``_kill_tree_safely`` already walked the children there, so this is a
         POSIX-only sweep.
         """
-        if group_id is None or _IS_WINDOWS:
+        if group_id is None or group_id <= 1 or _IS_WINDOWS:
             return
         sigkill = getattr(signal, 'SIGKILL', signal.SIGTERM)
         for sig, settle in ((signal.SIGTERM, 0.3), (sigkill, 0.0)):

@@ -1750,7 +1750,10 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         # _wait_for_exit needs poll(), wait()
         fake_proc.poll.return_value = 0
         fake_proc.wait.return_value = 0
-        session._escalate_to_kill(fake_proc)  # must not raise
+        # Never the real tree kill: a MagicMock's pid is 1 — init.
+        with patch('claude_core_lib.claude_core_lib.session.streaming.kill_process_tree', return_value=True) as tree_kill:
+            session._escalate_to_kill(fake_proc)  # must not raise
+        tree_kill.assert_called_once_with(fake_proc.pid, logger=session.logger)
         fake_proc.kill.assert_called_once()
 
     def test_escalate_to_kill_docker_mode_also_kills_the_container(self) -> None:
@@ -1767,7 +1770,7 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         fake_proc.wait.return_value = 0
         with patch(
             'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
-        ) as mock_kill_container:
+        ) as mock_kill_container, patch('claude_core_lib.claude_core_lib.session.streaming.kill_process_tree', return_value=True):
             session._escalate_to_kill(fake_proc)
         mock_kill_container.assert_called_once_with(
             'sandbox-UNA-1-abcd1234', logger=session.logger,
@@ -1781,9 +1784,21 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         fake_proc.wait.return_value = 0
         with patch(
             'sandbox_core_lib.sandbox_core_lib.manager.kill_container',
-        ) as mock_kill_container:
+        ) as mock_kill_container, patch('claude_core_lib.claude_core_lib.session.streaming.kill_process_tree', return_value=True):
             session._escalate_to_kill(fake_proc)
         mock_kill_container.assert_not_called()
+
+    def test_inits_process_group_is_never_reaped(self) -> None:
+        # Group 1 is init's: a mock process (pid 1) or a reparented child
+        # must never turn into a signal to it.
+        from claude_core_lib.claude_core_lib.session import streaming
+        session = self._build_session()
+        with patch.object(streaming, '_IS_WINDOWS', False), \
+                patch.object(streaming.os, 'getpgid', side_effect=[1, 999]), \
+                patch.object(streaming.os, 'killpg') as killpg:
+            self.assertIsNone(streaming._process_group_of(SimpleNamespace(pid=4242)))
+            session._reap_process_group(1)
+        killpg.assert_not_called()
 
     def test_wait_for_new_events_returns_immediately_when_events_present(self) -> None:
         # Lines 633-647: ``wait_for_new_events`` happy path.

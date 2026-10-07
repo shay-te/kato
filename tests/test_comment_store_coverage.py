@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -345,6 +346,57 @@ class LocalCommentStoreSkipBranchesTests(unittest.TestCase):
         self.store.add(queued_new)
         result = self.store.next_queued()
         self.assertEqual(result.id, 'c1')
+
+
+class CachedReadsSeeEveryWriteTests(unittest.TestCase):
+    """Two store instances on one workspace: what one writes, the other reads.
+
+    Linux stamps file times from a coarse clock, so a rewrite inside the same
+    tick as a cached read leaves ``st_mtime_ns`` unchanged. A cache keyed on the
+    time alone then served the previous content (CI: a comment marked FAILED read
+    back as IN_PROGRESS 37 times in 40). The tick is forced here with ``utime``.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+        self.writer = LocalCommentStore(self.workspace)
+        self.reader = LocalCommentStore(self.workspace)
+        self.record = self.writer.add(_record(kato_status=KatoCommentStatus.QUEUED.value))
+        self.path = self.writer.storage_path
+
+    def _settle(self, mtime_ns: int) -> None:
+        os.utime(self.path, ns=(mtime_ns, mtime_ns))
+
+    def test_a_replace_in_the_same_clock_tick_is_seen(self) -> None:
+        quiet = os.stat(self.path).st_mtime_ns - 60 * 1_000_000_000
+        self._settle(quiet)  # an old, quiet file: the reader may cache it
+        self.assertEqual(self.reader.list()[0].kato_status, KatoCommentStatus.QUEUED.value)
+        self.writer.update_kato_status(self.record.id, kato_status=KatoCommentStatus.FAILED.value)
+        self._settle(quiet)  # the same tick as the cached read
+        self.assertEqual(self.reader.list()[0].kato_status, KatoCommentStatus.FAILED.value)
+
+    def test_a_fresh_file_is_never_served_from_cache(self) -> None:
+        # An in-place rewrite keeps the inode, and the same size and time:
+        # only "too fresh to trust" catches it.
+        self.assertEqual(self.reader.list()[0].kato_status, KatoCommentStatus.QUEUED.value)
+        before = os.stat(self.path)
+        text = self.path.read_text(encoding='utf-8')
+        edited = text.replace('"queued"', '"failed"')
+        self.assertEqual(len(edited), len(text))
+        with open(self.path, 'r+', encoding='utf-8') as handle:
+            handle.write(edited)
+        os.utime(self.path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(os.stat(self.path).st_ino, before.st_ino)
+        self.assertEqual(self.reader.list()[0].kato_status, KatoCommentStatus.FAILED.value)
+
+    def test_a_quiet_unchanged_file_is_served_from_cache(self) -> None:
+        quiet = os.stat(self.path).st_mtime_ns - 60 * 1_000_000_000
+        self._settle(quiet)
+        self.reader.list()
+        with patch.object(Path, 'open', side_effect=AssertionError('re-read')):
+            self.assertEqual(len(self.reader.list()), 1)
 
 
 if __name__ == '__main__':

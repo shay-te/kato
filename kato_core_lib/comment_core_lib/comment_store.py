@@ -17,6 +17,11 @@ from kato_core_lib.comment_core_lib.comment_record import (
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
+from utils_core_lib.utils_core_lib.file_snapshot import (
+    FileSignature,
+    file_signature,
+    trustworthy,
+)
 
 _STORE_FILENAME = '.kato-comments.json'
 
@@ -35,9 +40,10 @@ class LocalCommentStore(object):
         self._path = self._workspace_dir / _STORE_FILENAME
         self._lock = self._lock_for(self._path)
         self.logger = configure_logger(self.__class__.__name__)
-        # Cache + mtime so a long-lived instance sees cross-process writes.
+        # Cache + the file's signature when it was read, so a long-lived
+        # instance sees writes made by other instances and processes.
         self._cache: list[CommentRecord] | None = None
-        self._cache_mtime_ns: int = 0
+        self._cache_signature: FileSignature | None = None
 
     @classmethod
     def _lock_for(cls, path: Path) -> threading.RLock:
@@ -302,25 +308,31 @@ class LocalCommentStore(object):
 
     # ----- internals -----
 
-    def _current_mtime_ns(self) -> int:
-        try:
-            return self._path.stat().st_mtime_ns
-        except OSError:
-            return 0
+    def _remember(
+        self, records: list[CommentRecord], signature: FileSignature | None,
+    ) -> list[CommentRecord]:
+        """Cache ``records`` as the file's content at ``signature`` — unless
+        the file is still too fresh for its signature to be trusted
+        (``utils_core_lib.file_snapshot``), then the next read goes to disk."""
+        if trustworthy(signature):
+            self._cache = list(records)
+            self._cache_signature = signature
+        else:
+            self._cache = None
+        return records
 
-    def _cache_empty(self, mtime: int) -> list:
-        """Reset the cache to empty (stamped at ``mtime``) and return ``[]``."""
-        self._cache = []
-        self._cache_mtime_ns = mtime
-        return []
+    def _cache_empty(self, signature: FileSignature | None) -> list:
+        """Remember the file as empty at ``signature`` and return ``[]``."""
+        return self._remember([], signature)
 
     def _load_all(self, *, force: bool = False) -> list[CommentRecord]:
-        # Cross-process writes bump the file mtime; drop the cache on change.
-        current_mtime = self._current_mtime_ns()
+        # Taken BEFORE the read: a write landing mid-read then leaves a
+        # newer signature on disk, so the next read is a miss, never stale.
+        current = file_signature(self._path)
         if (
             self._cache is not None
             and not force
-            and current_mtime == self._cache_mtime_ns
+            and current == self._cache_signature
         ):
             return list(self._cache)
         try:
@@ -330,7 +342,7 @@ class LocalCommentStore(object):
             # whole /api/sessions/<task>/comments response (one bad workspace
             # took down the endpoint). Treat any stat/read failure as empty.
             if not self._path.is_file():
-                return self._cache_empty(current_mtime)
+                return self._cache_empty(current)
             with self._path.open('r', encoding='utf-8') as fh:
                 payload = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
@@ -338,12 +350,12 @@ class LocalCommentStore(object):
                 'comment store at %s is unreadable (%s) — treating as empty',
                 self._path, exc,
             )
-            return self._cache_empty(current_mtime)
+            return self._cache_empty(current)
         if not isinstance(payload, dict):
-            return self._cache_empty(current_mtime)
+            return self._cache_empty(current)
         rows = payload.get('comments') or []
         if not isinstance(rows, list):
-            return self._cache_empty(current_mtime)
+            return self._cache_empty(current)
         out: list[CommentRecord] = []
         for entry in rows:
             if not isinstance(entry, dict):
@@ -355,9 +367,7 @@ class LocalCommentStore(object):
                     'skipping malformed comment record in %s',
                     self._path,
                 )
-        self._cache = list(out)
-        self._cache_mtime_ns = current_mtime
-        return out
+        return self._remember(out, current)
 
     def _persist(self, records: list[CommentRecord]) -> None:
         # Callers hold the cross-process flock; this just serialises
@@ -378,5 +388,4 @@ class LocalCommentStore(object):
                 'failed to persist comment store at %s: %s', self._path, exc,
             )
             return
-        self._cache = list(records)
-        self._cache_mtime_ns = self._current_mtime_ns()
+        self._remember(records, file_signature(self._path))

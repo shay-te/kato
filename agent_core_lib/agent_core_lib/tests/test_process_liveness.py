@@ -27,6 +27,18 @@ class KillProcessTreeTests(unittest.TestCase):
         self.assertFalse(process_liveness.kill_process_tree(0))
         self.assertFalse(process_liveness.kill_process_tree(-5))
 
+    def test_init_is_never_signalled_nor_its_group(self) -> None:
+        # ``int(MagicMock())`` is 1: a test that handed a mock process to the
+        # real kill sent SIGKILL to pid 1 AND process group 1, which on a CI
+        # runner took the runner itself down. Not even an attempt now.
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
+                mock.patch.object(os, 'killpg') as killpg, \
+                mock.patch.object(os, 'kill') as kill:
+            self.assertFalse(process_liveness.kill_process_tree(1))
+            self.assertFalse(process_liveness.kill_process_tree(mock.MagicMock()))
+        killpg.assert_not_called()
+        kill.assert_not_called()
+
     def test_windows_uses_taskkill_tree_force(self) -> None:
         completed = mock.Mock(returncode=0)
         with mock.patch.object(process_liveness, 'IS_WINDOWS', True), \
@@ -167,6 +179,15 @@ class KillProcessGroupTests(unittest.TestCase):
         # The suicide guard: same pgid as us => single-pid kill only.
         with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
                 mock.patch.object(os, 'getpgid', return_value=999), \
+                mock.patch.object(os, 'killpg') as killpg, \
+                mock.patch.object(os, 'kill') as kill:
+            self.assertTrue(process_liveness.kill_process_tree(4242))
+        killpg.assert_not_called()
+        self.assertEqual(kill.call_args[0][0], 4242)
+
+    def test_a_process_in_inits_group_gets_only_the_single_kill(self) -> None:
+        with mock.patch.object(process_liveness, 'IS_WINDOWS', False), \
+                mock.patch.object(os, 'getpgid', side_effect=[1, 999]), \
                 mock.patch.object(os, 'killpg') as killpg, \
                 mock.patch.object(os, 'kill') as kill:
             self.assertTrue(process_liveness.kill_process_tree(4242))

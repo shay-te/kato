@@ -55,7 +55,14 @@ def kill_process_tree(pid: int, *, logger=None, label: str = 'agent') -> bool:
         pid = int(pid)
     except (TypeError, ValueError):
         return False
-    if pid <= 0:
+    # Never pid 1 (init: systemd / launchd) and never anything at or below
+    # it. Nothing this helper is asked to kill can be init, so a 1 is always
+    # a bad input — and ``int()`` of a ``MagicMock`` IS 1. Unit tests that
+    # handed a mock process to a real kill sent SIGKILL to pid 1 and to
+    # process GROUP 1: harmless on a laptop (not permitted), but on a CI
+    # runner the group held the runner's own service, and the job died with
+    # "the hosted runner lost communication with the server".
+    if pid <= 1:
         return False
     if IS_WINDOWS:
         try:
@@ -94,7 +101,8 @@ def kill_process_tree(pid: int, *, logger=None, label: str = 'agent') -> bool:
     group_signalled = False
     try:
         group_id = os.getpgid(pid)
-        if group_id > 0 and group_id != os.getpgid(0):
+        # Group 1 is init's — see the pid guard above.
+        if group_id > 1 and group_id != os.getpgid(0):
             os.killpg(group_id, sigkill)
             group_signalled = True
     except (OSError, AttributeError):

@@ -47,6 +47,11 @@ from kato_core_lib.data_layers.data.repository_approval import (
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 from kato_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
+from utils_core_lib.utils_core_lib.file_snapshot import (
+    FileSignature,
+    file_signature,
+    trustworthy,
+)
 from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text, normalized_text
 
 
@@ -88,8 +93,9 @@ class RepositoryApprovalService(Service):
         self.logger = logger or configure_logger(self.__class__.__name__)
         self._storage_path = Path(storage_path).expanduser() if storage_path else default_storage_path()
         self._cache: ApprovalSidecar | None = None
-        # File mtime at cache time — drops cache on cross-process writes.
-        self._cache_mtime_ns: int = 0
+        # The file's signature at cache time — drops the cache on writes made
+        # by other instances and processes (an approval or a revoke).
+        self._cache_signature: FileSignature | None = None
         self._write_lock = self._lock_for(self._storage_path)
         self._corrupt_warned = False
 
@@ -239,18 +245,16 @@ class RepositoryApprovalService(Service):
 
     def _read_sidecar(self, *, force: bool = False) -> ApprovalSidecar:
         path = self._storage_path
-        # Cross-process writes bump the mtime; drop the cache on change.
-        current_mtime = self._current_mtime_ns()
+        # Taken BEFORE the read, so a write landing mid-read is a later miss.
+        current = file_signature(path)
         if (
             self._cache is not None
             and not force
-            and current_mtime == self._cache_mtime_ns
+            and current == self._cache_signature
         ):
             return self._cache
         if not path.is_file():
-            self._cache = ApprovalSidecar()
-            self._cache_mtime_ns = current_mtime
-            return self._cache
+            return self._remember(ApprovalSidecar(), current)
         try:
             with path.open('r', encoding='utf-8') as handle:
                 payload = json.load(handle)
@@ -263,22 +267,24 @@ class RepositoryApprovalService(Service):
                     path,
                 )
                 self._corrupt_warned = True
-            self._cache = ApprovalSidecar()
-            self._cache_mtime_ns = current_mtime
-            return self._cache
+            return self._remember(ApprovalSidecar(), current)
         if not isinstance(payload, dict):
-            self._cache = ApprovalSidecar()
-            self._cache_mtime_ns = current_mtime
-            return self._cache
-        self._cache = ApprovalSidecar.from_dict(payload)
-        self._cache_mtime_ns = current_mtime
-        return self._cache
+            return self._remember(ApprovalSidecar(), current)
+        return self._remember(ApprovalSidecar.from_dict(payload), current)
 
-    def _current_mtime_ns(self) -> int:
-        try:
-            return self._storage_path.stat().st_mtime_ns
-        except OSError:
-            return 0
+    def _remember(
+        self, sidecar: ApprovalSidecar, signature: FileSignature | None,
+    ) -> ApprovalSidecar:
+        """Cache ``sidecar`` as the file's content at ``signature`` — unless
+        the file is still too fresh for its signature to be trusted
+        (``utils_core_lib.file_snapshot``). A stale approval list is a
+        security bug: a revoke must be seen on the very next read."""
+        if trustworthy(signature):
+            self._cache = sidecar
+            self._cache_signature = signature
+        else:
+            self._cache = None
+        return sidecar
 
     def _write_sidecar(self, sidecar: ApprovalSidecar) -> None:
         # Callers hold the lock. Unique tmp name guards against a
@@ -295,8 +301,7 @@ class RepositoryApprovalService(Service):
             json.dump(sidecar.to_dict(), handle, indent=2, sort_keys=True)
             handle.write('\n')
         os.replace(tmp_path, path)
-        self._cache = sidecar
-        self._cache_mtime_ns = self._current_mtime_ns()
+        self._remember(sidecar, file_signature(path))
 
 
 class RestrictedExecutionRefusal(RuntimeError):

@@ -14,6 +14,7 @@ No file-mocking. No JSON-mocking. Real round-trips.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import textwrap
 import threading
@@ -249,10 +250,9 @@ class RepositoryApprovalCorruptionToleranceTests(unittest.TestCase):
         self.assertEqual(service.list_approvals(), ())
         first_warn_count = len(warn_calls)
         self.assertGreaterEqual(first_warn_count, 1)
-        # Force a second read that re-enters the parse path. Bumping the
-        # tracked mtime guarantees the cache is dropped without relying
-        # on filesystem timestamp resolution.
-        service._cache_mtime_ns = -1
+        # Force a second read that re-enters the parse path. Dropping the
+        # cache guarantees it without relying on filesystem timestamps.
+        service._cache = None
         self.assertEqual(service.list_approvals(), ())
         # Warning count did NOT increase — branch 309->317 was taken.
         self.assertEqual(len(warn_calls), first_warn_count)
@@ -778,6 +778,30 @@ class RepositoryApprovalModuleHelpersTests(unittest.TestCase):
                     os.environ[key] = prior
 
         return ctx()
+
+
+class CachedApprovalsSeeEveryWriteTests(unittest.TestCase):
+    """A revoke made by one instance is seen by another on its very next read.
+
+    Same coarse-clock problem as the comment store (see
+    ``utils_core_lib.file_snapshot``) — and here a stale read is a security
+    bug: a revoked repository would still look approved.
+    """
+
+    def test_a_revoke_in_the_same_clock_tick_is_seen(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix='kato-approval-tick-')
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / 'approvals.json'
+        writer = RepositoryApprovalService(path)
+        reader = RepositoryApprovalService(path)
+        writer.approve('repo-a', 'https://git.example/repo-a.git',
+                       mode=ApprovalMode.RESTRICTED, approved_by='alice')
+        quiet = os.stat(path).st_mtime_ns - 60 * 1_000_000_000
+        os.utime(path, ns=(quiet, quiet))
+        self.assertEqual(reader.is_approved('repo-a'), ApprovalMode.RESTRICTED)
+        writer.revoke('repo-a')
+        os.utime(path, ns=(quiet, quiet))  # the same tick as the cached read
+        self.assertIsNone(reader.is_approved('repo-a'))
 
 
 if __name__ == '__main__':

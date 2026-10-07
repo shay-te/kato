@@ -39,6 +39,14 @@ def _completed(stdout: str, stderr: str = '', returncode: int = 0) -> subprocess
 
 
 class ClaudeCliClientTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Whether the machine running the tests is itself a container (a CI
+        # job in Docker) is not what these tests are about: pin "on the host".
+        # The Docker refusal has its own test, which patches this back.
+        on_host = patch.object(ClaudeCliClient, '_running_inside_docker', return_value=False)
+        on_host.start()
+        self.addCleanup(on_host.stop)
+
     def test_validate_connection_raises_when_binary_missing(self) -> None:
         client = ClaudeCliClient(binary='claude-not-installed-xyz')
         with patch('claude_core_lib.claude_core_lib.cli_client.shutil.which', return_value=None), \

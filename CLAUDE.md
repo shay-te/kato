@@ -358,3 +358,13 @@ Auto-discovery: if `REPOSITORY_ROOT_PATH` is set (no explicit `repositories:` li
 - Each core-lib has its own `tests/` folder inside it
 - Top-level `tests/` is for kato integration tests only
 - Key test files: `test_task_publisher.py`, `test_startup_validator.py`, `test_repository_connections_validator.py`, `test_review_comment_question_mode.py`
+- **Never hand a mock process to a real kill.** `int(MagicMock())` is 1: three tests sent SIGKILL to pid 1 and
+  process GROUP 1, which killed GitHub's runner ("the hosted runner lost communication"). The kill helpers now
+  refuse pid/group ≤ 1 (`process_liveness.kill_process_tree`, `streaming._process_group_of`); mock the kill anyway.
+- **A file-backed cache keys on `utils_core_lib.file_snapshot`, never on mtime alone.** Linux stamps file times
+  from a coarse clock, so a rewrite in the same tick keeps `st_mtime_ns` and an mtime-keyed cache serves stale
+  data (a comment marked FAILED read back IN_PROGRESS 37/40 on Linux; never on macOS). Signature = mtime+size+inode,
+  and a read of a file changed in the last 2s is not cached.
+- **CI ≠ the local gate.** The CI step stops at its FIRST failing command, so one top-level failure hid every
+  lib suite from Linux for weeks. To vet CI, run `.github/workflows/ci.yml`'s commands on `git archive HEAD` in a
+  `python:3.11` container as a non-root user with an empty HOME.
