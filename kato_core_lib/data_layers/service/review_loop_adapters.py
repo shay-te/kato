@@ -192,7 +192,9 @@ class KatoReviewer(object):
         self._get_workspace_manager = provider_for(workspace_manager)
         self._timeout_seconds = int(timeout_seconds or 0)
 
-    def review(self, prompt: str, *, task_id: str, cancel_event: threading.Event) -> str:
+    def review(
+        self, prompt: str, *, task_id: str, cancel_event: threading.Event, model: str = '',
+    ) -> str:
         workspace_manager = self._get_workspace_manager()
         clones = task_repository_clones(workspace_manager, task_id)
         return self._get_implementation_service().investigate(
@@ -207,6 +209,8 @@ class KatoReviewer(object):
             log_label=f'{task_id} review loop',
             cancel_event=cancel_event,
             timeout_seconds=self._timeout_seconds,
+            # The model the operator picked for this loop ('' = the backend's).
+            model=model,
         )
 
 

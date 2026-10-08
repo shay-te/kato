@@ -65,7 +65,8 @@ const ROUND_OUTCOMES = {
   // Clean, but the code changed after the reviewer read it: not accepted.
   changed: 'code changed since — not accepted',
   clean: 'clean',
-  stuck: 'same issues as before',
+  // The same blocking issues survived two fixes — the loop's reason names them.
+  stuck: 'stuck — fixes didn\u2019t land',
   max_rounds: 'last round',
   stopped: 'stopped',
   failed: 'failed',
@@ -306,12 +307,58 @@ export function testsTone(tests) {
   return 'neutral';
 }
 
-// "Self-check 1 — fixed 2" · "Self-check 2 — clean" · "Self-check 1 — no verdict".
-export function selfCheckText(turn) {
-  let verdict = 'no verdict';
-  if (turn?.clean === true) { verdict = 'clean'; }
-  if (turn?.clean === false) { verdict = `fixed ${Number(turn.fixed || 0)}`; }
-  return `Self-check ${turn?.number || ''} — ${verdict}`;
+// A self-check turn as a row, like a round: "Self-check 2 · fixed 1 · 3m 10s ·
+// NOT CLEAN YET". ``state`` is its class — the clean turn reads green, as a
+// clean round does.
+export function selfCheckRow(turn) {
+  const name = `Self-check ${turn?.number || ''}`;
+  const took = span(turn?.started_at, turn?.finished_at);
+  const timing = took ? { text: took, title: `${name} took ${took}` } : null;
+  if (!turn?.finished_at) {
+    return { name, summary: 'checking…', outcome: 'in progress', state: 'active', timing };
+  }
+  const fixed = Number(turn.fixed || 0);
+  const summary = fixed ? `fixed ${fixed}` : 'nothing fixed';
+  if (turn.clean === true) { return { name, summary, outcome: 'clean', state: 'clean', timing }; }
+  if (turn.clean === false) { return { name, summary, outcome: 'not clean yet', state: 'unclean', timing }; }
+  return { name, summary, outcome: 'no verdict', state: 'no_verdict', timing };
+}
+
+// The review loop's model choices: the chat models kato offers, plus the
+// reviewer's own default when it isn't one of them (a pinned
+// ``claude-opus-5-5[1m]`` beside the ``opus`` alias). ``value`` is the model
+// the picker shows — the operator's pick while it is still offered, else the
+// default, named as itself. ``stale``: a remembered pick no longer offered.
+export function reviewerModelChoice({ models = [], defaultModel = null, picked = '' } = {}) {
+  const offered = (models || []).map((model) => ({ id: model.id, name: model.label || model.id }));
+  const configured = defaultModel?.model || '';
+  if (configured && !offered.some((option) => option.id === configured)) {
+    offered.unshift({ id: configured, name: defaultModel.label || configured });
+  }
+  const catalogDefault = (models || []).find((model) => model.default)?.id || '';
+  const defaultId = configured || catalogDefault || offered[0]?.id || '';
+  const options = offered.map((option) => ({
+    ...option,
+    label: option.id === defaultId ? `${option.name} — kato's default` : option.name,
+  }));
+  const stale = Boolean(picked) && options.length > 0 && !options.some((option) => option.id === picked);
+  const value = picked && !stale ? picked : defaultId;
+  return { options, value, defaultId, stale };
+}
+
+// "Still here — first reported as R2-1, survived 1 fix" for a finding a fix
+// said it fixed and a later review found again; '' for any other.
+export function findingRepeatNote(finding) {
+  if (!finding?.repeat_of) { return ''; }
+  const fixes = Number(finding.missed_fixes || 0);
+  const survived = fixes === 1 ? '1 fix' : `${fixes} fixes`;
+  return `Still here — first reported as ${finding.repeat_of}, survived ${survived}.`;
+}
+
+// The name of the model a loop ran on ('' = the reviewer's default then).
+export function reviewerModelName(model, choice) {
+  const id = model || choice.defaultId;
+  return choice.options.find((option) => option.id === id)?.name || id;
 }
 
 // The view's options, as the labels its checkboxes show.
@@ -326,6 +373,41 @@ function stepDetail(key, state, loop, elapsed) {
   if (state === 'current') { return waitingThen(loop, elapsed); }
   if (key === 'review' && state === 'done') { return countsText(loop.counts); }
   return '';
+}
+
+// Outcomes whose round ended on its review (or the tests after it).
+const ENDED_ON_REVIEW = new Set(['clean', 'changed', 'stuck', 'max_rounds']);
+
+// When the round ended. kato stamps ``finished_at``; a round saved before it
+// did ends at its last recorded step. A round cut off by a restart (stopped
+// without a stamp) or still running has no known end.
+function roundEnd(round) {
+  if (round.finished_at) { return round.finished_at; }
+  if (round.fixed_at && (round.outcome === 'sent' || round.outcome === 'tests_failed')) {
+    return round.fixed_at;
+  }
+  if (ENDED_ON_REVIEW.has(round.outcome)) {
+    return Math.max(round.reviewed_at || 0, round.tests?.reported_at || 0);
+  }
+  return 0;
+}
+
+function span(from, to) {
+  return from && to && to >= from ? formatElapsed(to - from) : '';
+}
+
+// How long a finished round took — ``{ text: '6m 12s', title }`` where the
+// title breaks it down (review · tests · fix) — or null while it runs.
+export function roundTiming(round) {
+  const total = span(round?.started_at, round ? roundEnd(round) : 0);
+  if (!total) { return null; }
+  const steps = [
+    ['review', span(round.started_at, round.reviewed_at)],
+    ['tests', span(round.reviewed_at, round.tests?.reported_at)],
+    ['fix', span(round.sent_at, round.fixed_at)],
+  ].filter(([, took]) => took).map(([name, took]) => `${name} ${took}`);
+  const breakdown = steps.length ? ` — ${steps.join(' · ')}` : '';
+  return { text: total, title: `Round ${round.number} took ${total}${breakdown}` };
 }
 
 export function roundOutcomeLabel(round) {

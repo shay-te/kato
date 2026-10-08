@@ -52,6 +52,7 @@ export default function TabList({
   onSelect,
   onForget,
   onOpenAddTask,
+  onNewTask,
   onOpenBulkForget,
   onOpenTaskPalette,
   onScanNow,
@@ -466,6 +467,17 @@ export default function TabList({
         disabled={typeof onOpenTaskPalette !== 'function'}
       >
         <Icon name="search" />
+      </button>
+      <button
+        type="button"
+        id="tabs-new-task"
+        className="tabs-action"
+        data-tooltip="New task — write one here in kato, no tracker: title, description, repositories. Starts in Plan."
+        aria-label="New task"
+        onClick={onNewTask}
+        disabled={typeof onNewTask !== 'function'}
+      >
+        <Icon name="edit" />
       </button>
       <button
         type="button"

@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from review_loop_core_lib.review_loop_core_lib.chat_prompts import (
@@ -71,9 +71,12 @@ from review_loop_core_lib.review_loop_core_lib.store import (
     ReviewLoopStore,
 )
 from review_loop_core_lib.review_loop_core_lib.verdict import (
+    STUCK_AFTER_MISSED_FIXES,
     ReviewVerdict,
     ReviewVerdictError,
+    count_missed_fixes,
     is_stuck,
+    mark_repeats,
     parse_review_verdict,
     settle_findings,
 )
@@ -205,6 +208,11 @@ class ReviewLoopRunner(object):
         if self._state.self_check:
             self._self_check_phase()
         previous: set[str] | None = None
+        # Per issue (fingerprint): how many fixes it has survived — the chat
+        # said it fixed it (or did not answer) and the next review still found
+        # it — and the id it was first sent under.
+        missed: dict[str, int] = {}
+        first_ids: dict[str, str] = {}
         max_rounds = self._state.max_rounds
         number = 0
         # The next review withholds the decision ledger: a clean-room check.
@@ -268,23 +276,40 @@ class ReviewLoopRunner(object):
                     review_round, verdict, confirmed=confirming, no_room=wants_sweep,
                 ))
             current = review_round.blocking_fingerprints
-            if previous is not None and is_stuck(previous, current):
+            if previous is not None:
+                missed = count_missed_fixes(missed, previous, current)
+            verdict = self._mark_repeats(review_round, verdict, missed, first_ids)
+            # Stuck only when every blocking issue left has survived
+            # STUCK_AFTER_MISSED_FIXES fixes: anything new, or a repeat that
+            # has missed only once, goes back to the chat.
+            if is_stuck(current, missed):
                 self._close_round(review_round, 'stuck')
-                raise _Finish(
-                    ReviewLoopStatus.STUCK,
-                    f'none of the blocking issues from round {number - 1} were fixed',
-                )
+                raise _Finish(ReviewLoopStatus.STUCK, _stuck_reason(verdict))
             if number == max_rounds:
                 self._close_round(review_round, 'max_rounds')
                 raise _Finish(
                     ReviewLoopStatus.MAX_ROUNDS,
                     f'{blocking} blocking issue(s) left after {number} reviews',
                 )
+            for finding in verdict.blocking:
+                first_ids.setdefault(finding.fingerprint, finding.id)
             prompt, dispatched_at = self._send_findings(review_round, verdict)
             self._await_fix(review_round, prompt, dispatched_at)
             # Only what the fixer claimed to fix (or left unanswered) can show
             # the loop is stuck: a finding it rejected with evidence is settled.
             previous = review_round.claimed_fixed_fingerprints
+
+    def _mark_repeats(
+        self, review_round: ReviewRound, verdict: ReviewVerdict,
+        missed: dict[str, int], first_ids: dict[str, str],
+    ) -> ReviewVerdict:
+        """Mark the round's repeats (``mark_repeats``) on the saved round too,
+        so the view shows them as well as the chat's message."""
+        findings = mark_repeats(verdict.findings, missed, first_ids)
+        with self._lock:
+            review_round.findings = list(findings)
+        self._save()
+        return replace(verdict, findings=findings)
 
     def _clean_reason(
         self, review_round: ReviewRound, verdict: ReviewVerdict, *,
@@ -360,6 +385,7 @@ class ReviewLoopRunner(object):
         try:
             reply = self._reviewer.review(
                 prompt, task_id=self._task_id, cancel_event=self._cancel,
+                model=self._state.model,
             )
         except Exception as exc:
             self._raise_if_cancelled()  # a Stop mid-review is a stop, not a failure
@@ -408,6 +434,7 @@ class ReviewLoopRunner(object):
         self._record_responses(review_round, turn.text)
         with self._lock:
             review_round.fixed_at = turn.received_at
+            review_round.finished_at = self._clock()
         self._notify('fixed')
 
     def _self_check_phase(self) -> None:
@@ -484,6 +511,7 @@ class ReviewLoopRunner(object):
         turn = self._await_turn(prompt, dispatched_at, what='fix')
         with self._lock:
             review_round.fixed_at = turn.received_at
+            review_round.finished_at = self._clock()
         self._notify('fixed')
 
     def _deliver(self, prompt: str, *, wait_phase: ReviewLoopPhase, label: str) -> float:
@@ -620,6 +648,8 @@ class ReviewLoopRunner(object):
                 current.outcome = 'stopped' if status in (
                     ReviewLoopStatus.STOPPED, ReviewLoopStatus.INTERRUPTED,
                 ) else 'failed'
+            if current is not None and not current.finished_at:
+                current.finished_at = now
             self._state.status = status
             self._state.phase = ReviewLoopPhase.DONE
             self._state.phase_started_at = now
@@ -633,6 +663,7 @@ class ReviewLoopRunner(object):
     def _close_round(self, review_round: ReviewRound, outcome: str) -> None:
         with self._lock:
             review_round.outcome = outcome
+            review_round.finished_at = self._clock()
 
     def _set_phase(self, phase: ReviewLoopPhase) -> None:
         with self._lock:
@@ -677,3 +708,10 @@ def _tests_note(report: TestReport | None) -> str:
         return 'the tests were not reported'
     detail = report.summary or report.command
     return f'tests passed ({detail})' if detail else 'tests passed'
+
+
+def _stuck_reason(verdict: ReviewVerdict) -> str:
+    """Which issues the chat could not fix: "R2-1 still found after 2 fixes"."""
+    ids = sorted({finding.repeat_of or finding.id for finding in verdict.blocking})
+    return f'{", ".join(ids)} still found after {STUCK_AFTER_MISSED_FIXES} fixes'
+

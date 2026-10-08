@@ -19,7 +19,7 @@ class TestUna2427(unittest.TestCase):
              patch('openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
-             patch('kato_core_lib.kato_core_lib.TaskService'), \
+             patch('kato_core_lib.kato_core_lib.LocalAwareTaskService'), \
              patch('kato_core_lib.kato_core_lib.ImplementationService'), \
              patch('kato_core_lib.kato_core_lib.TestingService'), \
              patch('kato_core_lib.kato_core_lib.NotificationService'), \
@@ -41,7 +41,7 @@ class TestUna2427(unittest.TestCase):
              patch('openhands_core_lib.openhands_core_lib.openhands_client.OpenHandsClient'), \
              patch('kato_core_lib.kato_core_lib.RepositoryService'), \
              patch('kato_core_lib.kato_core_lib.TaskDataAccess'), \
-             patch('kato_core_lib.kato_core_lib.TaskService'), \
+             patch('kato_core_lib.kato_core_lib.LocalAwareTaskService'), \
              patch('kato_core_lib.kato_core_lib.ImplementationService'), \
              patch('kato_core_lib.kato_core_lib.TestingService'), \
              patch('kato_core_lib.kato_core_lib.NotificationService'), \

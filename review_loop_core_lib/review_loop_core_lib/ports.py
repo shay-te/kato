@@ -99,9 +99,12 @@ class ChatChannel(Protocol):
 class Reviewer(Protocol):
     """Runs one fresh, read-only review and returns the reviewer's full reply."""
 
-    def review(self, prompt: str, *, task_id: str, cancel_event: threading.Event) -> str:
+    def review(
+        self, prompt: str, *, task_id: str, cancel_event: threading.Event, model: str = '',
+    ) -> str:
         """Raises (anything) on failure; is expected to stop soon after
-        ``cancel_event`` is set."""
+        ``cancel_event`` is set. ``model`` is the loop's pick ('' = the
+        reviewer's own default)."""
 
 
 @dataclass(frozen=True)

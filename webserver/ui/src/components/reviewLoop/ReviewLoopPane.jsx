@@ -5,6 +5,8 @@ import { useReviewLoop } from '../../hooks/useReviewLoop.js';
 import Icon, { BusyIcon } from '../Icon.jsx';
 import ReviewLoopRoundList from './ReviewLoopRoundList.jsx';
 import ReviewLoopRoundsPicker from './ReviewLoopRoundsPicker.jsx';
+import ReviewLoopModelPicker from './ReviewLoopModelPicker.jsx';
+import ReviewLoopModelName from './ReviewLoopModelName.jsx';
 import ReviewLoopSelfChecks from './ReviewLoopSelfChecks.jsx';
 import ReviewLoopStagesPicker from './ReviewLoopStagesPicker.jsx';
 import ReviewLoopTracker from './ReviewLoopTracker.jsx';
@@ -33,12 +35,16 @@ export default function ReviewLoopPane({ session, onClose }) {
   const outcome = reviewLoopOutcome(summary);
   const status = paneStatus(summary, outcome, now);
   const action = running ? (
-    <button type="button" className="review-loop-pane-action is-stop" onClick={stop} disabled={stopping}>
-      <BusyIcon busy={stopping} idle="stop" />
-      <span>Stop</span>
-    </button>
+    <>
+      <ReviewLoopModelName model={summary?.model || ''} />
+      <button type="button" className="review-loop-pane-action is-stop" onClick={stop} disabled={stopping}>
+        <BusyIcon busy={stopping} idle="stop" />
+        <span>Stop</span>
+      </button>
+    </>
   ) : (
     <>
+      <ReviewLoopModelPicker disabled={starting} />
       <ReviewLoopRoundsPicker disabled={starting} />
       <button type="button" className="review-loop-pane-action" onClick={start} disabled={starting}>
         <BusyIcon busy={starting} idle="play" />
@@ -49,11 +55,14 @@ export default function ReviewLoopPane({ session, onClose }) {
   // The stages are picked with the round limit, before a loop starts; a
   // running loop's were fixed when it started.
   const stagesBar = running ? null : <ReviewLoopStagesPicker disabled={starting} />;
+  // The lists remount per loop (and per task): each starts from what was
+  // remembered for exactly that loop.
+  const loopKey = `${session?.task_id || ''}:${detail?.loop_id || ''}`;
   const body = summary ? (
     <>
       <ReviewLoopTracker loop={summary} now={now} />
-      <ReviewLoopSelfChecks taskId={session?.task_id || ''} loop={detail} />
-      <ReviewLoopRoundList taskId={session?.task_id || ''} loop={detail} />
+      <ReviewLoopSelfChecks key={`self:${loopKey}`} taskId={session?.task_id || ''} loop={detail} />
+      <ReviewLoopRoundList key={`rounds:${loopKey}`} taskId={session?.task_id || ''} loop={detail} />
     </>
   ) : (
     <p className="review-loop-pane-empty">{REVIEW_LOOP_EMPTY_TEXT}</p>

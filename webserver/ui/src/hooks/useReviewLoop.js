@@ -10,6 +10,8 @@ import {
 } from '../components/reviewLoop/reviewLoopHelpers.js';
 import { readReviewLoopRounds } from '../components/reviewLoop/reviewLoopRoundsPref.js';
 import { readReviewLoopStages } from '../components/reviewLoop/reviewLoopStagesPref.js';
+import { readReviewLoopModel } from '../components/reviewLoop/reviewLoopModelPref.js';
+import { forgetLoopExpansion } from '../utils/reviewLoopExpandMemory.js';
 import { reviewLoopView } from '../components/reviewLoop/reviewLoopViewStore.js';
 
 // A task's review loop, for the header, the tab and the centre-pane view.
@@ -46,12 +48,18 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
 
   useFinishAnnouncement(announceFinish ? summary : null, taskId, taskSummary);
 
-  // The round limit and the stages are read at click time: whatever the view
-  // shows is what runs.
-  const [starting, start] = useBusyAction(() => startReviewLoop(
-    taskId, { maxRounds: readReviewLoopRounds(), stages: readReviewLoopStages() },
-  ), {
-    onDone: (result) => { announceStart(result, taskId, taskSummary); },
+  // The round limit, the stages and the model are read at click time: whatever
+  // the view shows is what runs.
+  const [starting, start] = useBusyAction(() => startReviewLoop(taskId, {
+    maxRounds: readReviewLoopRounds(),
+    stages: readReviewLoopStages(),
+    model: readReviewLoopModel(),
+  }), {
+    onDone: (result) => {
+      // A new loop is running: the last one's open / closed rounds go.
+      if (result?.ok) { forgetLoopExpansion(taskId); }
+      announceStart(result, taskId, taskSummary);
+    },
   });
   const [stopping, stop] = useBusyAction(() => stopReviewLoop(taskId), {
     onDone: (result) => { announceStop(result, taskId, taskSummary); },

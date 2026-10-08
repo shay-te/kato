@@ -140,11 +140,15 @@ class FakeReviewer(object):
     def __init__(self, *replies: str, block_until_cancelled: bool = False) -> None:
         self.replies = list(replies)
         self.prompts: list[str] = []
+        self.models: list[str] = []
         self.block_until_cancelled = block_until_cancelled
         self.started = threading.Event()
 
-    def review(self, prompt: str, *, task_id: str, cancel_event: threading.Event) -> str:
+    def review(
+        self, prompt: str, *, task_id: str, cancel_event: threading.Event, model: str = '',
+    ) -> str:
         self.prompts.append(prompt)
+        self.models.append(model)
         self.started.set()
         if self.block_until_cancelled:
             cancel_event.wait(5)

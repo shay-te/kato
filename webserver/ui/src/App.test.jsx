@@ -53,6 +53,13 @@ vi.mock('./api.js', () => ({
     { state: 'idle', percent: 0, lines: [] },
   ),
   upgradeAgentCli: vi.fn().mockResolvedValue({ ok: true, body: {} }),
+  // The "New task" pane's reads and its one write.
+  fetchInventoryRepositories: vi.fn().mockResolvedValue(
+    { ok: true, body: { repositories: [{ id: 'api' }] } },
+  ),
+  fetchModels: vi.fn().mockResolvedValue({ models: [{ id: 'opus', label: 'Opus', default: true }] }),
+  fetchEffortLevels: vi.fn().mockResolvedValue({ levels: ['high'], default: 'high' }),
+  createLocalTask: vi.fn().mockResolvedValue({ ok: true, status: 202, body: { task_id: 'LOCAL-1' } }),
 }));
 
 vi.mock('./hooks/useSessions.js', () => ({
@@ -117,9 +124,10 @@ vi.mock('./components/SessionDetail.jsx', () => ({
   ),
 }));
 vi.mock('./components/TabList.jsx', () => ({
-  default: ({ sessions, activeTaskId, onSelect, onForget }) => (
+  default: ({ sessions, activeTaskId, onSelect, onForget, onNewTask }) => (
     <div data-testid="tab-list">
       <span>active={activeTaskId || 'none'}</span>
+      <button type="button" onClick={onNewTask}>new-task</button>
       {sessions.map((s) => (
         <button key={s.task_id} onClick={() => onSelect(s.task_id)}>
           {s.task_id}
@@ -230,7 +238,8 @@ vi.mock('./components/ToastContainer.jsx', () => ({
 
 import { useSessions } from './hooks/useSessions.js';
 import { useResizable } from './hooks/useResizable.js';
-import { forgetTaskWorkspace } from './api.js';
+import { createLocalTask, fetchRepositoryApprovals, forgetTaskWorkspace } from './api.js';
+import { _resetNewTaskDraft } from './components/newTask/newTaskDraftStore.js';
 import { _resetLastActiveTask } from './utils/lastActiveTask.js';
 import App from './App.jsx';
 
@@ -249,6 +258,7 @@ beforeEach(() => {
   // so clearing storage alone leaves the old value being served.
   try { localStorage.clear(); } catch (_) { /* jsdom */ }
   _resetLastActiveTask();
+  _resetNewTaskDraft();
 });
 
 
@@ -928,5 +938,71 @@ describe('App — the last-viewed task is restored', () => {
     rerender(<App />);
     expect(screen.getByText('active=T1')).toBeInTheDocument();
     _resetLastActiveTask();
+  });
+});
+
+
+describe('App — the "New task" draft in the centre strip', () => {
+  test('the button opens the draft in the centre, with its tab in the strip', () => {
+    render(<App />);
+    expect(document.querySelector('#new-task-pane')).toBeNull();
+    fireEvent.click(screen.getByText('new-task'));
+    expect(document.querySelector('#new-task-pane')).not.toBeNull();
+    expect(document.querySelector('.file-tab.is-new-task.active')).not.toBeNull();
+    expect(screen.getByRole('radio', { name: /^Plan/ })).toBeChecked();
+  });
+
+  test('a file takes the centre back; the draft tab stays and returns to the draft', () => {
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1', status: 'active' }], refresh: vi.fn() });
+    render(<App />);
+    fireEvent.click(screen.getByText('T1'));
+    fireEvent.click(screen.getByText('new-task'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Half written' } });
+    fireEvent.click(screen.getByText('open-file-T1'));
+    expect(document.querySelector('#new-task-pane')).toBeNull();
+    expect(screen.getByTestId('editor-pane').textContent).toContain('src/T1.js');
+    const draftTab = document.querySelector('.file-tab.is-new-task');
+    expect(draftTab).not.toHaveClass('active');
+    fireEvent.click(screen.getByText('Half written'));
+    expect(screen.getByLabelText('Title')).toHaveValue('Half written');
+  });
+
+  test('the ✕ in the pane hides the draft; its tab brings it back', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText('new-task'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Kept' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Hide the new task' }));
+    expect(document.querySelector('#new-task-pane')).toBeNull();
+    fireEvent.click(screen.getByText('Kept'));
+    expect(screen.getByLabelText('Title')).toHaveValue('Kept');
+  });
+
+  test('closing the tab of an empty draft removes it', () => {
+    render(<App />);
+    fireEvent.click(screen.getByText('new-task'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close the new task' }));
+    expect(document.querySelector('.file-tab.is-new-task')).toBeNull();
+    expect(document.querySelector('#new-task-pane')).toBeNull();
+  });
+
+  test('Create switches to the new task and the draft is gone', async () => {
+    fetchRepositoryApprovals.mockResolvedValueOnce(
+      { ok: true, body: { repositories: [{ repository_id: 'api', approved: true }] } },
+    );
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'LOCAL-1', status: 'provisioning' }], refresh });
+    render(<App />);
+    fireEvent.click(screen.getByText('new-task'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Add retry' } });
+    fireEvent.click(await screen.findByRole('checkbox', { name: /api/ }));
+    await screen.findByRole('option', { name: 'Opus' });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(screen.getByText('active=LOCAL-1')).toBeInTheDocument());
+    expect(createLocalTask).toHaveBeenCalledWith(expect.objectContaining({
+      summary: 'Add retry', repositories: ['api'], start_mode: 'plan', model: 'opus', effort: 'high',
+    }));
+    expect(refresh).toHaveBeenCalled();
+    expect(document.querySelector('.file-tab.is-new-task')).toBeNull();
+    expect(screen.getByTestId('session-detail').textContent).toContain('LOCAL-1');
   });
 });

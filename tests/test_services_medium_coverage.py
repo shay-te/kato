@@ -195,7 +195,7 @@ class WaitPlanningServiceTests(unittest.TestCase):
         repo_service = MagicMock()
         repo_service.resolve_task_repositories.return_value = []
         service = self._service(repository_service=repo_service)
-        ctx = service._resolve_planning_context(Task(id='PROJ-1'))
+        ctx = service.resolve_planning_context(Task(id='PROJ-1'))
         self.assertEqual(ctx.cwd, '')
         self.assertEqual(ctx.expected_branch, '')
 
@@ -209,7 +209,7 @@ class WaitPlanningServiceTests(unittest.TestCase):
         ]
         repo_service.prepare_task_repositories.return_value = []
         service = self._service(repository_service=repo_service)
-        ctx = service._resolve_planning_context(Task(id='PROJ-1'))
+        ctx = service.resolve_planning_context(Task(id='PROJ-1'))
         self.assertEqual(ctx.expected_branch, '')
 
     def test_resolve_planning_context_blank_branch_name(self) -> None:
@@ -221,7 +221,7 @@ class WaitPlanningServiceTests(unittest.TestCase):
         repo_service.prepare_task_repositories.return_value = [repo_obj]
         repo_service.build_branch_name.return_value = ''  # blank
         service = self._service(repository_service=repo_service)
-        ctx = service._resolve_planning_context(Task(id='PROJ-1'))
+        ctx = service.resolve_planning_context(Task(id='PROJ-1'))
         self.assertEqual(ctx.cwd, '/tmp/repo')
         self.assertEqual(ctx.expected_branch, '')
 
@@ -237,7 +237,7 @@ class WaitPlanningServiceTests(unittest.TestCase):
             'git checkout failed',
         )
         service = self._service(repository_service=repo_service)
-        ctx = service._resolve_planning_context(Task(id='PROJ-1'))
+        ctx = service.resolve_planning_context(Task(id='PROJ-1'))
         self.assertEqual(ctx.expected_branch, '')
 
     def test_safe_call_logs_and_returns_fallback(self) -> None:

@@ -1,5 +1,6 @@
 import types
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 from kato_core_lib.data_layers.service.implementation_service import (
@@ -59,13 +60,13 @@ class ImplementationServiceInvestigateTests(unittest.TestCase):
         text = service.investigate(
             'review', cwd='/w/T/api', additional_dirs=['/w/T'],
             sandbox_root='/w/T', task_id='T', log_label='review', cancel_event=cancel,
-            timeout_seconds=5400,
+            timeout_seconds=5400, model='sonnet',
         )
         self.assertEqual(text, 'report')
         self.assertEqual(client.calls, [('review', dict(
             cwd='/w/T/api', additional_dirs=['/w/T'], sandbox_root='/w/T',
             task_id='T', log_label='review', cancel_event=cancel,
-            timeout_seconds=5400,
+            timeout_seconds=5400, model='sonnet',
         ))])
         self.assertTrue(service.supports_investigation)
 
@@ -92,3 +93,14 @@ class ImplementationServiceInvestigateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class InvestigationModelTests(unittest.TestCase):
+
+    def test_it_is_the_clients_model_or_empty(self) -> None:
+        self.assertEqual(
+            ImplementationService(SimpleNamespace(model='claude-opus-5-5[1m]')).investigation_model,
+            'claude-opus-5-5[1m]',
+        )
+        self.assertEqual(ImplementationService(object()).investigation_model, '')
+

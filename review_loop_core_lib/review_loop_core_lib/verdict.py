@@ -10,8 +10,8 @@ guessed "blocking" would send the fixer chasing nothing.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable
 
 from review_loop_core_lib.review_loop_core_lib.data.state import (
     BLOCKING_SEVERITIES,
@@ -103,17 +103,50 @@ def settle_findings(verdict: ReviewVerdict, ledger: Iterable[LedgerEntry]) -> Re
     ))
 
 
-def is_stuck(previous: Iterable[str], current: Iterable[str]) -> bool:
-    """True when a fix round fixed none of the previous round's blocking issues.
+# How many fixes one blocking issue may survive before the loop stops. One
+# miss is weak evidence — the fix may have been partial, or the "same" issue a
+# different bug in the same place (see ``ReviewFinding.fingerprint``) — so it
+# goes back to the chat once more, marked as a repeat.
+STUCK_AFTER_MISSED_FIXES = 2
 
-    ``previous`` / ``current`` are blocking-finding fingerprints. Every issue
-    from before is still there (new ones may have joined): another round
-    would only repeat the same request, so the loop stops instead of burning
-    the rest of its rounds.
+
+def count_missed_fixes(
+    missed: Mapping[str, int], claimed_fixed: Iterable[str], current: Iterable[str],
+) -> dict[str, int]:
+    """``missed`` plus one for each issue the last fix claimed (or left
+    unanswered) that the new review still finds. Fingerprints throughout."""
+    counts = dict(missed)
+    for fingerprint in set(claimed_fixed) & set(current):
+        counts[fingerprint] = counts.get(fingerprint, 0) + 1
+    return counts
+
+
+def is_stuck(
+    current: Iterable[str], missed: Mapping[str, int], *, after: int = STUCK_AFTER_MISSED_FIXES,
+) -> bool:
+    """True when every blocking issue left has survived ``after`` fixes.
+
+    Any new issue (it has survived none) means there is new work for the chat,
+    so the loop goes on; so does one that has only missed once.
     """
-    before = set(previous)
-    return bool(before) and before <= set(current)
+    left = set(current)
+    return bool(left) and all(missed.get(fingerprint, 0) >= after for fingerprint in left)
 
+
+def mark_repeats(
+    findings: Iterable[ReviewFinding], missed: Mapping[str, int], first_ids: Mapping[str, str],
+) -> tuple[ReviewFinding, ...]:
+    """The findings, each blocking repeat marked with the id it was first sent
+    under and the fixes it has survived — what the chat and the view show."""
+    marked = []
+    for finding in findings:
+        misses = missed.get(finding.fingerprint, 0) if finding.is_blocking else 0
+        if misses:
+            finding = finding.with_changes(
+                repeat_of=first_ids.get(finding.fingerprint, finding.id), missed_fixes=misses,
+            )
+        marked.append(finding)
+    return tuple(marked)
 
 def _last_block(text: str) -> str:
     end = text.rfind(VERDICT_CLOSE)

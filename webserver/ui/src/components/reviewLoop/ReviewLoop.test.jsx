@@ -18,12 +18,13 @@ import {
 } from './reviewLoopViewStore.js';
 import { _resetReviewLoopRounds, readReviewLoopRounds } from './reviewLoopRoundsPref.js';
 import { _resetReviewLoopStages, readReviewLoopStages } from './reviewLoopStagesPref.js';
+import { _resetReviewLoopModel, readReviewLoopModel, writeReviewLoopModel } from './reviewLoopModelPref.js';
 
 const ROUNDS_KEY = 'kato.reviewLoopRounds.v1';
-const STAGES_KEY = 'kato.reviewLoopStages.v1';
-// Every stage is on unless the operator unticks it.
-const ALL_STAGES_ON = {
-  self_check: true, verify_tests: true, confirm_clean: true, extra_sweep: true,
+const STAGES_KEY = 'kato.reviewLoopStages.v2';
+// The self-check is off until ticked; the other stages are on until unticked.
+const DEFAULT_STAGES = {
+  self_check: false, verify_tests: true, confirm_clean: true, extra_sweep: true,
 };
 
 const LOOP_ID = 'b'.repeat(32);
@@ -53,7 +54,13 @@ function round(number, overrides = {}) {
 
 // An in-memory kato: the routes, their JSON, and a log of what was asked.
 function fakeKato() {
-  const kato = { loop: null, artifacts: {}, requests: [], startBodies: [] };
+  const kato = {
+    loop: null, artifacts: {}, requests: [], startBodies: [],
+    // The chat's model catalogue, and the reviewer's own default — pinned,
+    // so not one of the catalogue's aliases.
+    models: [{ id: 'opus', label: 'Opus 5.5', default: true }, { id: 'sonnet', label: 'Sonnet 5.5' }],
+    defaultModel: { model: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M context)' },
+  };
   vi.stubGlobal('fetch', async (url, init = {}) => {
     const method = (init.method || 'GET').toUpperCase();
     kato.requests.push(`${method} ${url}`);
@@ -71,6 +78,8 @@ function fakeKato() {
       return respond(202, { loop: { ...started, rounds: [] } });
     }
     if (url.endsWith('/review-loop')) { return respond(200, { loop: kato.loop }); }
+    if (url === '/api/models') { return respond(200, { models: kato.models }); }
+    if (url === '/api/review-loop/default-model') { return respond(200, kato.defaultModel); }
     return respond(404, { error: 'unknown route' });
   });
   return kato;
@@ -83,6 +92,8 @@ beforeEach(() => {
   window.localStorage.removeItem(STAGES_KEY);
   _resetReviewLoopRounds();
   _resetReviewLoopStages();
+  window.localStorage.removeItem('kato.reviewLoopModel.v1');
+  _resetReviewLoopModel();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -110,6 +121,42 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     await screen.findByText('Round 1');
     expect(screen.getByText('Round 2')).toBeInTheDocument();
     expect(kato.requests).toContain('GET /api/sessions/UNA-1/review-loop');
+  });
+
+  test('a finding a fix said it fixed, found again, is marked as still here', async () => {
+    const repeated = round(3, {
+      outcome: 'stuck',
+      findings: [{
+        id: 'R3-1', severity: 'MAJOR', title: 'empty list crashes average', file: 'app.py',
+        repository: 'api', line: 7, symbol: 'average', category: 'correctness', detail: '',
+        repeat_of: 'R2-1', missed_fixes: 2,
+      }],
+      counts: { BLOCKER: 0, MAJOR: 1, MINOR: 0, NIT: 0 },
+    });
+    const stuck = summary({ status: 'stuck', phase: 'done', reason: 'R2-1 still found after 2 fixes' });
+    kato.loop = { ...stuck, rounds: [repeated] };
+    render(<ReviewLoopPane session={session(stuck)} onClose={() => {}} />);
+    const row = (await screen.findByText('Round 3')).closest('.review-loop-round');
+    expect(within(row).getByText('stuck — fixes didn\u2019t land')).toBeInTheDocument();
+    expect(within(row).getByText('Still here — first reported as R2-1, survived 2 fixes.'))
+      .toHaveClass('is-repeat');
+    expect(screen.getByText(/R2-1 still found after 2 fixes/)).toBeInTheDocument();
+  });
+
+  test('a finished round shows how long it took; the running one does not', async () => {
+    kato.loop = {
+      ...summary(),
+      rounds: [
+        round(1, { started_at: NOW - 900, reviewed_at: NOW - 648, sent_at: NOW - 640, fixed_at: NOW - 520, finished_at: NOW - 519 }),
+        round(2, { outcome: '', sent_at: 0, reviewed_at: 0, fixed_at: 0, started_at: NOW - 60 }),
+      ],
+    };
+    const { container } = render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    await screen.findByText('Round 1');
+    const first = container.querySelector('[data-round="1"] .review-loop-round-duration');
+    expect(first).toHaveTextContent('6m 21s');
+    expect(first).toHaveAttribute('title', 'Round 1 took 6m 21s — review 4m 12s · fix 2m 0s');
+    expect(container.querySelector('[data-round="2"] .review-loop-round-duration')).toBeNull();
   });
 
   test('the newest round opens itself; blocking and reported-only findings are apart', async () => {
@@ -222,7 +269,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText(/finished clean after 2 rounds — round 2 found no blocking issues/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /run again/i }));
     await waitFor(() => expect(kato.requests).toContain('POST /api/sessions/UNA-1/review-loop'));
-    expect(kato.startBodies).toEqual([{ ...ALL_STAGES_ON, max_rounds: 5 }]);
+    expect(kato.startBodies).toEqual([{ ...DEFAULT_STAGES, max_rounds: 5 }]);
   });
 
   test('a task that never ran a loop explains it and offers Start', () => {
@@ -234,7 +281,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
 });
 
 describe('the stages — picked with the round limit, before a loop starts', () => {
-  test('all four are on by default, and an untick goes into the start request', async () => {
+  test('the self-check is off by default, the rest on; a tick goes into the start request', async () => {
     render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
     const boxes = screen.getAllByRole('checkbox');
     expect(boxes.map((box) => box.closest('label').textContent)).toEqual([
@@ -243,15 +290,15 @@ describe('the stages — picked with the round limit, before a loop starts', () 
       'Clean-room check after the fixes',
       'One more sweep after any clean review',
     ]);
-    expect(boxes.every((box) => box.checked)).toBe(true);
+    expect(boxes.map((box) => box.checked)).toEqual([false, true, true, true]);
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Self-check in the main chat first' }));
-    expect(readReviewLoopStages().self_check).toBe(false);
+    expect(readReviewLoopStages().self_check).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
     await waitFor(() => expect(kato.startBodies).toEqual([
-      { ...ALL_STAGES_ON, self_check: false, max_rounds: 5 },
+      { ...DEFAULT_STAGES, self_check: true, max_rounds: 5 },
     ]));
-    expect(window.localStorage.getItem(STAGES_KEY)).toContain('"self_check":false');
+    expect(window.localStorage.getItem(STAGES_KEY)).toContain('"self_check":true');
   });
 
   test('a running loop shows no stage boxes — they were fixed when it started', () => {
@@ -260,10 +307,16 @@ describe('the stages — picked with the round limit, before a loop starts', () 
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
-  test('a stage missing from storage (added later) starts on', () => {
-    window.localStorage.setItem(STAGES_KEY, '{"self_check":false}');
+  test('a stage missing from storage (added later) takes its own default', () => {
+    window.localStorage.setItem(STAGES_KEY, '{"verify_tests":false,"extra_sweep":"yes"}');
     _resetReviewLoopStages();
-    expect(readReviewLoopStages()).toEqual({ ...ALL_STAGES_ON, self_check: false });
+    expect(readReviewLoopStages()).toEqual({ ...DEFAULT_STAGES, verify_tests: false });
+  });
+
+  test('a v1 record (it stored the self-check as on for everyone) is not read', () => {
+    window.localStorage.setItem('kato.reviewLoopStages.v1', '{"self_check":true}');
+    _resetReviewLoopStages();
+    expect(readReviewLoopStages().self_check).toBe(false);
   });
 });
 
@@ -303,12 +356,27 @@ describe('the view shows the stages that ran', () => {
         { number: 2, started_at: NOW - 50, finished_at: 0, clean: null, fixed: 0, summary: '' },
       ],
     };
-    render(<ReviewLoopPane session={session(running)} onClose={() => {}} />);
-    await screen.findByText('Self-check 1 — fixed 2');
-    expect(screen.getByText('fixed the empty-list case')).toBeInTheDocument();
-    expect(screen.getByText('Self-check 2 — no verdict')).toBeInTheDocument();
-    // Only a finished turn offers its reply.
+    const { container } = render(<ReviewLoopPane session={session(running)} onClose={() => {}} />);
+    // Each turn is a collapsed row, like a round: what it fixed, how long, outcome.
+    const first = (await screen.findByText('Self-check 1')).closest('.review-loop-round');
+    expect(first).toHaveClass('is-self-check', 'is-unclean');
+    expect(within(first).getByText('fixed 2')).toBeInTheDocument();
+    expect(within(first).getByText('40s')).toBeInTheDocument();
+    expect(within(first).getByText('not clean yet')).toBeInTheDocument();
+    expect(within(first).getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('fixed the empty-list case')).not.toBeInTheDocument();
+    const second = screen.getByText('Self-check 2').closest('.review-loop-round');
+    expect(within(second).getByText('checking…')).toBeInTheDocument();
+    expect(within(second).getByText('in progress')).toBeInTheDocument();
+    // Opened, it shows what the chat said, and — finished turns only — its reply.
+    fireEvent.click(screen.getByText('Self-check 1'));
+    expect(within(first).getByText('fixed the empty-list case')).toBeInTheDocument();
+    expect(within(first).getByText('The chat’s self-check reply')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Self-check 2'));
     expect(screen.getAllByText('The chat’s self-check reply')).toHaveLength(1);
+    fireEvent.click(screen.getByText('Self-check 1'));
+    expect(screen.queryByText('fixed the empty-list case')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-self-check]')).toHaveLength(2);
     // The tracker says where it is.
     expect(screen.getByText('Self-check in the main chat (turn 2)')).toBeInTheDocument();
   });
@@ -329,7 +397,7 @@ describe('the round limit — picked before a loop starts', () => {
     const { unmount } = render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
     fireEvent.change(picker(), { target: { value: '3' } });
     fireEvent.click(screen.getByRole('button', { name: /start/i }));
-    await waitFor(() => expect(kato.startBodies).toEqual([{ ...ALL_STAGES_ON, max_rounds: 3 }]));
+    await waitFor(() => expect(kato.startBodies).toEqual([{ ...DEFAULT_STAGES, max_rounds: 3 }]));
     expect(window.localStorage.getItem(ROUNDS_KEY)).toBe('{"rounds":3}');
     unmount();
 
@@ -341,7 +409,7 @@ describe('the round limit — picked before a loop starts', () => {
     expect(picker()).toHaveValue('3');
     fireEvent.click(screen.getByRole('button', { name: /run again/i }));
     await waitFor(() => expect(kato.startBodies).toEqual([
-      { ...ALL_STAGES_ON, max_rounds: 3 }, { ...ALL_STAGES_ON, max_rounds: 3 },
+      { ...DEFAULT_STAGES, max_rounds: 3 }, { ...DEFAULT_STAGES, max_rounds: 3 },
     ]));
   });
 
@@ -467,3 +535,118 @@ describe('open review-loop tabs survive a reload', () => {
     expect(readReviewLoopTabs()).toEqual({ tabs: [], active: '' });
   });
 });
+
+describe('the reviewer\'s model — picked before a loop starts', () => {
+  const picker = () => screen.getByRole('combobox', { name: 'Review loop model' });
+  const optionNames = () => within(picker()).getAllByRole('option').map((option) => option.textContent);
+
+  test('it names kato\'s default model and starts on it without sending one', async () => {
+    render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    await waitFor(() => expect(optionNames()).toEqual([
+      'Opus 5.5 (1M context) — kato\'s default', 'Opus 5.5', 'Sonnet 5.5',
+    ]));
+    expect(picker()).toHaveValue('claude-opus-5-5[1m]');
+    fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    await waitFor(() => expect(kato.startBodies).toEqual([{ ...DEFAULT_STAGES, max_rounds: 5 }]));
+  });
+
+  test('a picked model is what runs, and the next loop remembers it', async () => {
+    const { unmount } = render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    await waitFor(() => expect(optionNames()).toHaveLength(3));
+    fireEvent.change(picker(), { target: { value: 'sonnet' } });
+    expect(readReviewLoopModel()).toBe('sonnet');
+    fireEvent.click(screen.getByRole('button', { name: /start/i }));
+    await waitFor(() => expect(kato.startBodies).toEqual([
+      { ...DEFAULT_STAGES, max_rounds: 5, model: 'sonnet' },
+    ]));
+    unmount();
+    render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    await waitFor(() => expect(picker()).toHaveValue('sonnet'));
+  });
+
+  test('picking the default entry stores no pick, so it follows kato\'s setting', async () => {
+    writeReviewLoopModel('sonnet');
+    render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    await waitFor(() => expect(optionNames()).toHaveLength(3));
+    fireEvent.change(picker(), { target: { value: 'claude-opus-5-5[1m]' } });
+    expect(readReviewLoopModel()).toBe('');
+  });
+
+  test('a remembered model no longer offered is dropped, never sent unseen', async () => {
+    writeReviewLoopModel('retired-model');
+    render(<ReviewLoopPane session={session(null)} onClose={() => {}} />);
+    await waitFor(() => expect(readReviewLoopModel()).toBe(''));
+    expect(picker()).toHaveValue('claude-opus-5-5[1m]');
+  });
+
+  test('a running loop names the model reviewing it', async () => {
+    const running = summary({ model: 'sonnet' });
+    kato.loop = { ...running, rounds: [] };
+    const { rerender } = render(<ReviewLoopPane session={session(running)} onClose={() => {}} />);
+    expect(await screen.findByText('Reviewed by Sonnet 5.5')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Review loop model' })).not.toBeInTheDocument();
+    const onDefault = summary({ model: '' });
+    rerender(<ReviewLoopPane session={session(onDefault)} onClose={() => {}} />);
+    expect(await screen.findByText('Reviewed by Opus 5.5 (1M context)')).toBeInTheDocument();
+  });
+});
+
+describe('open and closed rounds are remembered — for the latest loop only', () => {
+  const header = (container, number) => container.querySelector(`[data-round="${number}"] .review-loop-round-header`);
+  const turnHeader = (container, number) => container.querySelector(`[data-self-check="${number}"] .review-loop-round-header`);
+
+  test('what the operator opened and closed survives closing the view', async () => {
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = { ...finished, rounds: [round(1), round(2, { outcome: 'clean' })] };
+    const first = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    // The newest opened itself; the operator closes it and opens round 1.
+    await waitFor(() => expect(header(first.container, 2)).toHaveAttribute('aria-expanded', 'true'));
+    fireEvent.click(header(first.container, 2));
+    fireEvent.click(header(first.container, 1));
+    first.unmount();
+
+    const again = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    expect(header(again.container, 2)).toHaveAttribute('aria-expanded', 'false');
+    expect(header(again.container, 1)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  test('an opened self-check turn is remembered too', async () => {
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = {
+      ...finished, rounds: [],
+      self_checks: [{ number: 1, started_at: NOW - 60, finished_at: NOW - 30, clean: true, fixed: 0, summary: 'all good' }],
+    };
+    const first = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    await screen.findByText('Self-check 1');
+    fireEvent.click(turnHeader(first.container, 1));
+    first.unmount();
+    const again = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    await screen.findByText('Self-check 1');
+    expect(turnHeader(again.container, 1)).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('all good')).toBeInTheDocument();
+  });
+
+  test('another loop never inherits them, and Run again forgets the last loop', async () => {
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = { ...finished, rounds: [round(1), round(2, { outcome: 'clean' })] };
+    const first = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    fireEvent.click(header(first.container, 1));  // open round 1 of this loop
+    expect(window.localStorage.getItem('kato.reviewLoopExpanded.v1')).toContain(LOOP_ID);
+
+    fireEvent.click(screen.getByRole('button', { name: /run again/i }));
+    await waitFor(() => expect(kato.requests).toContain('POST /api/sessions/UNA-1/review-loop'));
+    await waitFor(() => expect(window.localStorage.getItem('kato.reviewLoopExpanded.v1')).not.toContain(LOOP_ID));
+    first.unmount();
+
+    // The next loop has rounds with the same numbers: round 1 starts closed.
+    const next = { ...summary({ status: 'clean', phase: 'done' }), loop_id: 'c'.repeat(32) };
+    kato.loop = { ...next, rounds: [round(1), round(2, { outcome: 'clean' })] };
+    const again = render(<ReviewLoopPane session={session(next)} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    expect(header(again.container, 1)).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+

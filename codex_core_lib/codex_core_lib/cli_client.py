@@ -181,6 +181,11 @@ class CodexCliClient(CliAgentSharedBehaviour):
 
     # ----- public agent-client API (parity with the other transports) -----
 
+    @property
+    def model(self) -> str:
+        """The configured model ('' = the CLI's own default)."""
+        return self._model
+
     def validate_connection(self) -> None:
         if self._running_inside_docker():
             raise RuntimeError(
@@ -313,6 +318,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         log_label: str = '',
         cancel_event: threading.Event | None = None,
         timeout_seconds: int = 0,
+        model: str = '',
     ) -> str:
         """Read-only single turn — triage, and an independent review.
 
@@ -344,6 +350,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
             sandbox_override='read-only',
             cancel_event=cancel_event,
             timeout_seconds=timeout_seconds,
+            model=model,
         )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
@@ -497,6 +504,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         sandbox_override: str = '',
         cancel_event: threading.Event | None = None,
         timeout_seconds: int = 0,
+        model: str = '',
     ) -> dict[str, str | bool]:
         # 0 = the client's configured default. A per-call override lets a long
         # read-only run (a big task's review) get more than the default.
@@ -516,6 +524,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
                 last_message_file=last_message_file,
                 cwd=cwd,
                 sandbox_override=sandbox_override,
+                model=model,
             )
             env = self._build_subprocess_env()
             log_label = log_label or 'Codex CLI'
@@ -662,6 +671,7 @@ class CodexCliClient(CliAgentSharedBehaviour):
         last_message_file: str = '',
         cwd: str = '',
         sandbox_override: str = '',
+        model: str = '',
     ) -> list[str]:
         """Build the argv for one ``codex exec`` (or ``codex exec resume``) spawn.
 
@@ -718,8 +728,10 @@ class CodexCliClient(CliAgentSharedBehaviour):
             sandbox = normalized_text(sandbox_override) or self.SAFE_SANDBOX_MODE
             command.extend(['--sandbox', sandbox])
 
-        if self._model:
-            command.extend(['-m', self._model])
+        # A per-run model (the review loop's pick) outranks the client's.
+        chosen_model = normalized_text(model) or self._model
+        if chosen_model:
+            command.extend(['-m', chosen_model])
 
         if not is_resume:
             # -C and --add-dir are ONLY accepted on fresh ``codex exec``;

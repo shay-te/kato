@@ -491,6 +491,21 @@ class ImplementTaskTests(unittest.TestCase):
         idx = cmd.index('--sandbox')
         self.assertEqual(cmd[idx + 1], 'read-only')
 
+    def test_a_per_run_model_outranks_the_clients(self) -> None:
+        client = CodexCliClient(binary='codex', model='gpt-5.2')
+        self.assertEqual(client.model, 'gpt-5.2')
+        seen: list[list[str]] = []
+
+        def fake_run(command, **kwargs):
+            seen.append(list(command))
+            return _completed(returncode=0)
+
+        with patch('codex_core_lib.codex_core_lib.cli_client.subprocess.run', side_effect=fake_run):
+            client.investigate('Review this', model='o4-mini')
+            client.investigate('Review this')
+        self.assertEqual([cmd[cmd.index('-m') + 1] for cmd in seen], ['o4-mini', 'gpt-5.2'])
+        self.assertEqual(client.model, 'gpt-5.2')
+
     def test_a_bypass_client_still_runs_investigate_read_only(self) -> None:
         # The read-only sandbox is passed to the run, not written onto the
         # shared client: bypass stays on for everyone else, and is never on

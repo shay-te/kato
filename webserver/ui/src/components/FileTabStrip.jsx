@@ -31,6 +31,11 @@ export default function FileTabStrip({
   activeReviewLoopTab = '',
   onSelectReviewLoop = () => {},
   onCloseReviewLoop = () => {},
+  // The "New task" draft's tab (``buildNewTaskTabModel``), last in the strip;
+  // null while no draft is open.
+  newTaskTab = null,
+  onSelectNewTask = () => {},
+  onCloseNewTask = () => {},
   // Bumped ONLY when the operator opened a file from the tree. Scrolling
   // the tab into view is a response to that click and nothing else — see
   // the effect below.
@@ -82,7 +87,7 @@ export default function FileTabStrip({
 
   const fileTabs = tabs || [];
   const loopTabs = reviewLoopTabs || [];
-  if (fileTabs.length === 0 && loopTabs.length === 0) { return null; }
+  if (fileTabs.length === 0 && loopTabs.length === 0 && !newTaskTab) { return null; }
   const draggedTab = drag.key ? fileTabs.find((tab) => tab.key === drag.key) : null;
   const loopTabModels = buildReviewLoopTabModels(loopTabs, {
     activeTaskId: activeReviewLoopTab,
@@ -99,6 +104,9 @@ export default function FileTabStrip({
       onClose={onCloseReviewLoop}
     />
   ));
+  const newTaskTabEl = newTaskTab ? (
+    <NewTaskFileTab tab={newTaskTab} onSelect={onSelectNewTask} onClose={onCloseNewTask} />
+  ) : null;
   return (
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
@@ -143,6 +151,7 @@ export default function FileTabStrip({
           />
         ))}
         {loopTabEls}
+        {newTaskTabEl}
       </ul>
       {menu && (
         <FileTabMenu
@@ -181,6 +190,34 @@ function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose
         aria-label={`Close the ${taskId} review loop tab`}
         onClick={(event) => { event.stopPropagation(); onClose(taskId); }}
       >
+        <Icon name="xmark" />
+      </button>
+    </li>
+  );
+}
+
+
+// The "New task" draft's tab. A pencil and a green accent set it apart from
+// file tabs (cyan) and review loops (indigo); a dot marks unsaved text, and
+// closing it asks first, because closing discards the draft.
+function NewTaskFileTab({ tab, onSelect, onClose }) {
+  const dirtyDot = tab.dirty ? <span className="file-tab-new-task-dot" aria-label="unsaved draft" /> : null;
+  const close = (event) => {
+    event.stopPropagation();
+    if (tab.dirty && !window.confirm('Discard this new task? What you wrote will be lost.')) { return; }
+    onClose();
+  };
+  return (
+    <li
+      className={cx('file-tab', 'is-new-task', tab.active && 'active', tab.groupStart && 'is-group-start')}
+      data-new-task-tab=""
+      title="New task — not created yet"
+      onClick={onSelect}
+    >
+      <span className="file-tab-new-task-icon" aria-hidden="true"><Icon name="edit" /></span>
+      <span className="file-tab-label">{tab.label}</span>
+      {dirtyDot}
+      <button type="button" className="file-tab-close-btn" aria-label="Close the new task" onClick={close}>
         <Icon name="xmark" />
       </button>
     </li>

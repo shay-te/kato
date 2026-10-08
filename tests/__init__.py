@@ -29,6 +29,7 @@ for _key, _name in (
     ('KATO_WORKSPACES_ROOT', 'workspaces'),
     ('KATO_SESSION_STATE_DIR', 'sessions'),
     ('KATO_REVIEW_LOOPS_DIR', 'review_loops'),
+    ('KATO_LOCAL_TASKS_PATH', 'local_tasks.json'),
 ):
     os.environ.setdefault(_key, str(_ISOLATED_KATO_HOME / _name))
 

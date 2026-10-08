@@ -612,3 +612,71 @@ describe('FileTabStrip — review-loop tabs share the strip with file tabs', () 
     expect(container.querySelector('.file-tab.is-review-loop')).not.toHaveClass('is-group-start');
   });
 });
+
+
+describe('FileTabStrip — the "New task" draft tab', () => {
+  const draftTab = (overrides = {}) => ({
+    label: 'New task', dirty: false, active: false, groupStart: false, ...overrides,
+  });
+
+  function renderWithDraft(props = {}) {
+    const onSelectNewTask = vi.fn();
+    const onCloseNewTask = vi.fn();
+    const view = render(
+      <FileTabStrip
+        tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}}
+        newTaskTab={draftTab()} onSelectNewTask={onSelectNewTask} onCloseNewTask={onCloseNewTask}
+        {...props}
+      />,
+    );
+    return { onSelectNewTask, onCloseNewTask, ...view };
+  }
+
+  test('the draft alone keeps the strip on screen, with a pencil and no dot', () => {
+    const { container } = renderWithDraft();
+    const tab = container.querySelector('.file-tab.is-new-task');
+    expect(tab).not.toBeNull();
+    expect(tab.querySelector('.file-tab-new-task-icon [data-icon="edit"]')).not.toBeNull();
+    expect(tab.querySelector('.file-tab-new-task-dot')).toBeNull();
+    expect(tab).not.toHaveClass('is-group-start');
+  });
+
+  test('it shows the title, a dot while unsaved, and comes last', () => {
+    const { container } = renderWithDraft({
+      reviewLoopTabs: [{ taskId: 'UNA-1', tone: 'running' }],
+      newTaskTab: draftTab({ label: 'Add retry', dirty: true, active: true, groupStart: true }),
+    });
+    const all = [...container.querySelectorAll('.file-tab')];
+    expect(all[all.length - 1]).toHaveClass('is-new-task', 'active', 'is-group-start');
+    expect(screen.getByText('Add retry')).toBeInTheDocument();
+    expect(container.querySelector('.file-tab-new-task-dot')).not.toBeNull();
+  });
+
+  test('clicking it selects it', () => {
+    const { onSelectNewTask } = renderWithDraft();
+    fireEvent.click(screen.getByText('New task'));
+    expect(onSelectNewTask).toHaveBeenCalledTimes(1);
+  });
+
+  test('closing an empty draft does not ask', () => {
+    const confirm = vi.spyOn(window, 'confirm');
+    const { onCloseNewTask, onSelectNewTask } = renderWithDraft();
+    fireEvent.click(screen.getByRole('button', { name: 'Close the new task' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(onCloseNewTask).toHaveBeenCalledTimes(1);
+    expect(onSelectNewTask).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  test('closing a written draft asks first, and "cancel" keeps it', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { onCloseNewTask } = renderWithDraft({ newTaskTab: draftTab({ dirty: true }) });
+    const close = screen.getByRole('button', { name: 'Close the new task' });
+    fireEvent.click(close);
+    expect(onCloseNewTask).not.toHaveBeenCalled();
+    fireEvent.click(close);
+    expect(onCloseNewTask).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
+    confirm.mockRestore();
+  });
+});

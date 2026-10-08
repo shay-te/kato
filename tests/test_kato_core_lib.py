@@ -1,5 +1,8 @@
 import unittest
+import os
 from unittest.mock import ANY, Mock, patch
+
+from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 
 from kato_core_lib.kato_core_lib import KatoCoreLib
 from kato_core_lib.data_layers.data.fields import (
@@ -143,9 +146,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ) as mock_task_da_cls, patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ) as mock_task_service_cls, patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ) as mock_task_state_service_cls, patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ) as mock_impl_service_cls, patch(
@@ -263,11 +266,19 @@ class KatoCoreLibTests(unittest.TestCase):
         mock_task_service_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
             mock_task_da_cls.return_value,
+            ANY,
         )
         mock_task_state_service_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
             mock_task_da_cls.return_value,
+            ANY,
         )
+        # Both route local tasks to the SAME store, kept under ~/.kato
+        # (here the tests' isolated home).
+        local_tasks = mock_task_service_cls.call_args.args[2]
+        self.assertIs(mock_task_state_service_cls.call_args.args[2], local_tasks)
+        self.assertIsInstance(local_tasks, LocalTaskStore)
+        self.assertEqual(str(local_tasks.path), os.environ['KATO_LOCAL_TASKS_PATH'])
         mock_impl_service_cls.assert_called_once_with(implementation_client)
         mock_testing_service_cls.assert_called_once_with(testing_client)
         mock_notification_service_cls.assert_called_once_with(
@@ -321,9 +332,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -363,9 +374,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -507,9 +518,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -538,9 +549,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -571,9 +582,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -618,9 +629,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -668,9 +679,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -720,9 +731,9 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskStateService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskStateService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(
@@ -855,7 +866,7 @@ class KatoCoreLibTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.kato_core_lib.TaskDataAccess'
         ), patch(
-            'kato_core_lib.kato_core_lib.TaskService'
+            'kato_core_lib.kato_core_lib.LocalAwareTaskService'
         ), patch(
             'kato_core_lib.kato_core_lib.ImplementationService'
         ), patch(

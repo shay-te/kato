@@ -21,8 +21,11 @@ from review_loop_core_lib.review_loop_core_lib.store import (
 )
 from review_loop_core_lib.review_loop_core_lib.tests.fakes import finding, reply
 from review_loop_core_lib.review_loop_core_lib.verdict import (
+    STUCK_AFTER_MISSED_FIXES,
     ReviewVerdictError,
+    count_missed_fixes,
     is_stuck,
+    mark_repeats,
     parse_review_verdict,
 )
 
@@ -77,12 +80,32 @@ class ParseVerdictTests(unittest.TestCase):
 
 class StuckTests(unittest.TestCase):
 
-    def test_stuck_only_when_every_previous_issue_remains(self) -> None:
-        self.assertTrue(is_stuck({'a'}, {'a'}))
-        self.assertTrue(is_stuck({'a', 'b'}, {'a', 'b', 'c'}))
-        self.assertFalse(is_stuck({'a', 'b'}, {'a'}))
-        self.assertFalse(is_stuck({'a'}, {'c'}))
-        self.assertFalse(is_stuck(set(), {'c'}))
+    def test_a_miss_is_counted_only_for_a_claimed_fix_still_found(self) -> None:
+        missed = count_missed_fixes({'a': 1}, claimed_fixed={'a', 'b'}, current={'a', 'c'})
+        self.assertEqual(missed, {'a': 2})          # b went away; c is new
+        self.assertEqual(count_missed_fixes({}, set(), {'a'}), {})
+
+    def test_stuck_only_when_everything_left_survived_two_fixes(self) -> None:
+        self.assertEqual(STUCK_AFTER_MISSED_FIXES, 2)
+        self.assertTrue(is_stuck({'a'}, {'a': 2}))
+        self.assertTrue(is_stuck({'a', 'b'}, {'a': 3, 'b': 2}))
+        self.assertFalse(is_stuck({'a'}, {'a': 1}))             # one miss: once more
+        self.assertFalse(is_stuck({'a', 'c'}, {'a': 2}))        # c is new work
+        self.assertFalse(is_stuck(set(), {'a': 5}))             # nothing left
+        self.assertTrue(is_stuck({'a'}, {'a': 1}, after=1))
+
+    def test_repeats_are_marked_with_their_first_id_and_misses(self) -> None:
+        verdict = parse_review_verdict(reply(
+            finding('MAJOR', symbol='run'), finding('MAJOR', symbol='load'),
+            finding('MINOR', symbol='run', category='style'),
+        ), round_number=3)
+        run, load, minor = verdict.findings
+        missed = {run.fingerprint: 1, minor.fingerprint: 4}
+        marked = mark_repeats(verdict.findings, missed, {run.fingerprint: 'R1-1'})
+        self.assertEqual([(f.repeat_of, f.missed_fixes) for f in marked],
+                         [('R1-1', 1), ('', 0), ('', 0)])   # a non-blocking one is never marked
+        unknown_first = mark_repeats([load], {load.fingerprint: 1}, {})
+        self.assertEqual(unknown_first[0].repeat_of, load.id)
 
 
 class StoreTests(unittest.TestCase):

@@ -4981,7 +4981,8 @@ code {
 
 /* The review-loop view uses the same strip-above-pane layout as the file
  * tabs, so its pane fills the space under the loop-tab strip the same way. */
-.center-pane-with-tabs > #review-loop-pane {
+.center-pane-with-tabs > #review-loop-pane,
+.center-pane-with-tabs > #new-task-pane {
   flex: 1;
   min-height: 0;
   border-left: 0;
@@ -4996,7 +4997,8 @@ code {
   gap: 4px;
 }
 
-.file-tab.is-review-loop.is-group-start {
+.file-tab.is-review-loop.is-group-start,
+.file-tab.is-new-task.is-group-start {
   border-left: 1px solid #2a2a2a;
 }
 
@@ -5214,7 +5216,8 @@ code {
 }
 
 #plan-pane,
-#review-loop-pane {
+#review-loop-pane,
+#new-task-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -5225,7 +5228,8 @@ code {
 }
 
 .plan-pane-header,
-.review-loop-pane-header {
+.review-loop-pane-header,
+.new-task-header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -12461,6 +12465,20 @@ button.settings-prompt-editor-head {
 /* "Up to [5 rounds]" — the round limit, picked before Start / Run again.
  * Not ``.review-loop-rounds``: that is the list of rounds below (a column),
  * and sharing the name stacked "Up to" above the select. */
+/* The review loop's model: picked beside the round limit before a loop starts
+ * (same look), named in the header while one runs. A long label ("Opus 5.5
+ * (1M context) — kato's default") is cut, never allowed to push the header. */
+.review-loop-model-select {
+  max-width: 220px;
+  text-overflow: ellipsis;
+}
+
+.review-loop-model {
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.65);
+  white-space: nowrap;
+}
+
 .review-loop-round-limit {
   display: inline-flex;
   align-items: center;
@@ -12588,6 +12606,12 @@ button.settings-prompt-editor-head {
   color: rgba(245, 245, 247, 0.65);
 }
 
+.review-loop-round-duration {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.42);
+}
+
 .review-loop-round-outcome {
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -12656,7 +12680,8 @@ button.settings-prompt-editor-head {
   color: rgba(245, 245, 247, 0.65);
 }
 
-/* The main chat's own review of its change, before the first round. */
+/* The main chat's own review of its change, before the first round: one
+ * round-style row per turn (ReviewLoopRow), collapsed until opened. */
 .review-loop-self-checks {
   margin: 0 12px 8px;
 }
@@ -12669,18 +12694,13 @@ button.settings-prompt-editor-head {
   color: rgba(245, 245, 247, 0.42);
 }
 
-.review-loop-self-checks ul {
+.review-loop-self-checks ol {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-.review-loop-self-check-name {
-  font-size: 12.5px;
-  color: #f5f5f7;
 }
 
 .review-loop-self-check-summary {
@@ -12784,6 +12804,11 @@ button.settings-prompt-editor-head {
   flex-basis: 100%;
   margin: 0;
   color: rgba(245, 245, 247, 0.65);
+}
+
+/* A finding a fix said it fixed and the review still found. */
+.review-loop-finding-note.is-repeat {
+  color: #f59e0b;
 }
 
 .review-loop-finding-id {
@@ -13104,4 +13129,248 @@ button.settings-prompt-editor-head {
 .safeguard-flag-retry svg {
   width: 10px;
   height: 10px;
+}
+
+/* "New task" — a task written in kato itself, no tracker
+ * (components/newTask/). Its tab shares the centre strip with the file and
+ * review-loop tabs; a pencil and a green accent set it apart. */
+.file-tab.is-new-task {
+  gap: 4px;
+}
+
+.file-tab.is-new-task.active {
+  border-bottom-color: #34d399;
+}
+
+.file-tab-new-task-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #34d399;
+}
+
+.file-tab-new-task-icon svg {
+  width: 10px;
+  height: 10px;
+}
+
+.file-tab-new-task-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34d399;
+}
+
+.new-task-heading {
+  flex: 1;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.new-task-close {
+  display: inline-flex;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #a3a3a3;
+  cursor: pointer;
+}
+
+.new-task-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+}
+
+/* The description takes the height; the settings sit in a narrow column. */
+.new-task-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+}
+
+.new-task-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px;
+}
+
+.new-task-title,
+.new-task-description,
+.new-task-repos-filter,
+.new-task-field select {
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  background: #181818;
+  color: #f5f5f7;
+  font: inherit;
+}
+
+.new-task-title {
+  padding: 8px 10px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.new-task-editor-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.new-task-editor-tab {
+  padding: 4px 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #a3a3a3;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.new-task-editor-tab.active {
+  border-bottom-color: #34d399;
+  color: #f5f5f7;
+}
+
+.new-task-description,
+.new-task-preview {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.new-task-description {
+  resize: none;
+  line-height: 1.5;
+}
+
+.new-task-preview {
+  overflow-y: auto;
+}
+
+.new-task-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 14px;
+  border-left: 1px solid #2a2a2a;
+  overflow-y: auto;
+}
+
+.new-task-section {
+  margin: 0;
+}
+
+.new-task-section-title {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a3a3a3;
+}
+
+.new-task-repos-count {
+  font-weight: 400;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.new-task-repos-filter {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.new-task-repos-list {
+  max-height: 240px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.new-task-repo label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.new-task-repo.is-unapproved label {
+  color: rgba(245, 245, 247, 0.42);
+  cursor: default;
+}
+
+.new-task-repo-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: #f59e0b;
+}
+
+.new-task-repos-status,
+.new-task-problems {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.new-task-problems {
+  color: #f59e0b;
+}
+
+.new-task-agent {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.new-task-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.new-task-field-label {
+  color: #a3a3a3;
+}
+
+.new-task-field select {
+  padding: 5px 6px;
+}
+
+.new-task-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: #34d399;
+  color: #0a0a0a;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.new-task-create:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .new-task-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .new-task-side {
+    border-left: 0;
+    border-top: 1px solid #2a2a2a;
+  }
 }

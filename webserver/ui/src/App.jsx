@@ -15,6 +15,13 @@ import PanelCard from './components/PanelCard.jsx';
 import PlanPane from './components/PlanPane.jsx';
 import ReviewLoopPane from './components/reviewLoop/ReviewLoopPane.jsx';
 import { reviewLoopTabEntries } from './components/reviewLoop/reviewLoopHelpers.js';
+import NewTaskPane from './components/newTask/NewTaskPane.jsx';
+import { buildNewTaskTabModel } from './components/newTask/newTaskHelpers.js';
+import {
+  discardNewTaskDraft,
+  openNewTaskDraft,
+  useNewTaskDraft,
+} from './components/newTask/newTaskDraftStore.js';
 import {
   readReviewLoopTabs,
   reviewLoopView,
@@ -322,6 +329,11 @@ export default function App() {
   // from localStorage so a reload restores the set.
   const [reviewLoopTabs, setReviewLoopTabs] = useState(() => readReviewLoopTabs().tabs);
   const [activeReviewLoopTab, setActiveReviewLoopTab] = useState(() => readReviewLoopTabs().active);
+  // The "New task" draft: its tab exists while the draft is open (kept in
+  // localStorage with the text); ``newTaskActive`` is whether the centre shows
+  // it. Opening a file or a loop tab hides it, as it hides a loop.
+  const newTaskDraft = useNewTaskDraft();
+  const [newTaskActive, setNewTaskActive] = useState(false);
   const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
   const openTabsRef = useRef([]);
   const activeTabKeyRef = useRef(null);
@@ -672,6 +684,7 @@ export default function App() {
     setOrchestratorOpen(false);
     setCenterOverlay(null);
     setActiveReviewLoopTab('');
+    setNewTaskActive(false);
     openFileRequestRef.current += 1;
     // The operator just asked for this file — that is the one moment the
     // strip is allowed to move itself.
@@ -747,6 +760,7 @@ export default function App() {
     setOrchestratorOpen(false);
     setCenterOverlay(null);
     setActiveReviewLoopTab('');
+    setNewTaskActive(false);
     activeTabKeyRef.current = key;
     rememberTabsView(activeTaskId, openTabsRef.current, key);
     setOpenTabs(openTabsRef.current);
@@ -790,12 +804,36 @@ export default function App() {
     setCenterOverlay(null);
     setReviewLoopTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setActiveReviewLoopTab(id);
+    setNewTaskActive(false);
   }, []);
   const selectReviewLoopTab = useCallback((taskId) => {
     setOrchestratorOpen(false);
     setCenterOverlay(null);
     setActiveReviewLoopTab(String(taskId || ''));
+    setNewTaskActive(false);
   }, []);
+  // "New task": open (or return to) the draft in the centre strip.
+  const openNewTask = useCallback(() => {
+    openNewTaskDraft();
+    setOrchestratorOpen(false);
+    setCenterOverlay(null);
+    setActiveReviewLoopTab('');
+    setNewTaskActive(true);
+  }, []);
+  // The tab's close discards the draft (it asks first when anything is
+  // written); the pane's ✕ only hides it, the tab stays to come back to.
+  const closeNewTask = useCallback(() => {
+    discardNewTaskDraft();
+    setNewTaskActive(false);
+  }, []);
+  const hideNewTask = useCallback(() => { setNewTaskActive(false); }, []);
+  // Created: the draft is already emptied; show the new task's tab once the
+  // tab list has it (refresh first, or the reveal finds no pill to scroll to).
+  const handleNewTaskCreated = useCallback(async (taskId) => {
+    setNewTaskActive(false);
+    await refresh();
+    selectTaskAndReveal(taskId);
+  }, [refresh, selectTaskAndReveal]);
   // Close one loop tab. Dropping the active one moves to a neighbour (the tab
   // that slid into its slot, else the one before it); the empty string means
   // the centre falls back to the file view.
@@ -903,13 +941,18 @@ export default function App() {
   // otherwise the file tab is. The loop's session carries ``review_loop`` for
   // the pane — once a task has left the polled list a bare ``{ task_id }`` is
   // enough (the pane fetches the rounds by id).
-  const showingReviewLoop = !!activeReviewLoopTab;
+  const showingNewTask = newTaskActive && newTaskDraft.open;
+  const showingReviewLoop = !showingNewTask && !!activeReviewLoopTab;
   const reviewLoopSession = showingReviewLoop
     ? (sessions.find((s) => s.task_id === activeReviewLoopTab) || { task_id: activeReviewLoopTab })
     : null;
   // While a loop tab is active no file tab is "active", so the file tabs stay
   // unhighlighted behind it.
-  const activeFileTabKey = showingReviewLoop ? null : activeTabKey;
+  const activeFileTabKey = showingReviewLoop || showingNewTask ? null : activeTabKey;
+  const newTaskTab = buildNewTaskTabModel(newTaskDraft, {
+    active: showingNewTask,
+    hasOtherTabs: tabsForActiveTask.length + reviewLoopTabList.length > 0,
+  });
   // The centre column swaps between three bodies (activity feed, plan, and the
   // shared file/loop tab view); all go through the shared PanelCard so the card
   // chrome is identical no matter which is showing.
@@ -950,9 +993,12 @@ export default function App() {
     // pane, so this body opts the card's content wrapper into the tab-strip
     // rules rather than adding another nested flex column. Below it, the loop
     // pane when a loop tab is active, otherwise the file/diff pane.
-    const underStripPane = showingReviewLoop
-      ? <ReviewLoopPane session={reviewLoopSession} onClose={handleCloseReviewLoopView} />
-      : filePane;
+    let underStripPane = filePane;
+    if (showingNewTask) {
+      underStripPane = <NewTaskPane onCreated={handleNewTaskCreated} onHide={hideNewTask} />;
+    } else if (showingReviewLoop) {
+      underStripPane = <ReviewLoopPane session={reviewLoopSession} onClose={handleCloseReviewLoopView} />;
+    }
     centerContentClassName = 'center-pane-with-tabs';
     centerBody = (
       <>
@@ -971,6 +1017,9 @@ export default function App() {
           activeReviewLoopTab={activeReviewLoopTab}
           onSelectReviewLoop={selectReviewLoopTab}
           onCloseReviewLoop={closeReviewLoopTab}
+          newTaskTab={newTaskTab}
+          onSelectNewTask={openNewTask}
+          onCloseNewTask={closeNewTask}
           // Only a tree click bumps this, so the strip scrolls the tab
           // into view then and never while the operator is scrolling.
           revealRequestId={tabRevealRequest}
@@ -1004,6 +1053,7 @@ export default function App() {
           onSelect={selectTaskAndReveal}
           onForget={requestForgetTask}
           onOpenAddTask={() => setAddTaskModalOpen(true)}
+          onNewTask={openNewTask}
           onOpenTaskPalette={openTaskPalette}
           onScanNow={handleScanNow}
           scanPending={scanPending}

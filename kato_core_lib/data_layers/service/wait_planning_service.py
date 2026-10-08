@@ -170,7 +170,7 @@ class WaitPlanningService(object):
             return skip_task_result(task.id, [])
         if self._is_chat_already_alive(task):
             return skip_task_result(task.id, [])
-        context = self._resolve_planning_context(task)
+        context = self.resolve_planning_context(task)
         self._spawn_planning_session(task, context, mode)
         # Planning is real work — move the ticket out of the inbox so
         # it doesn't get picked up by another agent / scanned again as
@@ -379,7 +379,7 @@ class WaitPlanningService(object):
                 'failed to move planning task %s to in progress', task.id,
             )
 
-    def _resolve_planning_context(self, task: Task) -> _PlanningContext:
+    def resolve_planning_context(self, task: Task) -> _PlanningContext:
         """Resolve + clone + check-out branches; return where the chat opens.
 
         Best-effort: any failure (no repo match, git fetch error, etc.)

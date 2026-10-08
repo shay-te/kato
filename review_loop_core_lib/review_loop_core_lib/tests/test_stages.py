@@ -350,11 +350,11 @@ class EditingReviewer(FakeReviewer):
         self.tree = tree
         self.edit_during = set(edit_during)
 
-    def review(self, prompt, *, task_id, cancel_event) -> str:
+    def review(self, prompt, *, task_id, cancel_event, model='') -> str:
         number = len(self.prompts) + 1
         if number in self.edit_during:
             self.tree.files['app.py'] = f'print({number + 100})\n'
-        return super().review(prompt, task_id=task_id, cancel_event=cancel_event)
+        return super().review(prompt, task_id=task_id, cancel_event=cancel_event, model=model)
 
 
 class CandidateIdentityTests(_Stages):
@@ -408,6 +408,72 @@ class CandidateIdentityTests(_Stages):
         self.assertTrue(state.rounds[0].diff_digest)
         # Read once for the review, once to confirm it is still that code.
         self.assertEqual(self.tree.calls, 2)
+
+
+class RoundTimingTests(_Stages):
+    """Every round records when it ended, so the view can say how long it took."""
+
+    def assert_in_order(self, *stamps: float) -> None:
+        self.assertGreater(stamps[0], 0)
+        self.assertEqual(list(stamps), sorted(stamps))
+
+    def test_a_clean_round_ends_after_its_review_and_its_tests(self) -> None:
+        chat = ScriptedChat(tests=[test_report(True)])
+        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        only = state.rounds[0]
+        self.assert_in_order(only.started_at, only.reviewed_at, only.finished_at)
+        # The fake chat stamps a turn 1ms ahead (fakes.FakeChat), so the test
+        # report can read up to that much after the round's end.
+        self.assertGreaterEqual(only.finished_at, only.tests.reported_at - 0.001)
+
+    def test_a_sent_round_ends_when_its_fix_turn_does(self) -> None:
+        state = self.run_loop(FakeChat(), FakeReviewer(reply(finding('MAJOR')), reply()))
+        sent, clean = state.rounds
+        self.assertEqual((sent.outcome, clean.outcome), ('sent', 'clean'))
+        self.assert_in_order(sent.started_at, sent.sent_at, sent.finished_at, clean.started_at,
+                             clean.finished_at)
+
+    def test_a_round_closed_mid_loop_ends_before_the_next_starts(self) -> None:
+        # A clean review followed by its clean-room sweep: the first round is
+        # closed while the loop goes on, so the loop's own finish never stamps it.
+        state = self.run_loop(FakeChat(), FakeReviewer(reply()), extra_sweep=True)
+        first, sweep = state.rounds
+        self.assertEqual((first.outcome, sweep.sweep), ('clean', True))
+        self.assert_in_order(first.started_at, first.reviewed_at, first.finished_at,
+                             sweep.started_at, sweep.finished_at)
+
+    def test_a_failing_tests_round_ends_after_their_fix(self) -> None:
+        chat = ScriptedChat(tests=[test_report(False, failures=['t1']), test_report(True)])
+        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        failed, clean = state.rounds
+        self.assertEqual(failed.outcome, 'tests_failed')
+        self.assert_in_order(failed.started_at, failed.sent_at, failed.finished_at, clean.started_at)
+
+    def test_a_round_saved_before_this_field_reads_as_unfinished(self) -> None:
+        self.assertEqual(ReviewRound.from_dict({'number': 1}).finished_at, 0.0)
+        stamped = ReviewRound(number=1, started_at=1.0, finished_at=9.0)
+        self.assertEqual(ReviewRound.from_dict(stamped.to_dict()).finished_at, 9.0)
+
+
+class ReviewerModelTests(_Stages):
+    """The loop runs every review on the model it was started with."""
+
+    def test_every_review_of_the_loop_runs_on_its_model(self) -> None:
+        reviewer = FakeReviewer(reply(finding('MAJOR')), reply())
+        state = self.run_loop(FakeChat(), reviewer, extra_sweep=True, model=' sonnet ')
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(reviewer.models, ['sonnet', 'sonnet', 'sonnet'])  # incl. the sweep
+        self.assertEqual(state.summary()['model'], 'sonnet')
+        self.assertEqual(ReviewLoopState.from_dict(state.to_dict()).model, 'sonnet')
+
+    def test_no_pick_leaves_the_reviewer_its_own_default(self) -> None:
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(FakeChat(), reviewer)
+        self.assertEqual(reviewer.models, [''])
+        self.assertEqual(state.model, '')
+        self.assertEqual(ReviewLoopState.from_dict({
+            'task_id': 'T', 'loop_id': 'a' * 32, 'max_rounds': 5, 'started_at': 1.0,
+        }).model, '')
 
 
 class StateAndParsingTests(unittest.TestCase):

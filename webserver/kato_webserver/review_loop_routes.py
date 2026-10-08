@@ -13,9 +13,13 @@ The loop itself is ``review_loop_core_lib``; kato's wiring is
 
 from __future__ import annotations
 
+import re
+
 from typing import Callable
 
 from flask import Flask, jsonify, request
+
+from kato_core_lib.helpers.model_label_utils import model_display_label
 
 
 def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], list]) -> None:
@@ -26,6 +30,13 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
 
     def unavailable():
         return jsonify({'error': 'review loops are not available until kato is configured'}), 503
+
+    # The model a review runs on when the operator picks none — the picker
+    # shows it as the concrete choice it is, never as "Default".
+    @app.get('/api/review-loop/default-model')
+    def review_loop_default_model():
+        model = str(getattr(app.config.get('AGENT_SERVICE'), 'review_loop_default_model', '') or '')
+        return jsonify({'model': model, 'label': model_display_label(model)})
 
     @app.get('/api/sessions/<task_id>/review-loop')
     def get_review_loop(task_id: str):
@@ -47,6 +58,9 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
         if problem:
             return jsonify({'error': problem}), 400
         stages = _requested_stages(body)
+        model, problem = _requested_model(body)
+        if problem:
+            return jsonify({'error': problem}), 400
         summary, description = _task_text(app, task_id)
         try:
             state = loops.start(
@@ -55,6 +69,7 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
                 task_summary=summary,
                 task_description=description,
                 max_rounds=max_rounds,
+                model=model,
                 **stages,
             )
         except ReviewLoopError as exc:
@@ -104,12 +119,41 @@ def _requested_rounds(body: object) -> tuple[int | None, str]:
 # that came from a reviewer who saw the fix ping-pong, and one more clean-room
 # sweep after ANY clean verdict ("it was clean, we ran it again, and it found a
 # MAJOR" — one clean review is not proof).
-_STAGES = ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep')
+# What a loop runs when the request leaves a stage out — the same defaults the
+# view's checkboxes start at (reviewLoopStagesPref.js; a test pins the two
+# together). The self-check in the main chat is the operator's opt-in.
+_STAGE_DEFAULTS = {
+    'self_check': False,
+    'verify_tests': True,
+    'confirm_clean': True,
+    'extra_sweep': True,
+}
+
+
+# A model id as the CLIs take it: an alias (``opus``) or a pinned id
+# (``claude-opus-5-5[1m]``). It goes into argv, never through a shell; the
+# pattern only keeps junk from reaching the spawn as a confusing CLI error.
+_MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}')
+
+
+def _requested_model(body: object) -> tuple[str, str]:
+    """``(model, problem)``; an absent / empty model is the reviewer's default."""
+    source = body if isinstance(body, dict) else {}
+    model = source.get('model')
+    if model is None or model == '':
+        return '', ''
+    if not isinstance(model, str) or not _MODEL_ID.fullmatch(model.strip()):
+        return '', f'model must be a model id, got {model!r}'
+    return model.strip(), ''
 
 
 def _requested_stages(body: object) -> dict[str, bool]:
+    """An explicit true / false is the operator's pick; anything else, the default."""
     source = body if isinstance(body, dict) else {}
-    return {name: source.get(name) is not False for name in _STAGES}
+    return {
+        name: source[name] if isinstance(source.get(name), bool) else default
+        for name, default in _STAGE_DEFAULTS.items()
+    }
 
 
 def _task_text(app: Flask, task_id: str) -> tuple[str, str]:

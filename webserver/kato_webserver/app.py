@@ -83,6 +83,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
     session_is_in_explain_mode,
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
+from kato_core_lib.helpers.model_label_utils import model_display_label
 from kato_core_lib.helpers.workspace_repo_utils import (
     resolve_session_cwd,
     sibling_repository_dirs,
@@ -1154,18 +1155,6 @@ def _last_user_message(manager, task_id: str) -> str:
     return ''
 
 
-def _safeguard_fallback_label(model: str) -> str:
-    """Humanise a pinned fallback id for the UI: ``claude-opus-4-8`` → ``Opus 4.8``.
-
-    A best-effort label only — an id that doesn't match the usual
-    ``claude-<family>-<major>-<minor>`` shape is shown as-is.
-    """
-    match = re.match(r'claude-([a-z]+)-(\d+)-(\d+)$', str(model or '').strip())
-    if not match:
-        return str(model or '')
-    return f'{match.group(1).capitalize()} {match.group(2)}.{match.group(3)}'
-
-
 def _set_task_override(app: Flask, key: str, task_id: str, value: str = '') -> bool:
     """Write (or clear) a per-task override; ``False`` when not wired.
 
@@ -1461,6 +1450,14 @@ def create_app(
     register_review_loop_routes(
         app, collect_diffs=lambda task_id: _collect_review_diffs(app, task_id),
     )
+    from kato_webserver.local_task_routes import register_local_task_routes
+    register_local_task_routes(
+        app,
+        set_mode=lambda task_id, mode: _set_task_mode_of(app, task_id, mode),
+        set_override=lambda key, task_id, value: _set_task_override(app, key, task_id, value),
+        effort_levels=lambda: _discover_chat_effort_levels(app),
+        start_chat=lambda task_id, text: _spawn_or_reject_chat_session(app, task_id, text),
+    )
     return app
 
 
@@ -1694,7 +1691,7 @@ def _register_http_routes(app: Flask) -> None:
     @app.get('/api/safeguard-fallback')
     def safeguard_fallback():
         model = str(app.config.get('SAFEGUARD_FALLBACK_MODEL', '') or '')
-        return jsonify({'model': model, 'label': _safeguard_fallback_label(model)})
+        return jsonify({'model': model, 'label': model_display_label(model)})
 
     # Retry a safeguard-flagged turn on the pinned fallback model: pin it as
     # the task's model override, then respawn the chat on it and resend the

@@ -1,12 +1,14 @@
 import { cx } from '../../utils/cx.js';
-import Icon from '../Icon.jsx';
 import ReviewLoopArtifact from './ReviewLoopArtifact.jsx';
+import ReviewLoopRow from './ReviewLoopRow.jsx';
 import {
   countsText,
   findingDecision,
   findingLocation,
+  findingRepeatNote,
   isBlockingFinding,
   roundOutcomeLabel,
+  roundTiming,
   testsReportText,
   testsTone,
 } from './reviewLoopHelpers.js';
@@ -20,36 +22,28 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
   const others = round.findings.filter((finding) => !isBlockingFinding(finding) && !finding.settled_by);
   const blockingTitle = round.sent_at ? 'Blocking — sent to the chat to fix' : 'Blocking';
   const summary = round.reviewed_at ? countsText(round.counts) : 'not reviewed yet';
-  const chevron = expanded ? 'chevron-down' : 'chevron-right';
   // A clean-room sweep: a reviewer told nothing of the fixes, confirming the
   // clean round before it.
   const sweepTag = round.sweep ? <span className="review-loop-round-tag">Clean-room</span> : null;
   const tests = round.tests ? <RoundTests tests={round.tests} /> : null;
-  const body = expanded ? (
-    <div className="review-loop-round-body">
+  return (
+    <ReviewLoopRow
+      className={cx('review-loop-round', `is-${round.outcome || 'active'}`)}
+      data-round={round.number}
+      name={`Round ${round.number}`}
+      tag={sweepTag}
+      summary={summary}
+      timing={roundTiming(round)}
+      outcome={roundOutcomeLabel(round)}
+      expanded={expanded}
+      onToggle={() => onToggle(round.number)}
+    >
       {tests}
       <FindingList title={blockingTitle} findings={blocking} round={round} />
       <FindingList title="Settled earlier — not sent again" findings={settled} round={round} />
       <FindingList title="Not blocking — reported only" findings={others} round={round} />
       <RoundArtifacts taskId={taskId} loopId={loopId} round={round} />
-    </div>
-  ) : null;
-  return (
-    <li className={cx('review-loop-round', `is-${round.outcome || 'active'}`)} data-round={round.number}>
-      <button
-        type="button"
-        className="review-loop-round-header"
-        aria-expanded={expanded}
-        onClick={() => onToggle(round.number)}
-      >
-        <Icon name={chevron} />
-        <span className="review-loop-round-name">Round {round.number}</span>
-        {sweepTag}
-        <span className="review-loop-round-counts">{summary}</span>
-        <span className="review-loop-round-outcome">{roundOutcomeLabel(round)}</span>
-      </button>
-      {body}
-    </li>
+    </ReviewLoopRow>
   );
 }
 
@@ -91,6 +85,8 @@ function FindingItem({ finding, round }) {
   const settledBy = finding.settled_by ? (
     <p className="review-loop-finding-note">Settled by the decision on {finding.settled_by}.</p>
   ) : null;
+  const repeatText = findingRepeatNote(finding);
+  const repeat = repeatText ? <p className="review-loop-finding-note is-repeat">{repeatText}</p> : null;
   const decision = findingDecision(round, finding);
   const decisionLine = decision ? (
     <p className={cx('review-loop-decision', `is-${decision.tone}`)}>
@@ -110,6 +106,7 @@ function FindingItem({ finding, round }) {
       {invariant}
       {newEvidence}
       {settledBy}
+      {repeat}
       {decisionLine}
     </li>
   );

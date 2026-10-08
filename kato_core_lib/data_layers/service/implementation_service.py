@@ -34,6 +34,7 @@ class ImplementationService(_AgentClientService):
         log_label: str = '',
         cancel_event: threading.Event | None = None,
         timeout_seconds: int = 0,
+        model: str = '',
     ) -> str:
         """One fresh read-only turn on the active backend; returns its text.
 
@@ -53,7 +54,13 @@ class ImplementationService(_AgentClientService):
             log_label=log_label,
             cancel_event=cancel_event,
             timeout_seconds=timeout_seconds,
+            model=model,
         )
+
+    @property
+    def investigation_model(self) -> str:
+        """The model a read-only turn runs on unless the caller picks one."""
+        return str(getattr(self._client, 'model', '') or '')
 
     def implement_task(
         self,

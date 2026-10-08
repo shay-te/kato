@@ -109,6 +109,11 @@ class ReviewFinding(object):
     new_evidence: str = ''
     # The id of the earlier finding whose decision settles this one ('' if none).
     settled_by: str = ''
+    # Set by the loop when a fix said it fixed this issue (or did not answer)
+    # and a later review still found it: the id it was first sent under, and
+    # how many fixes it has survived.
+    repeat_of: str = ''
+    missed_fixes: int = 0
 
     @property
     def is_blocking(self) -> bool:
@@ -147,6 +152,8 @@ class ReviewFinding(object):
             'invariant': self.invariant,
             'new_evidence': self.new_evidence,
             'settled_by': self.settled_by,
+            'repeat_of': self.repeat_of,
+            'missed_fixes': self.missed_fixes,
         }
 
     @classmethod
@@ -164,6 +171,8 @@ class ReviewFinding(object):
             invariant=str(data.get('invariant', '')),
             new_evidence=str(data.get('new_evidence', '')),
             settled_by=str(data.get('settled_by', '')),
+            repeat_of=str(data.get('repeat_of') or ''),
+            missed_fixes=int(data.get('missed_fixes') or 0),
         )
 
 
@@ -288,6 +297,10 @@ class ReviewRound(object):
     reviewed_at: float = 0.0     # the reviewer finished
     sent_at: float = 0.0         # the findings went into the chat
     fixed_at: float = 0.0        # the chat's fix turn ended
+    # The round's last step ended — its review, tests, or fix turn, or the
+    # loop stopping during it. 0 while it runs, and for a round a restart cut
+    # off (its real end is unknown).
+    finished_at: float = 0.0
     findings: list[ReviewFinding] = field(default_factory=list)
     # The fix turn's answer to each finding it was sent (empty until it ends).
     responses: list[FindingResponse] = field(default_factory=list)
@@ -337,6 +350,7 @@ class ReviewRound(object):
             'reviewed_at': self.reviewed_at,
             'sent_at': self.sent_at,
             'fixed_at': self.fixed_at,
+            'finished_at': self.finished_at,
             'findings': [finding.to_dict() for finding in self.findings],
             'responses': [response.to_dict() for response in self.responses],
             'blind': self.blind,
@@ -358,6 +372,7 @@ class ReviewRound(object):
             reviewed_at=float(data.get('reviewed_at', 0.0)),
             sent_at=float(data.get('sent_at', 0.0)),
             fixed_at=float(data.get('fixed_at', 0.0)),
+            finished_at=float(data.get('finished_at', 0.0)),
             findings=[ReviewFinding.from_dict(item) for item in data.get('findings', [])],
             responses=[FindingResponse.from_dict(item) for item in data.get('responses', [])],
             blind=bool(data.get('blind', False)),
@@ -394,13 +409,15 @@ class ReviewLoopState(object):
     verify_tests: bool = False    # "clean" also needs the tests to pass
     confirm_clean: bool = False   # a ledger-informed "clean" needs a clean-room review to agree
     extra_sweep: bool = False     # ANY "clean" needs one more clean-room review to agree
+    # The model every review of this loop runs on; '' = the host's default.
+    model: str = ''
     self_checks: list[SelfCheckTurn] = field(default_factory=list)
 
     @classmethod
     def new(
         cls, task_id: str, *, max_rounds: int, now: float,
         self_check: bool = False, verify_tests: bool = False, confirm_clean: bool = False,
-        extra_sweep: bool = False,
+        extra_sweep: bool = False, model: str = '',
     ) -> 'ReviewLoopState':
         return cls(
             task_id=task_id,
@@ -412,6 +429,7 @@ class ReviewLoopState(object):
             verify_tests=verify_tests,
             confirm_clean=confirm_clean,
             extra_sweep=extra_sweep,
+            model=str(model or '').strip(),
         )
 
     @property
@@ -468,6 +486,7 @@ class ReviewLoopState(object):
             'verify_tests': self.verify_tests,
             'confirm_clean': self.confirm_clean,
             'extra_sweep': self.extra_sweep,
+            'model': self.model,
             'self_check_turn': len(self.self_checks),
             'sweep': bool(self.rounds and self.rounds[-1].sweep),
         }
@@ -498,6 +517,7 @@ class ReviewLoopState(object):
             verify_tests=bool(data.get('verify_tests', False)),
             confirm_clean=bool(data.get('confirm_clean', False)),
             extra_sweep=bool(data.get('extra_sweep', False)),
+            model=str(data.get('model') or ''),
             self_checks=[SelfCheckTurn.from_dict(item) for item in data.get('self_checks', [])],
         )
 

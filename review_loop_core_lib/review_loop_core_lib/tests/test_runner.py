@@ -86,6 +86,9 @@ class StopTests(_Runs):
         self.assertEqual(state.reason, 'main chat stopped')
         self.assertEqual(state.rounds[-1].outcome, 'sent')
         self.assertEqual(len(chat.delivered), 1)
+        # A round the loop stopped in still says when it ended.
+        self.assertGreaterEqual(state.rounds[-1].finished_at, state.rounds[-1].sent_at)
+        self.assertGreater(state.rounds[-1].finished_at, 0)
 
     def test_shutdown_marks_running_loops_interrupted(self) -> None:
         reviewer = FakeReviewer(block_until_cancelled=True)
@@ -366,7 +369,7 @@ class RunnerControlTests(unittest.TestCase):
             reviewer = FakeReviewer(reply())
             original = reviewer.review
 
-            def recording(prompt, *, task_id, cancel_event):
+            def recording(prompt, *, task_id, cancel_event, model=''):
                 names.append(threading.current_thread().name)
                 return original(prompt, task_id=task_id, cancel_event=cancel_event)
 

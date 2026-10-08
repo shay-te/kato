@@ -462,6 +462,14 @@ export function adoptTask(taskId) {
   );
 }
 
+// Create a task in kato itself (no tracker) from the "New task" tab:
+// ``{ summary, description, repositories, start_mode, model, effort }``.
+// 202 ``{ task_id }`` — the tab exists at once; the clone and the agent's
+// first turn follow in the background. 400 / 403 say what to fix.
+export function createLocalTask(body) {
+  return postEnvelope('/api/local-tasks', body || {});
+}
+
 // Recent commits on a repo's task branch (newest first). Drives the
 // Files-tab per-repo "view commit" dropdown. ``limit`` is optional
 // (server caps it at 200); ``repoId`` is required.
@@ -729,11 +737,18 @@ export function fetchReviewLoop(taskId) {
 
 // ``maxRounds``: how many reviews at most; omitted, kato's default applies.
 // ``stages``: ``{ self_check, verify_tests, confirm_clean, extra_sweep }`` —
-// any left out stay on (the server's default).
-export function startReviewLoop(taskId, { maxRounds = 0, stages = {} } = {}) {
+// any left out take the server's default. ``model``: the model the reviews run
+// on; '' = the reviewer's default (``fetchReviewLoopDefaultModel``).
+export function startReviewLoop(taskId, { maxRounds = 0, stages = {}, model = '' } = {}) {
   if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
   const body = maxRounds ? { ...stages, max_rounds: maxRounds } : { ...stages };
+  if (model) { body.model = model; }
   return postEnvelope(reviewLoopUrl(taskId), body);
+}
+
+// ``{ model, label }`` — what a review runs on when the operator picks none.
+export function fetchReviewLoopDefaultModel() {
+  return fetchJson('/api/review-loop/default-model');
 }
 
 export function stopReviewLoop(taskId) {

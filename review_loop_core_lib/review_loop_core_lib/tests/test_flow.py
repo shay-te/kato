@@ -52,10 +52,12 @@ class _Flow(unittest.TestCase):
         self.addCleanup(service.shutdown, 'test over')
         return service
 
-    def run_to_end(self, service: ReviewLoopService, task_id: str = 'T-1') -> ReviewLoopState:
+    def run_to_end(
+        self, service: ReviewLoopService, task_id: str = 'T-1', **options,
+    ) -> ReviewLoopState:
         service.start(
             task_id, diff_source=self.tree.diff_source,
-            task_summary='Add login', task_description='Users log in with email.',
+            task_summary='Add login', task_description='Users log in with email.', **options,
         )
         self.assertTrue(wait_until(lambda: not service.is_running(task_id)))
         return service.state(task_id)
@@ -128,15 +130,50 @@ class CleanAfterAFixTests(_Flow):
 
 class LoopsThatDoNotConvergeTests(_Flow):
 
-    def test_the_same_blocking_issue_twice_is_stuck(self) -> None:
+    def test_an_issue_that_survives_two_fixes_is_stuck(self) -> None:
         chat = FakeChat()
         reviewer = FakeReviewer(reply(finding('MAJOR', title='first wording')),
                                 reply(finding('MAJOR', title='said differently')))
         state = self.run_to_end(self.service(chat, reviewer))
         self.assertEqual(state.status, ReviewLoopStatus.STUCK)
-        self.assertEqual(len(chat.delivered), 1)
-        self.assertEqual(state.rounds[-1].outcome, 'stuck')
-        self.assertIn('round 1', state.reason)
+        # Sent, sent again as a repeat, then stuck: one miss is not enough.
+        self.assertEqual([r.outcome for r in state.rounds], ['sent', 'sent', 'stuck'])
+        self.assertEqual(len(chat.delivered), 2)
+        self.assertEqual(state.reason, 'R1-1 still found after 2 fixes')
+        repeat = state.rounds[1].findings[0]
+        self.assertEqual((repeat.repeat_of, repeat.missed_fixes), ('R1-1', 1))
+        second_message = chat.delivered[1][0]
+        self.assertIn('1 of them you said were fixed, and the review still finds them', second_message)
+        self.assertIn('Still here: first reported as R1-1, and it survived 1 fix(es)', second_message)
+
+    def test_a_fix_that_lands_on_the_second_try_ends_clean(self) -> None:
+        chat = FakeChat()
+        reviewer = FakeReviewer(reply(finding('MAJOR')), reply(finding('MAJOR')), reply())
+        state = self.run_to_end(self.service(chat, reviewer))
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual([r.outcome for r in state.rounds], ['sent', 'sent', 'clean'])
+
+    def test_new_blocking_issues_are_always_sent_never_stuck_on(self) -> None:
+        # A keeps coming back; B joins in round 2. Round 3: A has missed twice
+        # but B only once — still work to send. Round 4: both missed twice.
+        chat = FakeChat()
+        a, b = finding('MAJOR', symbol='run'), finding('MAJOR', symbol='load')
+        reviewer = FakeReviewer(reply(a), reply(a, b))
+        state = self.run_to_end(self.service(chat, reviewer))
+        self.assertEqual([r.outcome for r in state.rounds], ['sent', 'sent', 'sent', 'stuck'])
+        self.assertEqual(state.reason, 'R1-1, R2-2 still found after 2 fixes')
+
+    def test_the_screenshot_case_goes_on_with_the_new_issues(self) -> None:
+        # Clean, a clean-room sweep finds one, the fix is reviewed and three
+        # are found (the old one + two new): the old rule stopped here.
+        chat = FakeChat()
+        a, b, c = (finding('MAJOR', symbol=name) for name in ('run', 'load', 'save'))
+        reviewer = FakeReviewer(reply(), reply(a), reply(a, b, c), reply(), reply())
+        state = self.run_to_end(self.service(chat, reviewer), extra_sweep=True)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual([r.outcome for r in state.rounds],
+                         ['clean', 'sent', 'sent', 'clean', 'clean'])
+        self.assertEqual([f.repeat_of for f in state.rounds[2].blocking], ['R2-1', '', ''])
 
     def test_five_reviews_at_most_and_the_last_is_not_sent(self) -> None:
         chat = FakeChat()

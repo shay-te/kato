@@ -19,7 +19,11 @@ import {
   reviewLoopSignature,
   reviewLoopSteps,
   roundOutcomeLabel,
-  selfCheckText,
+  roundTiming,
+  reviewerModelChoice,
+  reviewerModelName,
+  findingRepeatNote,
+  selfCheckRow,
   testsReportText,
 } from './reviewLoopHelpers.js';
 
@@ -130,7 +134,7 @@ test('a finding is located the way the reviewer reported it', () => {
 
 test('round outcomes in words', () => {
   assert.equal(roundOutcomeLabel({ outcome: 'sent' }), 'sent to the chat');
-  assert.equal(roundOutcomeLabel({ outcome: 'stuck' }), 'same issues as before');
+  assert.equal(roundOutcomeLabel({ outcome: 'stuck' }), 'stuck — fixes didn\u2019t land');
   assert.equal(roundOutcomeLabel({ outcome: '' }), 'in progress');
 });
 
@@ -244,8 +248,111 @@ test('test reports and self-check turns read as words', () => {
   assert.equal(testsReportText({ passed: false }), 'Tests failed — see the report');
   assert.equal(testsReportText({ passed: null }), 'Tests not reported');
 
-  assert.equal(selfCheckText({ number: 1, clean: false, fixed: 2 }), 'Self-check 1 — fixed 2');
-  assert.equal(selfCheckText({ number: 2, clean: true }), 'Self-check 2 — clean');
-  assert.equal(selfCheckText({ number: 1, clean: null }), 'Self-check 1 — no verdict');
 });
 
+test('a self-check turn reads like a round: what it fixed, how long, its outcome', () => {
+  const pick = ({ name, summary, outcome, state, timing }) => [name, summary, outcome, state, timing?.text || ''];
+  assert.deepEqual(
+    pick(selfCheckRow({ number: 1, started_at: 10, finished_at: 200, clean: false, fixed: 2 })),
+    ['Self-check 1', 'fixed 2', 'not clean yet', 'unclean', '3m 10s'],
+  );
+  assert.deepEqual(
+    pick(selfCheckRow({ number: 2, started_at: 10, finished_at: 40, clean: true, fixed: 0 })),
+    ['Self-check 2', 'nothing fixed', 'clean', 'clean', '30s'],
+  );
+  assert.deepEqual(
+    pick(selfCheckRow({ number: 3, started_at: 10, finished_at: 15, clean: null })),
+    ['Self-check 3', 'nothing fixed', 'no verdict', 'no_verdict', '5s'],
+  );
+  assert.deepEqual(
+    pick(selfCheckRow({ number: 4, started_at: 10, finished_at: 0 })),
+    ['Self-check 4', 'checking…', 'in progress', 'active', ''],
+  );
+  assert.equal(selfCheckRow({ number: 1, started_at: 10, finished_at: 70 }).timing.title, 'Self-check 1 took 1m 0s');
+  assert.equal(selfCheckRow(null).name, 'Self-check ');
+});
+
+test('a finished round says how long it took, and where the time went', () => {
+  const sent = { number: 1, outcome: 'sent', started_at: 1000, reviewed_at: 1252, sent_at: 1260, fixed_at: 1380, finished_at: 1381 };
+  assert.deepEqual(roundTiming(sent), {
+    text: '6m 21s', title: 'Round 1 took 6m 21s — review 4m 12s · fix 2m 0s',
+  });
+  const clean = {
+    number: 2, outcome: 'clean', started_at: 2000, reviewed_at: 2030,
+    tests: { reported_at: 2090 }, finished_at: 2091,
+  };
+  assert.deepEqual(roundTiming(clean), {
+    text: '1m 31s', title: 'Round 2 took 1m 31s — review 30s · tests 1m 0s',
+  });
+});
+
+test('a round saved before kato stamped its end uses its last recorded step', () => {
+  assert.equal(roundTiming({ number: 1, outcome: 'sent', started_at: 10, sent_at: 20, fixed_at: 70 }).text, '1m 0s');
+  assert.equal(roundTiming({ number: 1, outcome: 'tests_failed', started_at: 10, fixed_at: 40 }).text, '30s');
+  assert.equal(roundTiming({ number: 1, outcome: 'clean', started_at: 10, reviewed_at: 25 }).text, '15s');
+  assert.equal(
+    roundTiming({ number: 1, outcome: 'clean', started_at: 10, reviewed_at: 25, tests: { reported_at: 55 } }).text,
+    '45s',
+  );
+  assert.equal(roundTiming({ number: 1, outcome: 'stuck', started_at: 10, reviewed_at: 12 }).text, '2s');
+});
+
+test('no time for a round still running or cut off without a known end', () => {
+  assert.equal(roundTiming({ number: 2, outcome: '', started_at: 10, reviewed_at: 20 }), null);
+  assert.equal(roundTiming({ number: 2, outcome: 'sent', started_at: 10, sent_at: 20 }), null);
+  assert.equal(roundTiming({ number: 2, outcome: 'stopped', started_at: 10, reviewed_at: 20 }), null);
+  assert.equal(roundTiming({ number: 2, outcome: 'clean', started_at: 30, finished_at: 20 }), null);
+  assert.equal(roundTiming(null), null);
+  // A round the loop itself stopped IS stamped, so it has a time.
+  assert.equal(roundTiming({ number: 2, outcome: 'stopped', started_at: 10, finished_at: 25 }).text, '15s');
+});
+
+const MODELS = [{ id: 'opus', label: 'Opus 5.5', default: true }, { id: 'sonnet', label: 'Sonnet 5.5' }];
+const PINNED = { model: 'claude-opus-5-5[1m]', label: 'Opus 5.5 (1M context)' };
+
+test('the reviewer\'s default is offered by name, first when it is not in the catalogue', () => {
+  const choice = reviewerModelChoice({ models: MODELS, defaultModel: PINNED });
+  assert.deepEqual(choice.options.map((o) => [o.id, o.label]), [
+    ['claude-opus-5-5[1m]', 'Opus 5.5 (1M context) — kato\'s default'],
+    ['opus', 'Opus 5.5'],
+    ['sonnet', 'Sonnet 5.5'],
+  ]);
+  assert.equal(choice.value, 'claude-opus-5-5[1m]');
+  assert.equal(choice.defaultId, 'claude-opus-5-5[1m]');
+  assert.equal(choice.stale, false);
+});
+
+test('a default already in the catalogue is marked there; none configured → the catalogue\'s', () => {
+  const inCatalogue = reviewerModelChoice({ models: MODELS, defaultModel: { model: 'sonnet', label: 'Sonnet 5.5' } });
+  assert.deepEqual(inCatalogue.options.map((o) => o.label), ['Opus 5.5', 'Sonnet 5.5 — kato\'s default']);
+  const unset = reviewerModelChoice({ models: MODELS, defaultModel: { model: '', label: '' } });
+  assert.equal(unset.value, 'opus');
+  assert.equal(reviewerModelChoice({ models: [{ id: 'a' }] }).value, 'a');
+  assert.deepEqual(reviewerModelChoice({ models: [{ id: 'a' }] }).options, [{ id: 'a', name: 'a', label: 'a — kato\'s default' }]);
+});
+
+test('a pick still offered is shown; one no longer offered is stale', () => {
+  assert.equal(reviewerModelChoice({ models: MODELS, defaultModel: PINNED, picked: 'sonnet' }).value, 'sonnet');
+  const gone = reviewerModelChoice({ models: MODELS, defaultModel: PINNED, picked: 'retired' });
+  assert.deepEqual([gone.stale, gone.value], [true, 'claude-opus-5-5[1m]']);
+  // Before anything has loaded nothing is stale: there is nothing to compare with.
+  const loading = reviewerModelChoice({ picked: 'sonnet' });
+  assert.deepEqual([loading.stale, loading.value, loading.options], [false, 'sonnet', []]);
+  assert.deepEqual(reviewerModelChoice().options, []);
+});
+
+test('a loop\'s model is named; no model means the default it ran on', () => {
+  const choice = reviewerModelChoice({ models: MODELS, defaultModel: PINNED });
+  assert.equal(reviewerModelName('sonnet', choice), 'Sonnet 5.5');
+  assert.equal(reviewerModelName('', choice), 'Opus 5.5 (1M context)');
+  assert.equal(reviewerModelName('gpt-x', choice), 'gpt-x');
+});
+
+test('a finding a fix said it fixed, found again, says so', () => {
+  assert.equal(findingRepeatNote({ repeat_of: 'R2-1', missed_fixes: 1 }),
+    'Still here — first reported as R2-1, survived 1 fix.');
+  assert.equal(findingRepeatNote({ repeat_of: 'R1-3', missed_fixes: 2 }),
+    'Still here — first reported as R1-3, survived 2 fixes.');
+  assert.equal(findingRepeatNote({ repeat_of: '' }), '');
+  assert.equal(findingRepeatNote(null), '');
+});

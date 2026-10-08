@@ -79,6 +79,9 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 │                                 the main chat, repeat until clean. Generic + kato-free: imports
 │                                 only stdlib + utils_core_lib; the host implements its ports
 │                                 (kato: data_layers/service/review_loop_adapters.py)
+├── local_task_core_lib        ← tasks created in kato's own UI (no tracker): one JSON store of
+│                                 LOCAL-<n> tasks — summary, description, tags, state, comments.
+│                                 Kato-free; imports only stdlib + utils_core_lib
 ├── git_core_lib               ← GitClientMixin, git subprocess engine, repo discovery utils
 ├── repository_core_lib        ← provider utils (URL parsing, token messages); imports
 │                                 git_core_lib's pure URL-parsing helpers directly (module
@@ -259,15 +262,20 @@ start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → R
   (review_loop_core_lib) thread per task
   round n: wait for the chat to be free → fresh READ-ONLY reviewer over the WHOLE diff
            (ImplementationService.investigate: no --resume, no session persistence, Bash/Edit denied)
-     no BLOCKER/MAJOR → CLEAN │ claimed fixes all still there → STUCK │ n == max → MAX_ROUNDS
+     no BLOCKER/MAJOR → CLEAN │ every blocking issue left survived 2 fixes, none new → STUCK │
+     n == max → MAX_ROUNDS
+     (new issues always go to the chat; a fix that missed once is resent marked
+      ``repeat_of`` + ``missed_fixes`` — "you said R2-1 was fixed; still here")
      else → findings (ids R<n>-<k> + invariants) posted into the MAIN chat (MainChatDelivery —
             the comment runs' own sender and per-task lock) → wait for that fix turn to end →
             parse its <review-response> into the DECISION LEDGER → round n+1, whose reviewer is
             told the ledger
 ```
-**Optional stages** (lib default OFF; kato turns all four ON unless the operator unticks one in
-the loop view — `kato.reviewLoopStages.v1`; route `POST .../review-loop {self_check, verify_tests,
-confirm_clean, extra_sweep}`, only an explicit `false` turns one off):
+**Optional stages** (lib default OFF; in kato `verify_tests`, `confirm_clean`, `extra_sweep` start
+ON and `self_check` OFF — checkboxes in the loop view, remembered in `kato.reviewLoopStages.v2`;
+route `POST .../review-loop {self_check, verify_tests, confirm_clean, extra_sweep}`: an explicit
+bool is the pick, anything else the default. The defaults live twice — `REVIEW_LOOP_STAGE_DEFAULTS`
+(JS) and `review_loop_routes._STAGE_DEFAULTS` — pinned equal by a test):
 - `self_check` — before round 1, the MAIN chat reviews + fixes its own change (≤3 turns, ends on
   its `<self-check>{"clean": true}` block). Cheap: it already holds the context.
 - `verify_tests` — a clean review only ends the loop once the main chat ran the tests
@@ -278,6 +286,13 @@ confirm_clean, extra_sweep}`, only an explicit `false` turns one off):
 - `extra_sweep` — ANY clean verdict gets that sweep ("it was clean, we ran it again, boom a
   MAJOR": one clean review is not proof). A sweep that finds something sends it back.
 Messages carry `Kato review loop — {stage}` headers (pinned to `REVIEW_LOOP_STAGE_PATTERN`).
+
+**The reviewer's model** is the operator's pick in the loop view ("Reviewed by", remembered in
+`kato.reviewLoopModel.v1`; route `{model}`, validated as a model id) → `ReviewLoopState.model` →
+`Reviewer.review(model=)` → `investigate(model=)` → the one-shot's `--model` / `-m`. '' = the
+backend client's configured model (`KATO_CLAUDE_MODEL`), which `GET /api/review-loop/default-model`
+names so the picker shows it concretely (never "Default"); picking it stores ''. The task's chat
+model picker never affects the reviewer — the fix turns run in the chat, on the chat's model.
 
 **A clean verdict covers the exact code reviewed — nothing else.** Each round records
 `diff_digest` (`diff.candidate_digest`: sha256 of every repo's diff); before CLEAN is accepted the
@@ -303,6 +318,27 @@ which a big multi-repo task's review (slower on Windows) overruns, failing the w
 header button (opens the view; nothing starts from it) + "where is it now" chip, tab badge,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.
+
+### New task (local tasks — no tracker)
+```
+"New task" tab (UI: components/newTask/, draft in localStorage kato.newTaskDraft.v1)
+  → POST /api/local-tasks {summary, description, repositories, start_mode, model, effort}
+    (webserver/kato_webserver/local_task_routes.py)
+  → LocalTaskService.create (kato_core_lib/data_layers/service/local_task_service.py):
+      repos resolve + REP approval checked BEFORE anything is written → store LOCAL-<n>
+      as IN_PROGRESS → workspace record (the tab appears at once, "provisioning")
+  → mode / model / effort overrides set (the CLI bakes them at spawn) → 202 {task_id}
+  → background: WaitPlanningService.resolve_planning_context (clone + branch — the same
+    hardened steps a kato:wait-planning ticket takes) → first chat turn with the opener
+    (plan by DEFAULT; "implement"; "chat" = clone only, send nothing)
+```
+**The ONE place local tasks are told apart:** `local_task_routing.py`. `LocalAwareTaskService` /
+`LocalAwareTaskStateService` (wired in `kato_core_lib.py` in place of the plain services) send
+every call about a `LOCAL-*` id to the store and add local tasks to every list in the matching
+state (all list methods funnel through `get_assigned_tasks(states=…)`). Do NOT add
+`is_local` checks elsewhere. Leaving local tasks out of the lists is not neutral: cleanup would
+mark their workspaces done and their PR review comments would never be polled. A local task is
+created IN_PROGRESS — as OPEN the autonomous scan would pick it up and implement it unasked.
 
 ### PR review comment
 ```

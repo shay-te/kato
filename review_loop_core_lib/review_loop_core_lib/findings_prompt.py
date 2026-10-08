@@ -59,11 +59,17 @@ def build_findings_prompt(
     wording: LoopWording,
 ) -> str:
     blocking = verdict.blocking
+    repeats = sum(1 for finding in blocking if finding.repeat_of)
+    still_there = (
+        f' {repeats} of them you said were fixed, and the review still finds them — '
+        'look again; if one really is fixed, say so with the evidence.'
+        if repeats else ''
+    )
     lines = [
         findings_header(wording, round_number=round_number, max_rounds=max_rounds),
         '',
         f'An independent reviewer read the whole change and found {len(blocking)} '
-        'blocking issue(s) (BLOCKER / MAJOR). Fix them now.',
+        f'blocking issue(s) (BLOCKER / MAJOR). Fix them now.{still_there}',
         '',
     ]
     listed = '\n\n'.join(
@@ -92,4 +98,9 @@ def _finding_text(index: int, finding) -> str:
         lines.append(f'   Invariant: {finding.invariant}')
     if finding.new_evidence:
         lines.append(f'   Raised again with new evidence: {finding.new_evidence}')
+    if finding.repeat_of:
+        lines.append(
+            f'   Still here: first reported as {finding.repeat_of}, and it survived '
+            f'{finding.missed_fixes} fix(es) that said it was fixed.',
+        )
     return '\n'.join(lines)

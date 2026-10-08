@@ -88,6 +88,7 @@ class ReviewLoopService(object):
         verify_tests: bool = False,
         confirm_clean: bool = False,
         extra_sweep: bool = False,
+        model: str = '',
     ) -> ReviewLoopState:
         """Start a loop for ``task_id``; raises ``ReviewLoopError`` with a reason.
 
@@ -114,6 +115,7 @@ class ReviewLoopService(object):
                 task_id, max_rounds=self._rounds_for(max_rounds), now=self._clock(),
                 self_check=bool(self_check), verify_tests=bool(verify_tests),
                 confirm_clean=bool(confirm_clean), extra_sweep=bool(extra_sweep),
+                model=model,
             )
             runner = ReviewLoopRunner(
                 state,

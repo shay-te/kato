@@ -84,3 +84,9 @@ test('a loop tab in the shared strip reads as its own kind', () => {
   assert.match(ruleBody('.file-tab-loop-icon.is-running'), /color:\s*#a78bfa;/);
   assert.match(ruleBody('.file-tab-loop-icon.is-good'), /color:/);
 });
+
+test('a round\'s duration sits beside its outcome, muted, in even digits', () => {
+  const body = ruleBody('.review-loop-round-duration');
+  assert.match(body, /font-variant-numeric: tabular-nums/);
+  assert.match(body, /color:/);
+});

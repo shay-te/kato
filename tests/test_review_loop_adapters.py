@@ -252,6 +252,21 @@ class WholeLoopTests(_ModeIsolation):
         self.assertIn('## Decisions so far', reviews[1]['prompt'])
         self.assertNotIn('## Decisions so far', reviews[2]['prompt'])
 
+    def test_the_picked_model_runs_every_review_and_no_pick_passes_none(self) -> None:
+        world = _KatoWorld(self)
+        world.cli.script_replies(_verdict(_major()), _verdict())
+        world.service.start('T-1', diff_source=world.diffs, model='sonnet')
+        self.assertTrue(_wait(lambda: not world.service.is_running('T-1'), 30))
+        picked = [call['argv'] for call in world.cli.oneshot_calls()]
+        self.assertEqual(len(picked), 2)
+        self.assertTrue(all(argv[argv.index('--model') + 1] == 'sonnet' for argv in picked))
+
+        world.cli.script_replies(_verdict())
+        world.service.start('T-1', diff_source=world.diffs)
+        self.assertTrue(_wait(lambda: not world.service.is_running('T-1'), 30))
+        # The fixture's client has no model configured: the CLI's own default.
+        self.assertNotIn('--model', world.cli.oneshot_calls()[-1]['argv'])
+
     def test_the_fix_turns_decisions_come_back_through_the_real_chat(self) -> None:
         # The chat's final reply (the stream-json ``result``) carries the
         # fixer's response block; a rejection with evidence settles its
@@ -483,3 +498,22 @@ class ReviewTimeoutTests(unittest.TestCase):
     def test_the_built_service_wires_the_configured_timeout(self) -> None:
         with patch.dict(os.environ, {REVIEW_TIMEOUT_ENV: '5400'}):
             self.assertEqual(review_timeout_seconds(), 5400)
+
+
+class DefaultModelTests(unittest.TestCase):
+    """What the loop view names as the reviewer's model when none is picked."""
+
+    def test_it_is_the_implementation_backends_model(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from tests.chaos_lib import build_real_agent_service
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        service, _ = build_real_agent_service(Path(tmp.name))
+        service._implementation_service = ImplementationService(
+            ClaudeCliClient(binary='claude', model='claude-opus-5-5[1m]'),
+        )
+        self.assertEqual(service.review_loop_default_model, 'claude-opus-5-5[1m]')
+        service._implementation_service = ImplementationService(ClaudeCliClient(binary='claude'))
+        self.assertEqual(service.review_loop_default_model, '')
+

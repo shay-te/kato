@@ -921,7 +921,7 @@ class AgentServiceTests(unittest.TestCase):
             workspace_manager=workspace_manager,
             planning_session_runner=planning_session_runner,
         )
-        wait_planning_service._resolve_planning_context = Mock(
+        wait_planning_service.resolve_planning_context = Mock(
             return_value=_PlanningContext(
                 cwd='.',
                 expected_branch='PROJ-1',

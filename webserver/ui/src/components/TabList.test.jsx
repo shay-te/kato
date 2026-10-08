@@ -135,6 +135,13 @@ describe('TabList', () => {
     expect(screen.getByText(/No tabs yet/)).toBeInTheDocument();
   });
 
+  test('New task button fires onNewTask', () => {
+    const onNewTask = vi.fn();
+    render(<TabList sessions={[]} onSelect={() => {}} onNewTask={onNewTask} />);
+    fireEvent.click(screen.getByRole('button', { name: 'New task' }));
+    expect(onNewTask).toHaveBeenCalledTimes(1);
+  });
+
   test('Add task button fires onOpenAddTask', () => {
     const onOpenAddTask = vi.fn();
     render(<TabList sessions={[]} onSelect={() => {}} onOpenAddTask={onOpenAddTask} />);

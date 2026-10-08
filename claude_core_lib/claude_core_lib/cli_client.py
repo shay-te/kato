@@ -176,6 +176,11 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             )
 
     @property
+    def model(self) -> str:
+        """The configured model ('' = the CLI's own default)."""
+        return self._model
+
+    @property
     def _permission_mode(self) -> str:
         return (
             self.BYPASS_PERMISSION_MODE
@@ -280,6 +285,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         log_label: str = '',
         cancel_event: threading.Event | None = None,
         timeout_seconds: int = 0,
+        model: str = '',
     ) -> str:
         """Run a single read-only Claude turn and return the raw text.
 
@@ -297,7 +303,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         ``additional_dirs`` / ``sandbox_root`` widen what the run can read (and,
         in docker mode, what is mounted) to a whole multi-repo task.
         ``cancel_event`` makes the run stoppable mid-way: setting it kills the
-        CLI and raises ``ProcessCancelled``.
+        CLI and raises ``ProcessCancelled``. ``model`` runs THIS turn on another
+        model ('' = the client's configured one).
         """
         normalized_prompt = normalized_text(prompt)
         if not normalized_prompt:
@@ -317,6 +324,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             sandbox_root=sandbox_root,
             cancel_event=cancel_event,
             timeout_seconds=timeout_seconds,
+            model=model,
         )
         result_text = payload.get('result') or payload.get(ImplementationFields.MESSAGE) or ''
         return str(result_text)
@@ -461,6 +469,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         sandbox_root: str = '',
         cancel_event: threading.Event | None = None,
         timeout_seconds: int = 0,
+        model: str = '',
     ) -> dict[str, str | bool]:
         # 0 = the client's configured default. A per-call override lets a long
         # read-only run (a big task's review) get more than the default, which
@@ -474,6 +483,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             allowed_tools=allowed_tools,
             disallowed_tools=disallowed_tools,
             persist_session=persist_session,
+            model=model,
         )
         env = self._build_subprocess_env()
         log_label = log_label or 'Claude CLI'
@@ -566,6 +576,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         allowed_tools: str | None = None,
         disallowed_tools: str | None = None,
         persist_session: bool = True,
+        model: str = '',
     ) -> list[str]:
         """``allowed_tools`` / ``disallowed_tools`` replace the client's own
         lists for this command only (``None`` keeps them); the non-overridable
@@ -592,7 +603,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         )])
         append_model_effort_flags(
             command,
-            model=self._model,
+            # A per-run model (the review loop's pick) outranks the client's.
+            model=normalized_text(model) or self._model,
             max_turns=self._max_turns,
             effort=self._effort,
         )

@@ -46,8 +46,11 @@ fixer. A bare "I disagree" settles nothing. Without this, a fresh reviewer
 re-raising a decided issue ended the loop as **stuck**.
 
 It stops on: clean · the round cap (picked per loop, 1–30 reviews; default 5,
-so at most 4 fix rounds) · **stuck** (none of the issues the fixer claimed to
-fix — or left unanswered — went away; settled ones don't count) · Stop · a
+so at most 4 fix rounds) · **stuck** (every blocking issue left has
+survived ``STUCK_AFTER_MISSED_FIXES`` = 2 fixes that claimed it — or left it
+unanswered — and nothing new was found; settled ones don't count. Anything
+new, or a repeat that missed only once, goes back to the fixer, the repeat
+marked ``repeat_of`` / ``missed_fixes``) · Stop · a
 failure (with a reason) · a host restart (**interrupted**, never resumed). A
 fix turn with no readable response block is not a failure: its findings are
 recorded as unanswered and the next review judges the code.

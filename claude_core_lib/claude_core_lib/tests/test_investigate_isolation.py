@@ -177,5 +177,20 @@ def _completed(stdout: str):
     return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr='')
 
 
+@unittest.skipIf(os.name == 'nt', 'shebang-script stand-in for the CLI is POSIX')
+class PerRunModelTests(unittest.TestCase):
+
+    def test_a_run_on_another_model_outranks_the_clients(self) -> None:
+        binary, record = _fake_cli(self)
+        client = ClaudeCliClient(binary=binary, model='claude-opus-5-5[1m]')
+        self.assertEqual(client.model, 'claude-opus-5-5[1m]')
+        client.investigate('review this', cwd=tempfile.gettempdir(), model=' sonnet ')
+        self.assertEqual(_flag(_recorded(record)['argv'], '--model'), 'sonnet')
+        client.investigate('review this', cwd=tempfile.gettempdir())
+        self.assertEqual(_flag(_recorded(record)['argv'], '--model'), 'claude-opus-5-5[1m]')
+        # The pick is for that run only: the client's own model is untouched.
+        self.assertEqual(client.model, 'claude-opus-5-5[1m]')
+
+
 if __name__ == '__main__':
     unittest.main()

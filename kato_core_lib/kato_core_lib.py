@@ -39,8 +39,10 @@ from kato_core_lib.data_layers.service.review_comment_service import (
     ReviewCommentService,
 )
 from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
-from kato_core_lib.data_layers.service.task_state_service import TaskStateService
-from kato_core_lib.data_layers.service.task_service import TaskService
+from kato_core_lib.data_layers.service.local_task_routing import (
+    LocalAwareTaskService,
+    LocalAwareTaskStateService,
+)
 from kato_core_lib.data_layers.service.testing_service import TestingService
 from kato_core_lib.data_layers.service.parallel_task_runner import ParallelTaskRunner
 from kato_core_lib.data_layers.service.triage_service import (
@@ -83,7 +85,8 @@ from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 from kato_core_lib.errors import AgentBackendChangedError
-from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
+from kato_core_lib.helpers.kato_paths_utils import kato_home_path, kato_session_state_dir
+from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
@@ -490,8 +493,16 @@ class KatoCoreLib(CoreLib):
             )
         )
         task_data_access = TaskDataAccess(ticket_cfg, ticket_client)
-        task_service = TaskService(ticket_cfg, task_data_access)
-        task_state_service = TaskStateService(ticket_cfg, task_data_access)
+        # Tasks created in kato's own UI ("New task", no tracker) live beside
+        # the tracker's: both services route LOCAL-* ids to this store and
+        # list local tasks with the tracker's (local_task_routing).
+        local_tasks = LocalTaskStore(
+            kato_home_path('local_tasks.json', env_key='KATO_LOCAL_TASKS_PATH'),
+        )
+        task_service = LocalAwareTaskService(ticket_cfg, task_data_access, local_tasks)
+        task_state_service = LocalAwareTaskStateService(
+            ticket_cfg, task_data_access, local_tasks,
+        )
         repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does

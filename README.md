@@ -43,6 +43,7 @@ Coding agents are powerful but scary: they run shell commands, touch credentials
 ### See and steer the work
 - **Live diff viewer + inline comments.** Read every change as it lands and drop a comment on any line — kato treats it as a new instruction and re-runs.
 - **Review loop — fresh eyes until it's clean.** Start it from the task's toolbar: an independent reviewer that never saw the work reads the whole change, the task's chat fixes what it found, and kato reviews again — until a review comes back clean. [How it works ↓](#review-loop)
+- **Write a task right in kato — no tracker needed.** The **New task** tab takes a title, a description (as long as you like, markdown), the repositories, and how to start — **Plan** by default, so the agent proposes before it changes anything. Kato clones, branches, and opens the chat.
 - **Saved prompts, one click away.** The prompts you send again and again ("review your change", "write the missing tests", …) become buttons on the task toolbar. Click one and it goes into that task's chat.
 - **Smart PR-comment handling.** Reviewer comments get fixed or answered in-thread; comments that @-mention a *human* (not the bot) are ignored, so kato never acts on a side conversation.
 - **Gets better over time.** Lessons from past tasks are fed back into future runs.
@@ -81,6 +82,7 @@ That's it. To make kato work a ticket: open it in your tracker, **assign it to y
 - 💬 **Handle reviewer feedback** — fix the comment OR reply in the thread, kato decides
 - 🔁 **Review loop** — an independent reviewer and the task's chat go back and forth until the change is clean
 - ⚡ **Saved prompts** — your most-used prompts as one-click buttons on every task
+- ✏️ **New task** — create a task in kato itself, alongside your tracker's tickets
 - 🔐 **Block bad work before it starts** — `.env` / secret / CVE scanner runs before the agent sees the code
 - 🛡 **Block harmful actions while it runs** — Action Guard refuses credential theft, network exfiltration, and destructive commands; you set Block / Ask / Allow per category
 - 🖥 **Watch it work live** — Planning UI (Flask + React) with chat, file tree, diffs, status bar
@@ -92,15 +94,15 @@ That's it. To make kato work a ticket: open it in your tracker, **assign it to y
 
 ## Review loop
 
-Click the **loop** button on a task's toolbar to open the review loop view, pick how many rounds to allow (1–30, default 5), and press **Start**. Each round:
+Click the **loop** button on a task's toolbar to open the review loop view, pick how many rounds to allow (1–30, default 5) and which model reviews ("Reviewed by", default: kato's own model), and press **Start**. Each round:
 
 1. **A fresh reviewer reads the whole change** — every repo, against its base branch, including files not committed yet. It is a new, read-only session each time: it can't edit anything and it doesn't carry the chat's assumptions.
 2. **The findings go into the task's chat.** Blockers and majors are sent to be fixed; minor issues and nits are reported only. For each finding the chat answers **fixed** (with a test), **rejected**, or **out of scope** (with evidence).
 3. **The next reviewer is told those answers.** A finding rejected with evidence isn't raised again unless the reviewer brings new evidence.
 
-The loop stops when a review is clean, when the round limit is reached, when the same issues keep coming back, or when you press Stop. Optional stages, all on by default and each a checkbox in the view:
+The loop stops when a review is clean, when the round limit is reached, when the same issues survive two fixes with nothing new found, or when you press Stop. An issue the chat said it fixed but the reviewer still finds is sent back once more, marked as such. Optional stages, each a checkbox in the view — the last three are on by default:
 
-- **Self-check first** — the chat reviews and fixes its own change before any outside reviewer.
+- **Self-check first** (off unless you tick it) — the chat reviews and fixes its own change before any outside reviewer.
 - **Tests must pass** — a clean review only ends the loop after the chat runs the tests and they pass.
 - **Clean-room check** — a clean verdict after fixes has to be confirmed by a reviewer who is told nothing about the earlier rounds.
 - **Extra sweep** — every clean verdict gets one more blind review: a single clean review is not proof.

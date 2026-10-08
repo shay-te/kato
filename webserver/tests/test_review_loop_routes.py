@@ -138,24 +138,62 @@ class ReviewLoopRouteTests(_RoutesBase):
                     client.get(f'/api/sessions/T-1/review-loop/{bad}').status_code, 404,
                 )
 
-    def test_every_stage_is_on_unless_the_request_turns_it_off(self) -> None:
+    def test_a_stage_left_out_takes_its_default_and_the_self_check_is_off(self) -> None:
+        stages = ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep')
         client = self.client(FakeReviewer(block_until_cancelled=True))
         loop = client.post('/api/sessions/T-1/review-loop').get_json()['loop']
         self.assertEqual(
-            {k: loop[k] for k in ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep')},
-            dict.fromkeys(('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep'), True),
+            {k: loop[k] for k in stages},
+            {'self_check': False, 'verify_tests': True, 'confirm_clean': True, 'extra_sweep': True},
         )
         self.loops.stop('T-1')
         self.wait_finished()
-        some_off = client.post('/api/sessions/T-1/review-loop', json={
-            'self_check': False, 'extra_sweep': False, 'verify_tests': 'yes',
+        picked = client.post('/api/sessions/T-1/review-loop', json={
+            'self_check': True, 'extra_sweep': False, 'verify_tests': 'yes',
         }).get_json()['loop']
-        # Only an explicit false turns a stage off.
+        # An explicit true / false is the pick; anything else, the default.
         self.assertEqual(
-            (some_off['self_check'], some_off['verify_tests'], some_off['confirm_clean'],
-             some_off['extra_sweep']),
-            (False, True, True, False),
+            tuple(picked[k] for k in stages), (True, True, True, False),
         )
+
+    def test_the_picked_model_runs_the_reviews(self) -> None:
+        reviewer = FakeReviewer(reply())
+        client = self.client(reviewer)
+        response = client.post('/api/sessions/T-1/review-loop', json={'model': ' sonnet '})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json()['loop']['model'], 'sonnet')
+        self.wait_finished()
+        # Every review of the loop — the first and its clean-room sweep.
+        self.assertEqual(reviewer.models, ['sonnet', 'sonnet'])
+
+    def test_a_model_that_is_not_a_model_id_is_refused(self) -> None:
+        client = self.client(FakeReviewer(reply()))
+        for bad in ('opus; rm -rf /', '-p', 5, ['opus'], 'x' * 101):
+            response = client.post('/api/sessions/T-1/review-loop', json={'model': bad})
+            self.assertEqual(response.status_code, 400, bad)
+            self.assertIn('model must be a model id', response.get_json()['error'])
+        self.assertFalse(self.loops.is_running('T-1'))
+
+    def test_the_reviewers_default_model_is_reported_as_itself(self) -> None:
+        from kato_webserver.app import create_app
+        app = create_app(agent_service=SimpleNamespace(
+            review_loops=None, review_loop_default_model='claude-opus-5-5[1m]',
+        ))
+        body = app.test_client().get('/api/review-loop/default-model').get_json()
+        self.assertEqual(body, {'model': 'claude-opus-5-5[1m]', 'label': 'Opus 5.5 (1M context)'})
+        bare = create_app(agent_service=None).test_client().get('/api/review-loop/default-model')
+        self.assertEqual(bare.get_json(), {'model': '', 'label': ''})
+
+    def test_the_server_defaults_are_the_views_defaults(self) -> None:
+        # One set of defaults in two languages: a request that leaves a stage
+        # out must run what the view's checkbox would have started at.
+        import re
+        from pathlib import Path
+        from kato_webserver.review_loop_routes import _STAGE_DEFAULTS
+        pref = Path(__file__).resolve().parents[1] / 'ui' / 'src' / 'components' / 'reviewLoop' / 'reviewLoopStagesPref.js'
+        block = re.search(r'REVIEW_LOOP_STAGE_DEFAULTS = Object\.freeze\(\{(.*?)\}\)', pref.read_text(encoding='utf-8'), re.S)
+        view = {name: value == 'true' for name, value in re.findall(r'(\w+): (true|false)', block.group(1))}
+        self.assertEqual(view, _STAGE_DEFAULTS)
 
     def test_the_operator_picks_the_number_of_rounds(self) -> None:
         # A NEW blocking finding every review (a repeat would end it as stuck):

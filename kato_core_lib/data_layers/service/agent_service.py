@@ -320,6 +320,28 @@ class AgentService(MissionStepLoggerMixin, Service):
             logger=later(self, 'logger'),
         )
 
+        # Tasks created in kato's own UI, no tracker. On only when the task
+        # service routes local ids (``local_task_routing``); they are cloned
+        # and branched through the same steps a ``kato:wait-planning`` ticket
+        # takes.
+        from kato_core_lib.data_layers.service.local_task_routing import (
+            LocalAwareTaskService,
+        )
+        self._local_task_service = None
+        if (
+            isinstance(self._task_service, LocalAwareTaskService)
+            and self._wait_planning_service is not None
+        ):
+            from kato_core_lib.data_layers.service.local_task_service import (
+                LocalTaskService,
+            )
+            self._local_task_service = LocalTaskService(
+                task_service=self._task_service,
+                repository_service=self._repository_service,
+                workspace_manager=self._workspace_manager,
+                prepare_workspace=self._wait_planning_service.resolve_planning_context,
+            )
+
         # Comments (operator diff comments + provider PR review comments) are
         # their own subsystem: one store, one queue, one scheduler. They were
         # 42% of this class; the logic lives in TaskCommentService now and
@@ -391,6 +413,20 @@ class AgentService(MissionStepLoggerMixin, Service):
         (kato's chat, reviewer and rules behind it).
         """
         return self._review_loop_service
+
+    @property
+    def review_loop_default_model(self) -> str:
+        """The model a review runs on when the operator picks none."""
+        return str(getattr(self._implementation_service, 'investigation_model', '') or '')
+
+    @property
+    def local_tasks(self):
+        """Create / prepare tasks made in kato's own UI; None when not wired.
+
+        See ``local_task_service`` (create, then clone + branch) and
+        ``local_task_routing`` (how the rest of kato sees them).
+        """
+        return self._local_task_service
 
     def finish_from_done_marker(self, task_id: str):
         """The ``<KATO_TASK_DONE>`` callback: publish — unless a loop is mid-cycle.
