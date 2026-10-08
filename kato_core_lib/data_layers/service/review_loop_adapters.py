@@ -235,6 +235,10 @@ def _event_message(state: ReviewLoopState, event: str) -> str:
     number = state.round
     if event == 'started':
         return f'review loop started (up to {state.max_rounds} reviews)'
+    if event == 'resumed':
+        return f'review loop resumed: {state.resume_note}'
+    if event == 'nudged':
+        return f'review loop round {number}: nudged the chat to continue its fixes'
     if event == 'reviewing':
         return f'review loop round {number}: reviewing the whole change'
     if event == 'reviewed':

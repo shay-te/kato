@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from review_loop_core_lib.review_loop_core_lib.chat_prompts import (
+    build_continue_prompt,
     build_self_check_prompt,
     build_tests_fix_prompt,
     build_tests_prompt,
@@ -76,6 +77,8 @@ class HeaderPinTests(unittest.TestCase):
             (build_tests_prompt(wording=wording), 'run the tests'),
             (build_tests_fix_prompt(task_id='T-1', failures=['x'], wording=wording),
              'fix the failing tests'),
+            (build_continue_prompt(round_number=7, failing_tests=False, wording=wording),
+             'continue round 7'),
         ):
             with self.subTest(stage=stage):
                 respawned = 'WORKSPACE SCOPE — STRICT BOUNDARY\n...\n\n' + message

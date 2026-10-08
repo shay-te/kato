@@ -255,6 +255,37 @@ class ReviewLoopRouteTests(_RoutesBase):
         loop = client.get('/api/sessions/T-1/review-loop').get_json()['loop']
         self.assertEqual(loop['status'], 'stopped')
 
+    def test_resume_picks_the_stopped_loop_up_and_nudges_the_chat(self) -> None:
+        self.chat.answer_turns = False  # the fix turn is cut off
+        client = self.client(FakeReviewer(reply(finding('MAJOR')), reply()))
+        self.assertEqual(client.post('/api/sessions/T-1/review-loop/resume').status_code, 409)
+        client.post('/api/sessions/T-1/review-loop', json={'verify_tests': False})
+        deadline = time.monotonic() + 5
+        while self.loops.state('T-1').phase.value != 'awaiting_fix' and time.monotonic() < deadline:
+            time.sleep(0.01)
+        client.post('/api/sessions/T-1/review-loop/stop')
+        self.wait_finished()
+        stopped = client.get('/api/sessions/T-1/review-loop').get_json()['loop']
+        self.assertEqual(stopped['resume'], "nudge the chat to finish round 1's fixes")
+        tabs = client.get('/api/sessions').get_json()
+        entry = next(tab for tab in tabs if tab['task_id'] == 'T-1')
+        self.assertEqual(entry['review_loop']['resume'], stopped['resume'])
+
+        self.chat.answer_turns = True
+        response = client.post('/api/sessions/T-1/review-loop/resume')
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.get_json()['loop']['loop_id'], stopped['loop_id'])
+        self.wait_finished()
+        loop = client.get('/api/sessions/T-1/review-loop').get_json()['loop']
+        self.assertEqual((loop['status'], loop['resumes']), ('clean', 1))
+        prompts = [prompt for prompt, _ in self.chat.delivered]
+        self.assertEqual(len(prompts), 2)
+        self.assertTrue(prompts[1].startswith('Host review loop — continue round 1'))
+        # Clean: nothing is left to resume.
+        refused = client.post('/api/sessions/T-1/review-loop/resume')
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn('nothing to resume', refused.get_json()['error'])
+
     def test_the_tab_list_carries_where_the_loop_is(self) -> None:
         reviewer = FakeReviewer(block_until_cancelled=True)
         client = self.client(reviewer)
@@ -275,6 +306,7 @@ class ReviewLoopRouteTests(_RoutesBase):
         for method, path in (('get', '/api/sessions/T-1/review-loop'),
                              ('post', '/api/sessions/T-1/review-loop'),
                              ('post', '/api/sessions/T-1/review-loop/stop'),
+                             ('post', '/api/sessions/T-1/review-loop/resume'),
                              ('get', '/api/sessions/T-1/review-loop/' + 'a' * 32 + '/rounds/1/diff')):
             with self.subTest(path=path):
                 self.assertEqual(getattr(client, method)(path).status_code, 503)

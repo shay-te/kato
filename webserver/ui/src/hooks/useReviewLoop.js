@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchReviewLoop, startReviewLoop, stopReviewLoop } from '../api.js';
+import { fetchReviewLoop, resumeReviewLoop, startReviewLoop, stopReviewLoop } from '../api.js';
 import { toastResult } from '../stores/toastStore.js';
 import { useBusyAction } from './useBusyAction.js';
 import {
@@ -64,6 +64,11 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
   const [stopping, stop] = useBusyAction(() => stopReviewLoop(taskId), {
     onDone: (result) => { announceStop(result, taskId, taskSummary); },
   });
+  // The SAME loop picks up where it stopped, so what the operator opened and
+  // closed in it stays as it was (unlike Run again).
+  const [resuming, resume] = useBusyAction(() => resumeReviewLoop(taskId), {
+    onDone: (result) => { announceResume(result, taskId, taskSummary); },
+  });
 
   return {
     summary,
@@ -73,6 +78,8 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
     starting,
     stop,
     stopping,
+    resume,
+    resuming,
   };
 }
 
@@ -114,6 +121,27 @@ function announceStart(result, taskId, taskSummary) {
   toastResult({
     kind: 'error',
     title: 'Couldn’t start the review loop',
+    message: result?.body?.error || result?.error || 'kato did not accept the request',
+    taskId,
+    taskSummary,
+  });
+}
+
+function announceResume(result, taskId, taskSummary) {
+  if (result?.ok) {
+    const note = String(result.body?.loop?.resume_note || '');
+    toastResult({
+      kind: 'success',
+      title: 'Review loop resumed',
+      message: note ? `It picks up where it stopped: ${note}.` : 'It picks up where it stopped.',
+      taskId,
+      taskSummary,
+    });
+    return;
+  }
+  toastResult({
+    kind: 'error',
+    title: 'Couldn’t resume the review loop',
     message: result?.body?.error || result?.error || 'kato did not accept the request',
     taskId,
     taskSummary,

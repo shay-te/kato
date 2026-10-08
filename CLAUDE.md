@@ -309,7 +309,7 @@ Modelled on reviewed-in-rounds PRs where the implementer rejects a wrong finding
 The loop never commits or pushes; `<KATO_TASK_DONE>` is ignored while it runs
 (`AgentService.finish_from_done_marker`). Rounds live in `~/.kato/review_loops/` (outside
 every clone). The chat's Stop, a task delete, and kato shutdown end it; a restart marks
-it interrupted (never resumed). A fix paused on a permission ask shows "waiting for your
+it interrupted (never resumed on its own). A fix paused on a permission ask shows "waiting for your
 approval" and is never treated as stalled. Each review run (a fresh one-shot `claude -p`)
 gets its OWN timeout — `KATO_REVIEW_LOOP_TIMEOUT_SECONDS` (default 7200, clamp ≥60), passed
 per-call to `investigate(timeout_seconds=)` — NOT the transport's 1800s implementation default,
@@ -318,6 +318,20 @@ which a big multi-repo task's review (slower on Windows) overruns, failing the w
 header button (opens the view; nothing starts from it) + "where is it now" chip, tab badge,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.
+
+**Resume** (the view's Resume button → `POST /api/sessions/<id>/review-loop/resume`): a
+STOPPED / FAILED / INTERRUPTED / STUCK loop picks up — the SAME loop (loop_id, rounds, ledger,
+stages, model) — at the step it was cut off in, which `ReviewLoopState.resume_point()` reads
+from the saved rounds (so loops saved before Resume existed resume too): an unfinished review
+is run again IN THE SAME ROUND (the reviewer is a fresh one-shot — there is no session to
+`--resume`); a chat cut off mid-fix gets a `Kato review loop — continue round N` nudge, never
+the findings twice, and its reply is still read for the `<review-response>` ledger; findings or
+failing tests never sent (or held back as STUCK) are sent; a cut-off self-check / test run is
+asked again. The summary's `resume` names the step ('' = no button). CLEAN and MAX_ROUNDS are
+done, and nothing is ever sent after the last round. The loop's between-rounds memory (missed
+fixes, first ids, sweep-next, tests digest) is DERIVED from the saved rounds at every round
+(`progress.loop_memory`) — never carried in locals — so a resumed loop judges each review
+exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
 
 ### New task (local tasks — no tracker)
 ```

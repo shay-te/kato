@@ -1,4 +1,4 @@
-"""Every task's review loops: start, stop, look at, forget.
+"""Every task's review loops: start, stop, resume, look at, forget.
 
 At most one loop runs per task. The service keeps the running ones and each
 task's most recent finished one in memory, so the cheap ``summaries()`` an
@@ -101,15 +101,9 @@ class ReviewLoopService(object):
         review to agree). ``extra_sweep`` goes further: ANY clean verdict needs
         one more clean-room review to agree — two clean reviews in a row.
         """
-        if not self._store.is_valid_task_id(task_id):
-            raise ReviewLoopError(f'not a task id that can be reviewed: {task_id!r}')
-        refusal = self._can_start(task_id) if self._can_start is not None else ''
-        if refusal:
-            raise ReviewLoopError(refusal)
+        self._refuse_to_start(task_id)
         with self._lock:
-            running = self._runners.get(task_id)
-            if running is not None and running.is_alive:
-                raise ReviewLoopError('a review loop is already running for this task')
+            self._refuse_if_running(task_id)
             self._store.open(task_id)
             state = ReviewLoopState.new(
                 task_id, max_rounds=self._rounds_for(max_rounds), now=self._clock(),
@@ -117,24 +111,85 @@ class ReviewLoopService(object):
                 confirm_clean=bool(confirm_clean), extra_sweep=bool(extra_sweep),
                 model=model,
             )
-            runner = ReviewLoopRunner(
-                state,
-                diff_source=diff_source,
-                reviewer=self._reviewer,
-                chat=self._chat,
-                store=self._store,
-                wording=self._wording,
-                task_summary=task_summary,
-                task_description=task_description,
-                observer=self._observer,
-                on_finished=self._runner_finished,
-                options=self._options,
-                clock=self._clock,
-                logger=self._logger,
+            runner = self._new_runner(
+                state, diff_source=diff_source,
+                task_summary=task_summary, task_description=task_description,
             )
-            self._runners[task_id] = runner
         runner.start()
         return runner.snapshot()
+
+    def resume(
+        self,
+        task_id: str,
+        *,
+        diff_source: TaskDiffSource,
+        task_summary: str = '',
+        task_description: str = '',
+    ) -> ReviewLoopState:
+        """Pick the task's latest loop up where it was cut off.
+
+        Stopped, failed, interrupted or stuck: the loop finishes the step it
+        was in (``ReviewLoopState.resume_point``) and goes on with its own
+        round limit, stages, model, decisions and repeat counts — the same
+        loop, not a new one. Raises ``ReviewLoopError`` with a reason.
+        """
+        self._refuse_to_start(task_id)
+        latest = self._latest_states().get(task_id)
+        with self._lock:
+            self._refuse_if_running(task_id)
+            if latest is None:
+                raise ReviewLoopError('this task has no review loop to resume')
+            point = latest.resume_point()
+            if point is None:
+                raise ReviewLoopError(
+                    f'the last review loop ended {latest.status.value} — there is nothing '
+                    'to resume; run a new loop instead',
+                )
+            self._store.open(task_id)
+            state = latest.copy()
+            state.reopen(point, self._clock())
+            runner = self._new_runner(
+                state, diff_source=diff_source,
+                task_summary=task_summary, task_description=task_description,
+            )
+        runner.start(resume=point)
+        return runner.snapshot()
+
+    def _refuse_to_start(self, task_id: str) -> None:
+        if not self._store.is_valid_task_id(task_id):
+            raise ReviewLoopError(f'not a task id that can be reviewed: {task_id!r}')
+        refusal = self._can_start(task_id) if self._can_start is not None else ''
+        if refusal:
+            raise ReviewLoopError(refusal)
+
+    def _refuse_if_running(self, task_id: str) -> None:
+        """Called with ``_lock`` held."""
+        running = self._runners.get(task_id)
+        if running is not None and running.is_alive:
+            raise ReviewLoopError('a review loop is already running for this task')
+
+    def _new_runner(
+        self, state: ReviewLoopState, *, diff_source: TaskDiffSource,
+        task_summary: str, task_description: str,
+    ) -> ReviewLoopRunner:
+        """A runner for ``state``, registered as the task's. ``_lock`` held."""
+        runner = ReviewLoopRunner(
+            state,
+            diff_source=diff_source,
+            reviewer=self._reviewer,
+            chat=self._chat,
+            store=self._store,
+            wording=self._wording,
+            task_summary=task_summary,
+            task_description=task_description,
+            observer=self._observer,
+            on_finished=self._runner_finished,
+            options=self._options,
+            clock=self._clock,
+            logger=self._logger,
+        )
+        self._runners[state.task_id] = runner
+        return runner
 
     def _rounds_for(self, requested: int | None) -> int:
         if requested is None:
@@ -225,9 +280,9 @@ class ReviewLoopService(object):
         """Close loops a previous run of the host left RUNNING; returns how many.
 
         A loop's thread does not survive its process, so on the next start the
-        saved state still says running. It is never resumed — the chat it was
-        waiting on is gone and the operator decides whether to run again —
-        just recorded as interrupted.
+        saved state still says running. It is never resumed on its own — the
+        chat it was waiting on is gone, and the operator decides between
+        ``resume`` and a new loop — just recorded as interrupted.
         """
         now = self._clock()
         closed = 0

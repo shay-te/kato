@@ -277,6 +277,28 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 repository.id,
             )
             return
+        # A clone of an EMPTY remote — a repository created on the provider
+        # with no commits and no branches yet — exits 0 and lands with no
+        # objects and no refs: byte-for-byte the state an interrupted clone
+        # leaves. The repair below therefore deleted it as "interrupted", the
+        # sync logged "✓ cloned", and branch prep then failed on the missing
+        # folder with "missing local repository path" — every sync, a fresh
+        # clone thrown away, and nothing naming the real cause (UNA-3237).
+        #
+        # git exited 0, so this is not an interruption: the remote has nothing
+        # to clone, and there is no branch to fork the task branch from or to
+        # open a pull request into. Only the operator can fix that, so say so.
+        # Nothing is left behind — the folder holds only ``.git`` — and the
+        # next sync after the first push clones it normally.
+        if self._clone_is_empty_of_objects(target):
+            if [entry.name for entry in target.iterdir()] == ['.git']:
+                shutil.rmtree(target, ignore_errors=True)
+            raise RuntimeError(
+                f'{repository.id} is an empty repository — its remote has no '
+                f'commits or branches yet, so there is no branch to start the '
+                f'task from. Push a first commit to it (for example a README '
+                f'on its default branch), then sync again'
+            )
         # A clone that exits 0 is still not proof of a usable checkout. The
         # reuse path below already had to learn this; a FRESH clone can land
         # the same way — ``--reference-if-able ... --dissociate`` does real
@@ -324,9 +346,8 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         without that proof, is what destroyed 41 files of an operator's work
         through ``_make_git_ready_for_work``.
 
-        A repo that is legitimately empty (freshly created, no commits) hits
-        this same branch and must NOT turn into a task failure, so an unborn
-        HEAD returns quietly.
+        An unborn HEAD with no objects is re-fetched (see below); an unborn
+        HEAD that does hold objects returns quietly.
 
         A failed repair does raise. Past that point the clone is known to have
         commits and no files, which makes it unusable — handing that folder to
@@ -351,15 +372,15 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         except Exception:
             head = ''
         if not normalized_text(head):
-            # Unborn HEAD with an empty working tree. Two cases look the
-            # same on disk, and they are told apart by whether the clone has
-            # any objects at all: a genuinely empty repository has a HEAD
-            # ref and no commits, while an INTERRUPTED clone has neither —
-            # ``git clone`` creates the directory before it fetches, so a
-            # process killed in between leaves ``.git`` with zero objects
-            # and no refs.
+            # Unborn HEAD with an empty working tree. An INTERRUPTED clone
+            # lands here with zero objects and no refs — ``git clone``
+            # creates the directory before it fetches, so a process killed in
+            # between leaves nothing else. (So does a clone of an EMPTY
+            # remote: the two are identical on disk. Re-fetching tells them
+            # apart — the fresh clone exits 0 and still holds nothing, which
+            # ``_ensure_clone_locked`` reports as an empty repository.)
             #
-            # Returning here left that second case unrepairable forever:
+            # Returning here left an interrupted clone unrepairable forever:
             # ``ensure_clone`` sees ``.git`` and skips, every later tick
             # agrees, and the agent is handed an empty folder while the
             # repos behind it never get branched. Re-cloning is not
@@ -400,9 +421,10 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         """True when the clone has no git objects AND no refs.
 
         The signature of an interrupted clone, and deliberately narrow: a
-        real repository — even one with no commits yet — has refs or objects
-        on disk. Anything unreadable answers False, so a permissions problem
-        never becomes a deletion.
+        repository with any commit has refs or objects on disk. A clone of an
+        EMPTY remote also answers True — it is identical on disk — and holds
+        nothing to lose either. Anything unreadable answers False, so a
+        permissions problem never becomes a deletion.
         """
         try:
             objects = target / '.git' / 'objects'

@@ -11,6 +11,9 @@ two more things, each ending in a machine-readable block it parses
   finding AND the tests pass. Failing tests go back to the chat to fix
   (``build_tests_fix_prompt``) and the loop goes on.
 
+A loop RESUMED while the chat was mid-fix sends a short **continue** nudge
+instead of the round's message again (``build_continue_prompt``).
+
 Each message's FIRST line is the host's ``stage_header`` so a UI can show it
 as the loop's, not the operator's. Text the chat did not get from the
 operator (test failures) is framed as untrusted.
@@ -18,6 +21,7 @@ operator (test failures) is framed as untrusted.
 
 from __future__ import annotations
 
+from review_loop_core_lib.review_loop_core_lib.findings_prompt import RESPONSE_OPEN
 from review_loop_core_lib.review_loop_core_lib.ports import LoopWording
 from review_loop_core_lib.review_loop_core_lib.reviewer_prompt import CHECKLIST
 
@@ -88,6 +92,32 @@ The task's tests are failing:
 Fix the code so they pass — at the root cause. If a test itself is wrong, fix
 the test and say why. Run the tests again before you finish. Do not commit,
 push or run git.''', wording)
+
+
+def build_continue_prompt(
+    *, round_number: int, failing_tests: bool, wording: LoopWording,
+) -> str:
+    """Nudge the chat to finish a fix the loop was cut off waiting for.
+
+    The round's message is already in the chat, so it is not sent again: a
+    resumed loop asks the chat to carry on — the review loop's own "continue"
+    — and still needs the answer block the round asked for, because that
+    block is the decision ledger the next review is told.
+    """
+    if failing_tests:
+        work = f"fixing the failing tests from round {round_number}"
+        ending = 'Run the tests again before you finish.'
+    else:
+        work = f"round {round_number}'s findings"
+        ending = (
+            f'End your reply with the {RESPONSE_OPEN} block that message asked for '
+            '— one entry per finding id — and nothing after it.'
+        )
+    return _with_guidance(f'''{stage_header(wording, f"continue round {round_number}")}
+
+The review loop stopped while you were working on {work} (that message is
+earlier in this chat). Continue from where you stopped and finish it. Do not
+commit, push or run git. {ending}''', wording)
 
 
 def _with_guidance(prompt: str, wording: LoopWording) -> str:

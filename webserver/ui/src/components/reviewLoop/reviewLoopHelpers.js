@@ -128,6 +128,17 @@ export function reviewLoopOutcome(loop) {
   return OUTCOMES[loop?.status] || null;
 }
 
+// Resume's tooltip: the step the loop picks up at, in kato's own words
+// (``summary.resume``, from ReviewLoopState.resume_point — the one place that
+// decides it). '' = nothing to resume, and no Resume button.
+export function reviewLoopResumeTooltip(loop) {
+  if (isReviewLoopRunning(loop)) { return ''; }
+  const step = String(loop?.resume || '');
+  if (!step) { return ''; }
+  return `Continue this loop where it stopped: ${step}. `
+    + 'It keeps its rounds, decisions, stages and model.';
+}
+
 // The blocking count — what keeps a loop going (BLOCKER + MAJOR). Findings an
 // earlier decision settled are counted apart (``SETTLED``), never in here.
 export function blockingCount(counts) {

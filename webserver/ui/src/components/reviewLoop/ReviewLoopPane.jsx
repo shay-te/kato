@@ -13,6 +13,7 @@ import ReviewLoopTracker from './ReviewLoopTracker.jsx';
 import {
   REVIEW_LOOP_EMPTY_TEXT,
   reviewLoopOutcome,
+  reviewLoopResumeTooltip,
   reviewLoopSentence,
 } from './reviewLoopHelpers.js';
 import { markReviewLoopSeen } from './reviewLoopViewStore.js';
@@ -22,9 +23,9 @@ import { markReviewLoopSeen } from './reviewLoopViewStore.js';
 // to the chat, and the round's saved texts. Loops start HERE, after the
 // operator has picked how many rounds (the header button only opens this).
 export default function ReviewLoopPane({ session, onClose }) {
-  const { summary, detail, running, start, starting, stop, stopping } = useReviewLoop(
-    session, { withDetail: true },
-  );
+  const {
+    summary, detail, running, start, starting, stop, stopping, resume, resuming,
+  } = useReviewLoop(session, { withDetail: true });
   const now = useNowSeconds(running);
   const loopId = summary?.loop_id || '';
   // A FINISHED loop seen here no longer needs the header to announce its
@@ -34,6 +35,10 @@ export default function ReviewLoopPane({ session, onClose }) {
   }, [loopId, running]);
   const outcome = reviewLoopOutcome(summary);
   const status = paneStatus(summary, outcome, now);
+  // Resume continues THIS loop on its own settings; the pickers beside it are
+  // for Run again, which starts a new one from round 1.
+  const resumeTooltip = reviewLoopResumeTooltip(summary);
+  const busy = starting || resuming;
   const action = running ? (
     <>
       <ReviewLoopModelName model={summary?.model || ''} />
@@ -44,10 +49,28 @@ export default function ReviewLoopPane({ session, onClose }) {
     </>
   ) : (
     <>
-      <ReviewLoopModelPicker disabled={starting} />
-      <ReviewLoopRoundsPicker disabled={starting} />
-      <button type="button" className="review-loop-pane-action" onClick={start} disabled={starting}>
-        <BusyIcon busy={starting} idle="play" />
+      <ReviewLoopModelPicker disabled={busy} />
+      <ReviewLoopRoundsPicker disabled={busy} />
+      {resumeTooltip && (
+        <button
+          type="button"
+          className="review-loop-pane-action"
+          onClick={resume}
+          disabled={busy}
+          data-tooltip={resumeTooltip}
+        >
+          <BusyIcon busy={resuming} idle="play" />
+          <span>Resume</span>
+        </button>
+      )}
+      <button
+        type="button"
+        className="review-loop-pane-action"
+        onClick={start}
+        disabled={busy}
+        data-tooltip={resumeTooltip ? 'Start a new loop from round 1 with the settings picked here.' : undefined}
+      >
+        <BusyIcon busy={starting} idle={summary ? 'refresh' : 'play'} />
         <span>{summary ? 'Run again' : 'Start'}</span>
       </button>
     </>

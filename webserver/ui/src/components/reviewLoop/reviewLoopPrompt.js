@@ -12,10 +12,11 @@
 // often not the opening line of the turn the transcript replays.
 export const REVIEW_LOOP_HEADER_PATTERN = /^Kato review loop — round (\d+) of (\d+)$/m;
 
-// The loop's OTHER messages: the main chat's self-check, the test run, and
-// failing tests sent back to fix. Same pinning as above, against
+// The loop's OTHER messages: the main chat's self-check, the test run, failing
+// tests sent back to fix, and the "continue" nudge a resumed loop sends a chat
+// it was cut off waiting for. Same pinning as above, against
 // REVIEW_LOOP_STAGE_HEADER = 'Kato review loop — {stage}'.
-export const REVIEW_LOOP_STAGE_PATTERN = /^Kato review loop — (self-check \d+ of \d+|run the tests|fix the failing tests)$/m;
+export const REVIEW_LOOP_STAGE_PATTERN = /^Kato review loop — (self-check \d+ of \d+|run the tests|fix the failing tests|continue round \d+)$/m;
 
 // ``{ round, maxRounds }`` for a findings message, ``{ stage }`` for a
 // self-check / test message, or null for anything the operator wrote.

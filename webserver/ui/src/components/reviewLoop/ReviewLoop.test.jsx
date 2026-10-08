@@ -19,6 +19,7 @@ import {
 import { _resetReviewLoopRounds, readReviewLoopRounds } from './reviewLoopRoundsPref.js';
 import { _resetReviewLoopStages, readReviewLoopStages } from './reviewLoopStagesPref.js';
 import { _resetReviewLoopModel, readReviewLoopModel, writeReviewLoopModel } from './reviewLoopModelPref.js';
+import { toastStore } from '../../stores/toastStore.js';
 
 const ROUNDS_KEY = 'kato.reviewLoopRounds.v1';
 const STAGES_KEY = 'kato.reviewLoopStages.v2';
@@ -71,6 +72,11 @@ function fakeKato() {
       return text === undefined ? respond(404, { error: 'no such round or artifact' }) : respond(200, { text });
     }
     if (url.endsWith('/review-loop/stop')) { return respond(200, { stopped: true }); }
+    if (url.endsWith('/review-loop/resume')) {
+      if (!kato.loop?.resume) { return respond(409, { error: 'there is nothing to resume' }); }
+      const resumed = summary({ resumes: 1, resume_note: kato.loop.resume, resume: '' });
+      return respond(202, { loop: { ...resumed, rounds: kato.loop.rounds } });
+    }
     if (url.endsWith('/review-loop') && method === 'POST') {
       const body = JSON.parse(init.body || '{}');
       kato.startBodies.push(body);
@@ -270,6 +276,57 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     fireEvent.click(screen.getByRole('button', { name: /run again/i }));
     await waitFor(() => expect(kato.requests).toContain('POST /api/sessions/UNA-1/review-loop'));
     expect(kato.startBodies).toEqual([{ ...DEFAULT_STAGES, max_rounds: 5 }]);
+  });
+
+  test('a loop cut off part-way offers Resume, which continues it — nothing is started', async () => {
+    const failed = summary({
+      status: 'failed', phase: 'done', round: 7, max_rounds: 10,
+      reason: 'the review run failed: Claude CLI did not finish within 7200s',
+      resume: 'run round 7’s review again',
+    });
+    kato.loop = { ...failed, rounds: [round(1)] };
+    render(<ReviewLoopPane session={session(failed)} onClose={() => {}} />);
+    const resume = screen.getByRole('button', { name: /resume/i });
+    expect(resume).toHaveAttribute(
+      'data-tooltip',
+      'Continue this loop where it stopped: run round 7’s review again. '
+        + 'It keeps its rounds, decisions, stages and model.',
+    );
+    // Run again is still there — a new loop from round 1 — and says so.
+    expect(screen.getByRole('button', { name: /run again/i }))
+      .toHaveAttribute('data-tooltip', 'Start a new loop from round 1 with the settings picked here.');
+
+    let toasts = [];
+    const unsubscribe = toastStore.subscribe((list) => { toasts = list; });
+    fireEvent.click(resume);
+    await waitFor(() => expect(kato.requests).toContain('POST /api/sessions/UNA-1/review-loop/resume'));
+    expect(kato.startBodies).toEqual([]);
+    await waitFor(() => expect(toasts.map((entry) => [entry.title, entry.message])).toContainEqual([
+      'Review loop resumed', 'It picks up where it stopped: run round 7’s review again.',
+    ]));
+    unsubscribe();
+  });
+
+  test('a refused resume says why', async () => {
+    const failed = summary({ status: 'failed', phase: 'done', resume: 'run round 2’s review again' });
+    kato.loop = { ...failed, resume: '', rounds: [] };  // resumed elsewhere meanwhile
+    render(<ReviewLoopPane session={session(failed)} onClose={() => {}} />);
+    let toasts = [];
+    const unsubscribe = toastStore.subscribe((list) => { toasts = list; });
+    fireEvent.click(screen.getByRole('button', { name: /resume/i }));
+    await waitFor(() => expect(toasts.map((entry) => [entry.title, entry.message])).toContainEqual([
+      'Couldn’t resume the review loop', 'there is nothing to resume',
+    ]));
+    unsubscribe();
+  });
+
+  test('a loop with nothing left to resume, or still running, offers no Resume', () => {
+    const clean = summary({ status: 'clean', phase: 'done', resume: '' });
+    const { rerender } = render(<ReviewLoopPane session={session(clean)} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: /resume/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /run again/i })).not.toHaveAttribute('data-tooltip');
+    rerender(<ReviewLoopPane session={session(summary({ resume: 'stale' }))} onClose={() => {}} />);
+    expect(screen.queryByRole('button', { name: /resume/i })).toBeNull();
   });
 
   test('a task that never ran a loop explains it and offers Start', () => {

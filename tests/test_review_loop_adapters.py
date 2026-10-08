@@ -405,15 +405,18 @@ class LogLineTests(unittest.TestCase):
         state.rounds.append(ReviewRound(number=2, started_at=1.0))
         state.status = ReviewLoopStatus.STUCK
         state.reason = 'none of the blocking issues from round 1 were fixed'
+        state.resume_note = "nudge the chat to finish round 2's fixes"
         with self.assertLogs(logger, level='INFO') as logs:
-            for event in ('started', 'reviewing', 'reviewed', 'sent', 'fixed', 'changed',
-                          'finished', 'other'):
+            for event in ('started', 'resumed', 'reviewing', 'reviewed', 'sent', 'nudged',
+                          'fixed', 'changed', 'finished', 'other'):
                 log_review_loop_event(logger, state, event)
         self.assertEqual([record.getMessage() for record in logs.records], [
             'Mission T-1: review loop started (up to 5 reviews)',
+            "Mission T-1: review loop resumed: nudge the chat to finish round 2's fixes",
             'Mission T-1: review loop round 2: reviewing the whole change',
             'Mission T-1: review loop round 2: 0 blocker, 0 major, 0 minor, 0 nit',
             'Mission T-1: review loop round 2: findings sent to the chat',
+            'Mission T-1: review loop round 2: nudged the chat to continue its fixes',
             'Mission T-1: review loop round 2: the chat finished its fixes',
             'Mission T-1: review loop round 2: the code changed after this review found it clean',
             'Mission T-1: review loop finished (stuck) after 2 round(s): '

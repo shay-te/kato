@@ -2,6 +2,7 @@
 
     GET  /api/sessions/<task>/review-loop                         the loop, every round
     POST /api/sessions/<task>/review-loop                         start one (202 / 400 / 409)
+    POST /api/sessions/<task>/review-loop/resume                  pick the last one up (202 / 409)
     POST /api/sessions/<task>/review-loop/stop                    stop it (200 / 404)
     GET  /api/sessions/<task>/review-loop/<loop>/rounds/<n>/<kind>  one round's text
 
@@ -71,6 +72,28 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
                 max_rounds=max_rounds,
                 model=model,
                 **stages,
+            )
+        except ReviewLoopError as exc:
+            return jsonify({'error': str(exc)}), 409
+        return jsonify({'loop': state.to_dict()}), 202
+
+    # The task's latest loop, picked up where it was cut off (stopped, failed,
+    # interrupted or stuck) — with its own rounds, stages, model and decisions.
+    # Nothing is read from the body: a resume continues the loop as it was.
+    @app.post('/api/sessions/<task_id>/review-loop/resume')
+    def resume_review_loop(task_id: str):
+        from review_loop_core_lib.review_loop_core_lib.service import ReviewLoopError
+
+        loops = review_loops()
+        if loops is None:
+            return unavailable()
+        summary, description = _task_text(app, task_id)
+        try:
+            state = loops.resume(
+                task_id,
+                diff_source=collect_diffs,
+                task_summary=summary,
+                task_description=description,
             )
         except ReviewLoopError as exc:
             return jsonify({'error': str(exc)}), 409

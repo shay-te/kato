@@ -12,6 +12,7 @@ import {
   isBlockingFinding,
   isReviewLoopRunning,
   reviewLoopChip,
+  reviewLoopResumeTooltip,
   reviewLoopRoundsText,
   reviewLoopTabEntries,
   buildReviewLoopTabModels,
@@ -355,4 +356,16 @@ test('a finding a fix said it fixed, found again, says so', () => {
     'Still here — first reported as R1-3, survived 2 fixes.');
   assert.equal(findingRepeatNote({ repeat_of: '' }), '');
   assert.equal(findingRepeatNote(null), '');
+});
+
+test('Resume says what it will pick up — and is offered only for a loop that can', () => {
+  const failed = { status: 'failed', resume: 'run round 7\u2019s review again' };
+  assert.equal(
+    reviewLoopResumeTooltip(failed),
+    'Continue this loop where it stopped: run round 7\u2019s review again. '
+      + 'It keeps its rounds, decisions, stages and model.',
+  );
+  for (const loop of [null, { status: 'clean', resume: '' }, { status: 'running', resume: 'stale' }]) {
+    assert.equal(reviewLoopResumeTooltip(loop), '');
+  }
 });

@@ -30,6 +30,16 @@ TERMINAL_STATUSES = frozenset(
     status for status in ReviewLoopStatus if status is not ReviewLoopStatus.RUNNING
 )
 
+# A loop cut off part-way — by the operator, a failure, a restart, or a fix that
+# would not land — can pick up again where it stopped. CLEAN and MAX_ROUNDS are
+# done: there is nothing left for the same loop to do.
+RESUMABLE_STATUSES = frozenset({
+    ReviewLoopStatus.STOPPED,
+    ReviewLoopStatus.FAILED,
+    ReviewLoopStatus.INTERRUPTED,
+    ReviewLoopStatus.STUCK,
+})
+
 
 class ReviewLoopPhase(str, Enum):
     """Where a running loop is right now."""
@@ -41,6 +51,40 @@ class ReviewLoopPhase(str, Enum):
     AWAITING_FIX = 'awaiting_fix'            # the main agent is fixing
     VERIFYING = 'verifying'                  # the main chat is running the tests
     DONE = 'done'
+
+
+class ResumeStage(str, Enum):
+    """The step a resumed loop picks up at — the one it was cut off in."""
+
+    SELF_CHECK = 'self_check'                  # ask the cut-off self-check turn again
+    REVIEW = 'review'                          # review the round (again), or begin the next one
+    SEND_FINDINGS = 'send_findings'            # post findings never sent (or held back as stuck)
+    CONTINUE_FIX = 'continue_fix'              # nudge the chat to finish fixing the findings
+    FINISH_CLEAN = 'finish_clean'              # a clean review's tests and confirmation
+    SEND_TESTS_FIX = 'send_tests_fix'          # post failing tests never sent
+    CONTINUE_TESTS_FIX = 'continue_tests_fix'  # nudge the chat to finish fixing them
+
+
+# Where a resumed loop shows itself before its first step moves it on.
+_RESUME_PHASES = {
+    ResumeStage.SELF_CHECK: ReviewLoopPhase.SELF_CHECK,
+    ResumeStage.REVIEW: ReviewLoopPhase.WAITING_TO_REVIEW,
+    ResumeStage.SEND_FINDINGS: ReviewLoopPhase.WAITING_TO_SEND,
+    ResumeStage.CONTINUE_FIX: ReviewLoopPhase.WAITING_TO_SEND,
+    ResumeStage.FINISH_CLEAN: ReviewLoopPhase.VERIFYING,
+    ResumeStage.SEND_TESTS_FIX: ReviewLoopPhase.WAITING_TO_SEND,
+    ResumeStage.CONTINUE_TESTS_FIX: ReviewLoopPhase.WAITING_TO_SEND,
+}
+
+
+@dataclass(frozen=True)
+class ResumePoint(object):
+    """Where a cut-off loop picks up: a stage, and the round (or self-check
+    turn) it belongs to. ``description`` says it to the operator."""
+
+    stage: ResumeStage
+    number: int
+    description: str
 
 
 class FindingSeverity(str, Enum):
@@ -412,6 +456,10 @@ class ReviewLoopState(object):
     # The model every review of this loop runs on; '' = the host's default.
     model: str = ''
     self_checks: list[SelfCheckTurn] = field(default_factory=list)
+    # How many times the operator resumed this loop, and what the latest
+    # resume picked up ("run round 7's review again").
+    resumes: int = 0
+    resume_note: str = ''
 
     @classmethod
     def new(
@@ -467,9 +515,61 @@ class ReviewLoopState(object):
                 return review_round
         return None
 
+    def resume_point(self) -> ResumePoint | None:
+        """Where this loop can pick up again; None when it cannot.
+
+        Read from what the rounds recorded, not from where the loop says it
+        was: a loop that ended has phase DONE, and one a restart cut off never
+        saved its last step. Each round's timestamps and outcome say how far
+        it got — reviewed or not, findings sent or not, fix finished or not.
+        """
+        if self.status not in RESUMABLE_STATUSES:
+            return None
+        last = self.current_round
+        if last is not None:
+            return _round_resume_point(last, self.max_rounds, self.verify_tests)
+        turn = self.self_checks[-1] if self.self_checks else None
+        if turn is not None and not turn.finished_at:
+            return ResumePoint(
+                ResumeStage.SELF_CHECK, turn.number, f'ask self-check {turn.number} again',
+            )
+        return ResumePoint(ResumeStage.REVIEW, 1, 'start round 1')
+
+    def reopen(self, point: ResumePoint, now: float) -> None:
+        """Make this cut-off loop RUNNING again, at ``point``.
+
+        The step being redone loses what its cut-off attempt recorded — a
+        review that never finished, a self-check that never answered — and
+        keeps everything before it: every earlier round, the decisions, the
+        repeat counts the next review is judged by.
+        """
+        self.status = ReviewLoopStatus.RUNNING
+        self.phase = _RESUME_PHASES[point.stage]
+        self.phase_started_at = now
+        self.finished_at = 0.0
+        self.reason = ''
+        self.waiting_for = ''
+        self.resumes += 1
+        self.resume_note = point.description
+        if point.stage is ResumeStage.SELF_CHECK:
+            self.self_checks = [turn for turn in self.self_checks if turn.number < point.number]
+            return
+        current = self.current_round
+        if current is None or current.number != point.number:
+            return  # a new round begins
+        if point.stage is ResumeStage.REVIEW:
+            self.rounds[-1] = ReviewRound(number=current.number, started_at=now)
+            return
+        current.finished_at = 0.0
+        if point.stage not in (ResumeStage.CONTINUE_FIX, ResumeStage.CONTINUE_TESTS_FIX):
+            # It never got past its outcome-less step; ``stopped`` / ``failed``
+            # / ``stuck`` were how that step ended, not what the round did.
+            current.outcome = ''
+
     def summary(self) -> dict[str, Any]:
         """The small, cheap view an indicator polls: position and outcome."""
         reviewed = self.last_reviewed_round
+        resume = self.resume_point()
         return {
             'loop_id': self.loop_id,
             'status': self.status.value,
@@ -489,6 +589,10 @@ class ReviewLoopState(object):
             'model': self.model,
             'self_check_turn': len(self.self_checks),
             'sweep': bool(self.rounds and self.rounds[-1].sweep),
+            'resumes': self.resumes,
+            'resume_note': self.resume_note,
+            # What a resume would pick up now ('' = nothing to resume).
+            'resume': resume.description if resume is not None else '',
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -519,7 +623,61 @@ class ReviewLoopState(object):
             extra_sweep=bool(data.get('extra_sweep', False)),
             model=str(data.get('model') or ''),
             self_checks=[SelfCheckTurn.from_dict(item) for item in data.get('self_checks', [])],
+            resumes=int(data.get('resumes') or 0),
+            resume_note=str(data.get('resume_note') or ''),
         )
 
     def copy(self) -> 'ReviewLoopState':
         return ReviewLoopState.from_dict(self.to_dict())
+
+
+def _round_resume_point(
+    last: ReviewRound, max_rounds: int, verify_tests: bool,
+) -> ResumePoint | None:
+    """Where a loop whose latest round is ``last`` picks up again."""
+    number = last.number
+    if not last.reviewed_at:
+        return ResumePoint(ResumeStage.REVIEW, number, f'run round {number}\'s review again')
+    outcome = last.outcome
+    if outcome == 'sent' and not last.fixed_at:
+        return ResumePoint(
+            ResumeStage.CONTINUE_FIX, number,
+            f'nudge the chat to finish round {number}\'s fixes',
+        )
+    if outcome == 'tests_failed' and not last.fixed_at:
+        return ResumePoint(
+            ResumeStage.CONTINUE_TESTS_FIX, number,
+            f'nudge the chat to finish fixing round {number}\'s failing tests',
+        )
+    if outcome in ('sent', 'tests_failed', 'clean', 'changed'):
+        # The round was done; the loop broke before the next one began.
+        return _next_round(number, max_rounds)
+    if outcome == 'max_rounds':
+        return None
+    # ``stuck``, or a round that ended (stopped / failed) before its next step
+    # went out: its findings, its test run, or its failing tests. A last
+    # round's findings and failures are never sent — no review would follow.
+    if last.blocking:
+        if number >= max_rounds:
+            return None
+        return ResumePoint(
+            ResumeStage.SEND_FINDINGS, number, f'send round {number}\'s findings to the chat',
+        )
+    if last.tests is not None and last.tests.passed is False:
+        if number >= max_rounds:
+            return None
+        return ResumePoint(
+            ResumeStage.SEND_TESTS_FIX, number,
+            f'send round {number}\'s failing tests to the chat',
+        )
+    if verify_tests and last.tests is None:
+        return ResumePoint(
+            ResumeStage.FINISH_CLEAN, number, f'run the tests after round {number}\'s clean review',
+        )
+    return ResumePoint(ResumeStage.FINISH_CLEAN, number, f'finish round {number}\'s clean review')
+
+
+def _next_round(number: int, max_rounds: int) -> ResumePoint | None:
+    if number >= max_rounds:
+        return None
+    return ResumePoint(ResumeStage.REVIEW, number + 1, f'start round {number + 1}')

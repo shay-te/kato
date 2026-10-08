@@ -14,6 +14,11 @@
                  ─▶ read its decisions ─▶ begin round n+1
     any cancel ─▶ STOPPED (or INTERRUPTED)    anything broken ─▶ FAILED
 
+A loop cut off part-way (stopped, failed, interrupted or stuck) can be RESUMED:
+it finishes the step it was cut off in — the round's review run again, a
+"continue" nudge to a chat that was mid-fix, findings never sent — and goes on
+as if it had never stopped (``ReviewLoopState.resume_point``).
+
 Every wait is a ``cancel_event`` wait, so a Stop ends the loop within one poll
 and a running review is killed through the reviewer's own cancel handling. The
 state is saved after every step, so what an operator sees is never more than
@@ -29,11 +34,14 @@ from dataclasses import dataclass, replace
 from typing import Callable
 
 from review_loop_core_lib.review_loop_core_lib.chat_prompts import (
+    build_continue_prompt,
     build_self_check_prompt,
     build_tests_fix_prompt,
     build_tests_prompt,
 )
 from review_loop_core_lib.review_loop_core_lib.data.state import (
+    ResumePoint,
+    ResumeStage,
     ReviewLoopPhase,
     ReviewLoopState,
     ReviewLoopStatus,
@@ -49,6 +57,7 @@ from review_loop_core_lib.review_loop_core_lib.diff import (
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
     build_findings_prompt,
 )
+from review_loop_core_lib.review_loop_core_lib.progress import LoopMemory, loop_memory
 from review_loop_core_lib.review_loop_core_lib.ports import (
     ChatChannel,
     ChatTurnEnd,
@@ -134,6 +143,8 @@ class ReviewLoopRunner(object):
         logger: logging.Logger | None = None,
     ) -> None:
         self._state = state
+        # Where a resumed loop picks up (see ``start``); None = a new loop.
+        self._resume: ResumePoint | None = None
         self._task_id = state.task_id
         self._diff_source = diff_source
         self._reviewer = reviewer
@@ -159,9 +170,13 @@ class ReviewLoopRunner(object):
     def task_id(self) -> str:
         return self._task_id
 
-    def start(self) -> None:
+    def start(self, *, resume: ResumePoint | None = None) -> None:
+        """Run the loop on its own thread. ``resume``: pick a cut-off loop up
+        at that point — ``ReviewLoopState.reopen`` has already put the state
+        back to RUNNING there."""
+        self._resume = resume
         self._save()
-        self._notify('started')
+        self._notify('resumed' if resume is not None else 'started')
         self._thread = threading.Thread(
             target=self._run, name=f'review-loop-{self._task_id}', daemon=True,
         )
@@ -205,99 +220,164 @@ class ReviewLoopRunner(object):
 
     def _loop(self) -> None:
         """Rounds until one of them ends the loop — the last always does."""
-        if self._state.self_check:
-            self._self_check_phase()
-        previous: set[str] | None = None
-        # Per issue (fingerprint): how many fixes it has survived — the chat
-        # said it fixed it (or did not answer) and the next review still found
-        # it — and the id it was first sent under.
-        missed: dict[str, int] = {}
-        first_ids: dict[str, str] = {}
-        max_rounds = self._state.max_rounds
-        number = 0
-        # The next review withholds the decision ledger: a clean-room check.
-        confirm_next = False
-        # The exact change the tests last PASSED on; a clean review of any
-        # other code runs them again.
-        tests_digest = ''
+        if self._resume is not None:
+            review_round = self._resume_step(self._resume)
+        else:
+            if self._state.self_check:
+                self._self_check_phase()
+            review_round = None
         while True:
-            number += 1
-            review_round = self._begin_round(number)
-            self._wait_for_chat(ReviewLoopPhase.WAITING_TO_REVIEW)
-            # This round is the clean-room sweep asked for by the last one.
-            confirming = confirm_next
-            verdict = self._review(review_round, withhold_ledger=confirming)
-            confirm_next = False
-            blocking = len(verdict.blocking)
-            if verdict.is_clean:
-                if self._state.verify_tests and tests_digest != review_round.diff_digest:
-                    report = self._verify_tests(review_round)
-                    if report.passed is False:
-                        if number == max_rounds:
-                            self._close_round(review_round, 'tests_failed')
-                            raise _Finish(
-                                ReviewLoopStatus.MAX_ROUNDS,
-                                f'the tests still fail after {number} reviews',
-                            )
-                        self._fix_tests(review_round, report)
-                        previous = None
-                        continue
-                    tests_digest = review_round.diff_digest
-                # A clean verdict from a reviewer told the fix ping-pong
-                # (``confirm_clean``) — or ANY clean verdict (``extra_sweep``) —
-                # needs one more reviewer, told nothing, to agree. The sweep it
-                # asks for is the last word.
-                wants_sweep = not confirming and (
-                    self._state.extra_sweep
-                    or (self._state.confirm_clean and not review_round.blind)
-                )
-                if wants_sweep and number < max_rounds:
-                    self._close_round(review_round, 'clean')
-                    confirm_next = True
-                    previous = None
-                    continue
-                # A clean verdict covers the code that reviewer saw — nothing
-                # else. If the tree moved on meanwhile, review it again (the
-                # same kind of review: a sweep is redone as a sweep).
-                if self._code_changed_since(review_round):
-                    self._close_round(review_round, 'changed')
-                    self._notify('changed')
-                    if number == max_rounds:
-                        raise _Finish(
-                            ReviewLoopStatus.MAX_ROUNDS,
-                            f'the code changed after round {number} found it clean, '
-                            'and no round was left to review it again',
-                        )
-                    confirm_next = confirming
-                    previous = None
-                    continue
-                self._close_round(review_round, 'clean')
-                raise _Finish(ReviewLoopStatus.CLEAN, self._clean_reason(
-                    review_round, verdict, confirmed=confirming, no_room=wants_sweep,
-                ))
-            current = review_round.blocking_fingerprints
-            if previous is not None:
-                missed = count_missed_fixes(missed, previous, current)
-            verdict = self._mark_repeats(review_round, verdict, missed, first_ids)
-            # Stuck only when every blocking issue left has survived
-            # STUCK_AFTER_MISSED_FIXES fixes: anything new, or a repeat that
-            # has missed only once, goes back to the chat.
-            if is_stuck(current, missed):
-                self._close_round(review_round, 'stuck')
-                raise _Finish(ReviewLoopStatus.STUCK, _stuck_reason(verdict))
+            if review_round is None:
+                review_round = self._begin_round(self._state.round + 1)
+            self._run_round(review_round)
+            review_round = None
+
+    def _run_round(self, review_round: ReviewRound) -> None:
+        """Review the whole change, then act on the verdict. Returns when the
+        loop goes on to another round; raises ``_Finish`` when it ends."""
+        # What the rounds before this one taught the loop. Derived from them
+        # each time, never carried along, so a resumed loop judges this review
+        # exactly as an uninterrupted one would (``progress.py``).
+        memory = self._memory_before(review_round)
+        self._wait_for_chat(ReviewLoopPhase.WAITING_TO_REVIEW)
+        # This round is the clean-room sweep asked for by the last one.
+        verdict = self._review(review_round, withhold_ledger=memory.confirm_next)
+        if verdict.is_clean:
+            self._after_clean_review(review_round, verdict, memory)
+        else:
+            self._after_blocking_review(review_round, verdict, memory)
+
+    def _after_clean_review(
+        self, review_round: ReviewRound, verdict: ReviewVerdict, memory: LoopMemory,
+    ) -> None:
+        """No blocking finding: the tests, a confirming sweep, then CLEAN."""
+        number = review_round.number
+        max_rounds = self._state.max_rounds
+        confirming = review_round.sweep
+        # The tests run on the exact change they have not passed on yet. A
+        # round resumed after its test run already reported is not asked again.
+        if (
+            self._state.verify_tests
+            and review_round.tests is None
+            and memory.tests_digest != review_round.diff_digest
+        ):
+            report = self._verify_tests(review_round)
+            if report.passed is False:
+                if number == max_rounds:
+                    self._close_round(review_round, 'tests_failed')
+                    raise _Finish(
+                        ReviewLoopStatus.MAX_ROUNDS,
+                        f'the tests still fail after {number} reviews',
+                    )
+                self._fix_tests(review_round, report)
+                return
+        # A clean verdict from a reviewer told the fix ping-pong
+        # (``confirm_clean``) — or ANY clean verdict (``extra_sweep``) — needs
+        # one more reviewer, told nothing, to agree. The sweep it asks for is
+        # the last word.
+        wants_sweep = not confirming and (
+            self._state.extra_sweep
+            or (self._state.confirm_clean and not review_round.blind)
+        )
+        if wants_sweep and number < max_rounds:
+            self._close_round(review_round, 'clean')
+            return
+        # A clean verdict covers the code that reviewer saw — nothing else. If
+        # the tree moved on meanwhile, review it again (the same kind of
+        # review: a sweep is redone as a sweep).
+        if self._code_changed_since(review_round):
+            self._close_round(review_round, 'changed')
+            self._notify('changed')
             if number == max_rounds:
-                self._close_round(review_round, 'max_rounds')
                 raise _Finish(
                     ReviewLoopStatus.MAX_ROUNDS,
-                    f'{blocking} blocking issue(s) left after {number} reviews',
+                    f'the code changed after round {number} found it clean, '
+                    'and no round was left to review it again',
                 )
-            for finding in verdict.blocking:
-                first_ids.setdefault(finding.fingerprint, finding.id)
-            prompt, dispatched_at = self._send_findings(review_round, verdict)
+            return
+        self._close_round(review_round, 'clean')
+        raise _Finish(ReviewLoopStatus.CLEAN, self._clean_reason(
+            review_round, verdict, confirmed=confirming, no_room=wants_sweep,
+        ))
+
+    def _after_blocking_review(
+        self, review_round: ReviewRound, verdict: ReviewVerdict, memory: LoopMemory,
+    ) -> None:
+        """Blocking findings: stuck, out of rounds, or sent to be fixed."""
+        number = review_round.number
+        current = review_round.blocking_fingerprints
+        missed = memory.missed
+        if memory.previous is not None:
+            missed = count_missed_fixes(missed, memory.previous, current)
+        verdict = self._mark_repeats(review_round, verdict, missed, memory.first_ids)
+        # Stuck only when every blocking issue left has survived
+        # STUCK_AFTER_MISSED_FIXES fixes: anything new, or a repeat that has
+        # missed only once, goes back to the chat.
+        if is_stuck(current, missed):
+            self._close_round(review_round, 'stuck')
+            raise _Finish(ReviewLoopStatus.STUCK, _stuck_reason(verdict))
+        if number == self._state.max_rounds:
+            self._close_round(review_round, 'max_rounds')
+            raise _Finish(
+                ReviewLoopStatus.MAX_ROUNDS,
+                f'{len(verdict.blocking)} blocking issue(s) left after {number} reviews',
+            )
+        prompt, dispatched_at = self._send_findings(review_round, verdict)
+        self._await_fix(review_round, prompt, dispatched_at)
+
+    def _memory_before(self, review_round: ReviewRound) -> LoopMemory:
+        return loop_memory(
+            earlier for earlier in self.snapshot().rounds
+            if earlier.number < review_round.number
+        )
+
+    # ----- resuming -----
+
+    def _resume_step(self, point: ResumePoint) -> ReviewRound | None:
+        """Finish the step the loop was cut off in.
+
+        Returns the round to review when that step IS the review (its own,
+        run again); None when the loop goes on with a new round.
+        """
+        stage = point.stage
+        if stage is ResumeStage.SELF_CHECK:
+            self._self_check_phase(first_turn=point.number)
+            return None
+        review_round = self._state.current_round
+        if review_round is None or review_round.number != point.number:
+            return None  # the review of a round not begun yet
+        if stage is ResumeStage.REVIEW:
+            return review_round
+        if stage is ResumeStage.CONTINUE_FIX:
+            prompt, dispatched_at = self._nudge(review_round, failing_tests=False)
             self._await_fix(review_round, prompt, dispatched_at)
-            # Only what the fixer claimed to fix (or left unanswered) can show
-            # the loop is stuck: a finding it rejected with evidence is settled.
-            previous = review_round.claimed_fixed_fingerprints
+        elif stage is ResumeStage.CONTINUE_TESTS_FIX:
+            prompt, dispatched_at = self._nudge(review_round, failing_tests=True)
+            self._await_fix(review_round, prompt, dispatched_at, decisions=False)
+        elif stage is ResumeStage.SEND_FINDINGS:
+            # Sent as saved — with the repeat marks a stuck round was judged by.
+            prompt, dispatched_at = self._send_findings(review_round, _saved_verdict(review_round))
+            self._await_fix(review_round, prompt, dispatched_at)
+        elif stage is ResumeStage.SEND_TESTS_FIX:
+            self._fix_tests(review_round, review_round.tests)
+        else:
+            self._after_clean_review(
+                review_round, _saved_verdict(review_round), self._memory_before(review_round),
+            )
+        return None
+
+    def _nudge(self, review_round: ReviewRound, *, failing_tests: bool) -> tuple[str, float]:
+        """The loop's own "continue": the round's message is already in the
+        chat, so the chat is asked to carry on, not sent it again."""
+        prompt = build_continue_prompt(
+            round_number=review_round.number, failing_tests=failing_tests, wording=self._wording,
+        )
+        dispatched_at = self._deliver(
+            prompt, wait_phase=ReviewLoopPhase.WAITING_TO_SEND, label='continue nudge',
+        )
+        self._set_phase(ReviewLoopPhase.AWAITING_FIX)
+        self._notify('nudged')
+        return prompt, dispatched_at
 
     def _mark_repeats(
         self, review_round: ReviewRound, verdict: ReviewVerdict,
@@ -429,24 +509,31 @@ class ReviewLoopRunner(object):
         self._notify('sent')
         return prompt, dispatched_at
 
-    def _await_fix(self, review_round: ReviewRound, prompt: str, dispatched_at: float) -> None:
+    def _await_fix(
+        self, review_round: ReviewRound, prompt: str, dispatched_at: float,
+        *, decisions: bool = True,
+    ) -> None:
+        """Wait for the fix turn; read its decisions on the findings it was
+        sent (``decisions``) — a failing-tests fix has none to give."""
         turn = self._await_turn(prompt, dispatched_at, what='fix')
-        self._record_responses(review_round, turn.text)
+        if decisions:
+            self._record_responses(review_round, turn.text)
         with self._lock:
             review_round.fixed_at = turn.received_at
             review_round.finished_at = self._clock()
         self._notify('fixed')
 
-    def _self_check_phase(self) -> None:
+    def _self_check_phase(self, first_turn: int = 1) -> None:
         """The main chat reviews and fixes its own change, before any reviewer.
 
         Up to ``self_check_turns`` turns, until the chat says this pass found
         nothing more. A reply without a readable block ends the phase too — a
         chat that cannot say it is done is not asked again and again; the
-        independent review that follows catches what is left.
+        independent review that follows catches what is left. A resumed loop
+        starts at the turn it was cut off in (``first_turn``).
         """
         max_turns = max(1, int(self._options.self_check_turns))
-        for number in range(1, max_turns + 1):
+        for number in range(first_turn, max_turns + 1):
             turn = SelfCheckTurn(number=number, started_at=self._clock())
             with self._lock:
                 self._state.self_checks.append(turn)
@@ -508,11 +595,7 @@ class ReviewLoopRunner(object):
             review_round.outcome = 'tests_failed'
         self._set_phase(ReviewLoopPhase.AWAITING_FIX)
         self._notify('sent')
-        turn = self._await_turn(prompt, dispatched_at, what='fix')
-        with self._lock:
-            review_round.fixed_at = turn.received_at
-            review_round.finished_at = self._clock()
-        self._notify('fixed')
+        self._await_fix(review_round, prompt, dispatched_at, decisions=False)
 
     def _deliver(self, prompt: str, *, wait_phase: ReviewLoopPhase, label: str) -> float:
         """Wait until the chat is free, then send ``prompt`` under its lock.
@@ -701,6 +784,11 @@ class ReviewLoopRunner(object):
     def _sleep(self) -> None:
         if self._cancel.wait(self._options.poll_seconds):
             self._raise_if_cancelled()
+
+
+def _saved_verdict(review_round: ReviewRound) -> ReviewVerdict:
+    """The verdict a round recorded, for a resumed loop to act on."""
+    return ReviewVerdict(findings=tuple(review_round.findings))
 
 
 def _tests_note(report: TestReport | None) -> str:

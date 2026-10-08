@@ -128,5 +128,6 @@ class LoopWording(object):
 
 
 # ``(state, event)`` after every step the loop takes; ``event`` is one of
-# ``started``, ``reviewing``, ``reviewed``, ``sent``, ``fixed``, ``finished``.
+# ``started``, ``resumed``, ``reviewing``, ``reviewed``, ``sent``, ``nudged``,
+# ``fixed``, ``finished``.
 LoopObserver = Callable[[ReviewLoopState, str], None]

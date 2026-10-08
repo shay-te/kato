@@ -154,6 +154,82 @@ class HalfFinishedCloneTests(unittest.TestCase):
         self.assertTrue((self.clone / 'service.py').is_file())
 
 
+class AnEmptyRemoteIsReportedNotLoopedTests(unittest.TestCase):
+    """A repository created on the provider with no commits yet (UNA-3237).
+
+    Its clone exits 0 and holds no objects and no refs — exactly what an
+    interrupted clone leaves — so the interrupted-clone repair deleted every
+    fresh clone of it. The sync logged "✓ cloned", branch prep then failed on
+    the vanished folder with "missing local repository path", and nothing
+    named the real cause: the remote has no branch to start the task from.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.service = _Service()
+        self.origin = self.root / 'origin.git'
+        _git(self.root, 'init', '-q', '--bare', str(self.origin))
+        self.clone = self.root / 'calendar-core-lib'
+        self.repository = SimpleNamespace(
+            id='calendar-core-lib', local_path=str(self.clone),
+            remote_url=str(self.origin),
+        )
+
+    def _ensure_clone_fails(self) -> str:
+        with self.assertRaises(RuntimeError) as raised:
+            self.service.ensure_clone(self.repository, self.clone)
+        return str(raised.exception)
+
+    def test_the_operator_is_told_the_remote_is_empty(self) -> None:
+        # THE REPORT. "missing local repository path" names a symptom of
+        # kato's own cleanup, not anything the operator can act on.
+        message = self._ensure_clone_fails()
+        self.assertIn('calendar-core-lib is an empty repository', message)
+        self.assertIn('Push a first commit', message)
+
+    def test_it_is_cloned_once_not_deleted_and_re_cloned(self) -> None:
+        clones: list[list[str]] = []
+        real_run_git = self.service._run_git
+
+        def counting_run_git(cwd, args, message, repository=None, **kwargs):
+            if args and args[0] == 'clone':
+                clones.append(list(args))
+            return real_run_git(cwd, args, message, repository, **kwargs)
+
+        self.service._run_git = counting_run_git
+        self._ensure_clone_fails()
+        self.assertEqual(len(clones), 1)
+
+    def test_no_unbranchable_folder_is_left_in_the_workspace(self) -> None:
+        # A .git-only folder would be handed to the agent, which would write
+        # into a repo kato can never put on the task branch.
+        self._ensure_clone_fails()
+        self.assertFalse(self.clone.exists())
+
+    def test_a_leftover_clone_of_it_gets_the_same_answer(self) -> None:
+        # The reuse path: a clone of the empty remote already on disk (an
+        # older kato kept none, but the operator can make one by hand).
+        _git(self.root, 'clone', '-q', str(self.origin), 'calendar-core-lib')
+        self.assertIn('empty repository', self._ensure_clone_fails())
+
+    def test_it_clones_normally_once_the_first_commit_is_pushed(self) -> None:
+        # The operator's fix must be all it takes — nothing kato left behind
+        # may stand in the way of the next sync.
+        self._ensure_clone_fails()
+        seed = self.root / 'seed'
+        _git(self.root, 'clone', '-q', str(self.origin), 'seed')
+        _git(seed, 'config', 'user.email', 't@example.com')
+        _git(seed, 'config', 'user.name', 'test')
+        (seed / 'README.md').write_text('# calendar-core-lib\n', encoding='utf-8')
+        _git(seed, 'add', '-A')
+        _git(seed, 'commit', '-qm', 'Initial commit')
+        _git(seed, 'push', '-q', 'origin', 'HEAD')
+        self.service.ensure_clone(self.repository, self.clone)
+        self.assertTrue((self.clone / 'README.md').is_file())
+
+
 class ALiveCloneIsNeverDeletedTests(unittest.TestCase):
     """Two provisioning runs for one task must not destroy each other's clone.
 

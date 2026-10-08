@@ -751,6 +751,14 @@ export function fetchReviewLoopDefaultModel() {
   return fetchJson('/api/review-loop/default-model');
 }
 
+// Pick the task's latest loop up where it was cut off (stopped, failed,
+// interrupted, stuck) — with its own rounds, stages and model, so nothing is
+// sent. What it will do is the summary's ``resume``.
+export function resumeReviewLoop(taskId) {
+  if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
+  return postEnvelope(reviewLoopUrl(taskId, '/resume'), {});
+}
+
 export function stopReviewLoop(taskId) {
   if (!taskId) { return Promise.resolve({ ok: false, error: 'no task id' }); }
   return requestEnvelope(reviewLoopUrl(taskId, '/stop'), { method: 'POST' });
