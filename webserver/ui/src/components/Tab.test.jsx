@@ -603,3 +603,21 @@ describe('Tab — the × deletes and never selects', () => {
     expect(onForget).not.toHaveBeenCalled();
   });
 });
+
+
+describe('Tab — the dot while the review loop reviews', () => {
+  test('a quiet chat with its reviewer reading the change shows the reviewing dot', () => {
+    const reviewing = _session({
+      working: false, review_loop: { status: 'running', phase: 'reviewing', round: 2, max_rounds: 5 },
+    });
+    const { container } = render(<Tab session={reviewing} onSelect={() => {}} />);
+    expect(container.querySelector('.status-dot')).toHaveClass(`status-${TAB_STATUS.REVIEWING}`);
+  });
+
+  test('when the chat is fixing, the dot is the chat\'s again', () => {
+    const fixing = _session({ review_loop: { status: 'running', phase: 'awaiting_fix', round: 2, max_rounds: 5 } });
+    const { container } = render(<Tab session={fixing} onSelect={() => {}} />);
+    expect(container.querySelector('.status-dot')).not.toHaveClass(`status-${TAB_STATUS.REVIEWING}`);
+  });
+});
+

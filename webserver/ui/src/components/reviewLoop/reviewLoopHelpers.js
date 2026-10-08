@@ -118,6 +118,12 @@ export function isReviewLoopRunning(loop) {
   return loop?.status === REVIEW_LOOP_STATUS.RUNNING;
 }
 
+// The loop's independent reviewer is reading the change right now — the one
+// phase where nothing of it shows in the chat (agentStatus reads this).
+export function isReviewLoopReviewing(loop) {
+  return isReviewLoopRunning(loop) && loop.phase === REVIEW_LOOP_PHASE.REVIEWING;
+}
+
 export function reviewLoopOutcome(loop) {
   return OUTCOMES[loop?.status] || null;
 }

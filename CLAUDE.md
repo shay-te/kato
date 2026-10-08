@@ -401,6 +401,11 @@ Auto-discovery: if `REPOSITORY_ROOT_PATH` is set (no explicit `repositories:` li
   from a coarse clock, so a rewrite in the same tick keeps `st_mtime_ns` and an mtime-keyed cache serves stale
   data (a comment marked FAILED read back IN_PROGRESS 37/40 on Linux; never on macOS). Signature = mtime+size+inode,
   and a read of a file changed in the last 2s is not cached.
+- **No agent CLI gets the operator's terminal.** Every `claude`/`codex` launch passes `stdin=DEVNULL`
+  (or pipes its input). Given a TTY stdin, `claude --help` switches the terminal to raw mode
+  (`-isig -icanon -echo`, `opost` kept — libuv's fingerprint) while it runs, and a probe killed by its
+  timeout LEAVES it raw: Ctrl+C then sends no SIGINT ("ctrl+c doesn't stop kato") and the shell has
+  no echo after exit. Pinned by `tests/test_agent_cli_never_gets_the_terminal.py` (real pty).
 - **CI ≠ the local gate.** The CI step stops at its FIRST failing command, so one top-level failure hid every
   lib suite from Linux for weeks. To vet CI, run `.github/workflows/ci.yml`'s commands on `git archive HEAD` in a
   `python:3.11` container as a non-root user with an empty HOME.

@@ -2,6 +2,7 @@ import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { AGENT_STATUS_KIND } from '../constants/agentStatusKind.js';
 import { deriveTabStatus, resolveTabStatus, statusDotClass } from './tabStatus.js';
+import { isReviewLoopReviewing } from '../components/reviewLoop/reviewLoopHelpers.js';
 
 // THE single source of truth for agent (Claude/Codex) liveness.
 //
@@ -27,6 +28,7 @@ const STATUS_BY_KIND = {
   [AGENT_STATUS_KIND.WORKFLOW]: { label: 'workflow', title: (n) => `A background workflow is running — ${n} will report back when it finishes.` },
   [AGENT_STATUS_KIND.BACKGROUND]: { label: 'background', title: (n) => `The turn has finished; ${n} is waiting on background work it started.` },
   [AGENT_STATUS_KIND.APPROVAL]: { label: 'approval', title: (n) => `${n} is paused waiting for your approval.` },
+  [AGENT_STATUS_KIND.REVIEWING]: { label: 'reviewing', title: () => 'The review loop\u2019s independent reviewer is reading the change.' },
   [AGENT_STATUS_KIND.IDLE]: { label: 'idle', title: (n) => `${n} is connected and waiting for input.` },
   [AGENT_STATUS_KIND.CONNECTING]: { label: 'connecting', title: (n) => `Connecting to the ${n} session…` },
   [AGENT_STATUS_KIND.SLEEPING]: { label: 'sleeping', title: (n) => `No live subprocess — kato will respawn ${n} on the next message.` },
@@ -105,6 +107,26 @@ function polledKind(session, baseStatus) {
   return AGENT_STATUS_KIND.UNKNOWN;
 }
 
+// Kinds where the CHAT is doing nothing of its own. While the review loop's
+// reviewer reads the change — a separate one-shot run the chat never sees —
+// the task is still busy, and a dot saying idle / sleeping was a lie by
+// omission. Anything the chat IS doing (a turn, background work, an approval
+// it waits on) outranks it: those are the operator's to see first.
+const QUIET_CHAT_KINDS = new Set([
+  AGENT_STATUS_KIND.IDLE,
+  AGENT_STATUS_KIND.CONNECTING,
+  AGENT_STATUS_KIND.SLEEPING,
+  AGENT_STATUS_KIND.CLOSED,
+  AGENT_STATUS_KIND.MISSING,
+  AGENT_STATUS_KIND.UNKNOWN,
+]);
+
+function withReviewLoop(kind, session) {
+  return QUIET_CHAT_KINDS.has(kind) && isReviewLoopReviewing(session?.review_loop)
+    ? AGENT_STATUS_KIND.REVIEWING
+    : kind;
+}
+
 // The only tab-tooltip badge CSS classes that exist are
 // is-work/flow/idle/sleep/wait.
 const BADGE_KIND = {
@@ -116,6 +138,7 @@ const BADGE_KIND = {
   [AGENT_STATUS_KIND.SLEEPING]: 'sleep',
   [AGENT_STATUS_KIND.CLOSED]: 'sleep',
   [AGENT_STATUS_KIND.APPROVAL]: 'wait',
+  [AGENT_STATUS_KIND.REVIEWING]: 'flow',
 };
 
 // Map a status kind to the tooltip badge's ``is-*`` class. Returns '' for kinds
@@ -130,6 +153,7 @@ function dotStatusForKind(kind, resolved) {
   if (kind === AGENT_STATUS_KIND.WORKFLOW
       || kind === AGENT_STATUS_KIND.BACKGROUND) { return TAB_STATUS.WORKFLOW; }
   if (kind === AGENT_STATUS_KIND.APPROVAL) { return TAB_STATUS.ATTENTION; }
+  if (kind === AGENT_STATUS_KIND.REVIEWING) { return TAB_STATUS.REVIEWING; }
   // ``resolved`` is the WORKSPACE status now — it can no longer answer
   // WORKING, so the dot's busy colours come from the kind above and nowhere
   // else. That is the whole point: one derivation, one answer.
@@ -144,9 +168,10 @@ export function deriveAgentStatus(
   session, liveStatus = null, needsAttention = false, agentName = '',
 ) {
   const baseStatus = deriveTabStatus(session);
-  const kind = liveStatus
-    ? liveKind(liveStatus, baseStatus, needsAttention)
-    : polledKind(session, baseStatus);
+  const kind = withReviewLoop(
+    liveStatus ? liveKind(liveStatus, baseStatus, needsAttention) : polledKind(session, baseStatus),
+    session,
+  );
   const meta = STATUS_BY_KIND[kind] || STATUS_BY_KIND[AGENT_STATUS_KIND.UNKNOWN];
 
   const resolved = resolveTabStatus(session, needsAttention);
@@ -211,10 +236,13 @@ export function deriveAgentStatus(
 // Uncertain kinds count as BUSY. The queue drain delivers on a busy -> idle
 // edge, so treating "connecting" or "unknown" as idle would manufacture an
 // ending that never happened and release a prompt mid-turn.
+// REVIEWING is idle here: the reviewer is a separate run, the CHAT is free —
+// a queued prompt may go (the loop re-reviews if it changes the code).
 const IDLE_AGENT_KINDS = new Set([
   AGENT_STATUS_KIND.IDLE,
   AGENT_STATUS_KIND.SLEEPING,
   AGENT_STATUS_KIND.CLOSED,
+  AGENT_STATUS_KIND.REVIEWING,
 ]);
 
 export function isBusyAgentKind(kind) {

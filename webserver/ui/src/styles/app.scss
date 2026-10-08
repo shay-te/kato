@@ -1577,6 +1577,16 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: $C-INDIGO-76;
   border-color: $C-INDIGO-76;
 } /* indigo: a background workflow is running */
+.status-reviewing {
+  background: $C-INDIGO-76;
+  border-color: $C-INDIGO-76;
+  /* The loop's own colour, pulsing: its reviewer is working. The pulse is
+   * what tells it from the steady indigo of a background workflow. */
+  animation: review-loop-pulse 1.6s ease-in-out infinite;
+} /* indigo, pulsing: the review loop's reviewer is reading the change */
+@media (prefers-reduced-motion: reduce) {
+  .status-reviewing { animation: none; }
+}
 .status-done {
   background: $C-NEUTRAL-16;
   border-color: $C-NEUTRAL-16;
@@ -10886,6 +10896,10 @@ button.settings-prompt-editor-head {
 }
 
 .tab-tooltip-dot.status-workflow {
+  background: $C-INDIGO-76;
+}
+
+.tab-tooltip-dot.status-reviewing {
   background: $C-INDIGO-76;
 }
 

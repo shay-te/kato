@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { deriveAgentStatus, badgeKindFor, isAgentActive } from './agentStatus.js';
+import { deriveAgentStatus, badgeKindFor, isAgentActive, isBusyAgentKind } from './agentStatus.js';
 import { AGENT_STATUS_KIND } from '../constants/agentStatusKind.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 
@@ -351,5 +351,49 @@ test('the dot and the label never disagree on one tab', () => {
       `dot and label disagree for live=${live_} working=${working}`,
     );
   }
+});
+
+
+// The review loop's reviewer is a separate run: while it reads the change the
+// chat is quiet, and the dot must still say the task is busy.
+const REVIEWING_LOOP = { status: 'running', phase: 'reviewing' };
+
+test('a reviewing loop colours a quiet chat\'s dot — live and polled', () => {
+  for (const lifecycle of [SESSION_LIFECYCLE.STREAMING, SESSION_LIFECYCLE.IDLE, SESSION_LIFECYCLE.CLOSED]) {
+    const status = deriveAgentStatus(session({ review_loop: REVIEWING_LOOP }), live({ lifecycle }));
+    assert.equal(status.kind, AGENT_STATUS_KIND.REVIEWING, lifecycle);
+    assert.equal(status.label, 'reviewing');
+    assert.match(status.dotClass, /status-reviewing/);
+    assert.match(status.title, /independent reviewer is reading the change/);
+  }
+  const polled = deriveAgentStatus(session({ live: false, review_loop: REVIEWING_LOOP }));
+  assert.equal(polled.kind, AGENT_STATUS_KIND.REVIEWING);
+  assert.equal(badgeKindFor(polled.kind), 'flow');
+});
+
+test('anything the chat itself is doing outranks the reviewer', () => {
+  const loop = { review_loop: REVIEWING_LOOP };
+  assert.equal(deriveAgentStatus(session(loop), live({ turnInFlight: true })).kind, AGENT_STATUS_KIND.WORKING);
+  assert.equal(deriveAgentStatus(session(loop), live(), true).kind, AGENT_STATUS_KIND.APPROVAL);
+  assert.equal(
+    deriveAgentStatus(session(loop), live({ awaitingBackground: true })).kind,
+    AGENT_STATUS_KIND.BACKGROUND,
+  );
+});
+
+test('only the reviewing phase of a running loop counts', () => {
+  for (const loop of [
+    { status: 'running', phase: 'awaiting_fix' },      // the chat is the one working
+    { status: 'running', phase: 'waiting_to_review' },
+    { status: 'clean', phase: 'reviewing' },             // finished
+    null,
+  ]) {
+    const status = deriveAgentStatus(session({ review_loop: loop }), live());
+    assert.notEqual(status.kind, AGENT_STATUS_KIND.REVIEWING, JSON.stringify(loop));
+  }
+});
+
+test('the reviewer does not hold back a queued prompt: the chat is free', () => {
+  assert.equal(isBusyAgentKind(AGENT_STATUS_KIND.REVIEWING), false);
 });
 

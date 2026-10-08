@@ -240,6 +240,9 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
                 errors='replace',
                 check=False,
                 timeout=self.VERSION_PROBE_TIMEOUT_SECONDS,
+                # Never the operator's terminal: given a TTY the CLI goes raw, and a
+                # timeout kill leaves it raw — Ctrl+C then can't stop the host.
+                stdin=subprocess.DEVNULL,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError(

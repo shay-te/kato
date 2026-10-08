@@ -19,6 +19,9 @@ export const AGENT_STATUS_KIND = Object.freeze({
   // processing. Its own kind so the two can never claim different things.
   BACKGROUND: 'background',
   APPROVAL: 'approval',
+  // The task's review loop has its independent reviewer reading the change —
+  // a separate one-shot run, so the chat itself is quiet meanwhile.
+  REVIEWING: 'reviewing',
   IDLE: 'idle',
   CONNECTING: 'connecting',
   SLEEPING: 'sleeping',

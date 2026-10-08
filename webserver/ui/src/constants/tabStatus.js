@@ -17,4 +17,5 @@ export const TAB_STATUS = Object.freeze({
   // churning). UI-only overlay, its own dot colour.
   WORKFLOW: 'workflow',
   ATTENTION: 'attention',
+  REVIEWING: 'reviewing',
 });

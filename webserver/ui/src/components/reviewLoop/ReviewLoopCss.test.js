@@ -90,3 +90,12 @@ test('a round\'s duration sits beside its outcome, muted, in even digits', () =>
   assert.match(body, /font-variant-numeric: tabular-nums/);
   assert.match(body, /color:/);
 });
+
+test('the reviewing dot is the loop\'s indigo, pulsing — steady for reduced motion', () => {
+  const body = ruleBody('.status-reviewing');
+  assert.match(body, /background: #a78bfa/);
+  assert.match(body, /animation: review-loop-pulse/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.status-reviewing \{\s*animation: none;/);
+  assert.match(ruleBody('.tab-tooltip-dot.status-reviewing'), /background: #a78bfa/);
+});
+

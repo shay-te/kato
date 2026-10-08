@@ -247,6 +247,9 @@ def _default_runner(path: str) -> str:
         [path, '--version'], capture_output=True, text=True,
         encoding='utf-8', errors='replace', check=False,
         timeout=_PROBE_TIMEOUT_SECONDS,
+        # Never the operator's terminal: given a TTY the CLI goes raw, and a
+        # timeout kill leaves it raw — Ctrl+C then can't stop kato.
+        stdin=subprocess.DEVNULL,
     )
     return (result.stdout or result.stderr or '').strip()
 
@@ -536,6 +539,9 @@ def _default_upgrade_runner(cmd: list) -> tuple[int, str]:
     result = subprocess.run(
         cmd, capture_output=True, text=True, encoding='utf-8',
         errors='replace', check=False, timeout=_UPGRADE_TIMEOUT_SECONDS,
+        # Never the operator's terminal: given a TTY the CLI goes raw, and a
+        # timeout kill leaves it raw — Ctrl+C then can't stop kato.
+        stdin=subprocess.DEVNULL,
     )
     return result.returncode, ((result.stdout or '') + (result.stderr or '')).strip()
 

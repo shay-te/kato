@@ -104,6 +104,9 @@ def _probe_help_for_remote_control(binary: str, timeout: float) -> bool:
         proc = subprocess.run(
             [binary, '--help'],
             capture_output=True, text=True, timeout=timeout, check=False,
+            # Never the operator's terminal: given a TTY the CLI goes raw, and a
+            # timeout kill leaves it raw — Ctrl+C then can't stop the host.
+            stdin=subprocess.DEVNULL,
         )
     except Exception:
         return False
