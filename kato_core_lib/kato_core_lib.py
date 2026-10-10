@@ -42,6 +42,7 @@ from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
 from kato_core_lib.data_layers.service.local_task_routing import (
     LocalAwareTaskService,
     LocalAwareTaskStateService,
+    NoTrackerClient,
 )
 from kato_core_lib.data_layers.service.testing_service import TestingService
 from kato_core_lib.data_layers.service.parallel_task_runner import ParallelTaskRunner
@@ -88,6 +89,7 @@ from kato_core_lib.errors import AgentBackendChangedError
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path, kato_session_state_dir
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
 from kato_core_lib.helpers.ticket_image_utils import download_ticket_images
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
@@ -470,12 +472,7 @@ class KatoCoreLib(CoreLib):
         # allowlist (grep/cat/ls/…) — the startup gate already refused it when
         # docker is off, so an enabled flag here implies docker is on.
         read_only_tools_on = is_read_only_tools_enabled()
-        issue_platform, ticket_cfg = self._resolve_ticket_platform_config(open_cfg)
-        ticket_client = TaskCoreLib(
-            issue_platform,
-            ticket_cfg,
-            retry_cfg.max_retries,
-        ).issue
+        ticket_client, ticket_cfg = self._build_ticket_client(open_cfg, retry_cfg.max_retries)
         implementation_service = ImplementationService(
             self._build_agent_client(
                 open_cfg,
@@ -812,6 +809,18 @@ class KatoCoreLib(CoreLib):
         rep_cfg = getattr(open_cfg, 'restricted_execution', None)
         storage_path = getattr(rep_cfg, 'storage_path', None) if rep_cfg is not None else None
         return RepositoryApprovalService(storage_path=storage_path or None)
+
+    @staticmethod
+    def _build_ticket_client(open_cfg: DictConfig, max_retries: int) -> tuple[object, DictConfig]:
+        """The tracker client and its config block.
+
+        An install with no tracker (``KATO_ISSUE_PLATFORM=local``) gets the
+        empty one its local tasks sit on — nothing to poll, no keys to ask for.
+        """
+        if is_no_tracker(open_cfg.issue_platform):
+            return NoTrackerClient(), open_cfg.local_tasks
+        issue_platform, ticket_cfg = KatoCoreLib._resolve_ticket_platform_config(open_cfg)
+        return TaskCoreLib(issue_platform, ticket_cfg, max_retries).issue, ticket_cfg
 
     @staticmethod
     def _resolve_ticket_platform_config(

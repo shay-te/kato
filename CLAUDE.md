@@ -358,6 +358,13 @@ state (all list methods funnel through `get_assigned_tasks(states=…)`). Do NOT
 mark their workspaces done and their PR review comments would never be polled. A local task is
 created IN_PROGRESS — as OPEN the autonomous scan would pick it up and implement it unasked.
 
+**No tracker at all** (`KATO_ISSUE_PLATFORM=local` — the wizard's "Skip for now" on its first step,
+or Settings → Task provider → No tracker): `validate_env`
+requires no tracker keys, and `KatoCoreLib._build_ticket_client` puts `NoTrackerClient` (empty: lists
+nothing, validates nothing, refuses writes for a non-local id) under the SAME LocalAware services, with
+the `kato.local_tasks` config block supplying only state names. So local tasks stay the one routing
+path — do not add a separate "no tracker" branch elsewhere. An UNSET platform still means YouTrack.
+
 ### PR review comment
 ```
 scan → get_new_pull_request_comments() on PRs in "In Review"

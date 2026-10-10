@@ -39,6 +39,13 @@ const TICKET_SYSTEMS = [
   { id: 'bitbucket', label: 'Bitbucket Issues', blurb: 'Issues on Bitbucket' },
 ];
 
+// "Skip for now" on the ticket-system step: no tracker
+// (KATO_ISSUE_PLATFORM=local). Tasks are created in kato's own "New task" tab,
+// so a tracker is never something setup may insist on — there is nothing to
+// connect to, and the details step is skipped rather than shown empty. A
+// tracker can be connected later in Settings → Task provider.
+const NO_TRACKER = 'local';
+
 // The fields kato needs to poll each ticket system. Mirrors the backend's
 // required-key map (validate_env.REQUIRED_AGENT_KEYS_BY_PLATFORM) plus the
 // token/email you can't authenticate without. Filling these clears the
@@ -65,6 +72,7 @@ const REQUIRED_TICKET_FIELDS = {
     'BITBUCKET_API_EMAIL', 'BITBUCKET_WORKSPACE', 'BITBUCKET_REPO_SLUG',
     'BITBUCKET_ASSIGNEE',
   ],
+  [NO_TRACKER]: [],
 };
 
 // The AI agent that runs the work. Only backends kato can actually boot
@@ -365,6 +373,20 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
     setStep(2);
   };
 
+  // "Skip for now": no tracker. Saved right here (there is nothing else to
+  // ask), and setup moves on to the agent.
+  const onSkipTracker = async () => {
+    const ok = await runSave(() => updateTaskProvider({ active: NO_TRACKER }));
+    if (!ok) { return; }
+    setPlatform(NO_TRACKER);
+    toast.show({
+      kind: 'success', title: 'No tracker for now',
+      message: 'Create tasks in kato’s New task tab. Connect a tracker any time in Settings → Task provider.',
+    });
+    await onRefreshStatus();
+    setStep(2);
+  };
+
   const onSaveRepo = async () => {
     const path = repoRoot.trim();
     if (!path) { return; }
@@ -431,6 +453,8 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
           platform={platform}
           onPick={setPlatform}
           onNext={() => setStep(1)}
+          onSkip={onSkipTracker}
+          saving={saving}
           loadError={loadError}
         />
       )}
@@ -458,7 +482,7 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
         <StepPickAgent
           agentChoice={agentChoice}
           onPick={onPickAgent}
-          onBack={() => setStep(1)}
+          onBack={() => setStep(platform === NO_TRACKER ? 0 : 1)}
           onNext={() => setStep(3)}
         />
       )}
@@ -576,13 +600,16 @@ function WizardField({ label, envKey, type = 'text', value, onChange, placeholde
   );
 }
 
-function StepPickSystem({ platform, onPick, onNext, loadError }) {
+function StepPickSystem({ platform, onPick, onNext, onSkip, saving, loadError }) {
+  // Next needs a tracker picked; "no tracker" (saved earlier) is not one.
+  const picked = TICKET_SYSTEMS.some((system) => system.id === platform);
   return (
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Where do your tickets live?</h3>
       <p className="setup-wizard-lead">
-        Pick the system kato should poll for assigned work. You can change
-        this later in Settings.
+        Pick the system kato should poll for assigned work — or skip it and
+        create tasks in kato yourself. You can connect a tracker later in
+        Settings → Task provider.
       </p>
       {loadError && <p className="setup-wizard-error" role="alert">{loadError}</p>}
       <div className="setup-wizard-choices" role="radiogroup" aria-label="Ticket system">
@@ -601,11 +628,13 @@ function StepPickSystem({ platform, onPick, onNext, loadError }) {
         ))}
       </div>
       <div className="setup-wizard-actions">
-        <span />
+        <button type="button" className="setup-wizard-btn" onClick={onSkip} disabled={saving}>
+          {saving ? 'Saving…' : 'Skip for now'}
+        </button>
         <button
           type="button"
           className="setup-wizard-btn setup-wizard-btn--primary"
-          disabled={!platform}
+          disabled={!picked || saving}
           onClick={onNext}
         >
           Next

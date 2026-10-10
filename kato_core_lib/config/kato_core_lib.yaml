@@ -19,6 +19,8 @@ core_lib:
       slack_email_error_url: ${oc.env:SLACK_WEBHOOK_URL_ERRORS_EMAIL,""}
 
 kato:
+  # Where tickets come from: youtrack | jira | github | gitlab | bitbucket, or
+  # ``local`` — no tracker, every task is created in kato's own UI.
   issue_platform: ${oc.env:KATO_ISSUE_PLATFORM,"youtrack"}
   agent_backend: ${oc.env:KATO_AGENT_BACKEND,"openhands"}
   # Per-task workspace folders that hold fresh clones of every repo a
@@ -164,6 +166,20 @@ kato:
     max_retries: ${core_lib.bitbucket_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
     require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
+  # KATO_ISSUE_PLATFORM=local: no tracker. Nothing to connect to, so no keys
+  # — only the state names the local tasks are listed and moved under (the
+  # labels local_task_routing gives them).
+  local_tasks:
+    project: ""
+    assignee: ""
+    issue_states: Open
+    progress_state_field: state
+    progress_state: In Progress
+    review_state_field: state
+    review_state: In Review
+    done_state_field: state
+    done_state: Done
+    max_retries: 1
   # Azure Repos (Azure DevOps): a git host only — pull requests and their
   # review comments; Azure Boards is not a task provider. The repository
   # inventory reads this as the API defaults for every repository whose remote

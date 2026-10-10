@@ -59,7 +59,7 @@ Open `.env`, fill in the blanks. The minimum to start:
 
 | Variable | What |
 |---|---|
-| `KATO_ISSUE_PLATFORM` | `youtrack` / `jira` / `github` / `gitlab` / `bitbucket` |
+| `KATO_ISSUE_PLATFORM` | `youtrack` / `jira` / `github` / `gitlab` / `bitbucket`, or `local` — no tracker: you create tasks in kato and no tracker keys are needed |
 | `KATO_AGENT_BACKEND` | `claude` (local) or `openhands` (Docker) |
 | `REPOSITORY_ROOT_PATH` | absolute path to a folder that contains your repo clones |
 | Issue-platform credentials | `YOUTRACK_API_TOKEN` / `JIRA_API_TOKEN` / `GITHUB_API_TOKEN` / `GITLAB_API_TOKEN` / `BITBUCKET_API_TOKEN` — only the one for the platform you picked |

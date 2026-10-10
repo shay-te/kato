@@ -6,7 +6,7 @@ The list below catalogs every environment key kato reads (set them in the Settin
 
 | Variable | What it does |
 | --- | --- |
-| `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, and `bitbucket`. |
+| `KATO_ISSUE_PLATFORM` | Selects the active issue platform. Supported values are `youtrack`, `jira`, `github`, `gitlab`, `bitbucket`, and `local` — no tracker: every task is created in kato's New task tab, and no tracker keys are needed. Unset means `youtrack`. |
 | `KATO_AGENT_BACKEND` | Selects the active agent backend. Supported values are `openhands` (default) and `claude`. |
 | `YOUTRACK_API_BASE_URL` | YouTrack API base URL. |
 | `YOUTRACK_API_TOKEN` | YouTrack API token. |

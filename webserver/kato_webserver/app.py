@@ -544,6 +544,9 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
         'BITBUCKET_DONE_STATE',
         'BITBUCKET_ISSUE_STATES',
     ),
+    # No tracker: tasks are created in kato itself, so there is nothing to
+    # connect to and no field to fill — choosing it is the whole setting.
+    'local': (),
 }
 
 # Git hosts — where code + PRs live. Bitbucket / GitHub / GitLab /

@@ -122,6 +122,51 @@ describe('SetupWizard step 1 — pick the ticket system', () => {
   });
 });
 
+// Tasks can be created in kato itself, so a tracker is not something setup
+// may insist on: "Skip for now" moves on with no tracker and no keys.
+describe('SetupWizard — skip the tracker', () => {
+  async function skip(onRefreshStatus = vi.fn()) {
+    render(<SetupWizard status={UNCONFIGURED} onRefreshStatus={onRefreshStatus} />);
+    await waitFor(() => { expect(fetchTaskProviders).toHaveBeenCalled(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }));
+  }
+
+  test('one click, no keys, straight to the agent', async () => {
+    const onRefreshStatus = vi.fn();
+    await skip(onRefreshStatus);
+    await screen.findByText('Which AI agent does the work?');
+    // Only "no tracker" is saved — no token, project or assignee.
+    expect(updateTaskProvider).toHaveBeenCalledTimes(1);
+    expect(updateTaskProvider).toHaveBeenCalledWith({ active: 'local' });
+    expect(onRefreshStatus).toHaveBeenCalled();
+    expect(screen.queryByText(/^Connect /)).toBeNull();
+  });
+
+  test('it is not one of the trackers to pick', async () => {
+    render(<SetupWizard status={UNCONFIGURED} onRefreshStatus={vi.fn()} />);
+    await waitFor(() => { expect(fetchTaskProviders).toHaveBeenCalled(); });
+    expect(screen.queryByRole('radio', { name: /No tracker/ })).toBeNull();
+  });
+
+  test('Back from the agent step returns to the choice, where Next still needs a tracker', async () => {
+    await skip();
+    await screen.findByText('Which AI agent does the work?');
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(await screen.findByText('Where do your tickets live?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('radio', { name: /Jira/ }));
+    expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled();
+  });
+
+  test('a failed save stays on the choice', async () => {
+    updateTaskProvider.mockResolvedValue({ ok: false, status: 500, body: { error: 'disk full' } });
+    await skip();
+    await waitFor(() => { expect(updateTaskProvider).toHaveBeenCalled(); });
+    expect(screen.getByText('Where do your tickets live?')).toBeInTheDocument();
+    expect(screen.queryByText('Which AI agent does the work?')).toBeNull();
+  });
+});
+
 // The install feedback that produced this block: "I don't know where I get
 // the API key from — this isn't something I usually do, and there is no
 // SECURITY menu." So every credential step must say WHY the key is needed

@@ -69,6 +69,52 @@ def local_task_as_task(local: LocalTask) -> Task:
     return task
 
 
+class NoTrackerClient(object):
+    """The tracker beneath an install that has none (``KATO_ISSUE_PLATFORM=local``).
+
+    Every task there is a local one, and the services below route ``LOCAL-*``
+    ids to the store before they reach a tracker — so this tracker is simply
+    empty: it lists no tickets and has no connection to validate. Being empty
+    is the point: first-run setup no longer has to demand tracker keys from an
+    operator who only creates tasks in kato.
+
+    A write can only reach it for a ticket id from a tracker the install no
+    longer has (a workspace left over from before the switch), and it says so
+    instead of pretending the ticket was updated.
+    """
+
+    provider_name = 'local'
+    max_retries = 1
+
+    def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
+        return None
+
+    def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list:
+        return []
+
+    def download_image_attachments(self, issue_id: str, destination_dir) -> list[str]:
+        return []
+
+    def add_comment(self, issue_id: str, comment: str) -> None:
+        self._no_ticket(issue_id)
+
+    def move_issue_to_state(self, issue_id: str, field_name: str, state_name: str) -> None:
+        self._no_ticket(issue_id)
+
+    def add_tag(self, issue_id: str, label_name: str) -> None:
+        self._no_ticket(issue_id)
+
+    def remove_tag(self, issue_id: str, label_name: str) -> None:
+        self._no_ticket(issue_id)
+
+    @staticmethod
+    def _no_ticket(issue_id: str) -> None:
+        raise ValueError(
+            f'{issue_id} is not a task kato has: this install has no issue '
+            'tracker, only tasks created in kato'
+        )
+
+
 class LocalAwareTaskService(TaskService):
 
     def __init__(self, config, task_data_access, local_tasks: LocalTaskStore) -> None:

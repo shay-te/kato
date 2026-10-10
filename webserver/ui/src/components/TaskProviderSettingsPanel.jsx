@@ -11,6 +11,7 @@ const PROVIDER_LABELS = {
   github: 'GitHub Issues',
   gitlab: 'GitLab Issues',
   bitbucket: 'Bitbucket Issues',
+  local: 'No tracker (tasks created in kato)',
 };
 
 export default function TaskProviderSettingsPanel() {

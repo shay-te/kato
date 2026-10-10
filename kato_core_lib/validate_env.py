@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from shutil import which
 
+from kato_core_lib.helpers.issue_platform_utils import NO_TRACKER_ISSUE_PLATFORM
 from kato_core_lib.helpers.kato_config_utils import (
     is_bedrock_model,
     is_openrouter_model,
@@ -66,6 +67,9 @@ REQUIRED_AGENT_KEYS_BY_PLATFORM = {
         'BITBUCKET_ASSIGNEE',
         'BITBUCKET_API_EMAIL',
     ),
+    # No tracker: tasks are created in kato's own UI, so there is nothing to
+    # connect to and nothing for first-run setup to ask for.
+    NO_TRACKER_ISSUE_PLATFORM: (),
 }
 EMAIL_REQUIREMENTS = {
     'KATO_FAILURE_EMAIL_ENABLED': (

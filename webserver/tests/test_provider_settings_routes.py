@@ -112,6 +112,17 @@ class TaskProvidersPostTests(_ProviderRouteTestBase):
         self.assertEqual(saved.get('JIRA_API_TOKEN'), 'tok-123')
         self.assertNotIn('KATO_CLAUDE_BYPASS_PERMISSIONS', saved)
 
+    def test_no_tracker_is_a_provider_with_nothing_to_fill(self) -> None:
+        # Tasks can be created in kato itself: choosing "no tracker" is the
+        # whole setting — no token, project or assignee.
+        with patch.dict(os.environ, self._env()):
+            listed = self._client().get('/api/task-providers').get_json()
+            resp = self._client().post('/api/task-providers', json={'active': 'local'})
+        self.assertIn('local', listed['supported'])
+        self.assertEqual(listed['providers']['local'], {'fields': {}})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._saved().get('KATO_ISSUE_PLATFORM'), 'local')
+
     def test_unknown_provider_rejected(self) -> None:
         with patch.dict(os.environ, self._env()):
             resp = self._client().post(
