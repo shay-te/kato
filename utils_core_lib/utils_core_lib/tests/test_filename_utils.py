@@ -10,9 +10,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from utils_core_lib.utils_core_lib.filename_utils import (
+    content_file_path,
     safe_attachment_name,
     unique_file_path,
 )
@@ -114,6 +116,18 @@ class UniqueFilePathTests(unittest.TestCase):
             self.directory / f'bug-{os.getpid()}.png',
         )
 
+    def test_even_the_last_resort_taken_is_still_a_path(self) -> None:
+        # Nothing left to pick: the last resort is returned rather than
+        # looping on — the pathological case must still terminate.
+        for index in range(2, 1000):
+            (self.directory / f'bug-{index}.png').write_bytes(b'x')
+        (self.directory / 'bug.png').write_bytes(b'x')
+        (self.directory / f'bug-{os.getpid()}.png').write_bytes(b'x')
+        self.assertEqual(
+            unique_file_path(self.directory, 'bug.png'),
+            self.directory / f'bug-{os.getpid()}.png',
+        )
+
     def test_a_string_directory_is_accepted(self) -> None:
         self.assertEqual(
             unique_file_path(str(self.directory), 'bug.png'),
@@ -123,3 +137,76 @@ class UniqueFilePathTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ContentFilePathTests(unittest.TestCase):
+    """Saving the same download twice lands on the same file."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.directory = Path(self._tmp.name)
+
+    def test_a_free_name_is_a_new_file(self) -> None:
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / 'bug.png', False),
+        )
+
+    def test_the_same_bytes_already_saved_are_reused_not_copied(self) -> None:
+        (self.directory / 'bug.png').write_bytes(b'PNG')
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / 'bug.png', True),
+        )
+
+    def test_a_different_file_of_that_name_is_never_overwritten(self) -> None:
+        (self.directory / 'bug.png').write_bytes(b'an operator upload')
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / 'bug-2.png', False),
+        )
+
+    def test_a_copy_saved_under_a_suffix_is_found_too(self) -> None:
+        (self.directory / 'bug.png').write_bytes(b'other')
+        (self.directory / 'bug-2.png').write_bytes(b'PNG')
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / 'bug-2.png', True),
+        )
+
+    def test_a_path_claimed_in_this_batch_is_not_handed_out_again(self) -> None:
+        # Two attachments, same name, same bytes: still two attachments.
+        (self.directory / 'bug.png').write_bytes(b'PNG')
+        self.assertEqual(
+            content_file_path(
+                self.directory, 'bug.png', b'PNG',
+                claimed=[str(self.directory / 'bug.png')],
+            ),
+            (self.directory / 'bug-2.png', False),
+        )
+
+    def test_a_directory_in_the_way_is_not_a_saved_copy(self) -> None:
+        (self.directory / 'bug.png').mkdir()
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / 'bug-2.png', False),
+        )
+
+    def test_an_unreadable_file_is_not_a_saved_copy(self) -> None:
+        (self.directory / 'bug.png').write_bytes(b'PNG')
+        with unittest.mock.patch.object(Path, 'read_bytes', side_effect=OSError('locked')):
+            self.assertEqual(
+                content_file_path(self.directory, 'bug.png', b'PNG'),
+                (self.directory / 'bug-2.png', False),
+            )
+
+    def test_every_slot_taken_falls_back_to_the_process_id(self) -> None:
+        for index in range(2, 1000):
+            (self.directory / f'bug-{index}.png').write_bytes(b'x')
+        (self.directory / 'bug.png').write_bytes(b'x')
+        (self.directory / f'bug-{os.getpid()}.png').write_bytes(b'x')
+        self.assertEqual(
+            content_file_path(self.directory, 'bug.png', b'PNG'),
+            (self.directory / f'bug-{os.getpid()}.png', False),
+        )

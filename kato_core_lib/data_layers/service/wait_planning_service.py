@@ -43,6 +43,7 @@ from kato_core_lib.helpers.plan_mode_store import PLAN_MODE
 from kato_core_lib.helpers.planning_hold_store import set_planning_hold
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
+from kato_core_lib.helpers.ticket_image_utils import download_ticket_images
 from kato_core_lib.helpers.workspace_refusal_guidance import KATO_AGENT_GUIDANCE
 from kato_core_lib.helpers.workspace_repo_utils import (
     resolve_session_cwd,
@@ -68,6 +69,8 @@ class _PlanningContext(object):
     workspace_root: str = ''
     repository_paths: tuple[str, ...] = ()
     additional_dirs: tuple[str, ...] = ()
+    # The ticket's screenshots, saved into the task folder (local paths).
+    attachment_paths: tuple[str, ...] = ()
 
 
 # The two hold tags, in match order. ``permission_mode`` is the CLI override
@@ -92,10 +95,13 @@ class WaitPlanningService(object):
         planning_session_runner=None,
         track_planning_holds: bool = False,
         logger: logging.Logger | None = None,
+        task_service=None,
     ) -> None:
         self._session_manager = session_manager
         self._repository_service = repository_service
         self._task_state_service = task_state_service
+        # Fetches the ticket's screenshots; None = a host without a tracker.
+        self._task_service = task_service
         self._workspace_manager = workspace_manager
         self._planning_session_runner = planning_session_runner
         # Off unless the app turns it on: the holds live in ONE file under
@@ -424,6 +430,7 @@ class WaitPlanningService(object):
                 for repo in repositories
             ) if path
         )
+        workspace_root = task_workspace_root(self._workspace_manager, task_id)
         return _PlanningContext(
             # Never spawn outside the task's own workspace. Repo resolution
             # can degrade to no repos (a clone failure, an unmatched tag), and
@@ -431,11 +438,17 @@ class WaitPlanningService(object):
             # kato's own working directory at spawn time — and then persisted.
             cwd=resolve_session_cwd(self._workspace_manager, task_id, cwd),
             expected_branch=branch_name,
-            workspace_root=task_workspace_root(self._workspace_manager, task_id),
+            workspace_root=workspace_root,
             repository_paths=repository_paths,
             additional_dirs=tuple(
                 sibling_repository_dirs(self._workspace_manager, task_id),
             ),
+            # Saved for the hold chat exactly as preflight saves them for the
+            # autonomous run: a chat handed only the tracker's link cannot
+            # open a screenshot (UNA-3242).
+            attachment_paths=tuple(download_ticket_images(
+                self._task_service, task_id, workspace_root, self.logger,
+            )),
         )
 
     def _resolve_repositories(self, task: Task) -> list:
@@ -616,6 +629,11 @@ class WaitPlanningService(object):
             description=text_from_attr(task, 'description'),
         )
         sections.append(definition or '## Task definition\n(no description provided)')
+        attachments = agent_prompt_utils.task_attachments_block(
+            context.attachment_paths if context is not None else (),
+        )
+        if attachments:
+            sections.extend(['', attachments])
         forbidden_repositories = agent_prompt_utils.forbidden_repository_guardrails_text()
         if forbidden_repositories:
             sections.extend(['', '## Forbidden repositories', forbidden_repositories])

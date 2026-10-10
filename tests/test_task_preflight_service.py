@@ -282,6 +282,7 @@ class TaskPreflightAttachmentTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.workspace_root = Path(self._tmp.name) / 'PROJ-1'
+        self.workspace_root.mkdir()  # provisioning made it: the clones live in it
         self.task = build_task()
         self.repository = types.SimpleNamespace(
             id='client',
@@ -346,3 +347,10 @@ class TaskPreflightAttachmentTests(unittest.TestCase):
 
         self.assertEqual(prepared.attachment_paths, [])
         self.task_service.download_image_attachments.assert_not_called()
+
+    def test_a_task_folder_that_is_not_there_is_never_created(self) -> None:
+        self.workspace_root.rmdir()
+
+        self.assertEqual(self._prepare().attachment_paths, [])
+        self.task_service.download_image_attachments.assert_not_called()
+        self.assertFalse(self.workspace_root.exists())

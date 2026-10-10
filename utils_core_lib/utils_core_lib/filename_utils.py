@@ -57,12 +57,52 @@ def unique_file_path(directory: Path, name: str) -> Path:
     the first — whatever referenced the path would then point at contents
     that are not what was attached.
     """
-    candidate = Path(directory) / name
-    if not candidate.exists():
-        return candidate
-    stem, extension = os.path.splitext(name)
-    for index in range(2, 1000):
-        candidate = Path(directory) / f'{stem}-{index}{extension}'
+    for candidate in _candidate_paths(directory, name):
         if not candidate.exists():
             return candidate
-    return Path(directory) / f'{stem}-{os.getpid()}{extension}'
+    return candidate  # every slot taken: the last resort
+
+
+def content_file_path(
+    directory: Path, name: str, content: bytes, *, claimed=(),
+) -> tuple[Path, bool]:
+    """Where ``content`` called ``name`` belongs: ``(path, already_saved)``.
+
+    The file that already holds exactly these bytes (``True`` — nothing to
+    write), else the first free slot ``unique_file_path`` would pick
+    (``False``). Saving the same download twice then lands on the same file,
+    instead of ``bug.png`` and ``bug-2.png`` holding one screenshot twice —
+    while a DIFFERENT file of the same name is still never overwritten.
+
+    ``claimed``: paths the caller already used in this batch. Two attachments
+    with the same name and the same bytes are still two attachments, so a
+    claimed path is never handed out again.
+    """
+    taken = {str(path) for path in claimed}
+    for candidate in _candidate_paths(directory, name):
+        if str(candidate) in taken:
+            continue
+        if not candidate.exists():
+            return candidate, False
+        if _holds(candidate, content):
+            return candidate, True
+    return candidate, False
+
+
+def _candidate_paths(directory: Path, name: str):
+    """``name``, ``name-2`` … ``name-999``, then a last resort no one else picks."""
+    yield Path(directory) / name
+    stem, extension = os.path.splitext(name)
+    for index in range(2, 1000):
+        yield Path(directory) / f'{stem}-{index}{extension}'
+    yield Path(directory) / f'{stem}-{os.getpid()}{extension}'
+
+
+def _holds(path: Path, content: bytes) -> bool:
+    """Whether ``path`` is a file with exactly ``content``. Unreadable is no."""
+    try:
+        return path.is_file() and path.stat().st_size == len(content) and (
+            path.read_bytes() == content
+        )
+    except OSError:
+        return False

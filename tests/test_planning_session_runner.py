@@ -227,6 +227,59 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertNotIn('Task definition', prompt)
         self.assertTrue(prompt.endswith('please continue'))
 
+    def test_first_chat_spawn_names_the_tickets_screenshots(self) -> None:
+        """UNA-3242: the screenshots were on the ticket and the chat could not
+        see them — it only had the tracker's link, which it cannot open."""
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+        asked = []
+        saved = '/ws/PROJ-1/attachments/image.png'
+
+        def fetch(task_id, task_folder):
+            asked.append((task_id, task_folder))
+            return [saved]
+
+        runner.attach_ticket_images(fetch)
+        runner.resume_session_for_chat(
+            task_id='PROJ-1', message='please continue', cwd='/tmp/client',
+            task_summary='Fix the FOC rule', task_description='See the screenshot.',
+            workspace_root='/ws/PROJ-1',
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertEqual(asked, [('PROJ-1', '/ws/PROJ-1')])
+        self.assertIn('Images attached to the ticket', prompt)
+        self.assertLess(prompt.index('Task definition'), prompt.index(saved))
+        self.assertTrue(prompt.endswith('please continue'))
+
+    def test_a_resumed_chat_is_not_handed_them_again(self) -> None:
+        # It already has them in its history; re-sending made the agent
+        # re-litigate the task every turn.
+        manager = _FakeManager(_terminal(result='ok'))
+        manager.get_record = lambda task_id: SimpleNamespace(
+            agent_session_id='0fd1267c-fb21-4364-aaa0-d71a2bb692c8', status='active',
+        )
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+        runner.attach_ticket_images(lambda task_id, folder: ['/ws/PROJ-1/attachments/a.png'])
+        runner.resume_session_for_chat(
+            task_id='PROJ-1', message='next', cwd='/tmp/client', workspace_root='/ws/PROJ-1',
+        )
+        self.assertNotIn('Images attached to the ticket', manager.start_kwargs['initial_prompt'])
+
+    def test_no_task_folder_or_a_failing_fetch_names_nothing(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        def broken(task_id, folder):
+            raise RuntimeError('tracker down')
+
+        for fetch, folder in ((broken, '/ws/PROJ-1'), (lambda t, f: ['/x.png'], '')):
+            runner.attach_ticket_images(fetch)
+            runner.resume_session_for_chat(
+                task_id='PROJ-1', message='go', cwd='/tmp/client', workspace_root=folder,
+            )
+            self.assertNotIn('Images attached', manager.start_kwargs['initial_prompt'])
+
     def test_explain_mode_spawns_read_only_and_never_reaches_the_cli_as_a_mode(self) -> None:
         """'explain' is not a CLI --permission-mode; it must be resolved away."""
         manager = _FakeManager(_terminal(result='explained'))

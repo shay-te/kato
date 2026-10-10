@@ -665,6 +665,28 @@ class DownloadImageAttachmentsTests(unittest.TestCase):
             [Path(path).name for path in written], ['bug.png', 'bug-2.png'],
         )
 
+    def test_downloading_again_reuses_the_saved_copies(self) -> None:
+        # The task is prepared again on every respawn and restart: the agent
+        # must be handed each screenshot once, not bug.png AND bug-2.png.
+        client = self._client_with([
+            {'name': 'bug.png', 'url': '/f/1.png'},
+            {'name': 'bug.png', 'url': '/f/2.png'},
+        ])
+        first = client.download_image_attachments('PROJ-1', self.directory)
+        again = client.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual(again, first)
+        self.assertEqual(sorted(path.name for path in self.directory.iterdir()),
+                         ['bug-2.png', 'bug.png'])
+
+    def test_a_changed_screenshot_is_saved_beside_the_old_one(self) -> None:
+        self._client_with([{'name': 'bug.png', 'url': '/f/1.png'}]).download_image_attachments(
+            'PROJ-1', self.directory,
+        )
+        changed = self._client_with([{'name': 'bug.png', 'url': '/f/1.png'}], content=b'NEW')
+        written = changed.download_image_attachments('PROJ-1', self.directory)
+        self.assertEqual([Path(path).name for path in written], ['bug-2.png'])
+        self.assertEqual((self.directory / 'bug.png').read_bytes(), b'PNG')
+
     def test_the_image_count_is_capped(self) -> None:
         client = self._client_with([
             {'name': f'shot-{index}.png', 'url': f'/f/{index}.png'}

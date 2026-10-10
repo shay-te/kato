@@ -251,7 +251,29 @@ class PlanningSessionRunner(object):
         # boot) is treated as a silent no-op so existing behaviour
         # is unchanged for kato installs that never adopt hooks.
         self._hook_runner = hook_runner
+        # ``(task_id, task_folder) -> local paths`` of the ticket's
+        # screenshots, for a fresh chat's first turn (``attach_ticket_images``).
+        self._ticket_images: Callable[[str, str], list[str]] | None = None
         self.logger = configure_logger(self.__class__.__name__)
+
+    def attach_ticket_images(self, fetch: Callable[[str, str], list[str]]) -> None:
+        """Name the ticket's screenshots in a fresh chat's first turn.
+
+        ``fetch(task_id, task_folder)`` saves them into the task folder and
+        returns the local paths. Late-bound: the task service that can reach
+        the tracker is built after this runner.
+        """
+        self._ticket_images = fetch
+
+    def _ticket_image_paths(self, task_id: str, task_folder: str) -> list[str]:
+        """The screenshots to name; none when no fetcher is wired, or it fails."""
+        if self._ticket_images is None or not task_folder:
+            return []
+        try:
+            return list(self._ticket_images(task_id, task_folder) or [])
+        except Exception:
+            self.logger.exception('failed to fetch ticket images for task %s', task_id)
+            return []
 
     def _defaults_for(self, task_id: str) -> StreamingSessionDefaults:
         """The spawn defaults for the backend THIS task's chat is on.
@@ -379,6 +401,11 @@ class PlanningSessionRunner(object):
                 summary=task_summary,
                 description=task_description,
             )
+            # The ticket's screenshots, as files on disk. The description only
+            # carries the tracker's own link, which the agent cannot open.
+            attachments = agent_prompt_utils.task_attachments_block(
+                self._ticket_image_paths(normalized_task_id, workspace_root),
+            )
             # The STRICT BOUNDARY block. Until now only the one-shot clients
             # emitted it, so a chat session — the surface the operator
             # actually drives — was never told where its world ends; it got a
@@ -390,7 +417,7 @@ class PlanningSessionRunner(object):
                 extra_refusal_guidance=KATO_AGENT_GUIDANCE,
             )
             first_turn = '\n\n'.join(
-                part for part in (definition, normalized_message) if part
+                part for part in (definition, attachments, normalized_message) if part
             )
             initial_prompt = agent_prompt_utils.prepend_chat_workspace_context(
                 first_turn,

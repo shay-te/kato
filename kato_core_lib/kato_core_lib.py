@@ -88,6 +88,7 @@ from kato_core_lib.errors import AgentBackendChangedError
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path, kato_session_state_dir
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.ticket_image_utils import download_ticket_images
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
     skip_testing_enabled,
@@ -503,6 +504,15 @@ class KatoCoreLib(CoreLib):
         task_state_service = LocalAwareTaskStateService(
             ticket_cfg, task_data_access, local_tasks,
         )
+        if self.planning_session_runner is not None:
+            # A fresh chat's first turn names the ticket's screenshots too.
+            # Attached here because the runner is built before the task
+            # service exists (``_build_core_managers``).
+            self.planning_session_runner.attach_ticket_images(
+                lambda task_id, task_folder: download_ticket_images(
+                    task_service, task_id, task_folder, self.logger,
+                ),
+            )
         repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does
@@ -644,6 +654,7 @@ class KatoCoreLib(CoreLib):
                 session_manager=self.session_manager,
                 repository_service=repository_service,
                 task_state_service=task_state_service,
+                task_service=task_service,
                 workspace_manager=self.workspace_manager,
                 planning_session_runner=self.planning_session_runner,
                 track_planning_holds=True,

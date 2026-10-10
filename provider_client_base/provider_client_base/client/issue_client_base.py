@@ -29,8 +29,8 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
 )
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from utils_core_lib.utils_core_lib.filename_utils import (
+    content_file_path,
     safe_attachment_name,
-    unique_file_path,
 )
 from utils_core_lib.utils_core_lib.text_utils import bool_from_text, normalized_text
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
@@ -596,8 +596,12 @@ class IssueClientBase(RetryingClientBase):
                 continue
             try:
                 directory.mkdir(parents=True, exist_ok=True)
-                target = unique_file_path(directory, name)
-                target.write_bytes(content)
+                # A copy saved by an earlier download is reused: the task is
+                # prepared again on a respawn or a restart, and the agent
+                # must not be handed one screenshot twice.
+                target, saved = content_file_path(directory, name, content, claimed=written)
+                if not saved:
+                    target.write_bytes(content)
             except OSError:
                 self.logger.exception('failed to save image attachment %s', name)
                 continue

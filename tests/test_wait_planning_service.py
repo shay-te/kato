@@ -211,5 +211,77 @@ class HoldPromptWorkspaceScopeTests(unittest.TestCase):
         self.assertNotIn('clone directory to work in', prompt)
 
 
+
+class HoldChatScreenshotTests(unittest.TestCase):
+    """A hold chat gets the ticket's screenshots as files it can open.
+
+    Reported on UNA-3242: the screenshots were in the YouTrack task and Claude
+    could not see them. Only the autonomous pickup downloaded them; a
+    ``kato:wait-planning`` chat was handed ``![](image.png)`` and the tracker's
+    signed ``/api/files/…`` link — which it cannot open — so the operator
+    pasted all seven by hand.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.folder = Path(tmp.name) / 'UNA-3242'
+        self.folder.mkdir()
+        self.task_service = Mock()
+        self.saved = [str(self.folder / 'attachments' / 'image.png')]
+        self.task_service.download_image_attachments.return_value = self.saved
+        self.workspaces = SimpleNamespace(
+            workspace_path=lambda task_id: self.folder,
+            get=lambda task_id: None,
+        )
+        self.service = WaitPlanningService(
+            session_manager=Mock(),
+            repository_service=Mock(),
+            task_state_service=Mock(),
+            workspace_manager=self.workspaces,
+            task_service=self.task_service,
+        )
+
+    def test_the_hold_context_downloads_them_into_the_task_folder(self) -> None:
+        from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+            task_attachments_directory,
+        )
+        task = build_task(task_id='UNA-3242')
+        context = self.service._planning_context(task, [], '', '')
+        self.assertEqual(context.attachment_paths, tuple(self.saved))
+        self.task_service.download_image_attachments.assert_called_once_with(
+            'UNA-3242', task_attachments_directory(str(self.folder)),
+        )
+
+    def test_both_hold_prompts_name_them_after_the_ticket_text(self) -> None:
+        context = self.service._planning_context(build_task(task_id='UNA-3242'), [], '', '')
+        for build in (WaitPlanningService._build_planning_prompt,
+                      WaitPlanningService._build_editing_prompt):
+            with self.subTest(prompt=build.__name__):
+                prompt = build(build_task(task_id='UNA-3242'), context)
+                self.assertIn('Images attached to the ticket', prompt)
+                self.assertIn(self.saved[0], prompt)
+                self.assertLess(prompt.index('Task definition'), prompt.index(self.saved[0]))
+
+    def test_no_screenshots_no_block(self) -> None:
+        self.task_service.download_image_attachments.return_value = []
+        context = self.service._planning_context(build_task(), [], '', '')
+        prompt = WaitPlanningService._build_planning_prompt(build_task(), context)
+        self.assertNotIn('Images attached to the ticket', prompt)
+
+    def test_a_host_without_a_tracker_downloads_nothing(self) -> None:
+        from unittest.mock import Mock
+        service = WaitPlanningService(
+            session_manager=Mock(), repository_service=Mock(),
+            task_state_service=Mock(), workspace_manager=self.workspaces,
+        )
+        self.assertEqual(service._planning_context(build_task(), [], '', '').attachment_paths, ())
+
+
 if __name__ == '__main__':
     unittest.main()
