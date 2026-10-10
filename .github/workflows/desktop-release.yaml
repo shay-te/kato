@@ -102,21 +102,61 @@ jobs:
           name: kato-sidecar-linux
           path: desktop/src-tauri/binaries
 
-      - name: Build + sign the Tauri app (emits installers + updater feed)
-        uses: tauri-apps/tauri-action@v0
+      # Apple signing / notarization variables, exported ONLY when their secret
+      # is set. A secret that does not exist still arrives as an EMPTY variable,
+      # and Tauri treats a set APPLE_CERTIFICATE as "sign this build": it runs
+      # `security import` on the empty certificate and the macOS build dies with
+      # "failed to import keychain certificate" — while Linux and Windows, which
+      # never read these, build fine. Unset, the app is bundled unsigned (as
+      # 0.1.0 was); add the secrets and signing turns on with no edit here.
+      - name: Apple signing, when configured
+        if: matrix.os == 'macos-latest'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                      APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            if [ -n "$value" ]; then
+              { echo "${name}<<APPLE_SECRET_END"; echo "$value"; echo "APPLE_SECRET_END"; } >> "$GITHUB_ENV"
+              echo "${name}: set"
+            else
+              echo "${name}: not configured — skipped"
+            fi
+          done
+
+      # The release's text is this version's notes file
+      # (desktop/RELEASE_NOTES_<version>.md), so the draft is ready to publish
+      # as it lands instead of needing its body pasted in by hand.
+      - name: Release notes for this version
+        id: notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#desktop-v}"
+          notes="desktop/RELEASE_NOTES_${version}.md"
+          {
+            echo 'body<<KATO_RELEASE_NOTES_END'
+            if [ -f "$notes" ]; then cat "$notes"; else echo "Kato Desktop ${version}"; fi
+            echo
+            echo 'KATO_RELEASE_NOTES_END'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build + sign the Tauri app (emits installers + updater feed)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
           releaseName: "Kato Desktop ${{ github.ref_name }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
