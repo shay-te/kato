@@ -7,11 +7,14 @@ import unittest
 from pathlib import Path
 
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
+    AZURE_DEVOPS_SERVICES_BASE_URL,
     DiscoveredRepository,
+    azure_devops_remote,
     build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,
     git_config_path,
+    is_azure_devops_host,
     parse_git_remote_url,
     read_git_remote_url,
     remote_web_base_url,
@@ -362,3 +365,91 @@ class ReviewUrlForRemoteTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AzureDevOpsRemoteTests(unittest.TestCase):
+    """Azure Repos: three-part identity (org, project, repo), one web base.
+
+    The generic parse took the last two path segments, so
+    ``https://dev.azure.com/org/proj/_git/repo`` came back as owner
+    ``org/proj/_git`` with no provider — every Azure repo looked unknown.
+    """
+
+    SERVICES = AZURE_DEVOPS_SERVICES_BASE_URL
+
+    def test_every_services_form_is_the_same_repository(self) -> None:
+        for remote in (
+            'https://dev.azure.com/acme/proj/_git/api',
+            'https://acme@dev.azure.com/acme/proj/_git/api',
+            'https://dev.azure.com/acme/proj/_git/api.git',
+            'https://acme.visualstudio.com/proj/_git/api',
+            'https://acme.visualstudio.com/DefaultCollection/proj/_git/api',
+            'git@ssh.dev.azure.com:v3/acme/proj/api',
+            'ssh://git@ssh.dev.azure.com/v3/acme/proj/api',
+            'acme@vs-ssh.visualstudio.com:v3/acme/proj/api',
+        ):
+            with self.subTest(remote=remote):
+                self.assertEqual(azure_devops_remote(remote), (self.SERVICES, 'acme/proj', 'api'))
+                self.assertEqual(parse_git_remote_url(remote), ('azure', 'acme/proj', 'api'))
+                self.assertEqual(remote_web_base_url(remote), self.SERVICES)
+
+    def test_a_project_name_with_a_space_is_decoded(self) -> None:
+        self.assertEqual(
+            azure_devops_remote('https://dev.azure.com/acme/My%20Project/_git/api'),
+            (self.SERVICES, 'acme/My Project', 'api'),
+        )
+
+    def test_an_on_prem_server_keeps_its_own_host_and_collection(self) -> None:
+        self.assertEqual(
+            azure_devops_remote('https://tfs.corp:8443/tfs/Coll/proj/_git/api'),
+            ('https://tfs.corp:8443', 'tfs/Coll/proj', 'api'),
+        )
+        # An SSH remote never carries its port into the web base.
+        self.assertEqual(
+            azure_devops_remote('ssh://tfs.corp:22/Coll/proj/_git/api'),
+            ('https://tfs.corp', 'Coll/proj', 'api'),
+        )
+        self.assertEqual(
+            parse_git_remote_url('https://tfs.corp/Coll/proj/_git/api'),
+            ('azure', 'Coll/proj', 'api'),
+        )
+
+    def test_shapes_that_are_not_an_azure_repository(self) -> None:
+        for remote in (
+            '',
+            'https://dev.azure.com/acme/proj',              # no _git
+            'https://dev.azure.com/acme/_git/api',           # no project
+            'https://dev.azure.com/a/b/c/_git/api',          # too deep for Services
+            'https://dev.azure.com/acme/proj/_git/api/more', # trailing path
+            'git@ssh.dev.azure.com:v2/acme/proj/api',        # not the v3 layout
+            'git@ssh.dev.azure.com:v3/acme/api',             # too short
+            'https://tfs.corp/proj/_git/api',                # server: no collection
+            'https://github.com/acme/_git/api',              # another provider's host
+            'https://gitlab.com/acme/proj/_git/api',
+            'not a url',
+        ):
+            with self.subTest(remote=remote):
+                self.assertEqual(azure_devops_remote(remote), ('', '', ''))
+
+    def test_an_unparseable_port_is_not_fatal(self) -> None:
+        self.assertEqual(
+            azure_devops_remote('https://tfs.corp:notaport/Coll/proj/_git/api'),
+            ('https://tfs.corp', 'Coll/proj', 'api'),
+        )
+
+    def test_the_host_check(self) -> None:
+        for host, expected in (('dev.azure.com', True), ('SSH.dev.azure.com', True),
+                               ('acme.visualstudio.com', True), ('github.com', False),
+                               ('', False), ('azure.com', False)):
+            with self.subTest(host=host):
+                self.assertEqual(is_azure_devops_host(host), expected)
+
+    def test_the_new_pull_request_page(self) -> None:
+        self.assertEqual(
+            review_url_for_remote(
+                'git@ssh.dev.azure.com:v3/acme/My Project/api', 'azure',
+                'acme/My Project', 'api', 'UNA-1', 'main',
+            ),
+            'https://dev.azure.com/acme/My%20Project/_git/api'
+            '/pullrequestcreate?sourceRef=UNA-1&targetRef=main',
+        )

@@ -87,13 +87,17 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 │                                 git_core_lib's pure URL-parsing helpers directly (module
 │                                 level, not lazy — narrow, stateless, no transport coupling);
 │                                 its own pull_request_client_factory lazily imports
-│                                 github/gitlab/bitbucket_core_lib inside the factory
+│                                 github/gitlab/bitbucket/azure_devops_core_lib inside the factory
 ├── task_core_lib              ← task data types and platform config; its own
 │                                 task_client_factory lazily imports youtrack/jira/
 │                                 bitbucket/github/gitlab_core_lib inside the factory
 ├── bitbucket_core_lib
 ├── github_core_lib
 ├── gitlab_core_lib
+├── azure_devops_core_lib      ← Azure Repos PR client (git host only — no Azure Boards).
+│                                 Owner = "<org>/<project>" (on-prem "<collection>/<project>");
+│                                 PAT as Basic; comment id "<thread>-<comment>" (ids repeat per
+│                                 thread); "@<GUID>" mentions rewritten to "@{uniqueName}"
 ├── youtrack_core_lib          ← YouTrack API client (fully black-box, see standard below)
 ├── jira_core_lib
 ├── workspace_core_lib         ← workspace folder management
@@ -118,7 +122,7 @@ Every core-lib must meet all of these (use `youtrack_core_lib` as the reference 
 
 1. **100% test coverage** — every service function, every permutation of inputs
 2. **Flow tests A-Z** — end-to-end flow tests inside the lib's own `tests/` folder (`test_flow.py`)
-3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once; see `repository_approval_discovery_service.py`'s `_read_origin_url`, fixed after an audit found it drifted).
+3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket/azure devops), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once; see `repository_approval_discovery_service.py`'s `_read_origin_url`, fixed after an audit found it drifted).
 4. **No kato references — AT ALL, ENFORCED.** The string `kato` (any case, incl. `KATO_*` env names) must NOT appear ANYWHERE in a core-lib — not source, tests, comments, or field names. All `KATO_*` variables and the `kato` brand live ONLY in `kato_core_lib`; every other lib reads GENERIC names (`AGENT_IGNORED_REPOSITORY_FOLDERS`, `CLAUDE_SESSIONS_ROOT`, …) or takes values via constructor/params, and `kato_core_lib` bridges its `KATO_*` config to those (e.g. `_export_agent_env_from_kato_config()`, `from_config(..., state_dir=...)`, `workspace_refusal_guidance`). This regresses during feature work, so it is gated: **`python -m unittest tests.test_corelib_agnostic_gate`** (runs in `kato test`) — a ratchet that fails the build when a lib gains a kato ref. Fix the code; never raise a ceiling. Full rule: AGENTS.md → "Core-libs stay kato-free".
 5. **Tests live inside the lib** — at `<lib>/<lib>/tests/`, not in the top-level `tests/` folder
 6. **Check for leaked tests** — after building a lib, grep `kato_core_lib/` and `tests/` for any tests that belong inside the lib instead

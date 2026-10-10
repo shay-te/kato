@@ -35,6 +35,7 @@ _MAX_KATO_LINES = {
     # ---- fully agnostic — LOCKED at 0, do not regress ----
     'agent_backend_core_lib': 0,
     'agent_core_lib': 0,
+    'azure_devops_core_lib': 0,
     'bitbucket_core_lib': 0,
     'claude_core_lib': 0,
     'codex_core_lib': 0,

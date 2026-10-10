@@ -55,3 +55,20 @@ describe('fieldInfo', () => {
     assert.ok(info.endsWith('Environment variable: REPOSITORY_ROOT_PATH'));
   });
 });
+
+describe('Azure DevOps fields', () => {
+  test('labels drop the AZURE_ prefix like every other host', () => {
+    assert.equal(humanizeFieldKey('AZURE_API_TOKEN', 'azure'), 'API token');
+    assert.equal(humanizeFieldKey('AZURE_USERNAME', 'azure'), 'Username');
+  });
+
+  test('the base URL says to leave it blank, the username says who reviewers mention', () => {
+    assert.equal(fieldPlaceholder('AZURE_API_BASE_URL'), 'https://dev.azure.com');
+    assert.match(fieldInfo('AZURE_API_BASE_URL'), /Leave blank/);
+    assert.match(fieldInfo('AZURE_USERNAME'), /@-mention/);
+  });
+
+  test('the token tip points at the Azure DevOps menu, not a generic one', () => {
+    assert.match(fieldInfo('AZURE_API_TOKEN'), /Personal access tokens/);
+  });
+});

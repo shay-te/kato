@@ -9,6 +9,7 @@ const HOST_LABELS = {
   bitbucket: 'Bitbucket',
   github: 'GitHub',
   gitlab: 'GitLab',
+  azure: 'Azure DevOps',
 };
 
 export default function GitProvidersSettingsPanel() {

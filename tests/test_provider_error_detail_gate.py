@@ -32,6 +32,7 @@ PROVIDER_LIBS = (
     'bitbucket_core_lib',
     'github_core_lib',
     'gitlab_core_lib',
+    'azure_devops_core_lib',
     'jira_core_lib',
     'youtrack_core_lib',
     'provider_client_base',

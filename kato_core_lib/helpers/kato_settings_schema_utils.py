@@ -150,6 +150,7 @@ _URL_KEYS: frozenset[str] = frozenset({
     'GITHUB_API_BASE_URL',
     'GITLAB_API_BASE_URL',
     'BITBUCKET_API_BASE_URL',
+    'AZURE_API_BASE_URL',
 })
 
 # Keys whose value must look like an email address when non-empty.
@@ -238,7 +239,8 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_REVIEW_COMMENTS_ENABLED', 'bool',
              'Pull PR review comments',
              'On by default. Turn OFF to stop kato polling Bitbucket / '
-             'GitHub / GitLab for new pull-request review comments — and '
+             'GitHub / GitLab / Azure DevOps for new pull-request review '
+             'comments — and '
              'to stop any review-comment run already in flight. Applies '
              'immediately, no restart. Ticket pickup is unaffected.', {}),
             ('KATO_REVIEW_COMMENTS_REQUIRE_MENTION', 'bool',

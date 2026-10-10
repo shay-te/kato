@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 import re
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 
 DISCOVERY_SKIP_DIRS = {
@@ -173,9 +173,123 @@ def _split_remote(remote_url: str) -> tuple[str, str]:
     return match.group(1), match.group(2)
 
 
+# Azure DevOps Services. Every organization is reachable at
+# ``https://dev.azure.com/<org>`` — the legacy ``<org>.visualstudio.com`` hosts
+# included — so all of them normalise to that one web/API base.
+AZURE_DEVOPS_SERVICES_BASE_URL = 'https://dev.azure.com'
+_AZURE_DEVOPS_SERVICES_HOSTS = frozenset({'dev.azure.com', 'ssh.dev.azure.com'})
+_AZURE_LEGACY_HOST_SUFFIX = '.visualstudio.com'
+_AZURE_LEGACY_SSH_HOST = 'vs-ssh.visualstudio.com'
+# The path segment every Azure Repos URL carries before the repository name —
+# on Services AND on an on-prem Azure DevOps Server, whose host can be anything.
+_AZURE_GIT_SEGMENT = '_git'
+# The leading segment of an Azure Repos SSH path (``v3/<org>/<project>/<repo>``).
+_AZURE_SSH_VERSION_SEGMENT = 'v3'
+# A ``/_git/`` path on another provider's host is a repository NAMED that,
+# never an Azure DevOps Server.
+_OTHER_PROVIDER_HOST = re.compile(r'github|gitlab|bitbucket')
+
+
+def is_azure_devops_host(host: str) -> bool:
+    """``dev.azure.com`` and its SSH host, or a legacy ``*.visualstudio.com``."""
+    normalized = str(host or '').strip().lower()
+    return (
+        normalized in _AZURE_DEVOPS_SERVICES_HOSTS
+        or normalized.endswith(_AZURE_LEGACY_HOST_SUFFIX)
+    )
+
+
+def azure_devops_remote(remote_url: str) -> tuple[str, str, str]:
+    """``(web_base_url, owner, repo_slug)`` for an Azure Repos remote, else blanks.
+
+    Azure's repository identity has THREE parts — organization (or on-prem
+    collection), project, repository — where every other provider has two.
+    The owner carries the first two (``"<org>/<project>"``, or
+    ``"tfs/<collection>/<project>"`` on a server under a virtual directory),
+    so the provider's API path is always ``{web_base}/{owner}/_apis/...``.
+    Path segments come back DECODED (a project can be ``My Project``).
+
+    Without this the generic parse below took the last two path segments and
+    produced the owner ``org/project/_git`` and no provider at all. The forms:
+
+    * ``https://[org@]dev.azure.com/<org>/<project>/_git/<repo>``
+    * ``https://<org>.visualstudio.com/[DefaultCollection/]<project>/_git/<repo>``
+    * ``git@ssh.dev.azure.com:v3/<org>/<project>/<repo>`` (and ``ssh://`` form)
+    * ``<org>@vs-ssh.visualstudio.com:v3/<org>/<project>/<repo>``
+    * on-prem: ``https://server[:port]/[tfs/]<collection>/<project>/_git/<repo>``
+    """
+    host, path, scheme, port = _remote_parts(remote_url)
+    if not host or not path:
+        return '', '', ''
+    parts = [unquote(part) for part in path.strip('/').split('/') if part]
+    if parts and parts[-1].endswith('.git'):
+        parts[-1] = parts[-1][:-4]
+    is_services = is_azure_devops_host(host)
+    if host in _AZURE_DEVOPS_SERVICES_HOSTS - {'dev.azure.com'} or host == _AZURE_LEGACY_SSH_HOST:
+        # SSH: ``v3/<org>/<project>/<repo>``.
+        if len(parts) != 4 or parts[0].lower() != _AZURE_SSH_VERSION_SEGMENT:
+            return '', '', ''
+        return AZURE_DEVOPS_SERVICES_BASE_URL, f'{parts[1]}/{parts[2]}', parts[3]
+    if _AZURE_GIT_SEGMENT not in parts or _OTHER_PROVIDER_HOST.search(host):
+        return '', '', ''
+    index = parts.index(_AZURE_GIT_SEGMENT)
+    owner_parts, slug_parts = parts[:index], parts[index + 1:]
+    if len(slug_parts) != 1 or not owner_parts:
+        return '', '', ''
+    if host.endswith(_AZURE_LEGACY_HOST_SUFFIX):
+        # The organization is the host's first label; ``DefaultCollection``
+        # is the legacy collection name, not part of the project.
+        organization = host[:-len(_AZURE_LEGACY_HOST_SUFFIX)]
+        if owner_parts[0].lower() == 'defaultcollection':
+            owner_parts = owner_parts[1:]
+        owner_parts = [organization, *owner_parts]
+    if is_services:
+        if len(owner_parts) != 2:
+            return '', '', ''
+        return AZURE_DEVOPS_SERVICES_BASE_URL, '/'.join(owner_parts), slug_parts[0]
+    # An on-prem Azure DevOps Server: its own host, and the collection (plus
+    # any virtual directory) before the project.
+    if len(owner_parts) < 2:
+        return '', '', ''
+    return _web_base(host, scheme, port), '/'.join(owner_parts), slug_parts[0]
+
+
+def _remote_parts(remote_url: str) -> tuple[str, str, str, int | None]:
+    """``(host, path, scheme, port)`` of a URL-form or SCP-form remote."""
+    text = str(remote_url or '').strip()
+    if '://' in text:
+        parsed = urlparse(text)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        return str(parsed.hostname or '').lower(), parsed.path, parsed.scheme, port
+    scp_host, scp_path = _split_remote(text)
+    return scp_host.lower(), scp_path, '', None
+
+
+def _web_base(host: str, scheme: str, port: int | None) -> str:
+    """The web base for a remote's host — what a provider's API hangs off.
+
+    An ``ssh://`` / ``git://`` remote (or an SCP one) must NOT carry its
+    transport scheme forward — ``ssh://gitlab.com`` yields the unusable API
+    base ``ssh://gitlab.com/api/v4`` and every call 404s. Those become https,
+    and DROP the port too: an SSH port (``:2222``) is never the HTTPS/API
+    port. An explicit http/https keeps BOTH its own scheme and its port (a
+    self-hosted ``https://host:8443``).
+    """
+    if scheme in ('http', 'https'):
+        return f'{scheme}://{host}{f":{port}" if port else ""}'
+    return f'https://{host}'
+
+
 def parse_git_remote_url(remote_url: str) -> tuple[str, str, str]:
     if not remote_url:
         return '', '', ''
+    _, azure_owner, azure_slug = azure_devops_remote(remote_url)
+    if azure_slug:
+        # First: the generic parse below would misread its three-part path.
+        return 'azure', azure_owner, azure_slug
 
     host = ''
     path = ''
@@ -224,29 +338,15 @@ def display_name_from_repo_slug(repo_slug: str) -> str:
 def remote_web_base_url(remote_url: str) -> str:
     if not remote_url:
         return ''
-    if '://' in remote_url:
-        parsed = urlparse(remote_url)
-        if not parsed.hostname:
-            return ''
-        # Derive a WEB base for the provider's API. An ``ssh://`` / ``git://``
-        # remote (or a scheme-relative ``//host`` one) must NOT carry its
-        # transport scheme forward — ``ssh://gitlab.com`` yields the unusable
-        # API base ``ssh://gitlab.com/api/v4`` and every call 404s. Force
-        # https for those, and DROP the port too: an SSH port (``:2222``) is
-        # never the HTTPS/API port. An explicit http/https keeps BOTH its own
-        # scheme and its port (e.g. a self-hosted ``https://host:8443``).
-        if parsed.scheme in ('http', 'https'):
-            scheme = parsed.scheme
-            port = f':{parsed.port}' if parsed.port else ''
-        else:
-            scheme = 'https'
-            port = ''
-        return f'{scheme}://{parsed.hostname}{port}'
-
-    scp_host, _ = _split_remote(remote_url)
-    if not scp_host:
+    azure_base, _, azure_slug = azure_devops_remote(remote_url)
+    if azure_slug:
+        # ``ssh.dev.azure.com`` / ``vs-ssh.visualstudio.com`` are SSH-only
+        # hosts: the web (and API) host is ``dev.azure.com``.
+        return azure_base
+    host, _, scheme, port = _remote_parts(remote_url)
+    if not host:
         return ''
-    return f'https://{scp_host}'
+    return _web_base(host, scheme, port)
 
 
 def review_url_for_remote(
@@ -277,5 +377,13 @@ def review_url_for_remote(
         return (
             f'{web_base_url}/{repository_path}/pull-requests/new'
             f'?source={quote(source_branch, safe="")}&dest={quote(destination_branch, safe="")}'
+        )
+    if provider == 'azure':
+        # ``<org>/<project>/_git/<repo>``; a project name can hold a space.
+        owner_path = '/'.join(quote(part, safe='') for part in owner.split('/') if part)
+        return (
+            f'{web_base_url}/{owner_path}/{_AZURE_GIT_SEGMENT}/{quote(repo_slug, safe="")}'
+            f'/pullrequestcreate?sourceRef={quote(source_branch, safe="")}'
+            f'&targetRef={quote(destination_branch, safe="")}'
         )
     return f'{web_base_url}/{repository_path}'

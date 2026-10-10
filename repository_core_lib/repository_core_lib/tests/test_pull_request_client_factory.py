@@ -39,6 +39,15 @@ def _bitbucket_cfg(**extra):
     })
 
 
+def _azure_cfg():
+    return OmegaConf.create({
+        'base_url': 'https://dev.azure.com',
+        'token': 'az-pat',
+        'owner': 'acme/proj',
+        'repo_slug': 'api',
+    })
+
+
 # ---------------------------------------------------------------------------
 # Injection: injectable factory callables
 # ---------------------------------------------------------------------------
@@ -141,6 +150,34 @@ class PullRequestClientFactoryInjectableTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Unsupported platform
 # ---------------------------------------------------------------------------
+
+
+class PullRequestClientFactoryAzureTests(unittest.TestCase):
+    def test_the_azure_client_gets_only_what_it_needs(self):
+        azure_factory = Mock(return_value='azure-client')
+        factory = PullRequestClientFactory(_azure_cfg(), 4, azure_client_factory=azure_factory)
+
+        self.assertEqual(factory.get(Platform.AZURE), 'azure-client')
+        passed = OmegaConf.to_container(azure_factory.call_args.args[0])
+        self.assertEqual(passed, {'core_lib': {'azure_devops_core_lib': {
+            'base_url': 'https://dev.azure.com', 'token': 'az-pat', 'max_retries': 4,
+        }}})
+
+    def test_the_default_azure_factory_builds_the_azure_core_lib(self):
+        from unittest.mock import MagicMock, patch
+        from repository_core_lib.repository_core_lib.client.pull_request_client_factory import (
+            _default_azure_factory,
+        )
+        fake_client = MagicMock(name='azure-pr-client')
+        fake_core_lib_cls = MagicMock(return_value=MagicMock(pull_request=fake_client))
+        with patch(
+            'azure_devops_core_lib.azure_devops_core_lib.azure_devops_core_lib.AzureDevOpsCoreLib',
+            fake_core_lib_cls,
+        ):
+            self.assertIs(_default_azure_factory(_azure_cfg()), fake_client)
+            # And it is what the factory uses when nothing is injected.
+            self.assertIs(PullRequestClientFactory(_azure_cfg(), 3).get(Platform.AZURE), fake_client)
+        fake_core_lib_cls.assert_called()
 
 
 class PullRequestClientFactoryUnsupportedTests(unittest.TestCase):

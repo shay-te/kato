@@ -3,12 +3,21 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from git_core_lib.git_core_lib.helpers.repository_discovery_utils import remote_web_base_url
+from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
+    azure_devops_remote,
+    is_azure_devops_host,
+    remote_web_base_url,
+)
 from utils_core_lib.utils_core_lib.text_utils import text_from_attr
 
 
 def provider_from_url_string(url: str) -> str:
     """Infer the VCS provider name from a URL or base-URL string."""
+    # Azure first, by host or by its ``/_git/`` repository URL: the substring
+    # checks below would read a repository called ``github-mirror`` as GitHub.
+    host = urlparse(url).hostname if '://' in url else ''
+    if is_azure_devops_host(host or '') or azure_devops_remote(url)[2]:
+        return 'azure'
     normalized = url.lower()
     if 'bitbucket' in normalized:
         return 'bitbucket'
@@ -33,6 +42,10 @@ def default_provider_base_url(provider: str, remote_url: str) -> str:
         return f'{web_base_url}/api/v4'
     if provider == 'bitbucket' and host == 'bitbucket.org':
         return 'https://api.bitbucket.org/2.0'
+    if provider == 'azure':
+        # The API hangs off the same host as the web pages:
+        # ``{base}/{org}/{project}/_apis/...``.
+        return azure_devops_remote(remote_url)[0]
     return ''
 
 
@@ -61,6 +74,7 @@ def missing_pull_request_token_message(repository_id: str, provider: str) -> str
         'github': 'GITHUB_API_TOKEN',
         'gitlab': 'GITLAB_API_TOKEN',
         'bitbucket': 'BITBUCKET_API_TOKEN',
+        'azure': 'AZURE_API_TOKEN',
     }.get(provider, '<provider-token>')
     return (
         f'missing pull request API token for repository {repository_id}; '

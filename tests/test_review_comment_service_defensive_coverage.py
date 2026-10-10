@@ -259,6 +259,35 @@ class PullRequestIdFromUrlTests(unittest.TestCase):
             '3',
         )
 
+    def test_azure_pull_request_links_on_every_azure_host(self) -> None:
+        service = _make_service()
+        repo = SimpleNamespace(
+            owner='acme/My Project', repo_slug='api', provider='azure',
+            provider_base_url='https://dev.azure.com',
+        )
+        for url, expected in (
+            ('https://dev.azure.com/acme/My%20Project/_git/api/pullrequest/42', '42'),
+            ('https://acme.visualstudio.com/My%20Project/_git/API/pullrequest/7', '7'),
+            ('https://dev.azure.com/acme/My%20Project/_git/web/pullrequest/42', ''),   # other repo
+            ('https://dev.azure.com/acme/My%20Project/_git/api/commit/42', ''),        # not a PR
+            ('https://dev.azure.com/acme/_git/pullrequest/42', ''),                    # too short
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(service._repository_pull_request_id_from_url(url, repo), expected)
+
+    def test_an_on_prem_azure_server_link(self) -> None:
+        service = _make_service()
+        repo = SimpleNamespace(
+            owner='tfs/Coll/proj', repo_slug='api', provider='azure',
+            provider_base_url='https://tfs.corp',
+        )
+        self.assertEqual(
+            service._repository_pull_request_id_from_url(
+                'https://tfs.corp/tfs/Coll/proj/_git/api/pullrequest/9', repo,
+            ),
+            '9',
+        )
+
     def test_gitlab_url_returns_empty_when_no_dash_marker(self) -> None:
         service = _make_service()
         repo = SimpleNamespace(

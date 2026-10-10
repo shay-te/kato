@@ -438,7 +438,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
             'You do NOT do any of the following — ever, under any circumstance:\n'
             '- git (status, diff, log, add, commit, push, pull, fetch, checkout, switch, branch, reset, rebase, stash, tag, anything)\n'
             '- create pull requests / merge requests\n'
-            '- call GitHub / GitLab / Bitbucket APIs\n'
+            '- call GitHub / GitLab / Bitbucket / Azure DevOps APIs\n'
             '- ask the operator for permission to commit\n'
             '- mention git, commits, PRs, or branches in your reply except to say you are done editing\n'
             '\n'

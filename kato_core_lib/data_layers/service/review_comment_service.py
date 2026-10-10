@@ -5,6 +5,7 @@ import threading
 from urllib.parse import urlparse
 
 from core_lib.data_layers.service.service import Service
+from git_core_lib.git_core_lib.helpers.repository_discovery_utils import azure_devops_remote
 
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -566,6 +567,21 @@ class ReviewCommentService(Service):
             return ''
 
         provider_base_url = str(getattr(repository, 'provider_base_url', '') or '').lower()
+        if str(getattr(repository, 'provider', '') or '').lower() == 'azure':
+            # ``…/<org>/<project>/_git/<repo>/pullrequest/<id>``, on any of
+            # Azure's hosts; the repository part is read the way its remote is.
+            if len(path_parts) < 5 or path_parts[-2].lower() != 'pullrequest':
+                return ''
+            _, owner, repo_slug = azure_devops_remote(
+                f'{parsed.scheme}://{parsed.netloc}/' + '/'.join(path_parts[:-2]),
+            )
+            candidate_repository_path = f'{owner}/{repo_slug}'
+            # Azure names are case-insensitive.
+            return (
+                path_parts[-1]
+                if repo_slug and candidate_repository_path.casefold() == repository_path.casefold()
+                else ''
+            )
         if 'bitbucket' in provider_base_url:
             if len(path_parts) < 3 or path_parts[-2] != 'pull-requests':
                 return ''

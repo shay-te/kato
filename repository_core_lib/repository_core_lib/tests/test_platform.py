@@ -15,8 +15,10 @@ class PlatformEnumTests(unittest.TestCase):
     def test_bitbucket_value(self):
         self.assertEqual(Platform.BITBUCKET.value, 'bitbucket')
 
-    def test_all_three_members_exist(self):
-        self.assertSetEqual({p.name for p in Platform}, {'GITHUB', 'GITLAB', 'BITBUCKET'})
+    def test_all_four_members_exist(self):
+        self.assertSetEqual(
+            {p.name for p in Platform}, {'GITHUB', 'GITLAB', 'BITBUCKET', 'AZURE'},
+        )
 
     def test_members_are_distinct(self):
         self.assertNotEqual(Platform.GITHUB, Platform.GITLAB)
@@ -83,9 +85,19 @@ class PlatformFromBaseUrlTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Platform.from_base_url('')
 
-    def test_rejects_azure_devops(self):
+    def test_detects_azure_devops_by_host(self):
+        for base_url in ('https://dev.azure.com', 'https://dev.azure.com/org/project',
+                         'https://acme.visualstudio.com'):
+            with self.subTest(base_url=base_url):
+                self.assertIs(Platform.from_base_url(base_url), Platform.AZURE)
+
+    def test_azure_wins_over_a_provider_word_in_its_path(self):
+        self.assertIs(Platform.from_base_url('https://dev.azure.com/github-mirror'), Platform.AZURE)
+
+    def test_an_on_prem_azure_server_is_not_guessed(self):
+        # Its host is its own; the caller names the provider instead.
         with self.assertRaisesRegex(ValueError, 'unsupported repository provider'):
-            Platform.from_base_url('https://dev.azure.com/org/project')
+            Platform.from_base_url('https://tfs.corp.local/tfs')
 
     def test_error_message_contains_base_url(self):
         bad_url = 'https://unknown.provider.io/api'

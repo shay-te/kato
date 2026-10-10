@@ -1,0 +1,8 @@
+# @package core_lib
+azure_devops_core_lib:
+    base_url: ${oc.env:AZURE_API_BASE_URL,"https://dev.azure.com"}
+    token: ${oc.env:AZURE_API_TOKEN,""}
+    # The account the bot works as (its sign-in name) — what reviewers
+    # @-mention to address it. Read by the host; the client does not need it.
+    username: ${oc.env:AZURE_USERNAME,""}
+    max_retries: ${oc.decode:${oc.env:AZURE_DEVOPS_CORE_LIB_MAX_RETRIES,"3"}}

@@ -23,6 +23,7 @@ const PLATFORM_LABELS = {
   GITHUB: 'GitHub',
   GITLAB: 'GitLab',
   BITBUCKET: 'Bitbucket',
+  AZURE: 'Azure DevOps',
 };
 
 const PLATFORM_URL_EXAMPLES = {
@@ -31,6 +32,7 @@ const PLATFORM_URL_EXAMPLES = {
   GITHUB: 'https://api.github.com',
   GITLAB: 'https://gitlab.com/api/v4',
   BITBUCKET: 'https://api.bitbucket.org/2.0',
+  AZURE: 'https://dev.azure.com',
 };
 
 // Platforms where "done" means closing the issue (a ``state`` change)
@@ -71,6 +73,10 @@ const EXACT_RULES = {
     'For bedrock/… models without a bearer token: AWS access key id (needs secret + region too).'],
   AWS_SECRET_ACCESS_KEY: ['paste your AWS secret access key',
     'For bedrock/… models without a bearer token: AWS secret access key (needs key id + region too).'],
+  AZURE_API_BASE_URL: ['https://dev.azure.com',
+    'Leave blank: each repository uses its own host — dev.azure.com, or your Azure DevOps Server. Set it only to send every Azure repository to one host.'],
+  AZURE_USERNAME: ['bot@company.com',
+    'Sign-in name (usually the email) of the account the token belongs to. Reviewers @-mention it to address kato on a pull request.'],
   AWS_REGION_NAME: ['us-east-1',
     'For bedrock/… models without a bearer token: AWS region of the Bedrock endpoint.'],
 };

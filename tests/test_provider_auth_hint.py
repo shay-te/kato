@@ -34,6 +34,16 @@ class ProviderAuthHintTests(unittest.TestCase):
         hint = _auth_hint_for(Exception('401 Client Error: Unauthorized for url: ...'))
         self.assertIn('BITBUCKET_API_EMAIL', hint)
 
+    def test_an_azure_refusal_names_the_azure_token(self) -> None:
+        for text in (
+            '401 Client Error: Unauthorized for url: https://dev.azure.com/acme/proj/_apis/git/...',
+            '401 Client Error: Unauthorized: TF400813: The user is not authorized to access this resource.',
+        ):
+            with self.subTest(text=text):
+                hint = _auth_hint_for(Exception(text))
+                self.assertIn('AZURE_API_TOKEN', hint)
+                self.assertNotIn('BITBUCKET', hint)
+
     def test_other_failures_get_no_hint(self) -> None:
         # A rate limit or a network blip is not an auth problem, and pointing
         # the operator at their credentials for one would send them the wrong

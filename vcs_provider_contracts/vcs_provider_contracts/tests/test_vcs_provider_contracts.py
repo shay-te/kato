@@ -1,6 +1,10 @@
 import inspect
 import unittest
 
+from azure_devops_core_lib.azure_devops_core_lib.azure_devops_core_lib import AzureDevOpsCoreLib
+from azure_devops_core_lib.azure_devops_core_lib.client.azure_devops_client import (
+    AzureDevOpsClient,
+)
 from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib
 from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import BitbucketClient
 from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_issues_client import (
@@ -100,6 +104,7 @@ class VcsProviderContractsTests(unittest.TestCase):
         self.assertIsInstance(BitbucketClient('https://api.bitbucket.org/2.0', 'bb-token'), PullRequestProvider)
         self.assertIsInstance(GitHubClient('https://api.github.com', 'gh-token'), PullRequestProvider)
         self.assertIsInstance(GitLabClient('https://gitlab.example/api/v4', 'gl-token'), PullRequestProvider)
+        self.assertIsInstance(AzureDevOpsClient('https://dev.azure.com', 'az-pat'), PullRequestProvider)
 
     def test_issue_contract_runtime_check_accepts_matching_provider(self) -> None:
         self.assertIsInstance(ContractIssueProvider(), IssueProvider)
@@ -221,6 +226,23 @@ class VcsProviderContractsTests(unittest.TestCase):
         self.assertIsInstance(gitlab.issue, GitLabIssuesClient)
         self.assertEqual(gitlab.pull_request.max_retries, 3)
         self.assertEqual(gitlab.issue.max_retries, 3)
+
+    def test_azure_devops_core_lib_composes_the_pull_request_client(self) -> None:
+        cfg = OmegaConf.create(
+            {
+                'core_lib': {
+                    'azure_devops_core_lib': {
+                        'base_url': 'https://dev.azure.com',
+                        'token': 'az-pat',
+                        'max_retries': 3,
+                    },
+                },
+            }
+        )
+        azure = AzureDevOpsCoreLib(cfg)
+
+        self.assertIsInstance(azure.pull_request, AzureDevOpsClient)
+        self.assertEqual(azure.pull_request.max_retries, 3)
 
     def test_gitlab_core_lib_uses_project_config(self) -> None:
         cfg = OmegaConf.create(

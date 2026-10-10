@@ -22,6 +22,7 @@ class RepositoryCoreLib(CoreLib):
         github_client_factory: Callable[[DictConfig], Any] | None = None,
         gitlab_client_factory: Callable[[DictConfig], Any] | None = None,
         bitbucket_client_factory: Callable[[DictConfig], Any] | None = None,
+        azure_client_factory: Callable[[DictConfig], Any] | None = None,
     ) -> None:
         super().__init__()
         pull_request_client_factory = PullRequestClientFactory(
@@ -30,5 +31,6 @@ class RepositoryCoreLib(CoreLib):
             github_client_factory=github_client_factory,
             gitlab_client_factory=gitlab_client_factory,
             bitbucket_client_factory=bitbucket_client_factory,
+            azure_client_factory=azure_client_factory,
         )
         self.pull_request = PullRequestService(pull_request_client_factory)

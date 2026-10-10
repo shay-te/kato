@@ -4,6 +4,7 @@ defaults:
   - github_core_lib: github_core_lib
   - bitbucket_core_lib: bitbucket_core_lib
   - gitlab_core_lib: gitlab_core_lib
+  - azure_devops_core_lib: azure_devops_core_lib
   - jira_core_lib: jira_core_lib
   - _self_
 
@@ -163,6 +164,18 @@ kato:
     max_retries: ${core_lib.bitbucket_core_lib.max_retries}
     include_comments: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_ENABLED,"false"}}
     require_bot_mention: ${oc.decode:${oc.env:KATO_TASK_COMMENTS_REQUIRE_MENTION,"true"}}
+  # Azure Repos (Azure DevOps): a git host only — pull requests and their
+  # review comments; Azure Boards is not a task provider. The repository
+  # inventory reads this as the API defaults for every repository whose remote
+  # is on Azure DevOps (the token, and the bot's sign-in name reviewers
+  # @-mention).
+  azure_repos:
+    # Empty unless set: each repository's own host is then used — dev.azure.com
+    # for Azure DevOps Services, the server for an on-prem Azure DevOps Server.
+    base_url: ${oc.env:AZURE_API_BASE_URL,""}
+    token: ${core_lib.azure_devops_core_lib.token}
+    username: ${core_lib.azure_devops_core_lib.username}
+    max_retries: ${core_lib.azure_devops_core_lib.max_retries}
   repository_root_path: ${oc.env:REPOSITORY_ROOT_PATH,""}
   ignored_repository_folders: ${oc.env:KATO_IGNORED_REPOSITORY_FOLDERS,""}
   source_fingerprint: ${oc.env:KATO_SOURCE_FINGERPRINT,""}

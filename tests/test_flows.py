@@ -105,6 +105,7 @@ REPO_PROVIDERS = {
     'bitbucket': 'https://bitbucket.example',
     'github': 'https://github.example/api/v3',
     'gitlab': 'https://gitlab.example/api/v4',
+    'azure': 'https://dev.azure.com',
 }
 
 
@@ -625,6 +626,12 @@ class TaskFixFlowTests(unittest.TestCase):
     def test_task_fix_flow_bitbucket_gitlab(self) -> None:
         self._run_and_assert_task_fix_flow('bitbucket', 'gitlab')
 
+    def test_task_fix_flow_youtrack_azure(self) -> None:
+        self._run_and_assert_task_fix_flow('youtrack', 'azure')
+
+    def test_task_fix_flow_jira_azure(self) -> None:
+        self._run_and_assert_task_fix_flow('jira', 'azure')
+
 
 # ---------------------------------------------------------------------------
 # ### Review Comment Fix Flow
@@ -986,6 +993,12 @@ class ReviewCommentFixFlowTests(unittest.TestCase):
 
     def test_review_comment_fix_flow_bitbucket_gitlab(self) -> None:
         self._run_and_assert_review_comment_fix_flow('bitbucket', 'gitlab')
+
+    def test_review_comment_fix_flow_youtrack_azure(self) -> None:
+        self._run_and_assert_review_comment_fix_flow('youtrack', 'azure')
+
+    def test_review_comment_fix_flow_jira_azure(self) -> None:
+        self._run_and_assert_review_comment_fix_flow('jira', 'azure')
 
     def test_review_comment_fix_reuses_implementation_session_id(self) -> None:
         """

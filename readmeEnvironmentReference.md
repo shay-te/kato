@@ -68,6 +68,9 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `BITBUCKET_DONE_STATE_FIELD` | Bitbucket Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
 | `BITBUCKET_DONE_STATE` | Bitbucket Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `BITBUCKET_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
+| `AZURE_API_BASE_URL` | Azure DevOps host for every Azure Repos repository. Leave blank: each repository's own host is used (`https://dev.azure.com`, or your Azure DevOps Server). |
+| `AZURE_API_TOKEN` | Azure DevOps personal access token (Code: Read & write). Used for git push over HTTPS and for pull requests and their review comments. Azure Boards is not a task provider. |
+| `AZURE_USERNAME` | Sign-in name (usually the email) of the account the token belongs to — reviewers @-mention it to address kato on a pull request. |
 | `REPOSITORY_ROOT_PATH` | Root folder where the agent scans for checked-out repositories. |
 | `MOUNT_DOCKER_DATA_ROOT` | Host folder that holds all Docker bind-mounted data under one parent directory. |
 | `KATO_IGNORED_REPOSITORY_FOLDERS` | Comma-separated folder names to exclude from repository auto-discovery. |

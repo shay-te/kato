@@ -39,6 +39,7 @@ _SCANNERS = ["bandit", "safety", "detect_secrets"]
 _LAZY_LIBS = [
     "claude_core_lib", "codex_core_lib",                              # agent transports (CLI)
     "github_core_lib", "gitlab_core_lib", "bitbucket_core_lib",        # PR providers
+    "azure_devops_core_lib",
     "youtrack_core_lib", "jira_core_lib",                             # task providers
     "agent_backend_core_lib", "agent_core_lib", "sandbox_core_lib",   # factories + bases
     "provider_client_base", "repository_core_lib", "task_core_lib",
@@ -104,7 +105,7 @@ datas += _tree(REPO / "kato_core_lib/templates", "kato_core_lib/templates")    #
 # Each provider lib ships a hydra config package that its search-path plugin
 # adds as pkg://<lib>.<lib>.config — bundle each at that exact import path.
 for _plib in ("youtrack_core_lib", "github_core_lib", "bitbucket_core_lib",
-              "gitlab_core_lib", "jira_core_lib"):
+              "gitlab_core_lib", "azure_devops_core_lib", "jira_core_lib"):
     datas += _tree(REPO / _plib / _plib / "config", f"{_plib}/{_plib}/config")
 for _asset in ("Dockerfile", "init-firewall.sh", "entrypoint.sh"):            # sandbox image assets
     _p = REPO / "sandbox_core_lib/sandbox_core_lib" / _asset

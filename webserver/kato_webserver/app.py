@@ -546,8 +546,9 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-# Git hosts — where code + PRs live. Only Bitbucket / GitHub /
-# GitLab (YouTrack + Jira are pure trackers with no git). NO active
+# Git hosts — where code + PRs live. Bitbucket / GitHub / GitLab /
+# Azure DevOps (YouTrack + Jira are pure trackers with no git; Azure is a
+# git host only here — Azure Boards is not a task provider). NO active
 # selector: kato infers the host from each repo's remote URL, so
 # this tab is "set the credentials kato uses to clone / push / open
 # PRs against <host>". Connection-level keys only — issue scoping +
@@ -574,6 +575,14 @@ _GIT_HOST_FIELDS: dict[str, tuple[str, ...]] = {
         'GITLAB_API_TOKEN',
         'GITLAB_API_TOKEN_SOURCE',
         'GITLAB_PROJECT',
+    ),
+    # No token-source picker: there is no Azure CLI login kato reads yet, so
+    # the token is pasted. The base URL is usually left blank (each repo's own
+    # host is used); the username is the bot's sign-in name reviewers mention.
+    'azure': (
+        'AZURE_API_BASE_URL',
+        'AZURE_API_TOKEN',
+        'AZURE_USERNAME',
     ),
 }
 

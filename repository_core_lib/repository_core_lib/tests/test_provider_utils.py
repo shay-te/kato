@@ -40,8 +40,18 @@ class ProviderFromUrlStringTests(unittest.TestCase):
         self.assertEqual(provider_from_url_string('https://GITHUB.com'), 'github')
 
     def test_returns_empty_for_unknown_provider(self) -> None:
+        self.assertEqual(provider_from_url_string('https://gitea.example/repo'), '')
         self.assertEqual(provider_from_url_string('https://azure.com/repo'), '')
         self.assertEqual(provider_from_url_string(''), '')
+
+    def test_detects_azure_devops(self) -> None:
+        for url in ('https://dev.azure.com', 'https://acme.visualstudio.com',
+                    'git@ssh.dev.azure.com:v3/acme/proj/api',
+                    'https://tfs.corp/Coll/proj/_git/api',
+                    # A repository named after another provider is still Azure.
+                    'https://dev.azure.com/acme/proj/_git/github-sync'):
+            with self.subTest(url=url):
+                self.assertEqual(provider_from_url_string(url), 'azure')
 
     def test_first_match_wins_when_multiple_keywords_appear(self) -> None:
         # Bitbucket is checked first — make sure that's stable.
@@ -96,9 +106,21 @@ class DefaultProviderBaseUrlTests(unittest.TestCase):
 
     def test_returns_empty_for_unknown_provider(self) -> None:
         self.assertEqual(
-            default_provider_base_url('azure', 'https://azure.com/r/r'),
+            default_provider_base_url('gitea', 'https://gitea.example/r/r'),
             '',
         )
+
+    def test_azure_api_lives_on_its_web_host(self) -> None:
+        self.assertEqual(
+            default_provider_base_url('azure', 'git@ssh.dev.azure.com:v3/acme/proj/api'),
+            'https://dev.azure.com',
+        )
+        self.assertEqual(
+            default_provider_base_url('azure', 'https://tfs.corp:8443/Coll/proj/_git/api'),
+            'https://tfs.corp:8443',
+        )
+        # Not an Azure repository URL: nothing to derive.
+        self.assertEqual(default_provider_base_url('azure', 'https://github.com/o/r'), '')
 
 
 class FallbackWebBaseUrlTests(unittest.TestCase):
@@ -192,8 +214,12 @@ class MissingPullRequestTokenMessageTests(unittest.TestCase):
         msg = missing_pull_request_token_message('client', 'bitbucket')
         self.assertIn('BITBUCKET_API_TOKEN', msg)
 
-    def test_unknown_provider_falls_back_to_placeholder(self) -> None:
+    def test_azure_message_mentions_azure_api_token_env_var(self) -> None:
         msg = missing_pull_request_token_message('client', 'azure')
+        self.assertIn('AZURE_API_TOKEN', msg)
+
+    def test_unknown_provider_falls_back_to_placeholder(self) -> None:
+        msg = missing_pull_request_token_message('client', 'gitea')
         self.assertIn('<provider-token>', msg)
 
 

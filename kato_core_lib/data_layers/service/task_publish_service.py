@@ -73,6 +73,14 @@ def _auth_hint_for(exc: Exception) -> str:
         )
     if 'api.github.com' in lowered or 'github.com' in lowered:
         return _github_permission_hint(lowered)
+    if (
+        'dev.azure.com' in lowered or '.visualstudio.com' in lowered
+        or 'tf400813' in lowered  # Azure DevOps (incl. on-prem): "not authorized"
+    ):
+        return (
+            ' — check AZURE_API_TOKEN: a personal access token for this '
+            'organization with the Code (Read & Write) scope, not expired'
+        )
     if '401' in text and 'unauthorized' in text.lower():
         return (
             ' — check the provider token, and that BITBUCKET_API_EMAIL is set '

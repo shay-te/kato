@@ -603,7 +603,7 @@ class OpenHandsClient(RetryingClientBase):
             '- For insertions through file_editor, use command "insert".\n'
             '- Never call file_editor with only path, summary, security_risk, old_str, or new_str.\n'
             '- Never use create_pr or any pull-request or merge-request creation tool.\n'
-            '- Do not call GitHub, GitLab, or Bitbucket APIs to publish a pull request yourself.\n'
+            '- Do not call GitHub, GitLab, Bitbucket, or Azure DevOps APIs to publish a pull request yourself.\n'
             '- Do not run git checkout, git switch, git branch, git pull, or git push unless the orchestration layer explicitly asks you to edit an already-checked-out branch.'
         )
 

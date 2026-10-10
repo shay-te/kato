@@ -122,6 +122,26 @@ export const CREDENTIAL_GUIDES = {
     docsLabel: 'Bitbucket: using API tokens',
   },
 
+  azure: {
+    provider: 'Azure DevOps',
+    credential: 'personal access token',
+    why: 'Kato uses this token to push its branch to Azure Repos, open the '
+      + 'pull request, and read and answer the review comments addressed to '
+      + 'it. It can do nothing this account cannot do.',
+    location: 'Azure DevOps → User settings (top right) → Personal access tokens',
+    steps: [
+      'Sign in to dev.azure.com (or your Azure DevOps Server) as the account kato should act as.',
+      'Click User settings (the person-with-gear icon, top right) → Personal access tokens.',
+      'Click New Token, name it (for example "kato"), pick the organization your repositories are in, and set an expiry.',
+      'Under Scopes choose Custom defined and grant Code = Read & write — it covers pushing branches and pull requests with their comments.',
+      'Click Create and copy the token — Azure DevOps shows it only once.',
+      'Put that account\'s sign-in name (its email) in Username: reviewers @-mention it to address kato.',
+    ],
+    note: 'Azure DevOps Server (on-prem): the same menu on your own server.',
+    docsUrl: 'https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate',
+    docsLabel: 'Microsoft: use personal access tokens',
+  },
+
   claude: {
     provider: 'Claude',
     credential: 'login',

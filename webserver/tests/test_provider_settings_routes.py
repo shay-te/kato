@@ -135,7 +135,7 @@ class GitProvidersGetTests(_ProviderRouteTestBase):
         body = resp.get_json()
         self.assertEqual(
             sorted(body['providers'].keys()),
-            ['bitbucket', 'github', 'gitlab'],
+            ['azure', 'bitbucket', 'github', 'gitlab'],
         )
         # No task trackers here.
         self.assertNotIn('youtrack', body['providers'])
@@ -160,6 +160,33 @@ class GitProvidersPostTests(_ProviderRouteTestBase):
         self.assertEqual(saved.get('GITHUB_API_TOKEN'), 'ghp_abc')
         # The git-providers route must NEVER write the platform key.
         self.assertNotIn('KATO_ISSUE_PLATFORM', saved)
+
+    def test_writes_azure_devops_creds(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post(
+                '/api/git-providers',
+                json={
+                    'provider': 'azure',
+                    'fields': {
+                        'AZURE_API_TOKEN': 'az-pat',
+                        'AZURE_USERNAME': 'bot@example.com',
+                        'GITHUB_API_TOKEN': 'smuggled',
+                    },
+                },
+            )
+        self.assertEqual(resp.status_code, 200)
+        saved = self._saved()
+        self.assertEqual(saved.get('AZURE_API_TOKEN'), 'az-pat')
+        self.assertEqual(saved.get('AZURE_USERNAME'), 'bot@example.com')
+        self.assertNotIn('GITHUB_API_TOKEN', saved)
+
+    def test_an_azure_base_url_must_be_a_url(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post(
+                '/api/git-providers',
+                json={'provider': 'azure', 'fields': {'AZURE_API_BASE_URL': 'dev.azure.com'}},
+            )
+        self.assertEqual(resp.status_code, 400)
 
     def test_rejects_a_tracker_as_git_host(self) -> None:
         # YouTrack / Jira are not git hosts — must 400.

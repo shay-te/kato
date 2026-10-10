@@ -50,6 +50,7 @@ include = [
   "github_core_lib*",
   "bitbucket_core_lib*",
   "gitlab_core_lib*",
+  "azure_devops_core_lib*",
   "jira_core_lib*",
   "hydra_plugins*",
   "vcs_provider_contracts*",
@@ -77,4 +78,5 @@ include = [
 "github_core_lib.github_core_lib.config" = ["*.yaml"]
 "bitbucket_core_lib.bitbucket_core_lib.config" = ["*.yaml"]
 "gitlab_core_lib.gitlab_core_lib.config" = ["*.yaml"]
+"azure_devops_core_lib.azure_devops_core_lib.config" = ["*.yaml"]
 "jira_core_lib.jira_core_lib.config" = ["*.yaml"]

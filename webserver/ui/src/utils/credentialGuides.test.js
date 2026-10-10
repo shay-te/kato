@@ -14,7 +14,7 @@ import { fieldInfo } from './fieldHelp.js';
 
 // Every provider/agent the setup wizard can ask a credential for.
 const ASKED_FOR_CREDENTIALS = [
-  'youtrack', 'jira', 'github', 'gitlab', 'bitbucket',
+  'youtrack', 'jira', 'github', 'gitlab', 'bitbucket', 'azure',
   'claude', 'openhands', 'openrouter', 'bedrock',
 ];
 

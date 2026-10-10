@@ -11,11 +11,12 @@ from repository_core_lib.repository_core_lib.platform import Platform
 class PullRequestClientFactory(object):
     """Build repository pull-request clients on demand.
 
-    Provider core-libs (github, gitlab, bitbucket) are resolved lazily via the
-    default factory helpers below.  Pass explicit callables to
+    Provider core-libs (github, gitlab, bitbucket, azure devops) are resolved
+    lazily via the default factory helpers below.  Pass explicit callables to
     ``github_client_factory`` / ``gitlab_client_factory`` /
-    ``bitbucket_client_factory`` to override the defaults — useful for testing
-    or to swap in alternative implementations without touching this module.
+    ``bitbucket_client_factory`` / ``azure_client_factory`` to override the
+    defaults — useful for testing or to swap in alternative implementations
+    without touching this module.
     """
 
     def __init__(
@@ -26,12 +27,14 @@ class PullRequestClientFactory(object):
         github_client_factory: Callable[[DictConfig], Any] | None = None,
         gitlab_client_factory: Callable[[DictConfig], Any] | None = None,
         bitbucket_client_factory: Callable[[DictConfig], Any] | None = None,
+        azure_client_factory: Callable[[DictConfig], Any] | None = None,
     ) -> None:
         self._config = config
         self._max_retries = max_retries
         self._github_client_factory = github_client_factory or _default_github_factory
         self._gitlab_client_factory = gitlab_client_factory or _default_gitlab_factory
         self._bitbucket_client_factory = bitbucket_client_factory or _default_bitbucket_factory
+        self._azure_client_factory = azure_client_factory or _default_azure_factory
 
     @NotFoundErrorHandler('unsupported repository provider')
     def get(self, platform: Platform) -> Any | None:
@@ -76,6 +79,19 @@ class PullRequestClientFactory(object):
                 }
             )
             return self._gitlab_client_factory(gitlab_config)
+        if platform == Platform.AZURE:
+            azure_config = OmegaConf.create(
+                {
+                    'core_lib': {
+                        'azure_devops_core_lib': {
+                            'base_url': self._config.base_url,
+                            'token': self._config.token,
+                            'max_retries': self._max_retries,
+                        },
+                    },
+                }
+            )
+            return self._azure_client_factory(azure_config)
         return None
 
 
@@ -92,3 +108,10 @@ def _default_gitlab_factory(config: DictConfig) -> Any:
 def _default_bitbucket_factory(config: DictConfig) -> Any:
     from bitbucket_core_lib.bitbucket_core_lib.bitbucket_core_lib import BitbucketCoreLib  # noqa: PLC0415
     return BitbucketCoreLib(config).pull_request
+
+
+def _default_azure_factory(config: DictConfig) -> Any:
+    from azure_devops_core_lib.azure_devops_core_lib.azure_devops_core_lib import (  # noqa: PLC0415
+        AzureDevOpsCoreLib,
+    )
+    return AzureDevOpsCoreLib(config).pull_request

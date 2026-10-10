@@ -382,6 +382,7 @@ class RepositoryInventoryService(Service):
             'github': provider_values('github_issues'),
             'gitlab': provider_values('gitlab_issues'),
             'bitbucket': provider_values('bitbucket_issues'),
+            'azure': provider_values('azure_repos'),
         }
 
     @staticmethod
@@ -721,6 +722,7 @@ class RepositoryInventoryService(Service):
             )
         config = OmegaConf.create(
             {
+                'provider': provider,
                 'base_url': provider_base_url,
                 'token': token,
                 'owner': owner,

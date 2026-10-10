@@ -50,7 +50,13 @@ class PullRequestDataAccess(DataAccess):
     def __init__(self, config: DictConfig, client: PullRequestService) -> None:
         self._config = config
         self._client = client
-        self._repository_type = Platform.from_base_url(config.base_url)
+        # The provider the inventory resolved for the repository, when it
+        # did: an on-prem host (an Azure DevOps Server, GitHub Enterprise)
+        # carries nothing in its base URL to detect it by.
+        provider = str(getattr(config, 'provider', '') or '').strip().lower()
+        self._repository_type = (
+            Platform(provider) if provider else Platform.from_base_url(config.base_url)
+        )
 
     @property
     def provider_name(self) -> str:
