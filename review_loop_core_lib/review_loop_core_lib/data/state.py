@@ -66,18 +66,19 @@ class ResumeStage(str, Enum):
 
 
 class TestsStep(str, Enum):
-    """The next step of a clean round's tests (``verify_tests``).
+    """The next step of a round's tests (``verify_tests``).
 
-    Failing tests are fixed INSIDE their round — run, send back, the chat's
-    fix, run again — and no further review starts until they pass. Read off
-    what the round recorded (``ReviewRound.tests_step``), so the running loop
-    and a resumed one take the same next step.
+    Every round's review starts only on code whose tests pass: failing tests
+    are fixed INSIDE the round — run, send back, the chat's fix, run again —
+    before its review. Read off what the round recorded
+    (``ReviewRound.tests_step``), so the running loop and a resumed one take
+    the same next step.
     """
 
-    RUN = 'run'              # no run yet, or the chat's fix ended since the last one
+    RUN = 'run'              # no run yet, the chat's fix ended since, or the code moved on
     SEND_FIX = 'send_fix'    # the latest run failed and its failures are not sent yet
     AWAIT_FIX = 'await_fix'  # sent; the chat's fix turn has not ended
-    DONE = 'done'            # the latest run passed (or did not say)
+    DONE = 'done'            # the latest run passed (or did not say) on this code
 
 
 # Where a resumed loop shows itself before its first step moves it on.
@@ -375,9 +376,9 @@ class ReviewRound(object):
     # before it (``confirm_clean`` / ``extra_sweep``). Always blind; a round
     # after a test fix can be blind without being one.
     sweep: bool = False
-    # Every test run the main chat reported after this round came back clean,
-    # oldest first: one when they passed, more when failing tests were fixed
-    # in this round and run again.
+    # Every test run the main chat reported in this round, oldest first —
+    # before its review (and after a clean one whose code had moved on): one
+    # when they passed, more when failing tests were fixed and run again.
     test_runs: list[TestReport] = field(default_factory=list)
     # How many times this round's failing tests went back to the chat to fix.
     tests_fixes: int = 0
@@ -397,15 +398,22 @@ class ReviewRound(object):
         """The latest test run; None before the first."""
         return self.test_runs[-1] if self.test_runs else None
 
-    @property
-    def tests_step(self) -> TestsStep:
-        """What this clean round's tests need next (see ``TestsStep``)."""
+    def tests_step(self, current_digest: str = '') -> TestsStep:
+        """What this round's tests need next (see ``TestsStep``).
+
+        ``current_digest``: the change as it is now — a pass on other code
+        is no pass for it. '' when not known: the latest run stands.
+        """
         latest = self.tests
         if latest is None:
             return TestsStep.RUN
         if latest.passed is not False:
-            return TestsStep.DONE
-        if self.tests_fixes < len(self.test_runs):
+            ran_on = latest.diff_digest or self.diff_digest
+            moved_on = bool(current_digest) and ran_on != current_digest
+            return TestsStep.RUN if moved_on else TestsStep.DONE
+        # One fix goes out per failing run; a pass in between (before the
+        # review, and the code moved on since) needs none.
+        if self.tests_fixes < sum(1 for run in self.test_runs if run.passed is False):
             return TestsStep.SEND_FIX
         if not self.fixed_at:
             return TestsStep.AWAIT_FIX
@@ -611,7 +619,12 @@ class ReviewLoopState(object):
         if current is None or current.number != point.number:
             return  # a new round begins
         if point.stage is ResumeStage.REVIEW:
-            self.rounds[-1] = ReviewRound(number=current.number, started_at=now)
+            # Its review starts over; the tests it ran before it stand.
+            self.rounds[-1] = ReviewRound(
+                number=current.number, started_at=now, sent_at=current.sent_at,
+                fixed_at=current.fixed_at, test_runs=current.test_runs,
+                tests_fixes=current.tests_fixes,
+            )
             return
         current.finished_at = 0.0
         if point.stage not in (ResumeStage.CONTINUE_FIX, ResumeStage.CONTINUE_TESTS_FIX):
@@ -643,6 +656,9 @@ class ReviewLoopState(object):
             'model': self.model,
             'self_check_turn': len(self.self_checks),
             'sweep': bool(self.rounds and self.rounds[-1].sweep),
+            # The current round's review has run — before it, the round is
+            # still on its tests (or waiting to review).
+            'round_reviewed': bool(current and current.reviewed_at),
             # The current round's failing tests are being fixed — sent back,
             # fixed, or run again — and how many fixes they have had.
             'tests_failing': bool(current and current.tests and current.tests.passed is False),
@@ -695,7 +711,7 @@ def _round_resume_point(
     """Where a loop whose latest round is ``last`` picks up again."""
     number = last.number
     if not last.reviewed_at:
-        return ResumePoint(ResumeStage.REVIEW, number, f'run round {number}\'s review again')
+        return _unreviewed_round_resume_point(last, verify_tests)
     outcome = last.outcome
     if outcome == 'sent' and not last.fixed_at:
         return ResumePoint(
@@ -719,12 +735,33 @@ def _round_resume_point(
     return _clean_round_resume_point(last, max_rounds, verify_tests)
 
 
+def _unreviewed_round_resume_point(last: ReviewRound, verify_tests: bool) -> ResumePoint:
+    """A round cut off before its review: in its tests, or in the review."""
+    number = last.number
+    step = last.tests_step() if verify_tests else TestsStep.DONE
+    if step is TestsStep.SEND_FIX:
+        return ResumePoint(
+            ResumeStage.SEND_TESTS_FIX, number,
+            f'send round {number}\'s failing tests to the chat',
+        )
+    if step is TestsStep.AWAIT_FIX:
+        return ResumePoint(
+            ResumeStage.CONTINUE_TESTS_FIX, number,
+            f'nudge the chat to finish fixing round {number}\'s failing tests',
+        )
+    if step is TestsStep.RUN and last.test_runs:
+        return ResumePoint(
+            ResumeStage.REVIEW, number, f'run round {number}\'s tests again, then its review',
+        )
+    return ResumePoint(ResumeStage.REVIEW, number, f'run round {number}\'s review again')
+
+
 def _clean_round_resume_point(
     last: ReviewRound, max_rounds: int, verify_tests: bool,
 ) -> ResumePoint | None:
     """Where a clean round cut off in its tests, or before it concluded, goes on."""
     number = last.number
-    step = last.tests_step
+    step = last.tests_step()
     if step is TestsStep.SEND_FIX:
         if number >= max_rounds:
             return None

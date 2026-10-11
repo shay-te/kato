@@ -218,9 +218,17 @@ test('the self-check and the test run have their own short tracks', () => {
   ]);
   assert.equal(self[0].detail, '30s');
 
+  // Before the round's review: the tests it waits for.
+  const before = reviewLoopSteps({ ...base, phase: 'verifying', round: 2 }, NOW);
+  assert.deepEqual(before.map((s) => [s.label, s.state]), [
+    ['Running the tests before the review', 'current'],
+    ['Review round 2', 'todo'],
+  ]);
+  assert.equal(before[0].detail, '30s');
+  // After a clean review whose code moved on since they passed.
   const testing = reviewLoopSteps({
     ...base, phase: 'verifying', counts: { BLOCKER: 0, MAJOR: 0, MINOR: 1, NIT: 0 },
-    extra_sweep: true, waiting_for: 'the agent is mid-turn',
+    extra_sweep: true, waiting_for: 'the agent is mid-turn', round_reviewed: true,
   }, NOW);
   assert.deepEqual(testing.map((s) => [s.label, s.state]), [
     ['Reviewed — no blocking issues', 'done'],
@@ -229,14 +237,35 @@ test('the self-check and the test run have their own short tracks', () => {
   ]);
   assert.equal(testing[0].detail, '1 minor');
   assert.equal(testing[1].detail, 'the agent is mid-turn · 30s');
-  const noSweep = reviewLoopSteps({ ...base, phase: 'verifying', counts: null }, NOW);
+  const noSweep = reviewLoopSteps({ ...base, phase: 'verifying', counts: null, round_reviewed: true }, NOW);
   assert.equal(noSweep[2].label, 'Loop ends');
 });
 
-test('failing tests are fixed and run again in their round, before any other review', () => {
+test('failing tests are fixed and run again in their round, before its review', () => {
   const base = {
     status: 'running', round: 2, max_rounds: 5, phase_started_at: NOW - 30, tests_failing: true,
     counts: { BLOCKER: 0, MAJOR: 0, MINOR: 1, NIT: 0 },
+  };
+  const track = (loop) => reviewLoopSteps(loop, NOW).map((s) => [s.label, s.state]);
+  assert.deepEqual(track({ ...base, phase: 'awaiting_fix', tests_fixes: 1 }), [
+    ['Failing tests sent to the chat', 'done'],
+    ['Fixing the failing tests (attempt 1)', 'current'],
+    ['Run the tests again', 'todo'],
+    ['Review round 2', 'todo'],
+  ]);
+  assert.deepEqual(track({ ...base, phase: 'verifying', tests_fixes: 1 }), [
+    ['Failing tests sent to the chat', 'done'],
+    ['Fixed (attempt 1)', 'done'],
+    ['Running the tests again', 'current'],
+    ['Review round 2', 'todo'],
+  ]);
+  assert.equal(track({ ...base, phase: 'waiting_to_send' })[0][0], 'Send the failing tests to the chat');
+});
+
+test('after a clean review, failing tests show behind that review', () => {
+  const base = {
+    status: 'running', round: 2, max_rounds: 5, phase_started_at: NOW - 30, tests_failing: true,
+    counts: { BLOCKER: 0, MAJOR: 0, MINOR: 1, NIT: 0 }, round_reviewed: true,
   };
   const track = (loop) => reviewLoopSteps(loop, NOW).map((s) => [s.label, s.state]);
   assert.deepEqual(track({ ...base, phase: 'waiting_to_send', tests_fixes: 1 }), [
@@ -272,6 +301,8 @@ test('failing tests are fixed and run again in their round, before any other rev
     '2/5 · fixing · 30s');
   assert.equal(track({ ...base, tests_failing: false, phase: 'verifying' })[1][0],
     'Running the tests in the main chat');
+  assert.equal(track({ ...base, tests_failing: false, round_reviewed: false, phase: 'verifying' })[0][0],
+    'Running the tests before the review');
 });
 
 test('a round\'s latest test run is the one it went on from', () => {

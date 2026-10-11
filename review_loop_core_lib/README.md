@@ -25,11 +25,11 @@ A **review loop** runs on one task:
 - `self_check` — before the first review, the main chat reviews and fixes its
   own change (cheap: it holds the context), up to `self_check_turns`, until
   its `<self-check>` block says clean.
-- `verify_tests` — a clean review ends the loop only once the main chat ran
-  the tests and its `<test-report>` passes. Failures are fixed inside their
-  round — sent back, fixed, run again — and no other review starts while they
-  fail. A fix that changed the code is reviewed by the next round; after
-  `tests_fix_attempts` fixes that don't land the loop stops STUCK.
+- `verify_tests` — no review starts on code whose tests fail. Each round has
+  the main chat run the tests (its `<test-report>`) before its review, unless
+  they already passed on exactly this code; failures are sent back, fixed and
+  run again inside the round until they pass. After `tests_fix_attempts`
+  fixes that don't land the loop stops STUCK.
 - `confirm_clean` — a clean verdict from a reviewer told the ledger needs a
   clean-room **sweep** (a fresh reviewer told nothing) to agree.
 - `extra_sweep` — every clean verdict needs that sweep: two clean reviews in

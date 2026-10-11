@@ -302,29 +302,35 @@ function trackSteps(order, labels, currentIndex, loop, nowSeconds) {
   });
 }
 
-const TESTS_FIX_ORDER = ['review', 'send', 'fix', 'rerun'];
 const TESTS_FIX_CURRENT = {
   [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'send',
   [REVIEW_LOOP_PHASE.AWAITING_FIX]: 'fix',
   [REVIEW_LOOP_PHASE.VERIFYING]: 'rerun',
 };
 
-// A clean round's failing tests, fixed inside the round — no other review
-// starts until they pass:
-//   [✓ Reviewed — no blocking issues] → [✓ Failing tests sent to the chat] →
-//   [● Fixing the failing tests (attempt 2) · 3m] → [○ Run the tests again]
+// A round's failing tests, fixed inside it — no review starts on code whose
+// tests fail:
+//   [✓ Failing tests sent to the chat] → [● Fixing the failing tests
+//   (attempt 2) · 3m] → [○ Run the tests again] → [○ Review round 3]
+// After a clean review (the code having moved on since they passed), the
+// review leads instead, as done.
 function testsFixSteps(loop, nowSeconds) {
-  const currentIndex = TESTS_FIX_ORDER.indexOf(TESTS_FIX_CURRENT[loop.phase] || 'send');
+  const order = loop.round_reviewed
+    ? ['review', 'send', 'fix', 'rerun']
+    : ['send', 'fix', 'rerun', 'next'];
+  const currentIndex = order.indexOf(TESTS_FIX_CURRENT[loop.phase] || 'send');
+  const at = (key) => order.indexOf(key);
   const fixes = Number(loop.tests_fixes || 0);
   // Counted as each fix goes out: before that, the one coming is the next.
-  const attempt = currentIndex > 1 ? fixes : fixes + 1;
+  const attempt = currentIndex > at('send') ? fixes : fixes + 1;
   const labels = {
     review: 'Reviewed — no blocking issues',
-    send: currentIndex > 1 ? 'Failing tests sent to the chat' : 'Send the failing tests to the chat',
-    fix: currentIndex > 2 ? `Fixed (attempt ${attempt})` : `Fixing the failing tests (attempt ${attempt})`,
-    rerun: currentIndex === 3 ? 'Running the tests again' : 'Run the tests again',
+    send: currentIndex > at('send') ? 'Failing tests sent to the chat' : 'Send the failing tests to the chat',
+    fix: currentIndex > at('fix') ? `Fixed (attempt ${attempt})` : `Fixing the failing tests (attempt ${attempt})`,
+    rerun: currentIndex === at('rerun') ? 'Running the tests again' : 'Run the tests again',
+    next: `Review round ${loop.round || 1}`,
   };
-  return trackSteps(TESTS_FIX_ORDER, labels, currentIndex, loop, nowSeconds);
+  return trackSteps(order, labels, currentIndex, loop, nowSeconds);
 }
 
 function reviewingLabel(loop) {
@@ -341,6 +347,13 @@ function selfCheckSteps(loop, nowSeconds) {
 }
 
 function verifyingSteps(loop, nowSeconds) {
+  // Before its review — the tests every review waits for.
+  if (!loop.round_reviewed) {
+    return [
+      { key: 'tests', label: 'Running the tests before the review', state: 'current', detail: currentDetail(loop, nowSeconds) },
+      { key: 'next', label: `Review round ${loop.round || 1}`, state: 'todo', detail: '' },
+    ];
+  }
   const sweepNext = loop.extra_sweep || loop.confirm_clean;
   return [
     { key: 'review', label: 'Reviewed — no blocking issues', state: 'done', detail: countsText(loop.counts) },
@@ -438,7 +451,7 @@ export function reviewerModelName(model, choice) {
 // The view's options, as the labels its checkboxes show.
 export const REVIEW_LOOP_STAGE_LABELS = Object.freeze({
   self_check: 'Self-check in the main chat first',
-  verify_tests: 'Tests must pass before clean',
+  verify_tests: 'Tests must pass before every review',
   confirm_clean: 'Clean-room check after the fixes',
   extra_sweep: 'One more sweep after any clean review',
 });

@@ -359,7 +359,7 @@ describe('the stages — picked with the round limit, before a loop starts', () 
     const boxes = screen.getAllByRole('checkbox');
     expect(boxes.map((box) => box.closest('label').textContent)).toEqual([
       'Self-check in the main chat first',
-      'Tests must pass before clean',
+      'Tests must pass before every review',
       'Clean-room check after the fixes',
       'One more sweep after any clean review',
     ]);

@@ -243,12 +243,15 @@ class WholeLoopTests(_ModeIsolation):
         self.assertEqual([r.outcome for r in state.rounds], ['sent', 'clean', 'clean'])
         self.assertEqual([r.sweep for r in state.rounds], [False, False, True])
         self.assertEqual([(t.clean, t.fixed) for t in state.self_checks], [(True, 1)])
-        self.assertTrue(state.rounds[1].tests.passed)
+        # The tests ran once, before round 1's review: the fix left the code
+        # they passed on unchanged, so no later review waited for them.
+        self.assertTrue(state.rounds[0].tests.passed)
+        self.assertEqual([r.test_runs for r in state.rounds[1:]], [[], []])
         self.assertEqual(state.reason, 'round 3 found no blocking issues; '
                          'confirmed by a clean-room review; tests passed (3 passed)')
         firsts = [m['text'].split('Kato review loop — ', 1)[1].splitlines()[0]
                   for m in world.cli.chat_messages()]
-        self.assertEqual(firsts, ['self-check 1 of 3', 'round 1 of 5', 'run the tests'])
+        self.assertEqual(firsts, ['self-check 1 of 3', 'run the tests', 'round 1 of 5'])
         reviews = world.cli.oneshot_calls()
         self.assertEqual(len(reviews), 3)
         self.assertIn('## Decisions so far', reviews[1]['prompt'])

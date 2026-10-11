@@ -282,15 +282,17 @@ bool is the pick, anything else the default. The defaults live twice — `REVIEW
 (JS) and `review_loop_routes._STAGE_DEFAULTS` — pinned equal by a test):
 - `self_check` — before round 1, the MAIN chat reviews + fixes its own change (≤3 turns, ends on
   its `<self-check>{"clean": true}` block). Cheap: it already holds the context.
-- `verify_tests` — a clean review only ends the loop once the main chat ran the tests
-  (`<test-report>`). Failures are fixed IN THEIR ROUND — sent back ("fix the failing tests"),
-  fixed, run again — and NO other review starts while they fail (it used to go straight on
-  to the next review, so the same tests failed round after round). Steps are read off the
-  round (`ReviewRound.tests_step`: `test_runs` + `tests_fixes`), so Resume takes the same one.
-  A fix that changed the code closes the round `tests_fixed` and the next round reviews it;
-  `RunnerOptions.tests_fix_attempts` (3) fixes that don't land → STUCK (Resume = one more
-  try); on the last round nothing is sent → MAX_ROUNDS. Not re-run on an unchanged tree (each
-  run records the digest it was asked to test).
+- `verify_tests` — NO REVIEW STARTS ON CODE WHOSE TESTS FAIL. Every round runs the tests in
+  the main chat (`<test-report>`) BEFORE its review, unless they already passed on exactly this
+  code (each run records the digest it was asked to test); failures are sent back ("fix the
+  failing tests"), fixed and run again in the round until they pass, then it reviews. (Tests
+  used to run only after a CLEAN review, so while reviews kept finding issues the loop went
+  round after round on failing tests.) Steps are read off the round
+  (`ReviewRound.tests_step(digest)`: `test_runs` + `tests_fixes`), so Resume takes the same one.
+  `RunnerOptions.tests_fix_attempts` (3) fixes that don't land → STUCK (Resume = one more try).
+  The last round fixes its tests too — its review comes after. Only if the code moves on
+  during a review are they run again after it: a fix there closes the round `tests_fixed`
+  (the next round reviews it); on the last round nothing is sent → MAX_ROUNDS.
 - `confirm_clean` — a clean verdict from a reviewer told the ledger gets a clean-room SWEEP
   (fresh reviewer, ledger withheld; `round.sweep`) that must agree.
 - `extra_sweep` — ANY clean verdict gets that sweep ("it was clean, we ran it again, boom a

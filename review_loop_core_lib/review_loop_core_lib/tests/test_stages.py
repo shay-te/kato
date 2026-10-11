@@ -2,9 +2,9 @@
 
 * **self-check** — before any independent review, the main chat reviews and
   fixes its own change (cheap: it holds the whole context);
-* **verify_tests** — a clean review only ends the loop once the main chat ran
-  the tests and they pass; failures are fixed and run again inside their
-  round, and no other review starts while they fail;
+* **verify_tests** — no review starts on code whose tests fail: every round
+  runs them first (unless they passed on exactly this code), and failures
+  are fixed and run again inside the round, before its review;
 * **confirm_clean** — a clean verdict from a reviewer that was told the fix
   ping-pong needs a clean-room reviewer (told nothing) to agree.
 
@@ -189,9 +189,43 @@ class TestsGateTests(_Stages):
                 self.tree.files['app.py'] = f'print({len(chat.delivered)})\n'
         chat.fixer = fix
 
-    def test_failing_tests_are_fixed_and_run_again_before_any_other_review(self) -> None:
-        # THE REPORT: the same tests failed in round after round — each failure
-        # was sent back once, then the loop went on to another review.
+    def test_no_review_starts_while_the_tests_fail(self) -> None:
+        # THE REPORT: "we have 3 loops with failing tests". A fix broke the
+        # tests and the loop went on reviewing round after round — it only
+        # ever ran them after a CLEAN review.
+        chat = ScriptedChat(tests=[
+            test_report(True, summary='ok'),                       # before round 1
+            test_report(False, failures=['test_a: broke']),        # round 1's fix broke them
+            test_report(True, summary='ok again'),
+            test_report(False, failures=['test_b: broke']),        # round 2's fix too
+            test_report(True, summary='green'),
+        ])
+        reviewer = FakeReviewer(reply(finding('MAJOR', symbol='a')),
+                                reply(finding('MAJOR', symbol='b')), reply())
+        self.edit_on(chat, 'fix', 'tests_fix')
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests', 'fix', 'tests', 'tests_fix', 'tests',
+                                      'fix', 'tests', 'tests_fix', 'tests'])
+        # Every review read code whose tests had just passed on it.
+        for review_round in state.rounds:
+            with self.subTest(round=review_round.number):
+                self.assertTrue(review_round.tests.passed)
+                self.assertEqual(review_round.tests.diff_digest, review_round.diff_digest)
+                self.assertLess(review_round.tests.reported_at, review_round.reviewed_at)
+        self.assertEqual([r.tests_fixes for r in state.rounds], [0, 1, 1])
+        self.assertEqual([r.outcome for r in state.rounds], ['sent', 'sent', 'clean'])
+        self.assertEqual(state.reason, 'round 3 found no blocking issues; tests passed (green)')
+
+    def edit_on(self, chat, *kinds) -> None:
+        """The chat's turns of these kinds change the code, as a real fix does."""
+        def fix(prompt: str) -> None:
+            if kind_of(prompt) in kinds:
+                self.tree.files['app.py'] = f'print({len(chat.delivered)})\n'
+        chat.fixer = fix
+
+    def test_failing_tests_are_fixed_and_run_again_before_the_review(self) -> None:
         chat = ScriptedChat(tests=[
             test_report(False, failures=['test_divide: ZeroDivisionError']),
             test_report(False, failures=['test_divide: still ZeroDivisionError']),
@@ -199,26 +233,25 @@ class TestsGateTests(_Stages):
         ])
         reviewer = FakeReviewer(reply())
         reviews_before = []
-        self.edit_on_tests_fix(chat)
+        self.edit_on(chat, 'tests_fix')
         edit = chat.fixer
         chat.fixer = lambda prompt: (reviews_before.append(len(reviewer.prompts)), edit(prompt))
         state = self.run_loop(chat, reviewer, verify_tests=True)
 
         self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
         self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests', 'tests_fix', 'tests'])
-        # All of it after round 1's review, and before any other.
-        self.assertEqual(reviews_before, [1, 1, 1, 1, 1])
-        first, second = state.rounds
-        self.assertEqual((first.outcome, second.outcome), ('tests_fixed', 'clean'))
-        self.assertEqual([run.passed for run in first.test_runs], [False, False, True])
-        self.assertEqual(first.tests_fixes, 2)
-        # Round 2 reviewed the fixed code — which the tests already passed on.
-        self.assertEqual(len(reviewer.prompts), 2)
-        self.assertEqual(second.test_runs, [])
-        self.assertEqual(state.reason, 'round 2 found no blocking issues; tests passed (all green)')
-        self.assertIn('tests_fixed', self.events)
+        # All of it before the review — which then read the fixed code.
+        self.assertEqual(reviews_before, [0, 0, 0, 0, 0])
+        self.assertEqual(len(reviewer.prompts), 1)
+        self.assertIn('print(4)', reviewer.prompts[0])
+        (only,) = state.rounds
+        self.assertEqual(only.outcome, 'clean')
+        self.assertEqual([run.passed for run in only.test_runs], [False, False, True])
+        self.assertEqual(only.tests_fixes, 2)
+        self.assertEqual(state.reason, 'round 1 found no blocking issues; tests passed (all green)')
 
-        fix, again = chat.delivered[1][0], chat.delivered[2][0]
+        first, fix, again = (chat.delivered[i][0] for i in range(3))
+        self.assertIn('The next independent review starts only once the tests pass', first)
         self.assertEqual(fix.splitlines()[0], 'Host review loop — fix the failing tests')
         self.assertIn(wrap('- test_divide: ZeroDivisionError', 'task T-1 failing tests'), fix)
         self.assertIn('(fix attempt 1)', fix)
@@ -227,9 +260,8 @@ class TestsGateTests(_Stages):
         self.assertEqual(again.splitlines()[0], 'Host review loop — run the tests')
         self.assertIn('You worked on the failing tests. No further review starts', again)
 
-    def test_tests_passing_again_on_the_reviewed_code_need_no_other_review(self) -> None:
-        # The fix changed nothing (a flaky test, a missing dependency): the
-        # clean review still covers the code, so the round concludes.
+    def test_tests_passing_again_on_the_same_code_need_no_fix_reviewed(self) -> None:
+        # The fix changed nothing (a flaky test, a missing dependency).
         chat = ScriptedChat(tests=[test_report(False, failures=['flaky']), test_report(True)])
         reviewer = FakeReviewer(reply())
         state = self.run_loop(chat, reviewer, verify_tests=True)
@@ -238,7 +270,7 @@ class TestsGateTests(_Stages):
         self.assertEqual(len(reviewer.prompts), 1)
         self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
 
-    def test_tests_no_fix_makes_pass_stop_the_loop_instead_of_reviewing_on(self) -> None:
+    def test_tests_no_fix_makes_pass_stop_the_loop_before_any_review(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, failures=['test_x: boom'])])
         reviewer = FakeReviewer(reply())
         state = self.run_loop(chat, reviewer, verify_tests=True)
@@ -246,7 +278,7 @@ class TestsGateTests(_Stages):
         self.assertEqual(state.reason,
                          'the tests still fail after 3 fixes in round 1 (test_x: boom)')
         self.assertEqual(chat.kinds, ['tests', 'tests_fix'] * 3 + ['tests'])
-        self.assertEqual(len(reviewer.prompts), 1)
+        self.assertEqual(reviewer.prompts, [])
         self.assertEqual((state.round, state.rounds[0].outcome), (1, 'stuck'))
         self.assertEqual(state.summary()['resume'], "send round 1's failing tests to the chat")
 
@@ -258,14 +290,38 @@ class TestsGateTests(_Stages):
         self.assertEqual(state.reason, 'the tests still fail after 1 fix in round 1 (2 failed)')
         self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
 
-    def test_tests_still_failing_on_the_last_round_is_the_round_limit(self) -> None:
-        chat = ScriptedChat(tests=[test_report(False, summary='2 failed')])
+    def test_the_last_round_fixes_its_tests_too_its_review_comes_after(self) -> None:
+        chat = ScriptedChat(tests=[test_report(False, summary='2 failed'), test_report(True)])
         state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True, max_rounds=1)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
+
+    def test_code_moving_on_during_a_review_is_tested_after_it(self) -> None:
+        # The tests passed, then the code changed while the reviewer read it:
+        # its clean verdict is only taken once they pass on what it read.
+        chat = ScriptedChat(tests=[
+            test_report(True), test_report(False, failures=['t: broke']), test_report(True),
+        ])
+        self.edit_on(chat, 'tests_fix')
+        reviewer = EditingReviewer(self.tree, reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests', 'tests', 'tests_fix', 'tests'])
+        # The fix after the review is code it never read: the next round does.
+        self.assertEqual([r.outcome for r in state.rounds], ['tests_fixed', 'clean'])
+        self.assertIn('tests_fixed', self.events)
+        self.assertEqual(state.rounds[1].test_runs, [])  # they passed on that code already
+        self.assertIn('The independent review found no blocking issues', chat.delivered[1][0])
+
+    def test_tests_failing_after_the_last_review_is_the_round_limit(self) -> None:
+        chat = ScriptedChat(tests=[test_report(True), test_report(False, summary='2 failed')])
+        state = self.run_loop(chat, EditingReviewer(self.tree, reply()), verify_tests=True,
+                              max_rounds=1)
         self.assertEqual(state.status, ReviewLoopStatus.MAX_ROUNDS)
         self.assertEqual(state.reason, 'the tests still fail after 1 reviews')
         self.assertEqual(state.rounds[0].outcome, 'max_rounds')
-        # No review is left to look at a fix, so none is asked for.
-        self.assertEqual(chat.kinds, ['tests'])
+        # No review is left to read a fix, so none is asked for.
+        self.assertEqual(chat.kinds, ['tests', 'tests'])
 
     def test_a_failure_with_no_details_sends_the_summary(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, summary='suite crashed'), test_report(True)])
@@ -376,9 +432,9 @@ class AllStagesTests(_Stages):
         state = self.run_loop(chat, reviewer, self_check=True, verify_tests=True,
                               confirm_clean=True)
         self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
-        # The tests ran ONCE: the clean-room review changed nothing, so they
-        # are not run again on the same tree.
-        self.assertEqual(chat.kinds, ['own', 'fix', 'tests'])
+        # The tests ran ONCE, before the first review: the fix changed nothing,
+        # so every later review read code they had passed on.
+        self.assertEqual(chat.kinds, ['own', 'tests', 'fix'])
         self.assertEqual(state.reason, 'round 3 found no blocking issues; '
                          'confirmed by a clean-room review; tests passed (ok)')
 
@@ -392,7 +448,9 @@ class AllStagesTests(_Stages):
 
     def test_tests_rerun_after_a_fix_changes_the_tree(self) -> None:
         chat = ScriptedChat(tests=[test_report(True, summary='ok')])
-        chat.fixer = lambda prompt: self.tree.files.update({'app.py': 'print(2)\n'})
+        chat.fixer = lambda prompt: (
+            kind_of(prompt) == 'fix' and self.tree.files.update({'app.py': 'print(2)\n'})
+        )
         self.run_sweep_catching_a_major(chat)
         # Once on R1's code, once on the fixed code; not again on R4 (same code).
         self.assertEqual(chat.kinds, ['tests', 'fix', 'tests'])
@@ -450,7 +508,7 @@ class CandidateIdentityTests(_Stages):
                          [('clean', False), ('changed', True), ('clean', True)])
         self.assertIn('confirmed by a clean-room review', state.reason)
 
-    def test_the_tests_turn_changing_code_gets_it_reviewed_and_tested_again(self) -> None:
+    def test_a_tests_turn_changing_code_gets_it_tested_again_before_the_review(self) -> None:
         chat = ScriptedChat(tests=[test_report(True, summary='ok')])
         edits = iter(['print(7)\n'])
 
@@ -459,11 +517,13 @@ class CandidateIdentityTests(_Stages):
             if new is not None:
                 self.tree.files['app.py'] = new
         chat.fixer = tests_turn_edits_once
-        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
 
         self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
-        self.assertEqual([r.outcome for r in state.rounds], ['changed', 'clean'])
+        self.assertEqual([r.outcome for r in state.rounds], ['clean'])
         self.assertEqual(chat.kinds, ['tests', 'tests'])
+        self.assertIn('print(7)', reviewer.prompts[0])  # the review read the edited code
 
     def test_an_unchanged_tree_is_accepted_without_another_round(self) -> None:
         state = self.run_loop(FakeChat(), FakeReviewer(reply()))
@@ -505,18 +565,16 @@ class RoundTimingTests(_Stages):
         self.assert_in_order(first.started_at, first.reviewed_at, first.finished_at,
                              sweep.started_at, sweep.finished_at)
 
-    def test_a_failing_tests_round_ends_after_they_pass_again(self) -> None:
+    def test_a_round_fixes_its_tests_first_then_reviews(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, failures=['t1']), test_report(True)])
         chat.fixer = lambda prompt: (
             kind_of(prompt) == 'tests_fix' and self.tree.files.update({'app.py': 'print(9)\n'})
         )
         state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
-        fixed, clean = state.rounds
-        self.assertEqual(fixed.outcome, 'tests_fixed')
-        self.assert_in_order(fixed.started_at, fixed.sent_at, fixed.finished_at, clean.started_at)
-        self.assertGreater(fixed.fixed_at, fixed.sent_at)
-        # The round ended with its passing run, not with the fix before it.
-        self.assertGreaterEqual(fixed.finished_at, fixed.tests.reported_at - 0.001)
+        (only,) = state.rounds
+        self.assertEqual(only.outcome, 'clean')
+        self.assert_in_order(only.started_at, only.sent_at, only.fixed_at, only.tests.reported_at,
+                             only.reviewed_at, only.finished_at)
 
     def test_a_round_saved_before_this_field_reads_as_unfinished(self) -> None:
         self.assertEqual(ReviewRound.from_dict({'number': 1}).finished_at, 0.0)

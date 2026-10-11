@@ -1,15 +1,17 @@
 """One review loop for one task, driven on its own thread.
 
     [self_check] the main chat reviews + fixes its own change (≤ N turns)
-    begin round n ─▶ wait for the chat to settle ─▶ review the whole diff
+    begin round n
+      [verify_tests] no review starts on code whose tests fail: the chat runs
+                     them (unless they passed on exactly this code) ─▶ failing:
+                     sent back ─▶ fixed ─▶ run again, until they pass. Still
+                     failing after ``tests_fix_attempts`` fixes ─▶ done: STUCK
+      ─▶ wait for the chat to settle ─▶ review the whole diff
                      (told the decisions so far; settled repeats don't block;
                       a clean-room confirmation is told nothing)
       no blocking finding:
-        [verify_tests] the chat runs the tests ─▶ failing: fixed IN this round
-                       (sent back ─▶ fixed ─▶ run again) until they pass; no
-                       other review starts while they fail. A fix that changed
-                       the code ─▶ round n+1 reviews it. Still failing after
-                       ``tests_fix_attempts`` fixes ─▶ done: STUCK
+        [verify_tests] the code moved on since its tests passed ─▶ the same,
+                       after the review; a fix ─▶ round n+1 reviews it
         [confirm_clean] the reviewer saw the ledger ─▶ clean-room round n+1
         otherwise ........................... done: CLEAN
       claimed fixes all still there ........ done: STUCK       (nothing sent)
@@ -247,6 +249,10 @@ class ReviewLoopRunner(object):
         # each time, never carried along, so a resumed loop judges this review
         # exactly as an uninterrupted one would (``progress.py``).
         memory = self._memory_before(review_round)
+        if self._state.verify_tests:
+            # No review starts on code whose tests fail — the last round's
+            # included: its review comes after, so it sees the fix.
+            self._settle_tests(review_round, memory, review_follows=True)
         self._wait_for_chat(ReviewLoopPhase.WAITING_TO_REVIEW)
         # This round is the clean-room sweep asked for by the last one.
         verdict = self._review(review_round, withhold_ledger=memory.confirm_next)
@@ -262,12 +268,11 @@ class ReviewLoopRunner(object):
         number = review_round.number
         max_rounds = self._state.max_rounds
         confirming = review_round.sweep
-        # The tests run on the exact change they have not passed on yet (a
-        # round resumed part-way through its tests goes on with them).
-        if self._state.verify_tests and (
-            review_round.test_runs or memory.tests_digest != review_round.diff_digest
-        ):
-            if self._settle_tests(review_round) and self._code_changed_since(review_round):
+        # The tests passed before the review; if the code moved on since, they
+        # run again on it (and a round resumed in them goes on with them).
+        if self._state.verify_tests:
+            fixed = self._settle_tests(review_round, memory, review_follows=False)
+            if fixed and self._code_changed_since(review_round):
                 # The fix is code this round's review never saw.
                 self._close_round(review_round, 'tests_fixed')
                 self._notify('tests_fixed')
@@ -363,7 +368,10 @@ class ReviewLoopRunner(object):
             # its tests is the operator asking for one more try.
             self._fix_tests(review_round, review_round.tests)
         # The round's tests go on from their next step (a fix still running is
-        # nudged), then its clean review concludes.
+        # nudged), then — before its review — the review, or its clean
+        # review concludes.
+        if not review_round.reviewed_at:
+            return review_round
         self._after_clean_review(
             review_round, _saved_verdict(review_round), self._memory_before(review_round),
         )
@@ -507,6 +515,8 @@ class ReviewLoopRunner(object):
         )
         with self._lock:
             review_round.sent_at = dispatched_at
+            # A fix of the tests before the review may have set it.
+            review_round.fixed_at = 0.0
             review_round.outcome = 'sent'
         self._set_phase(ReviewLoopPhase.AWAITING_FIX)
         self._notify('sent')
@@ -565,36 +575,45 @@ class ReviewLoopRunner(object):
             if clean is not False:
                 return
 
-    def _settle_tests(self, review_round: ReviewRound) -> bool:
-        """Run the tests on this clean round's code, and have them fixed
-        until they pass — all inside this round.
+    def _settle_tests(
+        self, review_round: ReviewRound, memory: LoopMemory, *, review_follows: bool,
+    ) -> bool:
+        """Have the tests pass on the code as it is now, fixing them inside
+        this round: run ─▶ failing: sent back ─▶ the chat's fix ─▶ run again.
 
-        No further review starts while they fail: run ─▶ failing: sent back ─▶
-        the chat's fix ─▶ run again. Each step is read off the round
+        Not run when they passed on exactly this code (an earlier round's run,
+        or this round's). Each step is read off the round
         (``ReviewRound.tests_step``), so a resumed loop takes the one it was
-        cut off in. Ends the loop when no round is left to review a fix
-        (MAX_ROUNDS) or the fixes stop landing (STUCK). Returns whether the
-        tests needed a fix.
+        cut off in. Ends the loop when the fixes stop landing (STUCK) — or,
+        with no review to follow (``review_follows``) on the last round, when
+        a fix could never be reviewed (MAX_ROUNDS). Returns whether a fix was
+        sent here.
         """
+        fixes_before = review_round.tests_fixes
         while True:
-            step = review_round.tests_step
+            digest = candidate_digest(self._diff_source(self._task_id))
+            if not review_round.test_runs and memory.tests_digest == digest:
+                return False
+            step = review_round.tests_step(digest)
             if step is TestsStep.DONE:
-                return review_round.tests_fixes > 0
+                return review_round.tests_fixes > fixes_before
             if step is TestsStep.RUN:
-                self._verify_tests(review_round)
+                self._verify_tests(review_round, digest)
             elif step is TestsStep.AWAIT_FIX:
                 prompt, dispatched_at = self._nudge(review_round, failing_tests=True)
                 self._await_fix(review_round, prompt, dispatched_at, decisions=False)
             else:
-                self._send_failing_tests(review_round)
+                self._send_failing_tests(review_round, review_follows=review_follows)
 
-    def _verify_tests(self, review_round: ReviewRound) -> TestReport:
-        """Have the main chat run the tests on the current tree, and report."""
+    def _verify_tests(self, review_round: ReviewRound, digest: str) -> TestReport:
+        """Have the main chat run the tests on the current tree — the change
+        ``digest`` names, which a pass covers and nothing else — and report."""
+        latest = review_round.tests
         prompt = build_tests_prompt(
-            wording=self._wording, after_fix=review_round.tests_fixes > 0,
+            wording=self._wording,
+            after_fix=latest is not None and latest.passed is False,
+            before_review=not review_round.reviewed_at,
         )
-        # The change the tests are asked to run on: a pass covers it, nothing else.
-        digest = candidate_digest(self._diff_source(self._task_id))
         dispatched_at = self._deliver(
             prompt, wait_phase=ReviewLoopPhase.VERIFYING, label='test request',
         )
@@ -612,11 +631,11 @@ class ReviewLoopRunner(object):
         self._notify('verified')
         return report
 
-    def _send_failing_tests(self, review_round: ReviewRound) -> None:
-        """The latest run failed: send it back to be fixed — unless no round
-        is left to review the fix, or the fixes have stopped landing."""
+    def _send_failing_tests(self, review_round: ReviewRound, *, review_follows: bool) -> None:
+        """The latest run failed: send it back to be fixed — unless the fixes
+        have stopped landing, or no review is left to look at the fix."""
         number = review_round.number
-        if number >= self._state.max_rounds:
+        if not review_follows and number >= self._state.max_rounds:
             self._close_round(review_round, 'max_rounds')
             raise _Finish(
                 ReviewLoopStatus.MAX_ROUNDS, f'the tests still fail after {number} reviews',

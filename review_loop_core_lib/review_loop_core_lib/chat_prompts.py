@@ -7,10 +7,10 @@ two more things, each ending in a machine-readable block it parses
 * a **self-check** before any independent review — the chat already holds the
   whole context, so having it review and fix its own change first is cheap
   and catches the easy bugs before a reviewer is paid to;
-* a **test run** once a review comes back clean — "clean" means no blocking
-  finding AND the tests pass. Failing tests go back to the chat to fix
-  (``build_tests_fix_prompt``) and are run again (``after_fix``), in the same
-  round, until they pass: no further review starts while they fail.
+* a **test run** before every review (``before_review``) — no review starts
+  on code whose tests fail, so "clean" means no blocking finding AND the tests
+  pass. Failing tests go back to the chat to fix (``build_tests_fix_prompt``)
+  and are run again (``after_fix``), in the same round, until they pass.
 
 A loop RESUMED while the chat was mid-fix sends a short **continue** nudge
 instead of the round's message again (``build_continue_prompt``).
@@ -60,16 +60,21 @@ End your reply with exactly one self-check block and nothing after it:
 `clean` is true only when this pass found nothing more to fix.''', wording)
 
 
-def build_tests_prompt(*, wording: LoopWording, after_fix: bool = False) -> str:
+def build_tests_prompt(
+    *, wording: LoopWording, after_fix: bool = False, before_review: bool = False,
+) -> str:
     """Ask the chat to run the task's tests on the current tree and report.
 
-    ``after_fix``: the run that checks the chat's fix of failing tests.
+    ``after_fix``: the run that checks the chat's fix of failing tests;
+    ``before_review``: the run a review waits for. Otherwise the run after a
+    clean review, the code having moved on since the tests passed.
     """
-    why = (
-        'You worked on the failing tests. No further review starts until they pass:'
-        if after_fix else
-        'The independent review found no blocking issues. Before the loop can finish,'
-    )
+    if after_fix:
+        why = 'You worked on the failing tests. No further review starts until they pass:'
+    elif before_review:
+        why = 'The next independent review starts only once the tests pass. Before it,'
+    else:
+        why = 'The independent review found no blocking issues. Before the loop can finish,'
     return _with_guidance(f'''{stage_header(wording, "run the tests")}
 
 {why}
