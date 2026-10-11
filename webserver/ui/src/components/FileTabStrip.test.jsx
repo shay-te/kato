@@ -602,6 +602,25 @@ describe('FileTabStrip — review-loop tabs share the strip with file tabs', () 
     expect(onCloseReviewLoop).toHaveBeenCalledWith('UNA-2');
   });
 
+  test('a file opened from a loop tab sits right after it, not with the files before it', () => {
+    const { container } = renderWithLoops({
+      tabs: [
+        tab(),
+        tab({ key: 'client::src/from-loop.py', relativePath: 'src/from-loop.py', after: 'loop:UNA-1' }),
+        tab({ key: 'client::src/other.py', relativePath: 'src/other.py' }),
+      ],
+    });
+    const all = [...container.querySelectorAll('.file-tab')];
+    expect(all.map((el) => el.dataset.reviewLoopTask || el.title)).toEqual([
+      'client/src/auth.py', 'client/src/other.py', 'UNA-1', 'client/src/from-loop.py', 'UNA-2',
+    ]);
+    // A divider before each loop that comes right after a file — not between a
+    // loop and the file opened from it.
+    expect(all[2]).toHaveClass('is-group-start');
+    expect(all[3]).not.toHaveClass('is-group-start');
+    expect(all[4]).toHaveClass('is-group-start');
+  });
+
   test('a loop tab leading the strip draws no divider', () => {
     const { container } = render(
       <FileTabStrip

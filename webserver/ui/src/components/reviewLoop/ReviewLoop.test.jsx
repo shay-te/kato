@@ -20,6 +20,7 @@ import { _resetReviewLoopRounds, readReviewLoopRounds } from './reviewLoopRounds
 import { _resetReviewLoopStages, readReviewLoopStages } from './reviewLoopStagesPref.js';
 import { _resetReviewLoopModel, readReviewLoopModel, writeReviewLoopModel } from './reviewLoopModelPref.js';
 import { toastStore } from '../../stores/toastStore.js';
+import { forgetLoopExpansion } from '../../utils/reviewLoopExpandMemory.js';
 
 const ROUNDS_KEY = 'kato.reviewLoopRounds.v1';
 const STAGES_KEY = 'kato.reviewLoopStages.v2';
@@ -100,6 +101,8 @@ beforeEach(() => {
   _resetReviewLoopStages();
   window.localStorage.removeItem('kato.reviewLoopModel.v1');
   _resetReviewLoopModel();
+  // What one test opened must not decide what the next one sees first.
+  forgetLoopExpansion('UNA-1');
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -144,6 +147,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     render(<ReviewLoopPane session={session(stuck)} onClose={() => {}} />);
     const row = (await screen.findByText('Round 3')).closest('.review-loop-round');
     expect(within(row).getByText('stuck — fixes didn\u2019t land')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Round 3'));
     expect(within(row).getByText('Still here — first reported as R2-1, survived 2 fixes.'))
       .toHaveClass('is-repeat');
     expect(screen.getByText(/R2-1 still found after 2 fixes/)).toBeInTheDocument();
@@ -165,9 +169,17 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(container.querySelector('[data-round="2"] .review-loop-round-duration')).toBeNull();
   });
 
-  test('the newest round opens itself; blocking and reported-only findings are apart', async () => {
+  test('every round starts collapsed; opened, blocking and reported-only findings are apart', async () => {
     kato.loop = { ...summary(), rounds: [round(1), round(2)] };
-    render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    const { container } = render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    // A long loop is a wall of findings otherwise: nothing opens by itself,
+    // not even the newest round.
+    for (const header of container.querySelectorAll('.review-loop-round-header')) {
+      expect(header).toHaveAttribute('aria-expanded', 'false');
+    }
+    expect(screen.queryByText('bug in round 2')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Round 2'));
     await screen.findByText('bug in round 2');
     expect(screen.queryByText('bug in round 1')).not.toBeInTheDocument();
     expect(screen.getByText('Blocking — sent to the chat to fix')).toBeInTheDocument();
@@ -198,7 +210,8 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     kato.artifacts['1/response'] = 'Rejected R1-2: Go reads extra.sub first.';
     render(<ReviewLoopPane session={session(summary({ status: 'clean', phase: 'done' }))} onClose={() => {}} />);
 
-    // The newest round: the repeat is settled, not blocking, and says by what.
+    // Round 2: the repeat is settled, not blocking, and says by what.
+    fireEvent.click(await screen.findByText('Round 2'));
     await screen.findByText('Settled earlier — not sent again');
     expect(screen.queryByText(/^Blocking/)).not.toBeInTheDocument();
     expect(screen.getByText('Settled by the decision on R1-2.')).toBeInTheDocument();
@@ -225,13 +238,15 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     const { rerender, container } = render(
       <ReviewLoopPane session={session(summary())} onClose={() => {}} />,
     );
+    fireEvent.click(await screen.findByText('Round 2'));     // the operator opens round 2
     await screen.findByText('bug in round 2');
-    fireEvent.click(screen.getByText('Round 1'));            // the operator opens round 1
+    fireEvent.click(screen.getByText('Round 1'));            // and round 1
     const roundOne = container.querySelector('[data-round="1"]');
 
     kato.loop = { ...summary({ round: 3, phase: 'reviewing' }), rounds: [round(1), round(2), round(3)] };
     rerender(<ReviewLoopPane session={session(summary({ round: 3, phase: 'reviewing' }))} onClose={() => {}} />);
-    await screen.findByText('bug in round 3');
+    await screen.findByText('Round 3');
+    expect(screen.queryByText('bug in round 3')).not.toBeInTheDocument(); // the new one arrives closed
 
     const order = [...container.querySelectorAll('.review-loop-round')].map((li) => li.dataset.round);
     expect(order).toEqual(['1', '2', '3']);
@@ -244,6 +259,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     kato.loop = { ...summary(), rounds: [round(1)] };
     kato.artifacts['1/review'] = '**MAJOR** api/app.py:7 — bug';
     render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    fireEvent.click(await screen.findByText('Round 1'));
     await screen.findByText('bug in round 1');
     const artifactUrl = `GET /api/sessions/UNA-1/review-loop/${LOOP_ID}/rounds/1/review`;
     expect(kato.requests).not.toContain(artifactUrl);
@@ -381,7 +397,8 @@ describe('the view shows the stages that ran', () => {
   test('a clean-room sweep is tagged, and a round shows its test result', async () => {
     const tested = round(1, {
       outcome: 'tests_failed', findings: [], counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 },
-      tests: { passed: false, command: 'pytest', summary: '1 failed', failures: ['test_divide: ZeroDivisionError'] },
+      test_runs: [{ passed: false, command: 'pytest', summary: '1 failed', failures: ['test_divide: ZeroDivisionError'] }],
+      tests_fixes: 1,
     });
     const sweep = round(2, {
       outcome: 'clean', sweep: true, blind: true, sent_at: 0, findings: [],
@@ -402,6 +419,33 @@ describe('the view shows the stages that ran', () => {
     // Failing tests sent back carry no per-finding reply, but do have a test report.
     expect(within(roundOne).queryByText('The chat’s reply to the findings')).not.toBeInTheDocument();
     expect(within(roundOne).getByText('The chat’s test report')).toBeInTheDocument();
+  });
+
+  test('a round whose failing tests were fixed in it lists every run, in order', async () => {
+    const fixed = round(1, {
+      outcome: 'tests_fixed', findings: [], counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 },
+      fixed_at: NOW - 200, tests_fixes: 2,
+      test_runs: [
+        { passed: false, failures: ['test_divide: ZeroDivisionError'] },
+        { passed: false, failures: ['test_divide: still failing'] },
+        { passed: true, summary: '41 passed', command: 'pytest' },
+      ],
+    });
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = { ...finished, rounds: [fixed] };
+    render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+    fireEvent.click(await screen.findByText('Round 1'));
+    const roundOne = screen.getByText('Round 1').closest('.review-loop-round');
+    const runs = [...roundOne.querySelectorAll('.review-loop-tests-summary')].map((node) => node.textContent);
+    expect(runs).toEqual([
+      'Run 1: Tests failed — 1 failing',
+      'Run 2: Tests failed — 1 failing',
+      'Run 3: Tests passed — 41 passed (pytest)',
+    ]);
+    expect(within(roundOne).getByText('tests fixed — the fix is reviewed next')).toBeInTheDocument();
+    expect(within(roundOne).getByText('The chat’s latest test report')).toBeInTheDocument();
+    // A tests fix has no per-finding answers to show, whatever its fixed_at.
+    expect(within(roundOne).queryByText('The chat’s reply to the findings')).not.toBeInTheDocument();
   });
 
   test('the main chat\'s self-check turns are listed above the rounds', async () => {
@@ -657,8 +701,10 @@ describe('open and closed rounds are remembered — for the latest loop only', (
     kato.loop = { ...finished, rounds: [round(1), round(2, { outcome: 'clean' })] };
     const first = render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
     await screen.findByText('Round 2');
-    // The newest opened itself; the operator closes it and opens round 1.
-    await waitFor(() => expect(header(first.container, 2)).toHaveAttribute('aria-expanded', 'true'));
+    // Nothing opened itself; the operator opens round 2, closes it again,
+    // and opens round 1.
+    expect(header(first.container, 2)).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(header(first.container, 2));
     fireEvent.click(header(first.container, 2));
     fireEvent.click(header(first.container, 1));
     first.unmount();

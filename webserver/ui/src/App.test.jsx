@@ -226,6 +226,9 @@ vi.mock('./components/DiffPane.jsx', () => ({
     </div>
   ),
 }));
+vi.mock('./components/reviewLoop/ReviewLoopPane.jsx', () => ({
+  default: ({ session }) => <div data-testid="review-loop-pane">loop={session?.task_id}</div>,
+}));
 vi.mock('./components/OrchestratorActivityFeed.jsx', () => ({
   default: () => <div data-testid="orchestrator-feed" />,
 }));
@@ -509,6 +512,135 @@ describe('App — file tab strip (VS Code-style multi-file tabs)', () => {
   });
 });
 
+
+describe('App — file, loop and draft tabs are one row of tabs', () => {
+  // A review loop's tab open and on show, the way a reload restores it.
+  function withLoopTabOpen(taskId) {
+    localStorage.setItem('kato.reviewLoopTabs.v1', JSON.stringify({ tabs: [taskId], active: taskId }));
+  }
+  const loopShown = () => screen.queryByTestId('review-loop-pane')?.textContent || '';
+  const activeTabTitles = () => [...document.querySelectorAll('.file-tab.active')].map((tab) => tab.title);
+  const close = (name) => fireEvent.click(screen.getByRole('button', { name: new RegExp(`Close ${name}`) }));
+
+  beforeEach(() => {
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }], refresh: vi.fn() });
+  });
+
+  function renderOnTask() {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+  }
+
+  const stripTitles = () => [...document.querySelectorAll('.file-tab')].map((tab) => tab.title);
+
+  test('a file opened while the loop tab shows opens right AFTER it, as a browser tab does', () => {
+    // THE REPORT: "how come file tab open before the loop review (left to
+    // it) and not right to it".
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(stripTitles()).toEqual(['Review loop — T1', 'repo/src/T1.js']);
+    // A file opened from that file goes right after it, still after the loop.
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    expect(stripTitles()).toEqual(['Review loop — T1', 'repo/src/T1.js', 'repo/src/other-T1.js']);
+  });
+
+  test('with a file before the loop, a file opened from the loop still opens after it', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    // Pinned, T1.js moves to the front, before the loop.
+    fireEvent.contextMenu(screen.getByTitle('repo/src/T1.js'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pin tab' }));
+    expect(stripTitles()).toEqual(['repo/src/T1.js', 'Review loop — T1']);
+    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    expect(stripTitles()).toEqual(['repo/src/T1.js', 'Review loop — T1', 'repo/src/other-T1.js']);
+    // Closed, its left neighbour — the loop — shows.
+    close('other-T1\\.js');
+    expect(loopShown()).toBe('loop=T1');
+  });
+
+  test('a file opened while the loop tab shows goes back to the loop when closed', () => {
+    // THE REPORT: "i keep the review loop tab open. i open a new file. close
+    // the file tab. the review loop tab is not selected".
+    withLoopTabOpen('T1');
+    renderOnTask();
+    expect(loopShown()).toBe('loop=T1');
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(loopShown()).toBe('');
+    close('T1\\.js');
+    expect(activeTabTitles()).toEqual(['Review loop — T1']);
+    expect(loopShown()).toBe('loop=T1');
+  });
+
+  test('with other files open, it still goes back to the loop it came from', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    close('other-T1\\.js');
+    expect(activeTabTitles()).toEqual(['Review loop — T1']);
+    expect(loopShown()).toBe('loop=T1');
+    // The other file is still there, behind the loop.
+    fireEvent.click(screen.getByTitle('repo/src/T1.js'));
+    expect(screen.getByTestId('editor-pane').textContent).toContain('file=src/T1.js');
+  });
+
+  test('a file reached from another file closes to a file, as it always has', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    close('other-T1\\.js');
+    expect(activeTabTitles()).toEqual(['repo/src/T1.js']);
+    expect(loopShown()).toBe('');
+  });
+
+  test('the last file closed shows the strip\'s next tab, the loop — not an empty view', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    fireEvent.click(screen.getByTitle('repo/src/T1.js'));   // reached from a file
+    close('other-T1\\.js');                                   // not the one on show
+    expect(loopShown()).toBe('');
+    close('T1\\.js');
+    expect(activeTabTitles()).toEqual(['Review loop — T1']);
+    expect(loopShown()).toBe('loop=T1');
+  });
+
+  test('"Close all" in a file tab\'s menu lands on the loop too', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
+    fireEvent.contextMenu(screen.getByTitle('repo/src/T1.js'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Close all' }));
+    expect(loopShown()).toBe('loop=T1');
+  });
+
+  test('closing a file that is not on show leaves the loop on show', () => {
+    withLoopTabOpen('T1');
+    renderOnTask();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    close('T1\\.js');
+    expect(loopShown()).toBe('loop=T1');
+  });
+
+  test('a file opened from the new-task draft goes back to the draft', () => {
+    renderOnTask();
+    fireEvent.click(screen.getByText('new-task'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Half written' } });
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(document.querySelector('#new-task-pane')).toBeNull();
+    close('T1\\.js');
+    expect(document.querySelector('#new-task-pane')).not.toBeNull();
+    expect(screen.getByLabelText('Title')).toHaveValue('Half written');
+  });
+});
 
 describe('App — forget task (hard-confirm modal gate)', () => {
 

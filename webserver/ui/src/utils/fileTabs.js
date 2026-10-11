@@ -138,6 +138,69 @@ export function closeTab(tabs, activeKey, key) {
   return { tabs: next, activeKey: next[fallbackIndex].key };
 }
 
+// --- the shared strip ------------------------------------------------------
+//
+// File tabs share the centre strip with the review-loop tabs and the "New
+// task" draft's tab, and it is ONE row of tabs: a tab opens right after the
+// one on show, and closing the one on show shows its neighbour — whatever
+// kind either is. A file opened while a loop (or the draft) shows records
+// that tab's strip id in ``after`` and sits right after it; the loops and
+// the draft keep their own order.
+export const STRIP_TAB_KIND = Object.freeze({
+  FILE: 'file', REVIEW_LOOP: 'review_loop', NEW_TASK: 'new_task',
+});
+
+export const NEW_TASK_STRIP_ID = 'new-task';
+
+export function loopStripId(taskId) {
+  return `loop:${taskId}`;
+}
+
+// The strip in display order, as ``{ kind, id, taskId? }`` entries (a file's
+// ``id`` is its tab key): the files that follow no other tab, then each loop
+// tab and then the draft's, each followed by the files opened from it. A file
+// whose tab has closed since rejoins the first group, in list order.
+export function stripOrder(fileTabs, loopTaskIds = [], newTaskOpen = false) {
+  const files = Array.isArray(fileTabs) ? fileTabs : [];
+  const others = [
+    ...loopTaskIds.map((taskId) => ({
+      kind: STRIP_TAB_KIND.REVIEW_LOOP, id: loopStripId(taskId), taskId,
+    })),
+    ...(newTaskOpen ? [{ kind: STRIP_TAB_KIND.NEW_TASK, id: NEW_TASK_STRIP_ID }] : []),
+  ];
+  const open = new Set(others.map((entry) => entry.id));
+  const following = (id) => files
+    .filter((tab) => (open.has(tab.after) ? tab.after : '') === id)
+    .map((tab) => ({ kind: STRIP_TAB_KIND.FILE, id: tab.key }));
+  return [...following(''), ...others.flatMap((entry) => [entry, ...following(entry.id)])];
+}
+
+// What shows once ``closedIds`` close while ``shownId`` was on show: its
+// nearest open neighbour in ``order`` — the left one first, as a file tab's
+// close always picked. null when nothing is left.
+export function stripNeighbour(order, shownId, closedIds) {
+  const index = order.findIndex((entry) => entry.id === shownId);
+  if (index < 0) { return null; }
+  const closed = new Set(closedIds);
+  const left = order.slice(0, index).reverse().find((entry) => !closed.has(entry.id));
+  return left || order.slice(index + 1).find((entry) => !closed.has(entry.id)) || null;
+}
+
+// A file tab ``key`` just opened goes right after the tab on show. After a
+// file, ``upsertTab`` already put it there, and it joins that file's group
+// (``after``). After a loop / the draft (``stripId``), it becomes the first
+// of the files that follow that tab.
+export function placeOpenedTab(tabs, key, { after = '', stripId = '' } = {}) {
+  const list = Array.isArray(tabs) ? tabs : [];
+  const opened = list.find((tab) => tab.key === key);
+  if (!opened) { return list; }
+  if (!stripId) { return list.map((tab) => (tab.key === key ? { ...tab, after } : tab)); }
+  const rest = list.filter((tab) => tab.key !== key);
+  const first = rest.findIndex((tab) => tab.after === stripId);
+  const index = first < 0 ? rest.length : first;
+  return [...rest.slice(0, index), { ...opened, after: stripId }, ...rest.slice(index)];
+}
+
 // Merge a partial update (Monaco view state, diff scroll offset, ...)
 // onto the tab at ``key``. No-op (returns the same array reference)
 // when the key isn't found, so callers can call this unconditionally
@@ -189,7 +252,8 @@ export function togglePin(tabs, key) {
   const list = Array.isArray(tabs) ? tabs : [];
   const index = list.findIndex((tab) => tab.key === key);
   if (index < 0) { return list; }
-  const target = { ...list[index], pinned: !list[index].pinned };
+  // A pinned tab sits in the block at the front, after no other tab.
+  const target = { ...list[index], pinned: !list[index].pinned, after: '' };
   const rest = list.filter((tab) => tab.key !== key);
   const pinned = rest.filter((tab) => tab.pinned);
   const unpinned = rest.filter((tab) => !tab.pinned);

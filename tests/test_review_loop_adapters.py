@@ -26,6 +26,7 @@ from review_loop_core_lib.review_loop_core_lib.data.state import (
     ReviewLoopState,
     ReviewLoopStatus,
     ReviewRound,
+    TestReport,
 )
 from review_loop_core_lib.review_loop_core_lib.ports import Readiness, RepoDiff
 from review_loop_core_lib.review_loop_core_lib.reviewer_prompt import (
@@ -51,6 +52,7 @@ from kato_core_lib.data_layers.service.review_loop_adapters import (
     KatoReviewer,
     REVIEW_LOOPS_DIR_ENV,
     REVIEW_TIMEOUT_ENV,
+    _tests_line,
     build_review_loop_service,
     chat_mode_refusal,
     log_review_loop_event,
@@ -402,13 +404,17 @@ class LogLineTests(unittest.TestCase):
     def test_one_mission_line_per_step(self) -> None:
         logger = logging.getLogger('test.review_loop.lines')
         state = ReviewLoopState.new('T-1', max_rounds=5, now=1.0)
-        state.rounds.append(ReviewRound(number=2, started_at=1.0))
+        state.rounds.append(ReviewRound(
+            number=2, started_at=1.0, tests_fixes=1,
+            test_runs=[TestReport(passed=False, failures=['test_a: boom', 'test_b: boom'])],
+        ))
         state.status = ReviewLoopStatus.STUCK
         state.reason = 'none of the blocking issues from round 1 were fixed'
         state.resume_note = "nudge the chat to finish round 2's fixes"
         with self.assertLogs(logger, level='INFO') as logs:
             for event in ('started', 'resumed', 'reviewing', 'reviewed', 'sent', 'nudged',
-                          'fixed', 'changed', 'finished', 'other'):
+                          'verified', 'tests_sent', 'fixed', 'tests_fixed', 'changed',
+                          'finished', 'other'):
                 log_review_loop_event(logger, state, event)
         self.assertEqual([record.getMessage() for record in logs.records], [
             'Mission T-1: review loop started (up to 5 reviews)',
@@ -417,11 +423,24 @@ class LogLineTests(unittest.TestCase):
             'Mission T-1: review loop round 2: 0 blocker, 0 major, 0 minor, 0 nit',
             'Mission T-1: review loop round 2: findings sent to the chat',
             'Mission T-1: review loop round 2: nudged the chat to continue its fixes',
+            'Mission T-1: review loop round 2: tests failed (2 failing)',
+            'Mission T-1: review loop round 2: failing tests sent to the chat (fix attempt 1)',
             'Mission T-1: review loop round 2: the chat finished its fixes',
+            'Mission T-1: review loop round 2: the tests pass again; the next round reviews the fix',
             'Mission T-1: review loop round 2: the code changed after this review found it clean',
             'Mission T-1: review loop finished (stuck) after 2 round(s): '
             'none of the blocking issues from round 1 were fixed',
         ])
+
+    def test_each_test_result_reads_plainly(self) -> None:
+        for report, line in (
+            (TestReport(passed=True), 'tests passed'),
+            (TestReport(passed=False, summary='crashed'), 'tests failed'),
+            (TestReport(passed=False, failures=['a']), 'tests failed (1 failing)'),
+            (TestReport(passed=None), 'the tests were not reported'),
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(_tests_line(report), line)
 
 
 @unittest.skipUnless(posix_only(), 'the stand-in CLI is a shebang script')

@@ -65,6 +65,21 @@ class ResumeStage(str, Enum):
     CONTINUE_TESTS_FIX = 'continue_tests_fix'  # nudge the chat to finish fixing them
 
 
+class TestsStep(str, Enum):
+    """The next step of a clean round's tests (``verify_tests``).
+
+    Failing tests are fixed INSIDE their round — run, send back, the chat's
+    fix, run again — and no further review starts until they pass. Read off
+    what the round recorded (``ReviewRound.tests_step``), so the running loop
+    and a resumed one take the same next step.
+    """
+
+    RUN = 'run'              # no run yet, or the chat's fix ended since the last one
+    SEND_FIX = 'send_fix'    # the latest run failed and its failures are not sent yet
+    AWAIT_FIX = 'await_fix'  # sent; the chat's fix turn has not ended
+    DONE = 'done'            # the latest run passed (or did not say)
+
+
 # Where a resumed loop shows itself before its first step moves it on.
 _RESUME_PHASES = {
     ResumeStage.SELF_CHECK: ReviewLoopPhase.SELF_CHECK,
@@ -304,12 +319,15 @@ class TestReport(object):
     summary: str = ''
     failures: list[str] = field(default_factory=list)
     reported_at: float = 0.0
+    #: The change the tests were asked to run on (``diff.candidate_digest``);
+    #: '' for a run saved before runs kept it — that one ran on its round's.
+    diff_digest: str = ''
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'passed': self.passed, 'command': self.command,
             'summary': self.summary, 'failures': list(self.failures),
-            'reported_at': self.reported_at,
+            'reported_at': self.reported_at, 'diff_digest': self.diff_digest,
         }
 
     @classmethod
@@ -321,6 +339,7 @@ class TestReport(object):
             summary=str(data.get('summary', '')),
             failures=[str(item) for item in data.get('failures', []) or []],
             reported_at=float(data.get('reported_at', 0.0)),
+            diff_digest=str(data.get('diff_digest') or ''),
         )
 
 
@@ -339,8 +358,8 @@ class ReviewRound(object):
     number: int
     started_at: float
     reviewed_at: float = 0.0     # the reviewer finished
-    sent_at: float = 0.0         # the findings went into the chat
-    fixed_at: float = 0.0        # the chat's fix turn ended
+    sent_at: float = 0.0         # the findings (or the latest failing tests) went into the chat
+    fixed_at: float = 0.0        # that message's fix turn ended (0 while it runs)
     # The round's last step ended — its review, tests, or fix turn, or the
     # loop stopping during it. 0 while it runs, and for a round a restart cut
     # off (its real end is unknown).
@@ -356,8 +375,12 @@ class ReviewRound(object):
     # before it (``confirm_clean`` / ``extra_sweep``). Always blind; a round
     # after a test fix can be blind without being one.
     sweep: bool = False
-    # The test run the main chat reported after this round came back clean.
-    tests: TestReport | None = None
+    # Every test run the main chat reported after this round came back clean,
+    # oldest first: one when they passed, more when failing tests were fixed
+    # in this round and run again.
+    test_runs: list[TestReport] = field(default_factory=list)
+    # How many times this round's failing tests went back to the chat to fix.
+    tests_fixes: int = 0
     # What the review was given: repositories, changed files, and files whose
     # diffs were left out for size (the reviewer reads those itself).
     diff_repos: int = 0
@@ -365,8 +388,28 @@ class ReviewRound(object):
     diff_omitted: int = 0
     # Fingerprint of the exact change reviewed (``diff.candidate_digest``).
     diff_digest: str = ''
-    # clean | sent | changed | tests_failed | stuck | max_rounds | stopped | failed
+    # clean | sent | changed | tests_failed (fixing them) | tests_fixed (the
+    # next round reviews the fix) | stuck | max_rounds | stopped | failed
     outcome: str = ''
+
+    @property
+    def tests(self) -> TestReport | None:
+        """The latest test run; None before the first."""
+        return self.test_runs[-1] if self.test_runs else None
+
+    @property
+    def tests_step(self) -> TestsStep:
+        """What this clean round's tests need next (see ``TestsStep``)."""
+        latest = self.tests
+        if latest is None:
+            return TestsStep.RUN
+        if latest.passed is not False:
+            return TestsStep.DONE
+        if self.tests_fixes < len(self.test_runs):
+            return TestsStep.SEND_FIX
+        if not self.fixed_at:
+            return TestsStep.AWAIT_FIX
+        return TestsStep.RUN
 
     @property
     def blocking(self) -> list[ReviewFinding]:
@@ -399,7 +442,8 @@ class ReviewRound(object):
             'responses': [response.to_dict() for response in self.responses],
             'blind': self.blind,
             'sweep': self.sweep,
-            'tests': self.tests.to_dict() if self.tests is not None else None,
+            'test_runs': [run.to_dict() for run in self.test_runs],
+            'tests_fixes': self.tests_fixes,
             'counts': self.counts,
             'diff_repos': self.diff_repos,
             'diff_files': self.diff_files,
@@ -410,6 +454,14 @@ class ReviewRound(object):
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'ReviewRound':
+        runs = data.get('test_runs')
+        if runs is None:
+            # Saved when a round kept one run, and failing tests went back to
+            # be fixed once (``tests_failed``) before the next round re-ran them.
+            runs = [data['tests']] if data.get('tests') else []
+        fixes = data.get('tests_fixes')
+        if fixes is None:
+            fixes = 1 if data.get('outcome') == 'tests_failed' else 0
         return cls(
             number=int(data['number']),
             started_at=float(data.get('started_at', 0.0)),
@@ -421,7 +473,8 @@ class ReviewRound(object):
             responses=[FindingResponse.from_dict(item) for item in data.get('responses', [])],
             blind=bool(data.get('blind', False)),
             sweep=bool(data.get('sweep', False)),
-            tests=TestReport.from_dict(data['tests']) if data.get('tests') else None,
+            test_runs=[TestReport.from_dict(item) for item in runs],
+            tests_fixes=int(fixes or 0),
             diff_repos=int(data.get('diff_repos', 0)),
             diff_files=int(data.get('diff_files', 0)),
             diff_omitted=int(data.get('diff_omitted', 0)),
@@ -570,6 +623,7 @@ class ReviewLoopState(object):
         """The small, cheap view an indicator polls: position and outcome."""
         reviewed = self.last_reviewed_round
         resume = self.resume_point()
+        current = self.current_round
         return {
             'loop_id': self.loop_id,
             'status': self.status.value,
@@ -589,6 +643,10 @@ class ReviewLoopState(object):
             'model': self.model,
             'self_check_turn': len(self.self_checks),
             'sweep': bool(self.rounds and self.rounds[-1].sweep),
+            # The current round's failing tests are being fixed — sent back,
+            # fixed, or run again — and how many fixes they have had.
+            'tests_failing': bool(current and current.tests and current.tests.passed is False),
+            'tests_fixes': current.tests_fixes if current is not None else 0,
             'resumes': self.resumes,
             'resume_note': self.resume_note,
             # What a resume would pick up now ('' = nothing to resume).
@@ -644,18 +702,13 @@ def _round_resume_point(
             ResumeStage.CONTINUE_FIX, number,
             f'nudge the chat to finish round {number}\'s fixes',
         )
-    if outcome == 'tests_failed' and not last.fixed_at:
-        return ResumePoint(
-            ResumeStage.CONTINUE_TESTS_FIX, number,
-            f'nudge the chat to finish fixing round {number}\'s failing tests',
-        )
-    if outcome in ('sent', 'tests_failed', 'clean', 'changed'):
+    if outcome in ('sent', 'clean', 'changed', 'tests_fixed'):
         # The round was done; the loop broke before the next one began.
         return _next_round(number, max_rounds)
     if outcome == 'max_rounds':
         return None
     # ``stuck``, or a round that ended (stopped / failed) before its next step
-    # went out: its findings, its test run, or its failing tests. A last
+    # went out: its findings, or — a clean round — a step of its tests. A last
     # round's findings and failures are never sent — no review would follow.
     if last.blocking:
         if number >= max_rounds:
@@ -663,14 +716,32 @@ def _round_resume_point(
         return ResumePoint(
             ResumeStage.SEND_FINDINGS, number, f'send round {number}\'s findings to the chat',
         )
-    if last.tests is not None and last.tests.passed is False:
+    return _clean_round_resume_point(last, max_rounds, verify_tests)
+
+
+def _clean_round_resume_point(
+    last: ReviewRound, max_rounds: int, verify_tests: bool,
+) -> ResumePoint | None:
+    """Where a clean round cut off in its tests, or before it concluded, goes on."""
+    number = last.number
+    step = last.tests_step
+    if step is TestsStep.SEND_FIX:
         if number >= max_rounds:
             return None
         return ResumePoint(
             ResumeStage.SEND_TESTS_FIX, number,
             f'send round {number}\'s failing tests to the chat',
         )
-    if verify_tests and last.tests is None:
+    if step is TestsStep.AWAIT_FIX:
+        return ResumePoint(
+            ResumeStage.CONTINUE_TESTS_FIX, number,
+            f'nudge the chat to finish fixing round {number}\'s failing tests',
+        )
+    if step is TestsStep.RUN and last.tests_fixes:
+        return ResumePoint(
+            ResumeStage.FINISH_CLEAN, number, f'run the tests again after round {number}\'s fix',
+        )
+    if verify_tests and step is TestsStep.RUN:
         return ResumePoint(
             ResumeStage.FINISH_CLEAN, number, f'run the tests after round {number}\'s clean review',
         )

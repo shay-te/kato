@@ -249,8 +249,17 @@ def _event_message(state: ReviewLoopState, event: str) -> str:
         )
     if event == 'sent':
         return f'review loop round {number}: findings sent to the chat'
+    if event == 'verified':
+        return f'review loop round {number}: {_tests_line(state.current_round.tests)}'
+    if event == 'tests_sent':
+        return (
+            f'review loop round {number}: failing tests sent to the chat '
+            f'(fix attempt {state.current_round.tests_fixes})'
+        )
     if event == 'fixed':
         return f'review loop round {number}: the chat finished its fixes'
+    if event == 'tests_fixed':
+        return f'review loop round {number}: the tests pass again; the next round reviews the fix'
     if event == 'changed':
         return f'review loop round {number}: the code changed after this review found it clean'
     if event == 'finished':
@@ -259,6 +268,16 @@ def _event_message(state: ReviewLoopState, event: str) -> str:
             f'round(s): {state.reason}'
         )
     return ''
+
+
+def _tests_line(report) -> str:
+    """"tests passed" / "tests failed (2 failing)" / "the tests were not reported"."""
+    if report.passed is None:
+        return 'the tests were not reported'
+    if report.passed:
+        return 'tests passed'
+    failing = len(report.failures)
+    return f'tests failed ({failing} failing)' if failing else 'tests failed'
 
 
 def build_review_loop_service(

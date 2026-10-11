@@ -43,13 +43,15 @@ def loop_memory(rounds: Iterable[ReviewRound]) -> LoopMemory:
     memory = LoopMemory()
     for review_round in rounds:
         memory.confirm_next = False
-        if review_round.tests is not None and review_round.tests.passed is not False:
-            memory.tests_digest = review_round.diff_digest
+        for run in review_round.test_runs:
+            if run.passed is not False:
+                # A run saved before runs kept their own ran on the round's code.
+                memory.tests_digest = run.diff_digest or review_round.diff_digest
         current = review_round.blocking_fingerprints
         if not current:
             # A clean review: a sweep was asked for (``clean``) or a changed
-            # tree is reviewed again the same way (``changed``); failing tests
-            # went back to be fixed (``tests_failed``). No fix claims carry over.
+            # tree is reviewed again the same way (``changed``); the tests'
+            # fix is reviewed next (``tests_fixed``). No fix claims carry over.
             if review_round.outcome == 'clean':
                 memory.confirm_next = True
             elif review_round.outcome == 'changed':

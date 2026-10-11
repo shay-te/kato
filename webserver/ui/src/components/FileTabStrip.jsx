@@ -9,6 +9,7 @@ import {
   markdownViewFor,
 } from '../utils/markdownView.js';
 import { buildReviewLoopTabModels } from './reviewLoop/reviewLoopHelpers.js';
+import { STRIP_TAB_KIND, stripOrder } from '../utils/fileTabs.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -25,8 +26,9 @@ export default function FileTabStrip({
   onCloseAll, onCloseOthers, onTogglePin, onReorder,
   // Review-loop tabs share this strip so they and file tabs live together —
   // opening a file no longer hides the loops. They are APP-level (one per
-  // task, spanning task switches), appended after the per-task file tabs and
-  // visually set apart (loop glyph + indigo accent). ``{ taskId, tone }`` each.
+  // task, spanning task switches), after the per-task file tabs — and a file
+  // opened from one sits right after it (``stripOrder``) — visually set apart
+  // (loop glyph + indigo accent). ``{ taskId, tone }`` each.
   reviewLoopTabs = [],
   activeReviewLoopTab = '',
   onSelectReviewLoop = () => {},
@@ -89,11 +91,62 @@ export default function FileTabStrip({
   const loopTabs = reviewLoopTabs || [];
   if (fileTabs.length === 0 && loopTabs.length === 0 && !newTaskTab) { return null; }
   const draggedTab = drag.key ? fileTabs.find((tab) => tab.key === drag.key) : null;
+  // ONE row of tabs, each where ``stripOrder`` puts it: a file opened while a
+  // loop (or the draft) showed sits right after that tab.
+  const order = stripOrder(fileTabs, loopTabs.map((loop) => loop.taskId), !!newTaskTab);
+  const fileByKey = new Map(fileTabs.map((tab) => [tab.key, tab]));
+  // A divider opens each run of loop tabs that comes after a file.
+  const groupStarts = new Set(order
+    .filter((entry, index) => (
+      entry.kind === STRIP_TAB_KIND.REVIEW_LOOP && order[index - 1]?.kind === STRIP_TAB_KIND.FILE
+    ))
+    .map((entry) => entry.taskId));
   const loopTabModels = buildReviewLoopTabModels(loopTabs, {
     activeTaskId: activeReviewLoopTab,
-    hasFileTabs: fileTabs.length > 0,
+    groupStarts,
   });
-  const loopTabEls = loopTabModels.map((loop) => (
+  const loopByTask = new Map(loopTabModels.map((loop) => [loop.taskId, loop]));
+  const fileTabEl = (tab) => (
+    <FileTab
+      key={tab.key}
+      tab={tab}
+      active={tab.key === activeKey}
+      nodeRef={tab.key === activeKey ? activeTabRef : null}
+      onSelect={onSelect}
+      onClose={onClose}
+      onToggleView={onToggleView}
+      onToggleMarkdownView={onToggleMarkdownView}
+      dragging={drag.key === tab.key}
+      dropTarget={drag.over === tab.key && drag.key !== tab.key}
+      // Pins are a block at the front of the strip, so a tab can only
+      // be dropped among its own group. Refusing the drop (rather than
+      // silently snapping it elsewhere) keeps the pinned block honest.
+      canDrop={
+        !!draggedTab
+        && draggedTab.key !== tab.key
+        && !!draggedTab.pinned === !!tab.pinned
+      }
+      onDragStart={(key) => setDrag({ key, over: '' })}
+      onDragEnd={() => setDrag(NO_DRAG)}
+      onDragOver={(key) => setDrag((prev) => (
+        prev.over === key ? prev : { ...prev, over: key }
+      ))}
+      onDragLeave={() => setDrag((prev) => (
+        prev.over ? { ...prev, over: '' } : prev
+      ))}
+      onDrop={(key) => {
+        if (drag.key && drag.key !== key && onReorder) {
+          onReorder(drag.key, key);
+        }
+        setDrag(NO_DRAG);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenu({ key: tab.key, tab, x: event.clientX, y: event.clientY });
+      }}
+    />
+  );
+  const loopTabEl = (loop) => (
     <ReviewLoopFileTab
       key={`loop:${loop.taskId}`}
       taskId={loop.taskId}
@@ -103,55 +156,18 @@ export default function FileTabStrip({
       onSelect={onSelectReviewLoop}
       onClose={onCloseReviewLoop}
     />
-  ));
-  const newTaskTabEl = newTaskTab ? (
-    <NewTaskFileTab tab={newTaskTab} onSelect={onSelectNewTask} onClose={onCloseNewTask} />
-  ) : null;
+  );
+  const items = order.map((entry) => {
+    if (entry.kind === STRIP_TAB_KIND.FILE) { return fileTabEl(fileByKey.get(entry.id)); }
+    if (entry.kind === STRIP_TAB_KIND.REVIEW_LOOP) { return loopTabEl(loopByTask.get(entry.taskId)); }
+    return (
+      <NewTaskFileTab key="new-task" tab={newTaskTab} onSelect={onSelectNewTask} onClose={onCloseNewTask} />
+    );
+  });
   return (
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
-        {tabs.map((tab) => (
-          <FileTab
-            key={tab.key}
-            tab={tab}
-            active={tab.key === activeKey}
-            nodeRef={tab.key === activeKey ? activeTabRef : null}
-            onSelect={onSelect}
-            onClose={onClose}
-            onToggleView={onToggleView}
-            onToggleMarkdownView={onToggleMarkdownView}
-            dragging={drag.key === tab.key}
-            dropTarget={drag.over === tab.key && drag.key !== tab.key}
-            // Pins are a block at the front of the strip, so a tab can only
-            // be dropped among its own group. Refusing the drop (rather than
-            // silently snapping it elsewhere) keeps the pinned block honest.
-            canDrop={
-              !!draggedTab
-              && draggedTab.key !== tab.key
-              && !!draggedTab.pinned === !!tab.pinned
-            }
-            onDragStart={(key) => setDrag({ key, over: '' })}
-            onDragEnd={() => setDrag(NO_DRAG)}
-            onDragOver={(key) => setDrag((prev) => (
-              prev.over === key ? prev : { ...prev, over: key }
-            ))}
-            onDragLeave={() => setDrag((prev) => (
-              prev.over ? { ...prev, over: '' } : prev
-            ))}
-            onDrop={(key) => {
-              if (drag.key && drag.key !== key && onReorder) {
-                onReorder(drag.key, key);
-              }
-              setDrag(NO_DRAG);
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              setMenu({ key: tab.key, tab, x: event.clientX, y: event.clientY });
-            }}
-          />
-        ))}
-        {loopTabEls}
-        {newTaskTabEl}
+        {items}
       </ul>
       {menu && (
         <FileTabMenu

@@ -283,8 +283,14 @@ bool is the pick, anything else the default. The defaults live twice — `REVIEW
 - `self_check` — before round 1, the MAIN chat reviews + fixes its own change (≤3 turns, ends on
   its `<self-check>{"clean": true}` block). Cheap: it already holds the context.
 - `verify_tests` — a clean review only ends the loop once the main chat ran the tests
-  (`<test-report>`); failures go back to fix ("fix the failing tests") and the loop goes on.
-  Not re-run on an unchanged tree.
+  (`<test-report>`). Failures are fixed IN THEIR ROUND — sent back ("fix the failing tests"),
+  fixed, run again — and NO other review starts while they fail (it used to go straight on
+  to the next review, so the same tests failed round after round). Steps are read off the
+  round (`ReviewRound.tests_step`: `test_runs` + `tests_fixes`), so Resume takes the same one.
+  A fix that changed the code closes the round `tests_fixed` and the next round reviews it;
+  `RunnerOptions.tests_fix_attempts` (3) fixes that don't land → STUCK (Resume = one more
+  try); on the last round nothing is sent → MAX_ROUNDS. Not re-run on an unchanged tree (each
+  run records the digest it was asked to test).
 - `confirm_clean` — a clean verdict from a reviewer told the ledger gets a clean-room SWEEP
   (fresh reviewer, ledger withheld; `round.sweep`) that must agree.
 - `extra_sweep` — ANY clean verdict gets that sweep ("it was clean, we ran it again, boom a

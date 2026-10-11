@@ -9,7 +9,8 @@ two more things, each ending in a machine-readable block it parses
   and catches the easy bugs before a reviewer is paid to;
 * a **test run** once a review comes back clean — "clean" means no blocking
   finding AND the tests pass. Failing tests go back to the chat to fix
-  (``build_tests_fix_prompt``) and the loop goes on.
+  (``build_tests_fix_prompt``) and are run again (``after_fix``), in the same
+  round, until they pass: no further review starts while they fail.
 
 A loop RESUMED while the chat was mid-fix sends a short **continue** nudge
 instead of the round's message again (``build_continue_prompt``).
@@ -59,11 +60,19 @@ End your reply with exactly one self-check block and nothing after it:
 `clean` is true only when this pass found nothing more to fix.''', wording)
 
 
-def build_tests_prompt(*, wording: LoopWording) -> str:
-    """Ask the chat to run the task's tests on the current tree and report."""
+def build_tests_prompt(*, wording: LoopWording, after_fix: bool = False) -> str:
+    """Ask the chat to run the task's tests on the current tree and report.
+
+    ``after_fix``: the run that checks the chat's fix of failing tests.
+    """
+    why = (
+        'You worked on the failing tests. No further review starts until they pass:'
+        if after_fix else
+        'The independent review found no blocking issues. Before the loop can finish,'
+    )
     return _with_guidance(f'''{stage_header(wording, "run the tests")}
 
-The independent review found no blocking issues. Before the loop can finish,
+{why}
 run this task's tests — and any linters or type checks the project uses — on
 the current working tree, and report the result. Do NOT change code in this
 turn: only run and report.
@@ -79,18 +88,22 @@ one-line reason) in `failures`. If the project has no tests, say so in
 `summary` and set `passed` to true.''', wording)
 
 
-def build_tests_fix_prompt(*, task_id: str, failures: list[str], wording: LoopWording) -> str:
-    """Send failing tests back to the chat to fix; the next review re-checks."""
+def build_tests_fix_prompt(
+    *, task_id: str, failures: list[str], wording: LoopWording, attempt: int = 1,
+) -> str:
+    """Send failing tests back to the chat to fix; they are run again next."""
     listed = '\n'.join(f'- {failure}' for failure in failures) or '- (no details reported)'
     framed = wording.wrap_untrusted(listed, f'task {task_id} failing tests')
     return _with_guidance(f'''{stage_header(wording, "fix the failing tests")}
 
-The task's tests are failing:
+The task's tests are failing (fix attempt {attempt}):
 
 {framed}
 
 Fix the code so they pass — at the root cause. If a test itself is wrong, fix
-the test and say why. Run the tests again before you finish. Do not commit,
+the test and say why. Run the tests again before you finish. The loop runs
+them again when you are done, and no further review starts until they pass:
+if you cannot make them pass, say exactly what blocks you. Do not commit,
 push or run git.''', wording)
 
 

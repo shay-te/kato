@@ -78,7 +78,8 @@ import { agentStatusStore } from './stores/agentStatusStore.js';
 import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
-  closeTab, findTab, patchTab, sortPinnedFirst, togglePin, upsertTab,
+  NEW_TASK_STRIP_ID, STRIP_TAB_KIND, closeTab, findTab, loopStripId, patchTab, placeOpenedTab,
+  sortPinnedFirst, stripNeighbour, stripOrder, togglePin, upsertTab,
 } from './utils/fileTabs.js';
 import { markdownViewFor } from './utils/markdownView.js';
 
@@ -337,6 +338,11 @@ export default function App() {
   const [fileTreeFocusTarget, setFileTreeFocusTarget] = useState(null);
   const openTabsRef = useRef([]);
   const activeTabKeyRef = useRef(null);
+  // The strip's non-file tabs, for the file-tab handlers (which keep a stable
+  // identity — the tree and the editors are handed them): the strip id of the
+  // loop / draft tab on show ('' = a file), and the loop and draft tabs open.
+  // Synced after every render, below where the shown tab is worked out.
+  const stripRef = useRef({ shownStripId: '', loopTabIds: [], newTaskOpen: false });
   // Per task: { tabs, activeKey }. Restored wholesale on task switch.
   const fileViewByTaskRef = useRef({});
   const openFileRequestRef = useRef(0);
@@ -693,18 +699,27 @@ export default function App() {
     // (same file, possibly toggling file<->diff view) or appends a
     // brand new tab right after the current one — it never replaces a
     // DIFFERENT file's tab (VS Code-style multi-file tabs).
+    const before = openTabsRef.current;
     const upserted = upsertTab(
-      openTabsRef.current,
+      before,
       activeTabKeyRef.current,
       { ...info, openRequestId: openFileRequestRef.current },
       activeTaskId,
+    );
+    const { activeKey } = upserted;
+    // A NEW tab opens right after the tab on show — a review loop's or the
+    // draft's too, not only a file's (``placeOpenedTab``).
+    const { shownStripId } = stripRef.current;
+    const placed = findTab(before, activeKey) ? upserted.tabs : placeOpenedTab(
+      upserted.tabs, activeKey, shownStripId
+        ? { stripId: shownStripId }
+        : { after: findTab(before, activeTabKeyRef.current)?.after || '' },
     );
     // A new tab is inserted after the ACTIVE one, which would drop it into
     // the middle of the pinned block whenever a pinned tab is active. Pins
     // are only useful as a stable block at the front, so re-apply the split
     // here; it is a stable partition, so nothing else moves.
-    const { activeKey } = upserted;
-    const tabs = sortPinnedFirst(upserted.tabs);
+    const tabs = sortPinnedFirst(placed);
     openTabsRef.current = tabs;
     activeTabKeyRef.current = activeKey;
     rememberTabsView(activeTaskId, tabs, activeKey);
@@ -722,9 +737,28 @@ export default function App() {
     setActiveTabKey(activeKey);
   }, [activeTaskId]);
 
+  // The file tab on show, or '' while a loop / draft tab is.
+  const shownFileKey = useCallback(
+    () => (stripRef.current.shownStripId ? '' : activeTabKeyRef.current || ''), [],
+  );
+  // The file on show ``shownKey`` closes with ``closedKeys``: its neighbour in
+  // the strip shows — a file, a loop or the draft, as closing any tab does
+  // (``stripNeighbour``). Read before the tabs change. Returns the file to
+  // make active ('' = none: a loop / the draft shows, or nothing is left).
+  const showNeighbourOf = useCallback((shownKey, closedKeys) => {
+    const { loopTabIds, newTaskOpen } = stripRef.current;
+    const order = stripOrder(openTabsRef.current, loopTabIds, newTaskOpen);
+    const next = stripNeighbour(order, shownKey, closedKeys);
+    if (next?.kind === STRIP_TAB_KIND.REVIEW_LOOP) { setActiveReviewLoopTab(next.taskId); }
+    if (next?.kind === STRIP_TAB_KIND.NEW_TASK) { setNewTaskActive(true); }
+    return next?.kind === STRIP_TAB_KIND.FILE ? next.id : '';
+  }, []);
+
   const handleCloseAllFileTabs = useCallback(() => {
+    const shownKey = shownFileKey();
+    if (shownKey) { showNeighbourOf(shownKey, openTabsRef.current.map((tab) => tab.key)); }
     applyTabs([], null);
-  }, [applyTabs]);
+  }, [applyTabs, showNeighbourOf, shownFileKey]);
 
   const handleCloseOtherFileTabs = useCallback((key) => {
     // Pinned tabs survive "close others" — pinning is the operator
@@ -748,7 +782,12 @@ export default function App() {
   // by returning the list unchanged, so an illegal drag is a no-op here
   // rather than something that needs handling at every call site.
   const handleReorderFileTabs = useCallback((fromKey, toKey) => {
-    applyTabs(moveTab(openTabsRef.current, fromKey, toKey), activeTabKeyRef.current);
+    const list = openTabsRef.current;
+    const moved = moveTab(list, fromKey, toKey);
+    if (moved === list) { return; }
+    // Dropped among the files that follow a loop (or the draft), it joins them.
+    const after = findTab(list, toKey)?.after || '';
+    applyTabs(patchTab(moved, fromKey, { after }), activeTabKeyRef.current);
   }, [applyTabs]);
 
   // Switch which already-open tab is active (file-tab-strip click).
@@ -767,13 +806,11 @@ export default function App() {
     setActiveTabKey(key);
   }, [activeTaskId]);
   const handleCloseFileTab = useCallback((key) => {
+    const neighbour = key === shownFileKey() ? showNeighbourOf(key, [key]) : '';
+    // Not on show: ``closeTab`` keeps (or picks) the file behind the loop.
     const { tabs, activeKey } = closeTab(openTabsRef.current, activeTabKeyRef.current, key);
-    openTabsRef.current = tabs;
-    activeTabKeyRef.current = activeKey;
-    rememberTabsView(activeTaskId, tabs, activeKey);
-    setOpenTabs(tabs);
-    setActiveTabKey(activeKey);
-  }, [activeTaskId]);
+    applyTabs(tabs, neighbour || activeKey);
+  }, [applyTabs, showNeighbourOf, shownFileKey]);
   // Open the agent's plan in the centre pane, replacing whatever file/diff
   // tab was showing (the tab strip + its tabs stay intact underneath — this
   // only sets a display flag, it doesn't touch openTabs at all). Deliberately
@@ -943,6 +980,13 @@ export default function App() {
   // enough (the pane fetches the rounds by id).
   const showingNewTask = newTaskActive && newTaskDraft.open;
   const showingReviewLoop = !showingNewTask && !!activeReviewLoopTab;
+  // What the file-tab handlers read about the rest of the strip (``stripRef``).
+  useEffect(() => {
+    let shownStripId = '';
+    if (showingNewTask) { shownStripId = NEW_TASK_STRIP_ID; }
+    if (showingReviewLoop) { shownStripId = loopStripId(activeReviewLoopTab); }
+    stripRef.current = { shownStripId, loopTabIds: reviewLoopTabs, newTaskOpen: !!newTaskDraft.open };
+  });
   const reviewLoopSession = showingReviewLoop
     ? (sessions.find((s) => s.task_id === activeReviewLoopTab) || { task_id: activeReviewLoopTab })
     : null;

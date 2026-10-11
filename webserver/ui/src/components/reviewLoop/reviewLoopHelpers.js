@@ -49,6 +49,25 @@ const PHASE_LONG = {
   [REVIEW_LOOP_PHASE.AWAITING_FIX]: 'the main chat is fixing the findings',
 };
 
+// While a clean round's failing tests are being fixed (``tests_failing``) —
+// sent back, fixed, run again, all before any other review — the same phases
+// are about the tests.
+const TESTS_PHASE_SHORT = {
+  [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'tests failed',
+  [REVIEW_LOOP_PHASE.AWAITING_FIX]: 'fixing tests',
+  [REVIEW_LOOP_PHASE.VERIFYING]: 'testing again',
+};
+
+const TESTS_PHASE_LONG = {
+  [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'the tests failed — they go to the chat when it is free',
+  [REVIEW_LOOP_PHASE.AWAITING_FIX]: 'the main chat is fixing the failing tests',
+  [REVIEW_LOOP_PHASE.VERIFYING]: 'the main chat is running the tests again',
+};
+
+function phaseWords(loop, words, testsWords) {
+  return (loop.tests_failing && testsWords[loop.phase]) || words[loop.phase];
+}
+
 // tone: good | warn | bad | neutral — the outcome's colour family.
 const OUTCOMES = {
   [REVIEW_LOOP_STATUS.CLEAN]: { label: 'clean', sentence: 'finished clean', tone: 'good' },
@@ -62,6 +81,9 @@ const OUTCOMES = {
 const ROUND_OUTCOMES = {
   sent: 'sent to the chat',
   tests_failed: 'tests failed — sent back',
+  // Failing tests were fixed in this round and pass again; the fix is code no
+  // review has read yet, so the next round reviews it.
+  tests_fixed: 'tests fixed — the fix is reviewed next',
   // Clean, but the code changed after the reviewer read it: not accepted.
   changed: 'code changed since — not accepted',
   clean: 'clean',
@@ -90,11 +112,6 @@ export function reviewLoopRoundsText(rounds) {
   return rounds === 1 ? '1 round' : `${rounds} rounds`;
 }
 
-// The view model for the loop tabs shown in the shared file-tab strip: for
-// each ``{ taskId, tone }``, whether it is the active one and whether it leads
-// the loop group (so the strip draws a divider before it, but only when file
-// tabs precede it). Kept out of the component so the derivation is testable
-// without mounting the strip.
 // ``[{ taskId, tone }]`` for the open loop tabs — the tone is the loop's state
 // colour (running / clean / …), read from each task's summary via ``loopFor``.
 // Built here so the strip is handed ready-to-render entries, no lookups in JSX.
@@ -105,12 +122,17 @@ export function reviewLoopTabEntries(taskIds, loopFor) {
   });
 }
 
-export function buildReviewLoopTabModels(loopTabs, { activeTaskId = '', hasFileTabs = false } = {}) {
-  return (loopTabs || []).map((loop, index) => ({
+// The view model for the loop tabs shown in the shared file-tab strip: for
+// each ``{ taskId, tone }``, whether it is the active one and whether the
+// strip draws a divider before it (``groupStarts``: the loops that come right
+// after a file tab). Kept out of the component so the derivation is testable
+// without mounting the strip.
+export function buildReviewLoopTabModels(loopTabs, { activeTaskId = '', groupStarts = new Set() } = {}) {
+  return (loopTabs || []).map((loop) => ({
     taskId: loop.taskId,
     tone: loop.tone,
     active: loop.taskId === activeTaskId,
-    groupStart: index === 0 && hasFileTabs,
+    groupStart: groupStarts.has(loop.taskId),
   }));
 }
 
@@ -208,7 +230,10 @@ export function reviewLoopChip(loop, nowSeconds) {
   if (!loop) { return null; }
   if (isReviewLoopRunning(loop)) {
     const elapsed = phaseElapsed(loop, nowSeconds);
-    const parts = [`${loop.round || 1}/${loop.max_rounds}`, PHASE_SHORT[loop.phase] || 'starting'];
+    const parts = [
+      `${loop.round || 1}/${loop.max_rounds}`,
+      phaseWords(loop, PHASE_SHORT, TESTS_PHASE_SHORT) || 'starting',
+    ];
     if (elapsed) { parts.push(elapsed); }
     return { text: parts.join(' · '), tone: 'running', running: true };
   }
@@ -224,7 +249,8 @@ export function reviewLoopSentence(loop, nowSeconds) {
     const elapsed = phaseElapsed(loop, nowSeconds);
     const waiting = loop.waiting_for ? ` (${loop.waiting_for})` : '';
     const forHowLong = elapsed ? ` · ${elapsed}` : '';
-    return `Round ${loop.round || 1} of ${loop.max_rounds} · ${PHASE_LONG[loop.phase] || 'starting'}${waiting}${forHowLong}`;
+    const where = phaseWords(loop, PHASE_LONG, TESTS_PHASE_LONG) || 'starting';
+    return `Round ${loop.round || 1} of ${loop.max_rounds} · ${where}${waiting}${forHowLong}`;
   }
   const outcome = reviewLoopOutcome(loop);
   if (!outcome) { return ''; }
@@ -250,10 +276,10 @@ const CURRENT_STEP = {
 export function reviewLoopSteps(loop, nowSeconds) {
   if (!isReviewLoopRunning(loop)) { return []; }
   if (loop.phase === REVIEW_LOOP_PHASE.SELF_CHECK) { return selfCheckSteps(loop, nowSeconds); }
+  if (loop.tests_failing) { return testsFixSteps(loop, nowSeconds); }
   if (loop.phase === REVIEW_LOOP_PHASE.VERIFYING) { return verifyingSteps(loop, nowSeconds); }
   const current = CURRENT_STEP[loop.phase] || 'review';
   const currentIndex = STEP_ORDER.indexOf(current);
-  const elapsed = phaseElapsed(loop, nowSeconds);
   const round = loop.round || 1;
   const isLastRound = round >= loop.max_rounds;
   const labels = {
@@ -262,12 +288,43 @@ export function reviewLoopSteps(loop, nowSeconds) {
     fix: 'Fixing in the main chat',
     next: isLastRound ? 'Loop ends' : `Review round ${round + 1}`,
   };
-  return STEP_ORDER.map((key, index) => {
+  return trackSteps(STEP_ORDER, labels, currentIndex, loop, nowSeconds);
+}
+
+// ``order`` as steps, the one at ``currentIndex`` in progress.
+function trackSteps(order, labels, currentIndex, loop, nowSeconds) {
+  const elapsed = phaseElapsed(loop, nowSeconds);
+  return order.map((key, index) => {
     let state = 'todo';
     if (index < currentIndex) { state = 'done'; }
     if (index === currentIndex) { state = 'current'; }
     return { key, label: labels[key], state, detail: stepDetail(key, state, loop, elapsed) };
   });
+}
+
+const TESTS_FIX_ORDER = ['review', 'send', 'fix', 'rerun'];
+const TESTS_FIX_CURRENT = {
+  [REVIEW_LOOP_PHASE.WAITING_TO_SEND]: 'send',
+  [REVIEW_LOOP_PHASE.AWAITING_FIX]: 'fix',
+  [REVIEW_LOOP_PHASE.VERIFYING]: 'rerun',
+};
+
+// A clean round's failing tests, fixed inside the round — no other review
+// starts until they pass:
+//   [✓ Reviewed — no blocking issues] → [✓ Failing tests sent to the chat] →
+//   [● Fixing the failing tests (attempt 2) · 3m] → [○ Run the tests again]
+function testsFixSteps(loop, nowSeconds) {
+  const currentIndex = TESTS_FIX_ORDER.indexOf(TESTS_FIX_CURRENT[loop.phase] || 'send');
+  const fixes = Number(loop.tests_fixes || 0);
+  // Counted as each fix goes out: before that, the one coming is the next.
+  const attempt = currentIndex > 1 ? fixes : fixes + 1;
+  const labels = {
+    review: 'Reviewed — no blocking issues',
+    send: currentIndex > 1 ? 'Failing tests sent to the chat' : 'Send the failing tests to the chat',
+    fix: currentIndex > 2 ? `Fixed (attempt ${attempt})` : `Fixing the failing tests (attempt ${attempt})`,
+    rerun: currentIndex === 3 ? 'Running the tests again' : 'Run the tests again',
+  };
+  return trackSteps(TESTS_FIX_ORDER, labels, currentIndex, loop, nowSeconds);
 }
 
 function reviewingLabel(loop) {
@@ -393,7 +450,13 @@ function stepDetail(key, state, loop, elapsed) {
 }
 
 // Outcomes whose round ended on its review (or the tests after it).
-const ENDED_ON_REVIEW = new Set(['clean', 'changed', 'stuck', 'max_rounds']);
+const ENDED_ON_REVIEW = new Set(['clean', 'changed', 'stuck', 'max_rounds', 'tests_fixed']);
+
+// The round's latest test run (the one it went on from); null before the first.
+export function latestTestRun(round) {
+  const runs = round?.test_runs || [];
+  return runs.length ? runs[runs.length - 1] : null;
+}
 
 // When the round ended. kato stamps ``finished_at``; a round saved before it
 // did ends at its last recorded step. A round cut off by a restart (stopped
@@ -404,7 +467,7 @@ function roundEnd(round) {
     return round.fixed_at;
   }
   if (ENDED_ON_REVIEW.has(round.outcome)) {
-    return Math.max(round.reviewed_at || 0, round.tests?.reported_at || 0);
+    return Math.max(round.reviewed_at || 0, latestTestRun(round)?.reported_at || 0);
   }
   return 0;
 }
@@ -420,7 +483,7 @@ export function roundTiming(round) {
   if (!total) { return null; }
   const steps = [
     ['review', span(round.started_at, round.reviewed_at)],
-    ['tests', span(round.reviewed_at, round.tests?.reported_at)],
+    ['tests', span(round.reviewed_at, latestTestRun(round)?.reported_at)],
     ['fix', span(round.sent_at, round.fixed_at)],
   ].filter(([, took]) => took).map(([name, took]) => `${name} ${took}`);
   const breakdown = steps.length ? ` — ${steps.join(' · ')}` : '';

@@ -43,6 +43,7 @@ from review_loop_core_lib.review_loop_core_lib.data.state import (
     ReviewRound,
     SelfCheckTurn,
     TestReport,
+    TestsStep,
 )
 from review_loop_core_lib.review_loop_core_lib.diff import candidate_digest
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
@@ -279,6 +280,36 @@ class AFixCutOffMidTurnTests(_Resume):
 
 class AStuckLoopTests(_Resume):
 
+    def test_tests_no_fix_made_pass_get_one_more_try_per_resume(self) -> None:
+        chat = ResumeChat(tests=test_report(False))
+        reviewer = ScriptedReviewer(CLEAN)
+        service = self.service(chat, reviewer)
+        self.start(service, verify_tests=True)
+        stuck = self.finished(service)
+        self.assertEqual(stuck.status, ReviewLoopStatus.STUCK)
+        self.assertEqual(stuck.summary()['resume'], "send round 1's failing tests to the chat")
+
+        # The operator looked into it, and resumes.
+        chat.answers['tests'] = test_report(True)
+        self.resume(service)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN)
+        self.assertEqual(chat.kinds()[-2:], ['tests_fix', 'tests'])
+        self.assertEqual(state.rounds[0].tests_fixes, 4)
+        self.assertEqual(len(reviewer.prompts), 1)
+
+    def test_still_failing_after_that_try_is_stuck_again(self) -> None:
+        chat = ResumeChat(tests=test_report(False))
+        service = self.service(chat, ScriptedReviewer(CLEAN))
+        self.start(service, verify_tests=True)
+        self.finished(service)
+        sent_before = len(chat.delivered)
+        self.resume(service)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.STUCK)
+        self.assertEqual(chat.kinds()[sent_before:], ['tests_fix', 'tests'])
+        self.assertIn('after 4 fixes in round 1', state.reason)
+
     def test_the_held_back_findings_are_sent_and_the_loop_goes_on(self) -> None:
         reviewer = ScriptedReviewer(MAJOR, MAJOR, MAJOR, CLEAN)
         chat = ResumeChat()
@@ -355,7 +386,32 @@ class StepsThatNeverWentOutTests(_Resume):
         state = self.finished(service)
         self.assertEqual(state.status, ReviewLoopStatus.CLEAN)
         self.assertEqual(chat.kinds(), ['tests', 'tests_fix', 'tests'])
-        self.assertEqual(state.rounds[0].outcome, 'tests_failed')
+        # Sent, fixed and run again in round 1; its review still covers the code.
+        self.assertEqual((state.round, state.rounds[0].outcome), (1, 'clean'))
+        self.assertEqual(state.rounds[0].tests_fixes, 1)
+
+    def test_a_run_again_after_a_fix_cut_off_is_asked_again(self) -> None:
+        chat = ResumeChat(tests=test_report(False))
+
+        def fixed_then_cut_off(prompt: str) -> str:
+            chat.silent = {'tests'}  # the run that checks this fix never answers
+            return 'Fixed it.'
+
+        chat.answers['tests_fix'] = fixed_then_cut_off
+        service = self.service(chat, ScriptedReviewer(CLEAN))
+        self.start(service, verify_tests=True)
+        self.assertTrue(wait_until(lambda: chat.kinds() == ['tests', 'tests_fix', 'tests']))
+        stopped = self.stop_at(service, ReviewLoopPhase.VERIFYING, 1)
+        self.assertEqual(stopped.summary()['resume'], "run the tests again after round 1's fix")
+
+        chat.silent = set()
+        chat.answers['tests'] = test_report(True)
+        self.resume(service)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN)
+        # Run again — not sent back to be fixed a second time.
+        self.assertEqual(chat.kinds(), ['tests', 'tests_fix', 'tests', 'tests'])
+        self.assertEqual([run.passed for run in state.rounds[0].test_runs], [False, True])
 
     def test_a_test_run_cut_off_is_asked_again(self) -> None:
         chat = ResumeChat(tests=test_report(True))
@@ -496,7 +552,9 @@ def _round(
         review_round.responses = [
             _response(review_round.findings[0]),
         ] if review_round.findings else []
-    review_round.tests = tests
+    review_round.test_runs = [tests] if tests is not None else []
+    if outcome == 'tests_failed':
+        review_round.tests_fixes = 1  # that outcome is set as the fix goes out
     return review_round
 
 
@@ -545,7 +603,9 @@ class ResumePointTests(unittest.TestCase):
             (_round(3, outcome='tests_failed', clean=True, tests=tests_failed),
              (ResumeStage.CONTINUE_TESTS_FIX, 3)),
             (_round(3, outcome='tests_failed', clean=True, tests=tests_failed, fixed=True),
-             (ResumeStage.REVIEW, 4)),
+             (ResumeStage.FINISH_CLEAN, 3)),
+            (_round(3, outcome='tests_fixed', clean=True, tests=TestReport(passed=True),
+                    fixed=True), (ResumeStage.REVIEW, 4)),
             (_round(3, outcome='clean', clean=True), (ResumeStage.REVIEW, 4)),
             (_round(3, outcome='changed', clean=True), (ResumeStage.REVIEW, 4)),
             (_round(3, outcome='stopped'), (ResumeStage.SEND_FINDINGS, 3)),
@@ -568,6 +628,12 @@ class ResumePointTests(unittest.TestCase):
             2, outcome='stopped', clean=True, tests=TestReport(passed=True),
         ), verify_tests=True)
         self.assertEqual(tested.resume_point().description, "finish round 2's clean review")
+
+    def test_a_fixed_round_runs_its_tests_again(self) -> None:
+        fixed = _round(2, outcome='tests_failed', clean=True,
+                       tests=TestReport(passed=False), fixed=True)
+        self.assertEqual(self.point(_state(ReviewLoopStatus.STOPPED, fixed, verify_tests=True)),
+                         (ResumeStage.FINISH_CLEAN, 2, "run the tests again after round 2's fix"))
 
     def test_nothing_is_sent_after_the_last_round(self) -> None:
         last = [
@@ -636,6 +702,55 @@ class ReopenTests(unittest.TestCase):
         self.assertEqual(old.summary()['resume'], "run round 1's review again")
 
 
+class TestsStepTests(unittest.TestCase):
+    """A clean round's next tests step, read off what it recorded."""
+
+    def round_with(self, *passed, fixes: int = 0, fixed_at: float = 0.0) -> ReviewRound:
+        review_round = ReviewRound(number=1, started_at=1.0, fixed_at=fixed_at, tests_fixes=fixes)
+        review_round.test_runs = [TestReport(passed=value) for value in passed]
+        return review_round
+
+    def test_each_step(self) -> None:
+        cases = [
+            (self.round_with(), TestsStep.RUN),
+            (self.round_with(True), TestsStep.DONE),
+            (self.round_with(None), TestsStep.DONE),           # not reported: not a failure
+            (self.round_with(False), TestsStep.SEND_FIX),
+            (self.round_with(False, fixes=1), TestsStep.AWAIT_FIX),
+            (self.round_with(False, fixes=1, fixed_at=5.0), TestsStep.RUN),
+            (self.round_with(False, False, fixes=1, fixed_at=5.0), TestsStep.SEND_FIX),
+            (self.round_with(False, True, fixes=1, fixed_at=5.0), TestsStep.DONE),
+        ]
+        for review_round, step in cases:
+            with self.subTest(runs=[r.passed for r in review_round.test_runs],
+                              fixes=review_round.tests_fixes, fixed_at=review_round.fixed_at):
+                self.assertIs(review_round.tests_step, step)
+
+    def test_a_round_saved_with_one_run_reads_as_one_run(self) -> None:
+        sent_back = ReviewRound.from_dict({
+            'number': 1, 'outcome': 'tests_failed', 'fixed_at': 9.0,
+            'tests': {'passed': False, 'failures': ['t']},
+        })
+        self.assertEqual(([r.passed for r in sent_back.test_runs], sent_back.tests_fixes),
+                         ([False], 1))
+        self.assertIs(sent_back.tests_step, TestsStep.RUN)  # its fix ended: run them again
+        never_sent = ReviewRound.from_dict({
+            'number': 1, 'outcome': 'stopped', 'tests': {'passed': False},
+        })
+        self.assertEqual(never_sent.tests_fixes, 0)
+        self.assertIs(never_sent.tests_step, TestsStep.SEND_FIX)
+
+    def test_the_summary_says_while_the_tests_are_failing(self) -> None:
+        state = ReviewLoopState.new('T-1', max_rounds=3, now=1.0, verify_tests=True)
+        self.assertEqual((state.summary()['tests_failing'], state.summary()['tests_fixes']),
+                         (False, 0))
+        state.rounds = [self.round_with(False, fixes=2)]
+        self.assertEqual((state.summary()['tests_failing'], state.summary()['tests_fixes']),
+                         (True, 2))
+        state.rounds[0].test_runs.append(TestReport(passed=True))
+        self.assertFalse(state.summary()['tests_failing'])
+
+
 class LoopMemoryTests(unittest.TestCase):
     """The between-rounds memory, read back from saved rounds."""
 
@@ -666,6 +781,15 @@ class LoopMemoryTests(unittest.TestCase):
         sweep.sweep = True
         self.assertTrue(loop_memory([sweep]).confirm_next)
         self.assertFalse(loop_memory([_round(1, outcome='changed', clean=True)]).confirm_next)
+
+    def test_a_pass_covers_the_code_that_run_was_asked_to_test(self) -> None:
+        fixed = _round(1, outcome='tests_fixed', clean=True)
+        fixed.diff_digest = 'reviewed'
+        fixed.test_runs = [TestReport(passed=False, diff_digest='reviewed'),
+                           TestReport(passed=True, diff_digest='after-the-fix')]
+        memory = loop_memory([fixed])
+        self.assertEqual((memory.tests_digest, memory.confirm_next, memory.previous),
+                         ('after-the-fix', False, None))
 
     def test_failing_tests_are_not_a_pass(self) -> None:
         failing = _round(1, outcome='tests_failed', clean=True, tests=TestReport(passed=False))

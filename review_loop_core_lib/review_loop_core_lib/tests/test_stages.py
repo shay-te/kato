@@ -3,7 +3,8 @@
 * **self-check** — before any independent review, the main chat reviews and
   fixes its own change (cheap: it holds the whole context);
 * **verify_tests** — a clean review only ends the loop once the main chat ran
-  the tests and they pass; failures go back to be fixed;
+  the tests and they pass; failures are fixed and run again inside their
+  round, and no other review starts while they fail;
 * **confirm_clean** — a clean verdict from a reviewer that was told the fix
   ping-pong needs a clean-room reviewer (told nothing) to agree.
 
@@ -181,28 +182,90 @@ class TestsGateTests(_Stages):
         self.assertIn('41 passed',
                       self.service.artifact('T-1', state.loop_id, 1, ArtifactKind.TESTS))
 
-    def test_failing_tests_go_back_to_be_fixed_then_the_loop_goes_on(self) -> None:
+    def edit_on_tests_fix(self, chat) -> None:
+        """The chat's fix of failing tests changes the code, as a real fix does."""
+        def fix(prompt: str) -> None:
+            if kind_of(prompt) == 'tests_fix':
+                self.tree.files['app.py'] = f'print({len(chat.delivered)})\n'
+        chat.fixer = fix
+
+    def test_failing_tests_are_fixed_and_run_again_before_any_other_review(self) -> None:
+        # THE REPORT: the same tests failed in round after round — each failure
+        # was sent back once, then the loop went on to another review.
         chat = ScriptedChat(tests=[
             test_report(False, failures=['test_divide: ZeroDivisionError']),
+            test_report(False, failures=['test_divide: still ZeroDivisionError']),
             test_report(True, summary='all green'),
         ])
-        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        reviewer = FakeReviewer(reply())
+        reviews_before = []
+        self.edit_on_tests_fix(chat)
+        edit = chat.fixer
+        chat.fixer = lambda prompt: (reviews_before.append(len(reviewer.prompts)), edit(prompt))
+        state = self.run_loop(chat, reviewer, verify_tests=True)
 
         self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
-        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
-        self.assertEqual([r.outcome for r in state.rounds], ['tests_failed', 'clean'])
-        fix = chat.delivered[1][0]
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests', 'tests_fix', 'tests'])
+        # All of it after round 1's review, and before any other.
+        self.assertEqual(reviews_before, [1, 1, 1, 1, 1])
+        first, second = state.rounds
+        self.assertEqual((first.outcome, second.outcome), ('tests_fixed', 'clean'))
+        self.assertEqual([run.passed for run in first.test_runs], [False, False, True])
+        self.assertEqual(first.tests_fixes, 2)
+        # Round 2 reviewed the fixed code — which the tests already passed on.
+        self.assertEqual(len(reviewer.prompts), 2)
+        self.assertEqual(second.test_runs, [])
+        self.assertEqual(state.reason, 'round 2 found no blocking issues; tests passed (all green)')
+        self.assertIn('tests_fixed', self.events)
+
+        fix, again = chat.delivered[1][0], chat.delivered[2][0]
         self.assertEqual(fix.splitlines()[0], 'Host review loop — fix the failing tests')
         self.assertIn(wrap('- test_divide: ZeroDivisionError', 'task T-1 failing tests'), fix)
-        self.assertEqual(state.rounds[0].tests.failures, ['test_divide: ZeroDivisionError'])
-        self.assertTrue(state.rounds[0].sent_at and state.rounds[0].fixed_at)
+        self.assertIn('(fix attempt 1)', fix)
+        self.assertIn('no further review starts until they pass', fix)
+        self.assertIn('(fix attempt 2)', chat.delivered[3][0])
+        self.assertEqual(again.splitlines()[0], 'Host review loop — run the tests')
+        self.assertIn('You worked on the failing tests. No further review starts', again)
+
+    def test_tests_passing_again_on_the_reviewed_code_need_no_other_review(self) -> None:
+        # The fix changed nothing (a flaky test, a missing dependency): the
+        # clean review still covers the code, so the round concludes.
+        chat = ScriptedChat(tests=[test_report(False, failures=['flaky']), test_report(True)])
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual([r.outcome for r in state.rounds], ['clean'])
+        self.assertEqual(len(reviewer.prompts), 1)
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
+
+    def test_tests_no_fix_makes_pass_stop_the_loop_instead_of_reviewing_on(self) -> None:
+        chat = ScriptedChat(tests=[test_report(False, failures=['test_x: boom'])])
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+        self.assertEqual(state.status, ReviewLoopStatus.STUCK)
+        self.assertEqual(state.reason,
+                         'the tests still fail after 3 fixes in round 1 (test_x: boom)')
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix'] * 3 + ['tests'])
+        self.assertEqual(len(reviewer.prompts), 1)
+        self.assertEqual((state.round, state.rounds[0].outcome), (1, 'stuck'))
+        self.assertEqual(state.summary()['resume'], "send round 1's failing tests to the chat")
+
+    def test_the_fix_limit_is_a_runner_option(self) -> None:
+        chat = ScriptedChat(tests=[test_report(False, summary='2 failed')])
+        options = replace(FAST, tests_fix_attempts=1)
+        state = self.run_loop(chat, FakeReviewer(reply()), options=options, verify_tests=True)
+        self.assertEqual(state.status, ReviewLoopStatus.STUCK)
+        self.assertEqual(state.reason, 'the tests still fail after 1 fix in round 1 (2 failed)')
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
 
     def test_tests_still_failing_on_the_last_round_is_the_round_limit(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, summary='2 failed')])
         state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True, max_rounds=1)
         self.assertEqual(state.status, ReviewLoopStatus.MAX_ROUNDS)
         self.assertEqual(state.reason, 'the tests still fail after 1 reviews')
-        self.assertEqual(state.rounds[0].outcome, 'tests_failed')
+        self.assertEqual(state.rounds[0].outcome, 'max_rounds')
+        # No review is left to look at a fix, so none is asked for.
+        self.assertEqual(chat.kinds, ['tests'])
 
     def test_a_failure_with_no_details_sends_the_summary(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, summary='suite crashed'), test_report(True)])
@@ -442,12 +505,18 @@ class RoundTimingTests(_Stages):
         self.assert_in_order(first.started_at, first.reviewed_at, first.finished_at,
                              sweep.started_at, sweep.finished_at)
 
-    def test_a_failing_tests_round_ends_after_their_fix(self) -> None:
+    def test_a_failing_tests_round_ends_after_they_pass_again(self) -> None:
         chat = ScriptedChat(tests=[test_report(False, failures=['t1']), test_report(True)])
+        chat.fixer = lambda prompt: (
+            kind_of(prompt) == 'tests_fix' and self.tree.files.update({'app.py': 'print(9)\n'})
+        )
         state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
-        failed, clean = state.rounds
-        self.assertEqual(failed.outcome, 'tests_failed')
-        self.assert_in_order(failed.started_at, failed.sent_at, failed.finished_at, clean.started_at)
+        fixed, clean = state.rounds
+        self.assertEqual(fixed.outcome, 'tests_fixed')
+        self.assert_in_order(fixed.started_at, fixed.sent_at, fixed.finished_at, clean.started_at)
+        self.assertGreater(fixed.fixed_at, fixed.sent_at)
+        # The round ended with its passing run, not with the fix before it.
+        self.assertGreaterEqual(fixed.finished_at, fixed.tests.reported_at - 0.001)
 
     def test_a_round_saved_before_this_field_reads_as_unfinished(self) -> None:
         self.assertEqual(ReviewRound.from_dict({'number': 1}).finished_at, 0.0)
@@ -483,7 +552,9 @@ class StateAndParsingTests(unittest.TestCase):
                                     verify_tests=True, confirm_clean=True)
         state.self_checks = [SelfCheckTurn(1, 1.0, 2.0, clean=None, fixed=0, summary='')]
         state.rounds = [ReviewRound(number=1, started_at=1.0, blind=True, diff_digest='ab12',
-                                    tests=TestReport(True, 'pytest', '3 passed', ['x'], 3.0))]
+                                    test_runs=[TestReport(False, 'pytest', '', ['x'], 2.0, 'ab12'),
+                                               TestReport(True, 'pytest', '3 passed', [], 3.0, 'cd34')],
+                                    tests_fixes=1)]
         again = ReviewLoopState.from_dict(json.loads(json.dumps(state.to_dict())))
         self.assertEqual(again.to_dict(), state.to_dict())
         self.assertTrue(again.summary()['confirm_clean'])
@@ -495,7 +566,9 @@ class StateAndParsingTests(unittest.TestCase):
         self.assertEqual((old.self_check, old.verify_tests, old.confirm_clean), (False,) * 3)
         self.assertEqual(old.self_checks, [])
         self.assertEqual((old.rounds[0].blind, old.rounds[0].tests), (False, None))
+        self.assertEqual((old.rounds[0].test_runs, old.rounds[0].tests_fixes), ([], 0))
         self.assertEqual(old.rounds[0].diff_digest, '')
+        self.assertEqual(TestReport.from_dict({}).diff_digest, '')
         self.assertIsNone(TestReport.from_dict({}).passed)
         self.assertEqual(SelfCheckTurn.from_dict({}).clean, None)
 
@@ -542,6 +615,17 @@ class StateAndParsingTests(unittest.TestCase):
         self.assertTrue(build_tests_prompt(wording=bare).endswith('to true.\n'))
         fix = build_tests_fix_prompt(task_id='T-1', failures=[], wording=bare)
         self.assertIn('(no details reported)', fix)
+        self.assertIn('(fix attempt 1)', fix)
+
+    def test_a_run_before_any_fix_and_one_after_ask_differently(self) -> None:
+        first = build_tests_prompt(wording=WORDING)
+        again = build_tests_prompt(wording=WORDING, after_fix=True)
+        self.assertIn('The independent review found no blocking issues.', first)
+        self.assertNotIn('failing tests', first)
+        self.assertIn('No further review starts until they pass', again)
+        self.assertNotIn('found no blocking issues', again)
+        # Both are the same stage to a UI reading the header.
+        self.assertEqual(first.splitlines()[0], again.splitlines()[0])
 
     def test_phases_exist_for_the_ui(self) -> None:
         self.assertEqual(ReviewLoopPhase.SELF_CHECK.value, 'self_check')

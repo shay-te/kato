@@ -11,6 +11,7 @@ import {
   formatElapsed,
   isBlockingFinding,
   isReviewLoopRunning,
+  latestTestRun,
   reviewLoopChip,
   reviewLoopResumeTooltip,
   reviewLoopRoundsText,
@@ -196,13 +197,15 @@ test('loop-tab entries carry each task\'s state colour', () => {
 
 test('loop-tab models mark the active tab and the group divider', () => {
   const tabs = [{ taskId: 'UNA-1', tone: 'running' }, { taskId: 'UNA-2', tone: 'good' }];
-  const withFiles = buildReviewLoopTabModels(tabs, { activeTaskId: 'UNA-2', hasFileTabs: true });
+  const withFiles = buildReviewLoopTabModels(tabs, {
+    activeTaskId: 'UNA-2', groupStarts: new Set(['UNA-1']),
+  });
   assert.deepEqual(withFiles, [
     { taskId: 'UNA-1', tone: 'running', active: false, groupStart: true },
     { taskId: 'UNA-2', tone: 'good', active: true, groupStart: false },
   ]);
-  // Leading the strip (no file tabs) → no divider on the first loop tab.
-  assert.equal(buildReviewLoopTabModels(tabs, { hasFileTabs: false })[0].groupStart, false);
+  // Leading the strip (no file tab before it) → no divider on any loop tab.
+  assert.equal(buildReviewLoopTabModels(tabs)[0].groupStart, false);
   assert.deepEqual(buildReviewLoopTabModels(null), []);
 });
 
@@ -230,12 +233,60 @@ test('the self-check and the test run have their own short tracks', () => {
   assert.equal(noSweep[2].label, 'Loop ends');
 });
 
+test('failing tests are fixed and run again in their round, before any other review', () => {
+  const base = {
+    status: 'running', round: 2, max_rounds: 5, phase_started_at: NOW - 30, tests_failing: true,
+    counts: { BLOCKER: 0, MAJOR: 0, MINOR: 1, NIT: 0 },
+  };
+  const track = (loop) => reviewLoopSteps(loop, NOW).map((s) => [s.label, s.state]);
+  assert.deepEqual(track({ ...base, phase: 'waiting_to_send', tests_fixes: 1 }), [
+    ['Reviewed — no blocking issues', 'done'],
+    ['Send the failing tests to the chat', 'current'],
+    ['Fixing the failing tests (attempt 2)', 'todo'],
+    ['Run the tests again', 'todo'],
+  ]);
+  const fixing = reviewLoopSteps({ ...base, phase: 'awaiting_fix', tests_fixes: 2 }, NOW);
+  assert.deepEqual(fixing.map((s) => [s.label, s.state]), [
+    ['Reviewed — no blocking issues', 'done'],
+    ['Failing tests sent to the chat', 'done'],
+    ['Fixing the failing tests (attempt 2)', 'current'],
+    ['Run the tests again', 'todo'],
+  ]);
+  assert.equal(fixing[0].detail, '1 minor');
+  assert.equal(fixing[2].detail, '30s');
+  assert.deepEqual(track({ ...base, phase: 'verifying', tests_fixes: 2 }), [
+    ['Reviewed — no blocking issues', 'done'],
+    ['Failing tests sent to the chat', 'done'],
+    ['Fixed (attempt 2)', 'done'],
+    ['Running the tests again', 'current'],
+  ]);
+
+  // The chip and the sentence say it is the tests, not findings.
+  assert.equal(reviewLoopChip({ ...base, phase: 'awaiting_fix' }, NOW).text, '2/5 · fixing tests · 30s');
+  assert.equal(reviewLoopSentence({ ...base, phase: 'verifying' }, NOW),
+    'Round 2 of 5 · the main chat is running the tests again · 30s');
+  assert.equal(reviewLoopSentence({ ...base, phase: 'waiting_to_send' }, NOW),
+    'Round 2 of 5 · the tests failed — they go to the chat when it is free · 30s');
+  // Not failing: the same phases are about findings, and the first run.
+  assert.equal(reviewLoopChip({ ...base, tests_failing: false, phase: 'awaiting_fix' }, NOW).text,
+    '2/5 · fixing · 30s');
+  assert.equal(track({ ...base, tests_failing: false, phase: 'verifying' })[1][0],
+    'Running the tests in the main chat');
+});
+
+test('a round\'s latest test run is the one it went on from', () => {
+  assert.equal(latestTestRun(null), null);
+  assert.equal(latestTestRun({ test_runs: [] }), null);
+  assert.deepEqual(latestTestRun({ test_runs: [{ passed: false }, { passed: true }] }), { passed: true });
+});
+
 test('a clean-room sweep says so while it reviews', () => {
   const steps = reviewLoopSteps(
     { status: 'running', phase: 'reviewing', round: 3, max_rounds: 5, sweep: true }, NOW,
   );
   assert.equal(steps[0].label, 'Clean-room check');
   assert.equal(roundOutcomeLabel({ outcome: 'tests_failed' }), 'tests failed — sent back');
+  assert.equal(roundOutcomeLabel({ outcome: 'tests_fixed' }), 'tests fixed — the fix is reviewed next');
   assert.equal(roundOutcomeLabel({ outcome: 'changed' }), 'code changed since — not accepted');
 });
 
@@ -280,7 +331,7 @@ test('a finished round says how long it took, and where the time went', () => {
   });
   const clean = {
     number: 2, outcome: 'clean', started_at: 2000, reviewed_at: 2030,
-    tests: { reported_at: 2090 }, finished_at: 2091,
+    test_runs: [{ reported_at: 2090 }], finished_at: 2091,
   };
   assert.deepEqual(roundTiming(clean), {
     text: '1m 31s', title: 'Round 2 took 1m 31s — review 30s · tests 1m 0s',
@@ -292,9 +343,14 @@ test('a round saved before kato stamped its end uses its last recorded step', ()
   assert.equal(roundTiming({ number: 1, outcome: 'tests_failed', started_at: 10, fixed_at: 40 }).text, '30s');
   assert.equal(roundTiming({ number: 1, outcome: 'clean', started_at: 10, reviewed_at: 25 }).text, '15s');
   assert.equal(
-    roundTiming({ number: 1, outcome: 'clean', started_at: 10, reviewed_at: 25, tests: { reported_at: 55 } }).text,
+    roundTiming({ number: 1, outcome: 'clean', started_at: 10, reviewed_at: 25, test_runs: [{ reported_at: 55 }] }).text,
     '45s',
   );
+  // A round whose tests were fixed ended with its LAST run.
+  assert.equal(roundTiming({
+    number: 1, outcome: 'tests_fixed', started_at: 10, reviewed_at: 25,
+    test_runs: [{ reported_at: 40 }, { reported_at: 130 }],
+  }).text, '2m 0s');
   assert.equal(roundTiming({ number: 1, outcome: 'stuck', started_at: 10, reviewed_at: 12 }).text, '2s');
 });
 

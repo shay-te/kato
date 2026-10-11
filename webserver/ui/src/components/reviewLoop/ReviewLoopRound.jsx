@@ -25,7 +25,7 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
   // A clean-room sweep: a reviewer told nothing of the fixes, confirming the
   // clean round before it.
   const sweepTag = round.sweep ? <span className="review-loop-round-tag">Clean-room</span> : null;
-  const tests = round.tests ? <RoundTests tests={round.tests} /> : null;
+  const runs = round.test_runs || [];
   return (
     <ReviewLoopRow
       className={cx('review-loop-round', `is-${round.outcome || 'active'}`)}
@@ -38,7 +38,7 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
       expanded={expanded}
       onToggle={() => onToggle(round.number)}
     >
-      {tests}
+      <RoundTests runs={runs} />
       <FindingList title={blockingTitle} findings={blocking} round={round} />
       <FindingList title="Settled earlier — not sent again" findings={settled} round={round} />
       <FindingList title="Not blocking — reported only" findings={others} round={round} />
@@ -47,14 +47,22 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
   );
 }
 
-// What the main chat reported after running the tests on this round's tree.
-function RoundTests({ tests }) {
-  const tone = testsTone(tests);
-  const failures = (tests.failures || []).map((failure) => <li key={failure}>{failure}</li>);
+// What the main chat reported each time it ran the tests on this round's
+// tree — several runs when failing tests were fixed in the round, oldest first.
+function RoundTests({ runs }) {
+  const numbered = runs.length > 1;
+  // Runs are only ever appended, so a run's place is its identity.
+  return runs.map((run, index) => (
+    <RoundTestRun key={index} run={run} name={numbered ? `Run ${index + 1}: ` : ''} />
+  ));
+}
+
+function RoundTestRun({ run, name }) {
+  const failures = (run.failures || []).map((failure) => <li key={failure}>{failure}</li>);
   const failureList = failures.length ? <ul className="review-loop-tests-failures">{failures}</ul> : null;
   return (
-    <section className={cx('review-loop-tests', `is-${tone}`)}>
-      <p className="review-loop-tests-summary">{testsReportText(tests)}</p>
+    <section className={cx('review-loop-tests', `is-${testsTone(run)}`)}>
+      <p className="review-loop-tests-summary">{`${name}${testsReportText(run)}`}</p>
       {failureList}
     </section>
   );
@@ -115,12 +123,13 @@ function FindingItem({ finding, round }) {
 function RoundArtifacts({ taskId, loopId, round }) {
   const diffLabel = `Diff the reviewer saw (${round.diff_files} file(s) in ${round.diff_repos} repo(s))`;
   // Failing tests sent back carry no per-finding answers, so no reply file.
-  const answeredFindings = round.fixed_at && round.outcome !== 'tests_failed';
+  const answeredFindings = round.fixed_at && !round.tests_fixes;
+  const runs = (round.test_runs || []).length;
   const shown = [
     { kind: 'review', label: 'Reviewer’s full report', when: round.reviewed_at },
     { kind: 'prompt', label: 'Message sent to the chat', when: round.sent_at },
     { kind: 'response', label: 'The chat’s reply to the findings', when: answeredFindings },
-    { kind: 'tests', label: 'The chat’s test report', when: round.tests },
+    { kind: 'tests', label: runs > 1 ? 'The chat’s latest test report' : 'The chat’s test report', when: runs },
     { kind: 'diff', label: diffLabel, when: round.diff_files },
   ].filter((artifact) => artifact.when);
   const artifacts = shown.map(({ kind, label }) => (
