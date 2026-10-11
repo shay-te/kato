@@ -1176,13 +1176,9 @@ def _start_planning_webserver_if_enabled(app) -> None:
     import logging as _logging
     _logging.getLogger('werkzeug').setLevel(_logging.ERROR)
 
-    def _serve() -> None:
-        _serve_flask_with_bind_retry(
-            flask_app, host, port, app.logger, ssl_context=ssl_context,
-        )
-
     thread = threading.Thread(
-        target=_serve,
+        target=_serve_planning_webserver,
+        args=(flask_app, host, port, app.logger, ssl_context),
         name='kato-planning-webserver',
         daemon=True,
     )
@@ -1215,9 +1211,18 @@ def _resolve_webserver_tls(logger) -> tuple[str, tuple[str, str] | None]:
     return ('https', ssl_context) if ssl_context else ('http', None)
 
 
+def _serve_planning_webserver(flask_app, host, port, logger, ssl_context) -> None:
+    """The webserver thread: serve, and stop kato if the port stays taken."""
+    _serve_flask_with_bind_retry(
+        flask_app, host, port, logger, ssl_context=ssl_context,
+        on_bind_failure=lambda: _stop_without_webserver(logger, port),
+    )
+
+
 def _serve_flask_with_bind_retry(
     flask_app, host, port, logger,
-    sleep_fn=time.sleep, attempts: int = 20, ssl_context=None,
+    sleep_fn=None, attempts: int = 20, ssl_context=None,
+    on_bind_failure=None,
 ) -> None:
     """Run the Flask dev server, retrying briefly when the port is busy.
 
@@ -1234,7 +1239,11 @@ def _serve_flask_with_bind_retry(
     ``ssl_context`` is the ``(cert_path, key_path)`` pair from
     ``tls_cert_utils.ensure_local_tls_cert`` — ``None`` serves plain HTTP
     (HTTPS disabled or cert generation failed; see ``_resolve_webserver_tls``).
+
+    ``on_bind_failure`` runs once the budget is spent and the port is still
+    taken (kato itself passes ``_stop_without_webserver``).
     """
+    sleep = sleep_fn or time.sleep  # resolved per call, so a test can patch it
     for attempt in range(attempts):
         try:
             flask_app.run(
@@ -1249,11 +1258,32 @@ def _serve_flask_with_bind_retry(
                     'attempts — is another kato still running?',
                     host, port, attempts,
                 )
+                if on_bind_failure is not None:
+                    on_bind_failure()
                 return
-            sleep_fn(0.5)
+            sleep(0.5)
         except Exception:
             logger.exception('planning webserver crashed')
             return
+
+
+def _stop_without_webserver(logger, port) -> None:
+    """Exit: another program holds the planning webserver's port.
+
+    Carrying on without the webserver is not a degraded kato — it is a SECOND
+    kato. Same ``~/.kato``, same scan loop: two agents picking up one task and
+    posting the same comments twice, with no UI to approve anything from. A
+    desktop app started while ``kato up`` ran in a terminal did exactly that,
+    behind a blank window. ``KATO_WEBSERVER_DISABLED`` remains the way to run
+    without a UI on purpose.
+    """
+    logger.error(
+        'stopping: port %s is taken — most likely by another kato (a '
+        'terminal `kato up`, or the desktop app). Stop that one, or give '
+        'this one another port with KATO_WEBSERVER_PORT.',
+        port,
+    )
+    _exit_now(1)
 
 
 def _browser_url(scheme: str, host: str, port: int) -> str:

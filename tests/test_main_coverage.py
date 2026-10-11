@@ -1430,6 +1430,7 @@ class StartPlanningWebserverFullPathTests(unittest.TestCase):
         def capture_thread(*args, **kwargs):
             # Save the target so we can call it directly in-thread.
             captured_target['fn'] = kwargs.get('target')
+            captured_target['args'] = kwargs.get('args', ())
             return MagicMock()
 
         # HTTPS off: this test doesn't exercise TLS and must not touch
@@ -1445,7 +1446,7 @@ class StartPlanningWebserverFullPathTests(unittest.TestCase):
             main_module._start_planning_webserver_if_enabled(app)
 
         # Now actually call _serve to drive the exception handler.
-        captured_target['fn']()
+        captured_target['fn'](*captured_target['args'])
         app.logger.exception.assert_called()
 
 

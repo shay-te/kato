@@ -218,13 +218,30 @@
 
         var api = window.__TAURI__;
         if (!api || !api.event) { return; }
+        function showBootFatal(line) {
+          showFatal('Kato couldn’t start — ' + line.replace(/^KATO-FATAL:\s*/i, ''));
+        }
+        // A failure main.rs hit BEFORE this page was listening — the port
+        // check runs before the page has even loaded, so its event reached no
+        // one. Asked for once; later failures arrive as events below.
+        if (api.core && api.core.invoke) {
+          api.core.invoke('boot_error').then(function (line) {
+            if (line) { showBootFatal(String(line)); }
+          }).catch(function () {});
+        }
         api.event.listen('kato-log', function (event) {
           var line = (event && event.payload ? String(event.payload) : '').trim();
           if (!line || /^[=\-\s]+$/.test(line) || failed) { return; }
-          // Explicit fatal marker from main.rs (sidecar process died before
-          // ever serving the UI).
+          // Explicit fatal marker from main.rs (the port is taken, the service
+          // is missing / died, or the server never answered).
           if (/^KATO-FATAL:/i.test(line)) {
-            showFatal('Kato couldn’t start — ' + line.replace(/^KATO-FATAL:\s*/i, ''));
+            showBootFatal(line);
+            return;
+          }
+          // kato itself gave up on its webserver (its port was taken after
+          // all) — the UI will never load, so say so now, not in 3 minutes.
+          if (/planning webserver could not bind/i.test(line)) {
+            showFatal('Kato couldn’t start — ' + line.slice(0, 220));
             return;
           }
           // Frozen-Python / code-signing / traceback crashes: surface them

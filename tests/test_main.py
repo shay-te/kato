@@ -1696,6 +1696,52 @@ class ServeFlaskBindRetryTests(unittest.TestCase):
         self.assertEqual(flask_app.run.call_count, 3)
         logger.error.assert_called_once()
 
+    def test_a_port_that_stays_taken_runs_the_failure_hook_once(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        flask_app.run.side_effect = OSError('in use')
+        on_bind_failure = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, Mock(), sleep_fn=lambda _s: None,
+            attempts=2, on_bind_failure=on_bind_failure,
+        )
+
+        on_bind_failure.assert_called_once_with()
+
+    def test_a_port_freed_in_time_never_runs_the_failure_hook(self) -> None:
+        from kato_core_lib.main import _serve_flask_with_bind_retry
+        flask_app = Mock()
+        flask_app.run.side_effect = [OSError('in use'), None]
+        on_bind_failure = Mock()
+
+        _serve_flask_with_bind_retry(
+            flask_app, '127.0.0.1', 5050, Mock(), sleep_fn=lambda _s: None,
+            on_bind_failure=on_bind_failure,
+        )
+
+        on_bind_failure.assert_not_called()
+
+    def test_without_its_webserver_kato_stops_rather_than_run_twice(self) -> None:
+        # Running on would be a second kato on the same ~/.kato: the same
+        # tasks picked up twice, with no UI to approve anything from.
+        from kato_core_lib import main
+        logger = Mock()
+        with patch.object(main, '_exit_now') as exit_now:
+            main._stop_without_webserver(logger, 5050)
+        exit_now.assert_called_once_with(1)
+        message = logger.error.call_args.args[0] % logger.error.call_args.args[1:]
+        self.assertIn('port 5050 is taken', message)
+        self.assertIn('KATO_WEBSERVER_PORT', message)
+
+    def test_the_webserver_thread_stops_kato_when_the_port_stays_taken(self) -> None:
+        from kato_core_lib import main
+        flask_app = Mock()
+        flask_app.run.side_effect = OSError('Address already in use')
+        with patch.object(main.time, 'sleep'), patch.object(main, '_exit_now') as exit_now:
+            main._serve_planning_webserver(flask_app, '127.0.0.1', 5050, Mock(), None)
+        exit_now.assert_called_once_with(1)
+
     def test_non_bind_crash_is_logged_not_retried(self) -> None:
         from kato_core_lib.main import _serve_flask_with_bind_retry
         flask_app = Mock()

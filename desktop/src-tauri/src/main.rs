@@ -60,6 +60,8 @@ fn main() {
     let target_setup = target_state.clone();
 
     tauri::Builder::default()
+        .manage(BootError::default())
+        .invoke_handler(tauri::generate_handler![boot_error])
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Lets the web UI open external links (Claude output, docs, PR URLs)
@@ -112,13 +114,24 @@ fn main() {
             // bind, fails, and the window lands on a half-dead server (the
             // blank-white-on-2nd-launch bug). Bounded so a genuinely-stuck port
             // can't hang boot forever.
-            if let Ok(addr) = format!("{HOST}:{DEFAULT_PORT}").parse::<SocketAddr>() {
+            let port = webserver_port();
+            if let Ok(addr) = format!("{HOST}:{port}").parse::<SocketAddr>() {
                 let mut waited_ms = 0u64;
                 while waited_ms < 4000
                     && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
                 {
                     std::thread::sleep(Duration::from_millis(150));
                     waited_ms += 150;
+                }
+                // STILL taken: not one of our own leftovers (those were just
+                // killed) — another program owns the port, most often kato
+                // running in a terminal. Starting ours anyway made it fail to
+                // bind and keep scanning tasks headless, a SECOND kato on the
+                // same ~/.kato, while the window opened on the other program's
+                // server and stayed blank white. Say what is wrong instead.
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                    report_fatal(app.handle(), &port_in_use_message(port, port_holder(port)));
+                    return Ok(());
                 }
             }
 
@@ -143,16 +156,24 @@ fn main() {
             // never installs or updates kato inside the distro by hand — the
             // shell's own signed update carries the matching backend.
             let command = match &target {
-                BackendTarget::Native => app
-                    .shell()
-                    .sidecar("kato-sidecar")
-                    .expect("kato-sidecar was not bundled (run `npm run sidecar`)")
+                BackendTarget::Native => match app.shell().sidecar("kato-sidecar") {
                     // A GUI launch has no shell profile, so PATH is rebuilt for
                     // the host case. NOT applied to wsl.exe: WSL derives the
                     // distro's PATH itself, and forcing Windows paths onto it
                     // would corrupt the Linux environment (the login shell in
                     // spawn_args does that job instead).
-                    .env("PATH", augmented_path()),
+                    Ok(sidecar) => sidecar.env("PATH", augmented_path()),
+                    Err(err) => {
+                        report_fatal(
+                            app.handle(),
+                            &format!(
+                                "the Kato service is missing from this install ({err}). \
+                                 Reinstall Kato."
+                            ),
+                        );
+                        return Ok(());
+                    }
+                },
                 BackendTarget::Wsl { distro } => {
                     let binary = wsl::sidecar_binary_name();
                     match prepare_wsl_backend(app.handle(), distro, &binary) {
@@ -165,17 +186,19 @@ fn main() {
                             // a missing tool inside the distro is a fixable
                             // setup problem, and silence is what made the
                             // original "stuck on the splash" bug so opaque.
-                            let fatal = format!("KATO-FATAL: {message}");
-                            eprintln!("[kato] {fatal}");
-                            let _ = app.handle().emit("kato-log", fatal);
+                            report_fatal(app.handle(), &message);
                             return Ok(());
                         }
                     }
                 }
             };
-            let (mut rx, child) = command
-                .spawn()
-                .expect("failed to spawn kato sidecar");
+            let (mut rx, child) = match command.spawn() {
+                Ok(spawned) => spawned,
+                Err(err) => {
+                    report_fatal(app.handle(), &format!("could not start the Kato service: {err}"));
+                    return Ok(());
+                }
+            };
             // Hold the child so the RunEvent::Exit handler can kill it on quit.
             if let Ok(mut guard) = sidecar_setup.lock() {
                 *guard = Some(child);
@@ -224,7 +247,9 @@ fn main() {
                         let _ = file.flush();
                     }
                     let trimmed = line.trim();
-                    if !trimmed.is_empty() {
+                    if let Some(message) = trimmed.strip_prefix("KATO-FATAL: ") {
+                        report_fatal(&log_handle, message);
+                    } else if !trimmed.is_empty() {
                         // Best-effort: the splash listens for "kato-log" and shows
                         // the latest line. Ignored once we navigate to the UI.
                         let _ = log_handle.emit("kato-log", trimmed.to_string());
@@ -235,11 +260,7 @@ fn main() {
             // 3 + 4) Wait for the server (blocking poll off the main thread),
             // then point the splash window at the local UI.
             std::thread::spawn(move || {
-                let port = std::env::var("KATO_WEBSERVER_PORT")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(DEFAULT_PORT);
-                if wait_for_port(HOST, port, READY_TIMEOUT) {
+                if wait_for_server(HOST, port, READY_TIMEOUT) {
                     // Loopback HTTP. If you run Kato's webserver with its
                     // self-signed HTTPS, either disable TLS for the desktop
                     // loopback case or add cert-pinning here (see README).
@@ -308,7 +329,14 @@ fn main() {
                         }
                     });
                 } else {
-                    eprintln!("[kato] webserver did not become ready within timeout");
+                    report_fatal(
+                        &app_handle,
+                        &format!(
+                            "the Kato server did not answer on port {port} within {} minutes. \
+                             The details are in ~/.kato/kato-desktop.log.",
+                            READY_TIMEOUT.as_secs() / 60
+                        ),
+                    );
                 }
             });
 
@@ -491,19 +519,183 @@ fn augmented_path() -> String {
     }
 }
 
-/// Poll a TCP connect to `host:port` until it succeeds or `timeout` elapses.
-fn wait_for_port(host: &str, port: u16, timeout: Duration) -> bool {
+/// Poll until kato's webserver ANSWERS on `host:port`, or `timeout` elapses.
+///
+/// Answers, not merely accepts: a TCP connect also succeeds against a wedged
+/// server, or one that is not kato at all — and opening the UI on that is the
+/// blank white window. `GET /healthz` returning 200 means kato is serving.
+fn wait_for_server(host: &str, port: u16, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .expect("invalid host:port");
     loop {
-        if TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok() {
+        if server_answers(host, port) {
             return true;
         }
         if Instant::now() >= deadline {
             return false;
         }
         std::thread::sleep(Duration::from_millis(400));
+    }
+}
+
+fn server_answers(host: &str, port: u16) -> bool {
+    use std::io::{Read, Write};
+
+    let Ok(addr) = format!("{host}:{port}").parse::<SocketAddr>() else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let request = format!(
+        "GET /healthz HTTP/1.0\r\nHost: {UI_HOST}:{port}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 32];
+    let Ok(read) = stream.read(&mut head) else {
+        return false;
+    };
+    is_ok_status_line(&String::from_utf8_lossy(&head[..read]))
+}
+
+/// An HTTP response that starts `HTTP/1.x 200`.
+fn is_ok_status_line(head: &str) -> bool {
+    let mut parts = head.split_whitespace();
+    matches!(parts.next(), Some(version) if version.starts_with("HTTP/1."))
+        && parts.next() == Some("200")
+}
+
+/// The port kato's webserver binds (``KATO_WEBSERVER_PORT``, else 5050).
+fn webserver_port() -> u16 {
+    std::env::var("KATO_WEBSERVER_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+/// The boot failure the splash shows.
+///
+/// Kept, not only emitted: `setup` runs before the splash page has loaded, so
+/// an event fired then reaches no listener and the splash would sit on
+/// "loading" — or a blank window — with the reason lost. The splash asks for
+/// it once on load (`boot_error`) and listens for later ones.
+#[derive(Default)]
+struct BootError(std::sync::Mutex<Option<String>>);
+
+#[tauri::command]
+fn boot_error(state: tauri::State<'_, BootError>) -> Option<String> {
+    state.0.lock().ok().and_then(|guard| guard.clone())
+}
+
+/// Stop boot with `message` on the splash (and in the console).
+fn report_fatal(app: &tauri::AppHandle, message: &str) {
+    let fatal = format!("KATO-FATAL: {message}");
+    eprintln!("[kato] {fatal}");
+    if let Some(state) = app.try_state::<BootError>() {
+        if let Ok(mut guard) = state.0.lock() {
+            *guard = Some(fatal.clone());
+        }
+    }
+    let _ = app.emit("kato-log", fatal);
+}
+
+/// What the operator reads when another program already holds the port.
+fn port_in_use_message(port: u16, holder: Option<String>) -> String {
+    let who = holder.map(|h| format!(" ({h})")).unwrap_or_default();
+    format!(
+        "port {port} is already in use by another program{who} — most likely Kato \
+         running in a terminal (`kato up`). Stop it, then reopen Kato."
+    )
+}
+
+/// `"<command>, PID <n>"` of the process listening on `port`, when the OS says.
+#[cfg(not(windows))]
+fn port_holder(port: u16) -> Option<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
+        .output()
+        .ok()?;
+    parse_lsof_holder(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(windows)]
+fn port_holder(_port: u16) -> Option<String> {
+    None
+}
+
+/// The first listener in `lsof -Fpc` output (`p<pid>` then `c<command>` lines).
+#[cfg_attr(windows, allow(dead_code))]
+fn parse_lsof_holder(output: &str) -> Option<String> {
+    let mut pid = None;
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix('p') {
+            if pid.is_some() {
+                break;
+            }
+            pid = Some(value.trim().to_string());
+        } else if let (Some(command), Some(found)) = (line.strip_prefix('c'), pid.as_ref()) {
+            return Some(format!("{}, PID {found}", command.trim()));
+        }
+    }
+    pid.map(|found| format!("PID {found}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_message_names_the_port_and_who_holds_it() {
+        let message = port_in_use_message(5050, Some("Python, PID 1998".into()));
+        assert!(message.starts_with("port 5050 is already in use by another program (Python, PID 1998)"));
+        assert!(message.contains("Stop it, then reopen Kato."));
+        assert!(port_in_use_message(5050, None).starts_with("port 5050 is already in use by another program — "));
+    }
+
+    #[test]
+    fn only_a_200_counts_as_answering() {
+        assert!(is_ok_status_line("HTTP/1.1 200 OK\r\nContent-Type"));
+        assert!(is_ok_status_line("HTTP/1.0 200 OK"));
+        assert!(!is_ok_status_line("HTTP/1.1 503 SERVICE UNAVAILABLE"));
+        assert!(!is_ok_status_line("SSH-2.0-OpenSSH"));
+        assert!(!is_ok_status_line(""));
+    }
+
+    #[test]
+    fn a_server_that_accepts_but_never_answers_is_not_ready() {
+        // The blank-window case: something holds the port and accepts, but
+        // serves nothing.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!server_answers("127.0.0.1", port));
+        drop(listener);
+        assert!(!server_answers("127.0.0.1", port)); // nothing there at all
+    }
+
+    #[test]
+    fn a_server_answering_healthz_is_ready() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut request = [0u8; 256];
+            let read = socket.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..read]).starts_with("GET /healthz "));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}").unwrap();
+        });
+        assert!(server_answers("127.0.0.1", port));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn lsof_output_gives_the_first_listener() {
+        assert_eq!(parse_lsof_holder("p1998\ncPython\n"), Some("Python, PID 1998".into()));
+        assert_eq!(parse_lsof_holder("p12\ncnode\np34\ncPython\n"), Some("node, PID 12".into()));
+        assert_eq!(parse_lsof_holder("p77\n"), Some("PID 77".into()));
+        assert_eq!(parse_lsof_holder(""), None);
     }
 }
