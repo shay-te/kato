@@ -147,6 +147,28 @@ jobs:
             echo 'KATO_RELEASE_NOTES_END'
           } >> "$GITHUB_OUTPUT"
 
+      # A tag moved onto a release that is already out (rebuilding it) must
+      # REPLACE that release. tauri-action finds a published release only
+      # with releaseDraft false: with true it looks for a draft, warns "Found
+      # release with tag … but it's NOT a draft!", and creates a duplicate
+      # draft — the published one kept its old files. So: a draft only for a
+      # release not published yet; a published one gets its files, its
+      # latest.json and its notes replaced in place.
+      - name: Draft only a release that is not out yet
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # releases/tags/<tag> answers only for a PUBLISHED release.
+          if gh api "repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}" \
+              --jq '.draft' 2>/dev/null | grep -qx false; then
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+            echo "${{ github.ref_name }} is published: replacing its files and notes."
+          else
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build + sign the Tauri app (emits installers + updater feed)
         uses: tauri-apps/tauri-action@v0
         env:
@@ -158,7 +180,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Kato Desktop ${{ github.ref_name }}"
           releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: true
+          releaseDraft: ${{ steps.release.outputs.draft == 'true' }}
           prerelease: false
 
       # The installer THIS build made, kept for windows-sign: what SignPath

@@ -28,31 +28,23 @@ Kato now reviews its own work before you do, takes tasks that live in no tracker
 
 ## Install
 
-Grab the file for your OS from the Assets below. **Kato 0.1.0 updates itself** — it checks for the new release, verifies its signature, and installs it on restart.
+Grab the file for your OS from the Assets below. **Kato 0.1.0 updates itself**: it checks for the new release, verifies its signature, and installs it on restart.
 
-**macOS** (`Kato_0.2.0_aarch64.dmg`, Apple Silicon)
-Open the `.dmg` and drag **Kato** to Applications. This build isn't Apple-notarized yet, so on first launch macOS may block it. Clear the quarantine flag once:
+**macOS** (`Kato_0.2.0_aarch64.dmg`, Apple Silicon): open the `.dmg` and drag **Kato** to Applications. The app is signed and notarized by Apple, so it opens normally.
 
-```bash
-xattr -cr /Applications/Kato.app
-```
+**Windows** (`.exe` installer): run it and follow the prompts. The installer isn't signed yet, so Windows SmartScreen may warn; choose **More info → Run anyway**.
 
-Then open Kato normally.
-
-**Windows** (`.exe` installer) — run it and follow the prompts. Windows SmartScreen may warn on an unsigned installer; choose **More info → Run anyway**.
-
-**Linux** (`.AppImage`) — `chmod +x Kato_0.2.0_amd64.AppImage` then run it.
+**Linux** (`.AppImage`): `chmod +x Kato_0.2.0_amd64.AppImage`, then run it.
 
 ## Requirements
 
 - **`git`**
-- An **agent CLI** — Claude Code (`claude`) or Codex
-- **Docker with gVisor** — only for the optional hardened sandbox
+- An **agent CLI**: Claude Code (`claude`) or Codex
+- **Docker with gVisor**, only for the optional hardened sandbox
 
 ## Notes
 
-- **Apple Silicon only** on macOS this release; Intel/universal builds to follow.
-- macOS/Windows binaries aren't notarized/signed yet — hence the one-time Gatekeeper/SmartScreen step above.
+- **Apple Silicon only** on macOS this release; Intel and universal builds are still to come.
 
 ---
 
