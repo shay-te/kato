@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import os
 import signal
@@ -14,7 +15,8 @@ from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.deadline import run_with_deadline
 import logging
 
-from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.instance_lock_utils import INSTANCE_RESTART_ENV, hold_instance_lock
+from kato_core_lib.helpers.logging_utils import configure_logger, enable_log_file
 from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
     sleep_with_countdown_spinner,
@@ -85,14 +87,44 @@ class _KatoInstanceProxy:
 ProcessAssignedTasksJob = _ProcessAssignedTasksJobProxy()
 KatoInstance = _KatoInstanceProxy()
 
+# A crash out of main() reaches sys.excepthook — and so kato's log file
+# (``enable_log_file``) — only when hydra lets it through. Otherwise hydra
+# prints a trimmed traceback and exits, and the file never hears of it: a
+# crash under ``kato up`` left nothing to read once the terminal was closed.
+os.environ.setdefault('HYDRA_FULL_ERROR', '1')
+
+
+def _exit_with_status(task):
+    """hydra discards its task's return value, so every ``return 1`` refusal
+    below exited 0 — the launcher, Docker and the desktop app all read it as
+    success. A non-zero status leaves as ``SystemExit`` instead."""
+    @functools.wraps(task)
+    def run(cfg):
+        status = task(cfg)
+        if status:
+            raise SystemExit(status)
+        return status
+    return run
+
 
 @hydra.main(
     version_base=None,
     config_path='config',
     config_name='kato_core_lib',
 )
+@_exit_with_status
 def main(cfg: DictConfig) -> int:
     logger = configure_logger(cfg.core_lib.app.name)
+    # Before anything that acts — its log file included, which is the running
+    # kato's: a second kato on this ~/.kato would work the same tasks
+    # (instance_lock_utils). Its port no longer keeps it out.
+    already_running = hold_instance_lock()
+    if already_running:
+        logger.error('%s', already_running)
+        return 1
+    log_file = enable_log_file()
+    if log_file is not None:
+        logger.info('kato logs to %s', log_file)
     # Missing config no longer hard-exits at the terminal: kato boots into
     # SETUP MODE (the planning UI runs so the operator configures via the
     # Settings drawer) instead of dying. The SECURITY gates below (bypass /
@@ -585,6 +617,9 @@ def _restart_in_place(app) -> None:
         return  # unreachable in production; keeps mocked-_exit tests honest
     argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
     app.logger.warning('restarting kato in place: %s', ' '.join(argv))
+    # The new process may start before this one has let go of the instance
+    # lock (Python emulates execv on Windows): it waits for it, briefly.
+    os.environ[INSTANCE_RESTART_ENV] = '1'
     os.execv(sys.executable, argv)
 
 

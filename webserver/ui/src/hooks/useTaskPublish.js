@@ -32,13 +32,15 @@ export function useTaskPublish(taskId) {
   } = useTaskPublishState(taskId);
   const {
     hasPullRequest, pullRequestUrls, pullRequestLookupError, pullRequestRepositories,
+    pullRequestStatus, pullRequestFetchError,
   } = useTaskPullRequestState(taskId);
 
   // Re-check both after a button action (push / pull / merge / create-PR /
   // update-source). On-demand only — never polled.
-  const refresh = useCallback(() => {
-    if (taskId) { revalidate(taskId, ['publish', 'pullRequest']); }
-  }, [taskId]);
+  const refresh = useCallback(
+    () => (taskId ? revalidate(taskId, ['publish', 'pullRequest']) : Promise.resolve()),
+    [taskId],
+  );
 
   // A FAILED publish fetch must not strand the git buttons.
   //
@@ -120,8 +122,11 @@ export function useTaskPublish(taskId) {
     // request". A bad provider credential answers both the same way, and
     // only this field tells them apart.
     pullRequestLookupError,
-    // Each repository with its open PR (or none / couldn't check).
+    // Each repository with its open PR (or none / couldn't check), and how
+    // the lookup stands — loading or failed is not an empty list.
     pullRequestRepositories,
+    pullRequestStatus,
+    pullRequestFetchError,
     // Publish-state lifecycle from the LOCAL publish child: ``ready`` after a
     // successful fetch, ``error`` when the latest one failed. Lets callers say
     // "checking…" / "couldn't check" instead of a premature "no workspace".

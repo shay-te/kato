@@ -744,7 +744,11 @@ class MainTlsPinIntegrationTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ):
-            return main(self.cfg)
+            # The status kato exits with: a refusal leaves as SystemExit.
+            try:
+                return main(self.cfg)
+            except SystemExit as exit_:
+                return exit_.code
 
     def test_main_proceeds_when_optout_is_set(self) -> None:
         """``KATO_SANDBOX_ALLOW_NO_TLS_PIN=true`` opts out — main proceeds."""
@@ -846,7 +850,11 @@ class MainReadOnlyToolsIntegrationTests(unittest.TestCase):
         ), patch(
             'kato_core_lib.main._run_task_scan_loop'
         ):
-            return main(self.cfg)
+            # The status kato exits with: a refusal leaves as SystemExit.
+            try:
+                return main(self.cfg)
+            except SystemExit as exit_:
+                return exit_.code
 
     def test_main_refuses_when_read_only_set_without_docker(self) -> None:
         """Strict gate: read-only=true alone -> main() returns 1."""

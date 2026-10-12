@@ -3,15 +3,25 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from agent_core_lib.agent_core_lib.helpers.logging_utils import (
     set_workflow_root as _set_agent_workflow_root,
 )
+from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 
 _LOGGING_CONFIGURED = False
 _ROOT_HANDLER_NAME = 'kato_root'
 _WORKFLOW_HANDLER_NAME = 'kato_workflow'
+_FILE_HANDLER_NAME = 'kato_file'
+# Crashes go to the log file only — the console prints its own traceback.
+_CRASH_LOGGER_NAME = 'kato.crash'
+LOG_FILE_ENV = 'KATO_LOG_FILE'
+_LOG_FILE_MAX_BYTES = 5 * 1024 * 1024
+_LOG_FILE_BACKUPS = 3
 _WORKFLOW_LOGGER_PREFIX = 'kato.workflow'
 _DEFAULT_LOG_LEVEL = logging.WARNING
 _DEFAULT_WORKFLOW_LOG_LEVEL = logging.INFO
@@ -153,3 +163,104 @@ def configure_logger(name: str) -> logging.Logger:
         _LOGGING_CONFIGURED = True
 
     return logging.getLogger(_workflow_logger_name(name))
+
+
+# ----- the log file --------------------------------------------------------
+#
+# kato logged only to the console. A crash under the desktop app, or in a
+# terminal closed since, left nothing to read — on Windows, nothing at all
+# ("where does it store the crash report?"). Now the same lines also go to a
+# file under kato's own folder, on every platform and however kato started.
+
+def log_file_path() -> Path:
+    """``~/.kato/logs/kato.log`` — ``%USERPROFILE%\\.kato\\logs`` on Windows,
+    which ``Path.home()`` resolves there (Windows sets no ``HOME``)."""
+    return kato_home_path(os.path.join('logs', 'kato.log'), env_key=LOG_FILE_ENV)
+
+
+class _ConsoleLevels(logging.Filter):
+    """Keep the file to what the console shows: kato's workflow lines at their
+    level, everything else at the dependency level — both as the console's
+    handlers took them at boot, so a setting loaded later cannot make the two
+    disagree."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._workflow_level = _workflow_log_level()
+        self._dependency_level = _dependency_log_level()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        name = record.name
+        if name == _CRASH_LOGGER_NAME:
+            return True
+        workflow = name == _WORKFLOW_LOGGER_PREFIX or name.startswith(f'{_WORKFLOW_LOGGER_PREFIX}.')
+        return record.levelno >= (self._workflow_level if workflow else self._dependency_level)
+
+
+def enable_log_file() -> Path | None:
+    """Write what kato logs to :func:`log_file_path` too, timestamped, and
+    every unhandled exception — main thread or any other — with its traceback.
+
+    Rotates at 5 MB, keeping 3. Idempotent. Returns the path, or None when the
+    file cannot be opened: then the console says so, and kato runs on — a log
+    file is never a reason not to start.
+    """
+    configure_logger('logging')
+    root = logging.getLogger()
+    existing = _named_handler(root, _FILE_HANDLER_NAME)
+    if existing is not None:
+        return Path(existing.baseFilename)
+    path = log_file_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            path, maxBytes=_LOG_FILE_MAX_BYTES, backupCount=_LOG_FILE_BACKUPS,
+            encoding='utf-8', errors='replace',
+        )
+    except OSError as exc:
+        configure_logger('logging').warning('kato could not open its log file %s: %s', path, exc)
+        return None
+    handler.set_name(_FILE_HANDLER_NAME)
+    # The pid tells a restart (a new process, on Windows) from the kato before it.
+    handler.setFormatter(logging.Formatter('%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s'))
+    handler.addFilter(_ConsoleLevels())
+    root.addHandler(handler)
+    # The workflow logger does not propagate to the root, so it gets the
+    # same handler itself.
+    logging.getLogger(_WORKFLOW_LOGGER_PREFIX).addHandler(handler)
+    crash = logging.getLogger(_CRASH_LOGGER_NAME)
+    crash.propagate = False
+    crash.addHandler(handler)
+    _record_crashes(crash)
+    return path
+
+
+def _record_crashes(crash: logging.Logger) -> None:
+    """Every unhandled exception into the log file, then the usual handling.
+
+    Installed once: ``crash`` is a named logger, so a hook already in place
+    reaches whatever file handler it has now — wrapping again would write each
+    crash twice.
+    """
+    if getattr(sys.excepthook, '_records_kato_crashes', False) is True:
+        return
+    previous_hook = sys.excepthook
+    previous_thread_hook = threading.excepthook
+
+    def log_crash(exc_type, exc, traceback):
+        if not issubclass(exc_type, KeyboardInterrupt):
+            crash.critical('kato crashed', exc_info=(exc_type, exc, traceback))
+        previous_hook(exc_type, exc, traceback)
+
+    def log_thread_crash(args):
+        if not issubclass(args.exc_type, (KeyboardInterrupt, SystemExit)):
+            thread = getattr(args.thread, 'name', '?')
+            crash.critical(
+                'kato thread %s crashed', thread,
+                exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+            )
+        previous_thread_hook(args)
+
+    log_crash._records_kato_crashes = True
+    sys.excepthook = log_crash
+    threading.excepthook = log_thread_crash

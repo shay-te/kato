@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What SignPath signs, for the release workflow's windows-sign job
+  (.github/workflows/desktop-release.yaml). Paste it into the SignPath project's
+  artifact configuration.
+
+  The job uploads the NSIS installer as a GitHub artifact, which arrives as a
+  zip holding the one installer (Kato_<version>_x64-setup.exe). It is signed
+  with Authenticode; the auto-updater's own signature is made again over the
+  signed file by the job afterwards.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Kato_*_x64-setup.exe" max-matches="unbounded">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

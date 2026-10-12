@@ -20,8 +20,13 @@ async function fetchJson(url, { timeoutMs = 0 } = {}) {
   // state indefinitely instead of surfacing an error and retrying.
   const controller = timeoutMs > 0 && typeof AbortController !== 'undefined'
     ? new AbortController() : null;
+  // Its own reason, not the browser's: an abort with none reads "signal is
+  // aborted without reason" (WebView2), which tells the operator nothing.
   const timer = controller && typeof window !== 'undefined'
-    ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+    ? window.setTimeout(
+      () => controller.abort(new Error(`no answer within ${Math.round(timeoutMs / 1000)}s`)),
+      timeoutMs,
+    ) : null;
   try {
     const response = await fetch(url, {
       cache: 'no-store',

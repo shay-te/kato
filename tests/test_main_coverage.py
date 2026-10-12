@@ -904,7 +904,11 @@ class MainBodyTests(unittest.TestCase):
         real_bypass_orig = real_bypass.is_docker_mode_enabled
         real_bypass.is_docker_mode_enabled = lambda: False
         try:
-            return main_module.main.__wrapped__(self._cfg())
+            # The status kato exits with: a refusal leaves as SystemExit.
+            try:
+                return main_module.main.__wrapped__(self._cfg())
+            except SystemExit as exit_:
+                return exit_.code
         finally:
             real_bypass.is_docker_mode_enabled = real_bypass_orig
             for p in ctx:

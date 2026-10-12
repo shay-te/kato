@@ -146,6 +146,10 @@ export function useTaskPullRequestState(taskId) {
     pullRequestUrls: sl.data.pullRequestUrls,
     pullRequestLookupError: sl.data.lookupError,
     pullRequestRepositories: sl.data.repositories,
+    // The lookup itself: 'idle' | 'loading' | 'ready' | 'error' (+ why), so
+    // a list still loading — or that failed — never reads as an empty one.
+    pullRequestStatus: sl.status,
+    pullRequestFetchError: sl.error,
   }));
 }
 

@@ -20,8 +20,10 @@ export const pullRequestChild = createDataStore({
     lookupError: String(body?.lookup_error || ''),
     // Every repository on the task with its open PR (null = none), and
     // ``lookupFailed`` when the provider could not be asked — the header's
-    // pull-request list, so no PR is missed.
-    repositories: parseRepositories(body?.repositories),
+    // pull-request list, so no PR is missed. null when the server did not
+    // list them at all (a kato older than this page): "no repositories"
+    // would be a guess.
+    repositories: Array.isArray(body?.repositories) ? parseRepositories(body.repositories) : null,
   }),
   empty: { hasPullRequest: false, pullRequestUrls: [], lookupError: '', repositories: [] },
 });

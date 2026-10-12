@@ -20,7 +20,7 @@ to a workspace manager nobody else uses.
 from __future__ import annotations
 
 from kato_core_lib.data_layers.data.fields import PullRequestFields
-from kato_core_lib.helpers.deadline import run_with_deadline
+from kato_core_lib.helpers.deadline import run_all_with_deadline, run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.service_results import failure
 from kato_core_lib.helpers.logging_utils import configure_logger
@@ -1331,6 +1331,11 @@ class TaskPublishService(object):
         )
         return {'has_workspace': True, 'has_changes_to_push': has_changes_to_push}
 
+    # How long the pull-request lookup may take, all repositories at once —
+    # under the 8s the page waits for it (api.js), so a slow git host costs
+    # its repository's answer ("could not check"), never the whole list.
+    PULL_REQUEST_LOOKUP_SECONDS = 6.0
+
     def task_pull_request_state(self, task_id: str) -> dict[str, object]:
         """PR-existence for the task — a SEPARATE fetch from the git-button
         state so a slow provider can't freeze the toolbar.
@@ -1367,9 +1372,32 @@ class TaskPublishService(object):
         # identically, and 25 copies of the same sentence is not a better
         # report than one.
         lookup_error = ''
-        for repository in repos:
-            branch_name = self._repository_service.build_branch_name(task_obj, repository)
-            existing, failure = self._find_pull_requests_safe(repository, branch_name)
+        branches = [
+            self._repository_service.build_branch_name(task_obj, repository)
+            for repository in repos
+        ]
+        # Every repository at once, within the lookup's time: one asked after
+        # another, a task with many repositories (or one slow host) outran the
+        # page's wait and the whole list failed.
+        late = object()
+        results = run_all_with_deadline(
+            [
+                (lambda repository=repository, branch=branch:
+                    self._find_pull_requests_safe(repository, branch))
+                for repository, branch in zip(repos, branches)
+            ],
+            seconds=self.PULL_REQUEST_LOOKUP_SECONDS,
+            default=late,
+        )
+        for repository, result in zip(repos, results):
+            if result is late:
+                self.logger.warning(
+                    'PR lookup for repository %s did not answer within %ss — '
+                    'shown as not checked',
+                    getattr(repository, 'id', ''), self.PULL_REQUEST_LOOKUP_SECONDS,
+                )
+                result = (None, '')
+            existing, failure = result
             if failure and not lookup_error:
                 lookup_error = failure
             pull_request = None

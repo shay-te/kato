@@ -29,6 +29,7 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
     CONFIGURABLE_CATEGORIES,
     CommandPolicy,
 )
+from kato_core_lib.helpers.plan_mode_store import DEFAULT_MODE_CHOICES
 
 LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 
@@ -301,6 +302,18 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_CLAUDE_EFFORT', 'select', 'Reasoning effort',
              'Passed via --effort. Higher = more tokens/time.',
              {'options': ['', 'low', 'medium', 'high', 'xhigh', 'max']}),
+            ('KATO_CLAUDE_DEFAULT_MODE', 'select', 'Default mode for new tasks',
+             'The mode a task\'s chat starts in until you pick another in the '
+             'composer — for the autonomous run too. Tasks tagged '
+             'kato:wait-planning still start in Plan. Applies from the next '
+             'message; a task you already picked a mode for keeps it.',
+             {'options': list(DEFAULT_MODE_CHOICES),
+              'option_labels': {
+                  '': 'Edit automatically', 'default': 'Manual', 'explain': 'Explain',
+                  'plan': 'Plan', 'bypassPermissions': 'Auto',
+              },
+              'warning': 'Auto approves everything the Action Guard clears, on '
+                         'every task that has no mode of its own.'}),
             ('KATO_CLAUDE_ALLOWED_TOOLS', 'text', 'Allowed tools',
              'Comma-separated --allowedTools. Empty → safe default '
              'when bypass is off.', {}),

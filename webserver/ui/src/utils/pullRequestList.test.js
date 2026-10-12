@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 import {
   pullRequestBadge,
+  pullRequestButtonState,
   pullRequestCounts,
   pullRequestLabel,
   pullRequestListTooltip,
@@ -37,7 +38,28 @@ test('the tooltip says how they stand', () => {
     + 'Click for the list — open or copy each one.');
   assert.equal(pullRequestListTooltip([repo('api')]),
     'Pull requests open in 0 of 1 repository. Click for the list — open or copy each one.');
-  assert.equal(pullRequestListTooltip([]), 'Pull requests — no repositories on this task to check yet.');
+  assert.equal(pullRequestListTooltip([]), 'Pull requests — this task has no repositories to check.');
+});
+
+test('only the server\'s answer is a list — loading, failed or not listed says so', () => {
+  // THE REPORT: an existing task's button read "no repositories on this task".
+  assert.deepEqual(pullRequestButtonState({ repositories: [], status: 'loading' }),
+    { disabled: true, tooltip: 'Checking the pull requests…' });
+  assert.deepEqual(pullRequestButtonState({ repositories: [], status: 'idle' }),
+    { disabled: true, tooltip: 'Checking the pull requests…' });
+  assert.deepEqual(pullRequestButtonState({ repositories: [], status: 'error', fetchError: 'HTTP 500' }),
+    { disabled: false, tooltip: 'Could not check the pull requests (HTTP 500). Click to try again.' });
+  assert.equal(pullRequestButtonState({ status: 'error' }).tooltip,
+    'Could not check the pull requests. Click to try again.');
+  assert.deepEqual(pullRequestButtonState({ repositories: null, status: 'ready' }), {
+    disabled: true,
+    tooltip: 'This kato server is older than this page and does not list pull requests '
+      + 'per repository. Restart kato.',
+  });
+  assert.deepEqual(pullRequestButtonState({ repositories: [], status: 'ready' }),
+    { disabled: true, tooltip: 'Pull requests — this task has no repositories to check.' });
+  assert.equal(pullRequestButtonState({ repositories: MIXED }).disabled, false);
+  assert.equal(pullRequestButtonState().disabled, true);  // nothing said at all
 });
 
 test('a pull request is named by its number and title', () => {

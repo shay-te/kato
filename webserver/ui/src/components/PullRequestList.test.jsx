@@ -58,6 +58,45 @@ describe('PullRequestList — the button', () => {
   });
 });
 
+describe('PullRequestList — while it does not know', () => {
+  test('still loading: says so, not "no repositories"', () => {
+    const { toggle } = renderList([], { status: 'loading' });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute('data-tooltip', 'Checking the pull requests…');
+  });
+
+  test('the lookup failed: says why, and a click tries again', () => {
+    const { toggle, onOpen } = renderList([], { status: 'error', fetchError: 'HTTP 500' });
+    expect(toggle).not.toBeDisabled();
+    expect(toggle).toHaveAttribute('data-tooltip',
+      'Could not check the pull requests (HTTP 500). Click to try again.');
+    fireEvent.click(toggle);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Could not check the pull requests (HTTP 500).')).toHaveClass('is-warn');
+  });
+
+  test('from the open list it tries again, and says so while it does', async () => {
+    let settle;
+    const onOpen = vi.fn(() => new Promise((resolve) => { settle = resolve; }));
+    render(<PullRequestList repositories={[]} status="error" fetchError="no answer within 8s" onOpen={onOpen} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Pull requests:/ }));
+    settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(onOpen).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Checking again…' })).toBeDisabled();
+    settle();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).not.toBeDisabled());
+    // Still open: trying again is not a click outside.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  test('a server that does not list them says to restart kato', () => {
+    const { toggle } = renderList(null);
+    expect(toggle).toBeDisabled();
+    expect(toggle.getAttribute('data-tooltip')).toMatch(/older than this page.*Restart kato/);
+  });
+});
+
 describe('PullRequestList — the list', () => {
   test('each repository: its pull request, none yet, or could not check', () => {
     const { list } = openList([repo('api', API), repo('web'), repo('lib', null, true)]);

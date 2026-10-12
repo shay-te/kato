@@ -98,6 +98,28 @@ test('fetchTaskPublishState rejects when the request fails (abort/timeout/networ
   await assert.rejects(() => fetchTaskPublishState('T1'), /aborted/);
 });
 
+test('a request that times out says so, not the browser\'s "aborted without reason"', async function () {
+  // A fetch that never answers; the timeout fires at once — as a real fetch
+  // does, an already-aborted signal rejects with its reason.
+  globalThis.fetch = function (url, init) {
+    return new Promise((resolve, reject) => {
+      if (init.signal.aborted) { reject(init.signal.reason); return; }
+      init.signal.addEventListener('abort', () => reject(init.signal.reason));
+    });
+  };
+  const hadWindow = 'window' in globalThis;
+  const previous = globalThis.window;
+  globalThis.window = {
+    setTimeout: (callback) => { callback(); return 1; },
+    clearTimeout: () => {},
+  };
+  try {
+    await assert.rejects(() => fetchTaskPullRequestState('T1'), /^Error: no answer within 8s$/);
+  } finally {
+    if (hadWindow) { globalThis.window = previous; } else { delete globalThis.window; }
+  }
+});
+
 test('fetchTaskPublishState short-circuits an empty taskId without a request', async function () {
   const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
   const body = await fetchTaskPublishState('');

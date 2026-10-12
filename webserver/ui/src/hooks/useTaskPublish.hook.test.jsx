@@ -222,6 +222,24 @@ describe('useTaskPublish — with taskId', () => {
     });
   });
 
+  test('a server that does not list repositories is not read as "none"', async () => {
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    fetchTaskPullRequestState.mockResolvedValue({ has_pull_request: false, pull_request_urls: [] });
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await waitFor(() => expect(result.current.pullRequestStatus).toBe('ready'));
+    expect(result.current.pullRequestRepositories).toBeNull();
+  });
+
+  test('a failed lookup is reported as failed, with why', async () => {
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    fetchTaskPullRequestState.mockRejectedValue(new Error('HTTP 500'));
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await waitFor(() => expect(result.current.pullRequestStatus).toBe('error'));
+    expect(result.current.pullRequestFetchError).toContain('HTTP 500');
+    // ...and never touches the git buttons.
+    expect(result.current.publishStateError).toBe(false);
+  });
+
   test('checks on tab load (mount), NOT on a timer', async () => {
     // The old 10s poll hammered the provider PR lookup and hung the
     // endpoint. Now we fetch once on tab load; advancing time must NOT

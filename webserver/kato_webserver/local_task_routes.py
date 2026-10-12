@@ -22,11 +22,13 @@ from flask import Flask, jsonify, request
 from kato_core_lib.data_layers.service.local_task_service import (
     START_MODES,
     START_PERMISSION_MODE,
+    START_IMPLEMENT,
     START_PLAN,
     LocalTaskRejected,
     opening_message,
 )
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
+from kato_core_lib.helpers.plan_mode_store import picked_mode_to_store
 
 
 def register_local_task_routes(
@@ -70,8 +72,14 @@ def register_local_task_routes(
             status = 403 if exc.unapproved else 400
             return jsonify({'error': str(exc), 'unapproved_repositories': exc.unapproved}), status
         task_id = str(task.id)
-        set_mode(task_id, START_PERMISSION_MODE[start_mode])
-        _persist_mode(task_id, START_PERMISSION_MODE[start_mode])
+        # "Implement" is a pick: once a default mode for new tasks is set it
+        # is kept explicitly, or a Plan default would make "Implement this
+        # task" a planning turn. "Chat" picks nothing — the default applies.
+        mode = START_PERMISSION_MODE[start_mode]
+        if start_mode == START_IMPLEMENT:
+            mode = picked_mode_to_store(mode)
+        set_mode(task_id, mode)
+        _persist_mode(task_id, mode)
         set_override('TASK_MODEL_OVERRIDES', task_id, str(body.get('model') or '').strip())
         set_override('TASK_EFFORT_OVERRIDES', task_id, effort)
         background(lambda: _prepare_and_start(task_id, start_mode), f'local-task-{task_id}')

@@ -11,7 +11,7 @@ import threading
 import time
 import unittest
 
-from kato_core_lib.helpers.deadline import run_with_deadline
+from kato_core_lib.helpers.deadline import run_all_with_deadline, run_with_deadline
 
 
 class RunWithDeadlineTests(unittest.TestCase):
@@ -92,6 +92,40 @@ class RunWithDeadlineTests(unittest.TestCase):
         run_with_deadline(_slow, seconds=0.2, default=None)
         time.sleep(0.05)
         self.assertTrue(seen.get('daemon'), 'the probe thread was not a daemon')
+
+
+class RunAllWithDeadlineTests(unittest.TestCase):
+
+    def test_each_answer_comes_back_in_order(self) -> None:
+        self.assertEqual(
+            run_all_with_deadline([lambda: 1, lambda: 0, lambda: None], seconds=5, default='late'),
+            [1, 0, None],
+        )
+
+    def test_one_slow_one_costs_only_its_own_answer_and_the_call_stays_bounded(self) -> None:
+        release = threading.Event()
+        self.addCleanup(release.set)
+        started = time.monotonic()
+        results = run_all_with_deadline(
+            [lambda: 'fast', lambda: release.wait(10) and 'slow', lambda: 'also fast'],
+            seconds=0.2, default='late',
+        )
+        self.assertEqual(results, ['fast', 'late', 'also fast'])
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_they_run_at_once_not_one_after_another(self) -> None:
+        def slowish():
+            time.sleep(0.3)
+            return 'done'
+        started = time.monotonic()
+        self.assertEqual(run_all_with_deadline([slowish] * 5, seconds=5), ['done'] * 5)
+        self.assertLess(time.monotonic() - started, 1.2)  # one after another: 1.5s
+
+    def test_one_that_raises_is_the_default(self) -> None:
+        def boom():
+            raise RuntimeError('provider down')
+        self.assertEqual(run_all_with_deadline([boom, lambda: 2], seconds=5, default='x'), ['x', 2])
+        self.assertEqual(run_all_with_deadline([], seconds=5), [])
 
 
 if __name__ == '__main__':

@@ -151,6 +151,20 @@ describe('createTaskCache — orchestrator', () => {
     expect(children.diff.get('A').status).toBe('ready');
   });
 
+  test('revalidate resolves once its loads have settled — for a retry shown in flight', async () => {
+    const { cache, children, fetchers } = makeCache();
+    fetchers.diff.gate = deferred();
+    let settled = false;
+    const done = cache.revalidate('A', ['diff', 'tree', 'not-a-type']).then(() => { settled = true; });
+    await flush();
+    expect(settled).toBe(false);                           // diff is still out
+    fetchers.diff.gate.resolve();
+    await done;
+    expect(children.diff.get('A').status).toBe('ready');
+    expect(children.tree.get('A').status).toBe('ready');
+    await expect(cache.revalidate('', ['diff'])).resolves.toBeUndefined();
+  });
+
   test('a background (retained, non-active) task is not polled', async () => {
     const { cache, fetchers, poller } = makeCache({ retain: 3 });
     cache.setActiveTask('A'); await flush();

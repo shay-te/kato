@@ -193,7 +193,7 @@ export function SchemaField({ field, value, onChange }) {
         >
           {(field.options || []).map((opt) => (
             <option key={opt} value={opt}>
-              {opt === '' ? '(default)' : opt}
+              {selectOptionLabel(field, opt)}
             </option>
           ))}
         </select>
@@ -228,4 +228,13 @@ export function SchemaField({ field, value, onChange }) {
     </label>
     </>
   );
+}
+
+// What a select shows for ``opt``: the schema's own name for it when it has
+// one (``option_labels`` — the composer's mode names, not ``bypassPermissions``),
+// else the value itself, '' reading as "(default)".
+export function selectOptionLabel(field, opt) {
+  const named = field?.option_labels?.[opt];
+  if (named) { return named; }
+  return opt === '' ? '(default)' : opt;
 }

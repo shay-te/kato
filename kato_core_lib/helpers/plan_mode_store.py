@@ -24,6 +24,7 @@ TWO on-disk shapes, both read:
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -50,6 +51,42 @@ def _norm(task_id: object) -> str:
 
 #: The literal ``--permission-mode`` value for the planning lock.
 PLAN_MODE = 'plan'
+
+#: The setting naming the mode a task starts in when nobody has picked one
+#: for it (Settings → Claude agent → Default mode for new tasks).
+DEFAULT_MODE_ENV = 'KATO_CLAUDE_DEFAULT_MODE'
+#: The composer's modes it may name — '' is "Edit automatically", kato's
+#: built-in default.
+DEFAULT_MODE_CHOICES = ('', 'default', 'explain', PLAN_MODE, 'bypassPermissions')
+#: How an explicit "Edit automatically" pick is kept once a default mode is
+#: set: as '' it would read back as that default.
+EDIT_AUTOMATICALLY_MODE = 'acceptEdits'
+
+
+def configured_default_task_mode() -> str:
+    """The mode a task starts in when nobody picked one for it.
+
+    Read live from the environment, which a Settings save mirrors into, so a
+    change applies to the next spawn without a restart. An unknown value
+    counts as unset: a typo must never become a ``--permission-mode`` that
+    fails every spawn.
+    """
+    value = _norm(os.environ.get(DEFAULT_MODE_ENV))
+    return value if value in DEFAULT_MODE_CHOICES else ''
+
+
+def picked_mode_to_store(mode: object) -> str:
+    """The value to keep for a mode the operator just picked.
+
+    "Edit automatically" is '' — "no mode of its own" — which, once a default
+    mode is set, would read back as THAT default: the pick would never stick.
+    So it is kept as an explicit ``acceptEdits`` then; with no default set,
+    '' as before.
+    """
+    value = _norm(mode)
+    if not value and configured_default_task_mode():
+        return EDIT_AUTOMATICALLY_MODE
+    return value
 
 
 def read_task_modes() -> dict[str, str]:
@@ -120,7 +157,9 @@ def set_plan_mode(task_id: str, on: bool) -> None:
 
 
 def task_permission_mode(task_id: str, default: str = '') -> str:
-    """The operator's persisted ``--permission-mode`` for a task, or ``default``.
+    """The operator's persisted ``--permission-mode`` for a task, else
+    ``default``, else the configured default mode for new tasks
+    (``configured_default_task_mode``) — '' = kato's built-in default.
 
     The single read-side entry point for "what mode did the operator lock
     this task to". It exists because the lock used to be reachable ONLY
@@ -139,4 +178,4 @@ def task_permission_mode(task_id: str, default: str = '') -> str:
     task = _norm(task_id)
     if not task:
         return default
-    return read_task_modes().get(task, '') or default
+    return read_task_modes().get(task, '') or default or configured_default_task_mode()

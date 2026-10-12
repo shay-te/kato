@@ -30,6 +30,7 @@ neither module — never as the Windows answer.
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 from pathlib import Path
 
@@ -46,6 +47,11 @@ except ImportError:  # POSIX
 # ``msvcrt.locking`` is byte-range. One byte at offset 0 is enough: nothing
 # ever reads the lockfile's contents, it exists only to be locked.
 _LOCK_BYTES = 1
+
+# What a non-blocking lock attempt fails with when another holder has it:
+# ``flock`` says EWOULDBLOCK / EAGAIN; ``msvcrt.locking`` EACCES / EDEADLK.
+# Anything else is a filesystem that cannot lock at all — not "held".
+_HELD_ERRNOS = frozenset({errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES, errno.EDEADLK})
 
 
 @contextlib.contextmanager
@@ -102,3 +108,32 @@ def exclusive_file_lock(path: str | os.PathLike[str]):
             yield descriptor
     finally:
         os.close(descriptor)
+
+
+def hold_exclusive_file_lock(path: str | os.PathLike[str]) -> int | None:
+    """Take the exclusive lock on ``<path>.lock`` and keep it — or ``None`` at
+    once when another process holds it.
+
+    For a lock held for a whole process's life (one instance of a program per
+    data folder), where waiting would be wrong: the second instance must hear
+    "taken" now, not block until the first one exits. The lock lasts while the
+    returned descriptor stays open, and the OS releases it when the process
+    ends — a crash leaves nothing stale behind. Same lockfile and primitives as
+    :func:`exclusive_file_lock`. Raises ``OSError`` when the filesystem cannot
+    lock at all (NFS without lockd, some network mounts): that is not "held".
+    """
+    lock_path = Path(str(path) + '.lock')
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if fcntl is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt is not None:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            msvcrt.locking(descriptor, msvcrt.LK_NBLCK, _LOCK_BYTES)
+    except OSError as exc:
+        os.close(descriptor)
+        if exc.errno in _HELD_ERRNOS:
+            return None
+        raise  # the filesystem cannot lock: the caller decides what that means
+    return descriptor

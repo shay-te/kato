@@ -40,9 +40,21 @@ const HOST: &str = "127.0.0.1";
 // through a warning.
 const UI_HOST: &str = "localhost";
 const DEFAULT_PORT: u16 = 5050;
+// The ports the app may give its kato when ``KATO_WEBSERVER_PORT`` names none.
+// The default comes first, so a launch lands where the last one did — the UI
+// keeps its own browser storage (remembered tabs, drafts) per port — and the
+// next ones are taken only while another program holds it.
+const PORT_RANGE: std::ops::RangeInclusive<u16> = DEFAULT_PORT..=5059;
 // First boot can take ~a minute — the frozen sidecar validates the agent CLI +
 // provider connections before the webserver comes up — so allow generous slack.
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
+// The boot log: everything the Kato service printed on its last start.
+const BOOT_LOG_NAME: &str = "kato-desktop.log";
+// Where an error message sends the operator to read it.
+#[cfg(windows)]
+const BOOT_LOG_LOCATION: &str = r"%USERPROFILE%\.kato\kato-desktop.log";
+#[cfg(not(windows))]
+const BOOT_LOG_LOCATION: &str = "~/.kato/kato-desktop.log";
 
 fn main() {
     // Shared handle to the sidecar child so the exit handler can kill it.
@@ -93,7 +105,10 @@ fn main() {
             // launch's sidecar owns the port and serves THIS bundle — not a
             // stale process's old one. Runs before our own spawn, so it only
             // hits stragglers. Best-effort.
-            match &target {
+            // Whether one was there to kill: only then is the port worth
+            // waiting for — a program that simply holds it will not let go,
+            // and waiting for it only delayed every launch by 4s.
+            let killed_straggler = match &target {
                 // The Windows-side wsl.exe is only a relay — killing it does
                 // NOT kill the Linux process on the port, so the straggler has
                 // to be cleared from INSIDE the distro.
@@ -101,12 +116,19 @@ fn main() {
                 BackendTarget::Native => {
                     #[cfg(not(windows))]
                     {
-                        let _ = std::process::Command::new("/usr/bin/pkill")
+                        // pkill exits 0 only when it matched something.
+                        std::process::Command::new("/usr/bin/pkill")
                             .args(["-9", "-f", "kato-sidecar"])
-                            .status();
+                            .status()
+                            .map(|status| status.success())
+                            .unwrap_or(false)
+                    }
+                    #[cfg(windows)]
+                    {
+                        false
                     }
                 }
-            }
+            };
 
             // Clearing a straggler is async — the OS takes a beat to release the
             // socket. WAIT for the port to be genuinely free before spawning the
@@ -114,25 +136,48 @@ fn main() {
             // bind, fails, and the window lands on a half-dead server (the
             // blank-white-on-2nd-launch bug). Bounded so a genuinely-stuck port
             // can't hang boot forever.
-            let port = webserver_port();
-            if let Ok(addr) = format!("{HOST}:{port}").parse::<SocketAddr>() {
-                let mut waited_ms = 0u64;
-                while waited_ms < 4000
-                    && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
-                {
-                    std::thread::sleep(Duration::from_millis(150));
-                    waited_ms += 150;
+            let configured = configured_port(&target);
+            let preferred = configured.unwrap_or(DEFAULT_PORT);
+            if killed_straggler {
+                if let Ok(addr) = format!("{HOST}:{preferred}").parse::<SocketAddr>() {
+                    let mut waited_ms = 0u64;
+                    while waited_ms < 4000
+                        && TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
+                    {
+                        std::thread::sleep(Duration::from_millis(150));
+                        waited_ms += 150;
+                    }
                 }
-                // STILL taken: not one of our own leftovers (those were just
-                // killed) — another program owns the port, most often kato
-                // running in a terminal. Starting ours anyway made it fail to
-                // bind and keep scanning tasks headless, a SECOND kato on the
-                // same ~/.kato, while the window opened on the other program's
-                // server and stayed blank white. Say what is wrong instead.
-                if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
-                    report_fatal(app.handle(), &port_in_use_message(port, port_holder(port)));
+            }
+            // STILL taken: not one of our own leftovers (those were just
+            // killed) — another program owns it. A KATO there (it answers
+            // /healthz) is refused, never moved past: a kato older than the
+            // one-per-~/.kato lock would not keep ours out, and two would work
+            // the same tasks. Anything else: the next free port of the range
+            // (or, held to a configured port, why not).
+            if configured.is_none() && !port_is_free(preferred) && server_answers(HOST, preferred) {
+                report_fatal(app.handle(), &kato_running_message(preferred, port_holder(preferred)));
+                return Ok(());
+            }
+            let port = match choose_port(configured, port_is_free, port_holder) {
+                Ok(port) => port,
+                Err(message) => {
+                    report_fatal(app.handle(), &message);
                     return Ok(());
                 }
+            };
+            // Said on the splash, and kept for the boot log (opened below):
+            // the UI's browser storage — remembered tabs, drafts — is per port,
+            // so a launch on another port starts without them.
+            let mut boot_notes: Vec<String> = Vec::new();
+            if port != preferred {
+                let note = format!(
+                    "port {preferred} is in use{} — Kato is using port {port}.",
+                    port_holder(preferred).map(|h| format!(" by {h}")).unwrap_or_default(),
+                );
+                println!("[kato] {note}");
+                let _ = app.handle().emit("kato-log", note.clone());
+                boot_notes.push(note);
             }
 
             // 1) Spawn the frozen kato sidecar with no args — its entry
@@ -162,7 +207,9 @@ fn main() {
                     // distro's PATH itself, and forcing Windows paths onto it
                     // would corrupt the Linux environment (the login shell in
                     // spawn_args does that job instead).
-                    Ok(sidecar) => sidecar.env("PATH", augmented_path()),
+                    Ok(sidecar) => sidecar
+                        .env("PATH", augmented_path())
+                        .env("KATO_WEBSERVER_PORT", port.to_string()),
                     Err(err) => {
                         report_fatal(
                             app.handle(),
@@ -177,10 +224,14 @@ fn main() {
                 BackendTarget::Wsl { distro } => {
                     let binary = wsl::sidecar_binary_name();
                     match prepare_wsl_backend(app.handle(), distro, &binary) {
+                        // WSL_UTF8: wsl.exe's own messages ("the instance has
+                        // terminated") in UTF-8, not UTF-16, so the splash can
+                        // read them as the service's last line.
                         Ok(()) => app
                             .shell()
                             .command("wsl.exe")
-                            .args(wsl::spawn_args(distro, &binary)),
+                            .env("WSL_UTF8", "1")
+                            .args(wsl::spawn_args(distro, &binary, port)),
                         Err(message) => {
                             // Fail LOUDLY on the splash rather than spinning:
                             // a missing tool inside the distro is a fixable
@@ -208,32 +259,46 @@ fn main() {
             // so a slow first boot (agent-CLI validation can take ~a minute)
             // reads as live progress instead of a frozen spinner.
             let log_handle = app.handle().clone();
-            // Tee the sidecar output to ~/.kato/kato-desktop.log so a FINDER
-            // launch failure (whose stdout goes to /dev/null) is diagnosable —
-            // truncated each launch so it holds only the latest boot.
-            let mut boot_log = std::env::var("HOME").ok().and_then(|home| {
-                std::fs::OpenOptions::new()
+            // Tee the sidecar output to the boot log (``kato_dir``) so a launch
+            // failure is diagnosable — a Finder launch's stdout goes to
+            // /dev/null and a Windows GUI app has no console at all. Truncated
+            // each launch so it holds only the latest boot.
+            let mut boot_log = kato_dir().and_then(|dir| {
+                use std::io::Write;
+                let _ = std::fs::create_dir_all(&dir);
+                let mut file = std::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
                     .truncate(true)
-                    .open(format!("{home}/.kato/kato-desktop.log"))
-                    .ok()
+                    .open(dir.join(BOOT_LOG_NAME))
+                    .ok()?;
+                for note in &boot_notes {
+                    let _ = writeln!(file, "[kato] {note}");
+                }
+                Some(file)
             });
             tauri::async_runtime::spawn(async move {
                 use std::io::Write;
+                // What the service last said — when it stops, the reason it
+                // stopped is most often that line (another kato on this
+                // ~/.kato, a missing setting), so the splash shows it.
+                let mut last_said = String::new();
                 while let Some(event) = rx.recv().await {
                     let line = match event {
                         CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
-                            String::from_utf8_lossy(&bytes).into_owned()
+                            let text = String::from_utf8_lossy(&bytes).into_owned();
+                            if let Some(said) = text.lines().rev().find(|l| !l.trim().is_empty()) {
+                                last_said = last_line_for_splash(said);
+                            }
+                            text
                         }
                         // The sidecar process exited before it ever served the UI.
                         // Emit a fatal marker so the splash shows an error instead
                         // of spinning "loading" forever.
                         CommandEvent::Terminated(payload) => {
                             format!(
-                                "KATO-FATAL: the Kato service exited (code {:?}) before it \
-                                 could start. Open ~/.kato/kato-desktop.log for details.",
-                                payload.code
+                                "KATO-FATAL: {}",
+                                stopped_message(payload.code, payload.signal, &last_said),
                             )
                         }
                         CommandEvent::Error(err) => {
@@ -333,7 +398,7 @@ fn main() {
                         &app_handle,
                         &format!(
                             "the Kato server did not answer on port {port} within {} minutes. \
-                             The details are in ~/.kato/kato-desktop.log.",
+                             The details are in {BOOT_LOG_LOCATION}.",
                             READY_TIMEOUT.as_secs() / 60
                         ),
                     );
@@ -568,12 +633,139 @@ fn is_ok_status_line(head: &str) -> bool {
         && parts.next() == Some("200")
 }
 
-/// The port kato's webserver binds (``KATO_WEBSERVER_PORT``, else 5050).
-fn webserver_port() -> u16 {
+/// ``~/.kato`` — kato's own folder, where the boot log is written. On Windows
+/// that is ``%USERPROFILE%\.kato``: HOME is usually unset there, and reading
+/// HOME alone meant the boot log was never written on Windows at all.
+fn kato_dir() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        wsl::windows_state_dir()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("HOME")
+            .ok()
+            .filter(|home| !home.is_empty())
+            .map(|home| std::path::PathBuf::from(home).join(".kato"))
+    }
+}
+
+/// The port the operator set, kept to exactly: ``KATO_WEBSERVER_PORT`` in the
+/// app's own environment, else in kato's settings.json — where the Settings UI
+/// writes it, and all a Dock / Start-menu launch has. Read where this launch's
+/// kato reads it: on this machine, or inside the WSL distro.
+fn configured_port(target: &BackendTarget) -> Option<u16> {
     std::env::var("KATO_WEBSERVER_PORT")
         .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+        .and_then(|value| parse_port(&value))
+        .or_else(|| settings_port(&settings_text(target)?))
+}
+
+fn parse_port(text: &str) -> Option<u16> {
+    text.trim().parse::<u16>().ok().filter(|port| *port > 0)
+}
+
+/// ``KATO_WEBSERVER_PORT`` in settings.json's text — a flat map, values
+/// strings (a hand edit may have put a number).
+fn settings_port(text: &str) -> Option<u16> {
+    let settings: serde_json::Value = serde_json::from_str(text).ok()?;
+    match settings.get("KATO_WEBSERVER_PORT")? {
+        serde_json::Value::String(value) => parse_port(value),
+        serde_json::Value::Number(value) => {
+            value.as_u64().and_then(|n| u16::try_from(n).ok()).filter(|port| *port > 0)
+        }
+        _ => None,
+    }
+}
+
+/// kato's settings.json, from the side its kato runs on (``KATO_SETTINGS_FILE``
+/// overrides the path, as it does for kato).
+fn settings_text(target: &BackendTarget) -> Option<String> {
+    match target {
+        BackendTarget::Native => {
+            let path = std::env::var("KATO_SETTINGS_FILE")
+                .ok()
+                .filter(|path| !path.trim().is_empty())
+                .map(std::path::PathBuf::from)
+                .or_else(|| kato_dir().map(|dir| dir.join("settings.json")))?;
+            std::fs::read_to_string(path).ok()
+        }
+        BackendTarget::Wsl { distro } => {
+            let read = "cat \"${KATO_SETTINGS_FILE:-$HOME/.kato/settings.json}\"";
+            let output = wsl::run_wsl(&["-d", distro, "--", "bash", "-lc", read])?;
+            output.ok.then_some(output.stdout)
+        }
+    }
+}
+
+/// Nothing answers on ``port`` — on IPv4 or IPv6 loopback, since the window
+/// opens ``localhost``, which may be either — and it can be bound here.
+fn port_is_free(port: u16) -> bool {
+    let answers = |addr: &str| {
+        addr.parse::<SocketAddr>()
+            .map(|addr| TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok())
+            .unwrap_or(false)
+    };
+    !answers(&format!("{HOST}:{port}"))
+        && !answers(&format!("[::1]:{port}"))
+        && std::net::TcpListener::bind((HOST, port)).is_ok()
+}
+
+/// The port this launch's kato serves on: the configured one, kept to (or why
+/// it can't be), else the first free one of ``PORT_RANGE``.
+fn choose_port(
+    configured: Option<u16>,
+    is_free: impl Fn(u16) -> bool,
+    holder: impl Fn(u16) -> Option<String>,
+) -> Result<u16, String> {
+    if let Some(port) = configured {
+        return if is_free(port) { Ok(port) } else { Err(port_in_use_message(port, holder(port))) };
+    }
+    PORT_RANGE.clone().find(|port| is_free(*port)).ok_or_else(|| {
+        format!(
+            "every port Kato may use ({}–{}) is in use by other programs. Stop one of them, \
+             or set Kato's webserver port (Settings, or KATO_WEBSERVER_PORT) to a free one.",
+            PORT_RANGE.start(),
+            PORT_RANGE.end(),
+        )
+    })
+}
+
+/// The service stopped before it served the UI: how, and what it last said,
+/// which is most often why.
+fn stopped_message(code: Option<i32>, signal: Option<i32>, last_said: &str) -> String {
+    let how = match (code, signal) {
+        (Some(code), _) => format!(" (exit code {code})"),
+        (None, Some(signal)) => format!(" (ended by signal {signal})"),
+        (None, None) => String::new(),
+    };
+    let said = if last_said.is_empty() { String::new() } else { format!(" It said: {last_said}") };
+    format!(
+        "the Kato service stopped{how} before it could start.{said} \
+         Details: {BOOT_LOG_LOCATION}."
+    )
+}
+
+/// A line of the service's output, as the splash shows it: trimmed, and its
+/// end kept when long — a traceback's last line is the error itself.
+fn last_line_for_splash(line: &str) -> String {
+    const MAX_CHARS: usize = 300;
+    let line = line.trim();
+    let count = line.chars().count();
+    if count <= MAX_CHARS {
+        return line.to_string();
+    }
+    let tail: String = line.chars().skip(count - MAX_CHARS).collect();
+    format!("…{tail}")
+}
+
+/// A kato already answers on the port the app would use.
+fn kato_running_message(port: u16, holder: Option<String>) -> String {
+    let who = holder.map(|h| format!(" ({h})")).unwrap_or_default();
+    format!(
+        "Kato is already running on port {port}{who} — most likely `kato up` in a \
+         terminal. Two would work the same tasks: stop it, then reopen Kato."
+    )
 }
 
 /// The boot failure the splash shows.
@@ -602,12 +794,14 @@ fn report_fatal(app: &tauri::AppHandle, message: &str) {
     let _ = app.emit("kato-log", fatal);
 }
 
-/// What the operator reads when another program already holds the port.
+/// What the operator reads when another program already holds the port they
+/// set (``KATO_WEBSERVER_PORT``).
 fn port_in_use_message(port: u16, holder: Option<String>) -> String {
     let who = holder.map(|h| format!(" ({h})")).unwrap_or_default();
     format!(
         "port {port} is already in use by another program{who} — most likely Kato \
-         running in a terminal (`kato up`). Stop it, then reopen Kato."
+         running in a terminal (`kato up`). It is the port KATO_WEBSERVER_PORT sets, \
+         so Kato keeps to it: stop that program, or set another port, then reopen Kato."
     )
 }
 
@@ -651,8 +845,88 @@ mod tests {
     fn the_message_names_the_port_and_who_holds_it() {
         let message = port_in_use_message(5050, Some("Python, PID 1998".into()));
         assert!(message.starts_with("port 5050 is already in use by another program (Python, PID 1998)"));
-        assert!(message.contains("Stop it, then reopen Kato."));
+        assert!(message.contains("KATO_WEBSERVER_PORT sets, so Kato keeps to it"));
         assert!(port_in_use_message(5050, None).starts_with("port 5050 is already in use by another program — "));
+    }
+
+    #[test]
+    fn a_taken_default_moves_to_the_next_free_port_of_the_range() {
+        let taken = [5050u16, 5051];
+        let free = |port: u16| !taken.contains(&port);
+        assert_eq!(choose_port(None, free, |_| None), Ok(5052));
+        assert_eq!(choose_port(None, |_| true, |_| None), Ok(DEFAULT_PORT));
+    }
+
+    #[test]
+    fn a_configured_port_is_kept_to_or_refused_never_moved() {
+        assert_eq!(choose_port(Some(6000), |_| true, |_| None), Ok(6000));
+        let refused = choose_port(Some(6000), |_| false, |_| Some("nginx".into())).unwrap_err();
+        assert!(refused.starts_with("port 6000 is already in use by another program (nginx)"));
+    }
+
+    #[test]
+    fn only_ports_of_the_range_are_ever_chosen() {
+        let refused = choose_port(None, |_| false, |_| None).unwrap_err();
+        assert!(refused.starts_with("every port Kato may use (5050–5059) is in use"));
+        let seen = std::cell::RefCell::new(Vec::new());
+        let _ = choose_port(None, |port| { seen.borrow_mut().push(port); false }, |_| None);
+        assert_eq!(*seen.borrow(), (5050..=5059).collect::<Vec<u16>>());
+    }
+
+    #[test]
+    fn a_port_something_answers_on_is_not_free() {
+        let listener = std::net::TcpListener::bind((HOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!port_is_free(port));
+        drop(listener);
+        assert!(port_is_free(port));
+    }
+
+    #[test]
+    fn a_stop_says_how_and_what_the_service_last_said() {
+        let message = stopped_message(Some(1), None, "ERROR another kato is already running on /home/a/.kato");
+        assert!(message.starts_with("the Kato service stopped (exit code 1) before it could start."));
+        assert!(message.contains(" It said: ERROR another kato is already running on /home/a/.kato"));
+        assert!(stopped_message(None, Some(9), "").starts_with("the Kato service stopped (ended by signal 9) before"));
+        let bare = stopped_message(None, None, "");
+        assert!(bare.starts_with("the Kato service stopped before it could start."));
+        assert!(!bare.contains("It said"));
+    }
+
+    #[test]
+    fn a_long_last_line_keeps_its_end() {
+        assert_eq!(last_line_for_splash("  short  "), "short");
+        let long = format!("{}ValueError: settings.json is not JSON", "x".repeat(400));
+        let shown = last_line_for_splash(&long);
+        assert!(shown.starts_with('…'));
+        assert!(shown.ends_with("ValueError: settings.json is not JSON"));
+        assert_eq!(shown.chars().count(), 301);
+    }
+
+    #[test]
+    fn a_port_set_in_settings_is_read_from_its_text() {
+        assert_eq!(settings_port(r#"{"KATO_WEBSERVER_PORT": "6000", "OTHER": "x"}"#), Some(6000));
+        assert_eq!(settings_port(r#"{"KATO_WEBSERVER_PORT": 6001}"#), Some(6001));
+        for unset in [r#"{}"#, r#"{"KATO_WEBSERVER_PORT": ""}"#, r#"{"KATO_WEBSERVER_PORT": "0"}"#,
+                      r#"{"KATO_WEBSERVER_PORT": "99999"}"#, r#"{"KATO_WEBSERVER_PORT": true}"#,
+                      "not json", "[1]"] {
+            assert_eq!(settings_port(unset), None, "{unset}");
+        }
+    }
+
+    #[test]
+    fn a_kato_on_the_port_is_named_as_kato() {
+        let message = kato_running_message(5050, Some("Python, PID 1998".into()));
+        assert!(message.starts_with("Kato is already running on port 5050 (Python, PID 1998)"));
+        assert!(message.contains("Two would work the same tasks"));
+    }
+
+    #[test]
+    fn a_port_held_on_ipv6_loopback_only_is_not_free() {
+        // The window opens localhost, which may resolve to ::1 first.
+        let Ok(listener) = std::net::TcpListener::bind(("::1", 0)) else { return };  // no IPv6 here
+        let port = listener.local_addr().unwrap().port();
+        assert!(!port_is_free(port));
     }
 
     #[test]

@@ -49,7 +49,9 @@ export const AGENT_MODES = [
 export const DEFAULT_AGENT_MODE = '';
 
 export function agentModeEntry(mode) {
-  const wanted = String(mode ?? '');
+  // ``acceptEdits`` is how an explicit "Edit automatically" pick is kept once
+  // a default mode for new tasks is set (plan_mode_store.picked_mode_to_store).
+  const wanted = mode === 'acceptEdits' ? '' : String(mode ?? '');
   return AGENT_MODES.find((entry) => entry.mode === wanted)
     || AGENT_MODES.find((entry) => entry.mode === DEFAULT_AGENT_MODE);
 }

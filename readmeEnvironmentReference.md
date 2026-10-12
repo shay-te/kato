@@ -151,6 +151,7 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_CLAUDE_MODEL` | Optional model id passed via `--model` (e.g. `claude-opus-4-7`). Empty uses the CLI default. |
 | `KATO_CLAUDE_MAX_TURNS` | Optional cap on agent turns per task, passed via `--max-turns`. Empty means no cap. |
 | `KATO_CLAUDE_EFFORT` | Optional reasoning depth passed via `--effort` (`low`/`medium`/`high`/`xhigh`/`max`). Empty leaves Claude on its built-in default. |
+| `KATO_CLAUDE_DEFAULT_MODE` | The mode a task starts in until you pick another in the composer: empty = Edit automatically, `default` = Manual, `explain`, `plan`, or `bypassPermissions` = Auto. Covers the chat and the autonomous run. Tasks tagged `kato:wait-planning` still start in Plan, and a task you already picked a mode for keeps it. Settings → Claude agent; applies from the next message. |
 | `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
 | `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
 | `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts) inside the hardened Docker sandbox. When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root, refused under CI/Docker/cron (no TTY for confirmation), and double-prompted on the terminal at every interactive startup. See [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md). |

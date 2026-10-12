@@ -75,12 +75,12 @@ export function createTaskCache({
 
   // Refresh named types (or all) for a task. Callers say WHAT changed, not
   // HOW to refetch. Single-flight in each child coalesces overlapping calls.
+  // Resolves once every one of them has settled (a load never rejects — a
+  // failure lands in its slice), for a caller that shows a retry in flight.
   function revalidate(taskId, types) {
-    if (!taskId) { return; }
+    if (!taskId) { return Promise.resolve(); }
     const names = types && types.length ? types : Object.keys(children);
-    for (const name of names) {
-      if (children[name]) { children[name].load(taskId); }
-    }
+    return Promise.all(names.filter((name) => children[name]).map((name) => children[name].load(taskId)));
   }
 
   // Ticks stay on ``intervalMs`` and the IDLE ones are dropped, rather than

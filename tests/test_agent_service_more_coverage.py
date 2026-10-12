@@ -1941,6 +1941,41 @@ class TaskPublishStateTests(unittest.TestCase):
         ])
         self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
 
+    def test_a_git_host_that_does_not_answer_in_time_costs_only_its_repository(self) -> None:
+        # Asked one after another, one slow host (or many repositories) outran
+        # the page's wait and the whole list failed.
+        import threading
+        import time as time_module
+        fast, slow = SimpleNamespace(id='api'), SimpleNamespace(id='lib')
+        release = threading.Event()
+        self.addCleanup(release.set)
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+
+        def _find_pull_requests(repository, source_branch='', title_prefix=''):
+            if repository is slow:
+                release.wait(10)
+                return []
+            return [{'id': '3', 'title': 'T1', 'url': 'https://example.com/pr/3'}]
+
+        repo.find_pull_requests.side_effect = _find_pull_requests
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        started = time_module.monotonic()
+        with patch.object(service.publish, 'PULL_REQUEST_LOOKUP_SECONDS', 0.3), \
+                patch.object(service.publish, '_resolve_publish_context',
+                             return_value=([fast, slow], 'T1', SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+        self.assertLess(time_module.monotonic() - started, 3.0)
+        self.assertEqual(result['repositories'], [
+            {'repository_id': 'api', 'lookup_failed': False,
+             'pull_request': {'id': '3', 'title': 'T1', 'url': 'https://example.com/pr/3'}},
+            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True},
+        ])
+        self.assertFalse(result['has_pull_request'])
+        warning = ' '.join(str(arg) for arg in service.logger.warning.call_args[0])
+        self.assertIn('did not answer within', warning)
+
     def test_a_rejected_credential_marks_its_repository_unchecked(self) -> None:
         repo_obj = SimpleNamespace(id='client')
         repo = MagicMock()

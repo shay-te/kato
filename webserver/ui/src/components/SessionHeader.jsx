@@ -504,6 +504,8 @@ export default function SessionHeader({
           {/* The task's pull requests, per repository: open or copy each. */}
           <PullRequestList
             repositories={taskPublish.pullRequestRepositories}
+            status={taskPublish.pullRequestStatus}
+            fetchError={taskPublish.pullRequestFetchError}
             lookupError={taskPublish.pullRequestLookupError}
             onOpen={taskPublish.refresh}
           />

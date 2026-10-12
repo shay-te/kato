@@ -13,7 +13,7 @@ vi.mock('../api.js', () => ({
   fetchOpenRouterModels: (...args) => fetchOpenRouterModels(...args),
 }));
 
-import { SchemaField, resetDatalistCacheForTests } from './SchemaSettingsPanel.jsx';
+import { SchemaField, resetDatalistCacheForTests, selectOptionLabel } from './SchemaSettingsPanel.jsx';
 
 const OPENROUTER_FIELD = {
   key: 'OPENHANDS_LLM_MODEL',
@@ -73,5 +73,27 @@ describe('SchemaField — datalist autocomplete', () => {
     expect(container.querySelectorAll('datalist option').length).toBe(0);
     // Still a normal text input — operator can type a slug by hand.
     expect(container.querySelector('input')).not.toBeNull();
+  });
+});
+
+describe('SchemaField — select labels', () => {
+  const MODE_FIELD = {
+    key: 'KATO_CLAUDE_DEFAULT_MODE', type: 'select', label: 'Default mode for new tasks',
+    options: ['', 'default', 'bypassPermissions'],
+    option_labels: { '': 'Edit automatically', default: 'Manual', bypassPermissions: 'Auto' },
+  };
+
+  test('a select shows the schema\'s names for its options, its values unchanged', () => {
+    const { container } = render(<SchemaField field={MODE_FIELD} value="" onChange={() => {}} />);
+    const options = [...container.querySelectorAll('select option')];
+    expect(options.map((o) => [o.value, o.textContent])).toEqual([
+      ['', 'Edit automatically'], ['default', 'Manual'], ['bypassPermissions', 'Auto'],
+    ]);
+  });
+
+  test('without names, a value is its own label and empty reads "(default)"', () => {
+    expect(selectOptionLabel({ options: ['', 'low'] }, '')).toBe('(default)');
+    expect(selectOptionLabel({ options: ['', 'low'] }, 'low')).toBe('low');
+    expect(selectOptionLabel(null, 'x')).toBe('x');
   });
 });

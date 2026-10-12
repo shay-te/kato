@@ -30,6 +30,15 @@ describe('ComposerModeMenu', () => {
     ).toBeInTheDocument();
   });
 
+  test('an explicit "Edit automatically" pick reads as that mode', () => {
+    // How the pick is kept once a default mode for new tasks is set.
+    open({ mode: 'acceptEdits' });
+    const checked = screen.getAllByRole('menuitemradio')
+      .filter((i) => i.getAttribute('aria-checked') === 'true');
+    expect(checked).toHaveLength(1);
+    expect(checked[0]).toHaveTextContent(/edit automatically/i);
+  });
+
   test('offers every mode with the active one checked', () => {
     open({ mode: 'plan' });
     const items = screen.getAllByRole('menuitemradio');

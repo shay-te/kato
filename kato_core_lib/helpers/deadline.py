@@ -14,6 +14,7 @@ needs).
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable
 
 
@@ -49,3 +50,40 @@ def run_with_deadline(
                 pass
         return default
     return box.get('value', default)
+
+
+def run_all_with_deadline(
+    works: list[Callable[[], Any]],
+    *,
+    seconds: float,
+    default: Any = None,
+) -> list[Any]:
+    """Run every ``work`` at once; return each result in order, or ``default``
+    for one that outran the shared ``seconds`` (or raised).
+
+    The whole call takes at most ``seconds``, however many there are — a
+    slow one only costs its own answer. Abandons what is late, exactly as
+    :func:`run_with_deadline` does.
+    """
+    boxes: list[dict[str, Any]] = [{} for _ in works]
+
+    def _run(work: Callable[[], Any], box: dict[str, Any]) -> None:
+        try:
+            box['value'] = work()
+        except Exception:
+            box['failed'] = True
+
+    workers = [
+        threading.Thread(target=_run, args=(work, box), daemon=True, name='deadline-probe')
+        for work, box in zip(works, boxes)
+    ]
+    for worker in workers:
+        worker.start()
+    deadline = time.monotonic() + max(0.0, float(seconds))
+    for worker in workers:
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
+    return [
+        default if worker.is_alive() else box.get('value', default)
+        for worker, box in zip(workers, boxes)
+    ]
+

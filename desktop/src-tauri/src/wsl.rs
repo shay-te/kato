@@ -388,20 +388,26 @@ pub fn preflight_missing_tools(distro: &str, tools: &[&str]) -> Vec<String> {
 /// The Windows-side `wsl.exe` process is only a relay: killing IT does not kill
 /// the Linux process holding port 5050, so without this the next launch
 /// collides with a straggler — the white-screen bug, in its WSL form.
-pub fn kill_stragglers(distro: &str) {
-    let _ = run_wsl(&["-d", distro, "--", "pkill", "-9", "-f", "kato-sidecar"]);
+/// Returns whether there was one: ``pkill`` exits 0 only when it matched.
+pub fn kill_stragglers(distro: &str) -> bool {
+    run_wsl(&["-d", distro, "--", "pkill", "-9", "-f", "kato-sidecar"])
+        .map(|output| output.ok)
+        .unwrap_or(false)
 }
 
 /// Arguments for spawning the backend: a LOGIN shell inside the distro, so the
 /// profile that puts `git` and the agent CLI on PATH is sourced before exec.
-pub fn spawn_args(distro: &str, binary: &str) -> Vec<String> {
+///
+/// ``port`` goes in on the command line: an environment variable set on
+/// ``wsl.exe`` does not reach the Linux side (that takes ``WSLENV``).
+pub fn spawn_args(distro: &str, binary: &str, port: u16) -> Vec<String> {
     vec![
         "-d".to_string(),
         distro.to_string(),
         "--".to_string(),
         "bash".to_string(),
         "-lc".to_string(),
-        format!("exec \"$HOME/.kato/bin/{binary}\""),
+        format!("export KATO_WEBSERVER_PORT={port}; exec \"$HOME/.kato/bin/{binary}\""),
     ]
 }
 
@@ -484,11 +490,21 @@ mod tests {
 
     #[test]
     fn spawn_uses_a_login_shell_and_the_versioned_binary() {
-        let args = spawn_args("Ubuntu", "kato-sidecar-0.1.0");
+        let args = spawn_args("Ubuntu", "kato-sidecar-0.1.0", 5050);
         assert_eq!(args[0], "-d");
         assert_eq!(args[1], "Ubuntu");
         assert!(args.contains(&"-lc".to_string()));
         assert!(args.last().unwrap().contains("kato-sidecar-0.1.0"));
+    }
+
+    #[test]
+    fn the_port_reaches_the_linux_side_on_the_command_line() {
+        // An env var set on wsl.exe stops at the Windows side.
+        let args = spawn_args("Ubuntu", "kato-sidecar-0.2.1", 5053);
+        assert_eq!(
+            args.last().unwrap(),
+            "export KATO_WEBSERVER_PORT=5053; exec \"$HOME/.kato/bin/kato-sidecar-0.2.1\"",
+        );
     }
 
     #[test]

@@ -29,9 +29,32 @@ export function pullRequestTone(repositories) {
   return open && open === total ? 'good' : 'warn';
 }
 
+// ``{ disabled, tooltip }`` for the header button. Only an answer from the
+// server is a list: still loading, failed, or not listed by an older kato is
+// said as such — never as "no repositories", which is what got reported.
+export function pullRequestButtonState({ repositories, status = 'ready', fetchError = '' } = {}) {
+  if (status === 'error') {
+    return {
+      disabled: false,
+      tooltip: `Could not check the pull requests${fetchError ? ` (${fetchError})` : ''}. Click to try again.`,
+    };
+  }
+  if (status === 'idle' || status === 'loading') {
+    return { disabled: true, tooltip: 'Checking the pull requests…' };
+  }
+  if (!Array.isArray(repositories)) {
+    return {
+      disabled: true,
+      tooltip: 'This kato server is older than this page and does not list pull requests '
+        + 'per repository. Restart kato.',
+    };
+  }
+  return { disabled: repositories.length === 0, tooltip: pullRequestListTooltip(repositories) };
+}
+
 export function pullRequestListTooltip(repositories) {
   const { open, total, unchecked } = pullRequestCounts(repositories);
-  if (!total) { return 'Pull requests — no repositories on this task to check yet.'; }
+  if (!total) { return 'Pull requests — this task has no repositories to check.'; }
   const repos = total === 1 ? 'repository' : 'repositories';
   const parts = [`Pull requests open in ${open} of ${total} ${repos}`];
   if (unchecked) { parts.push(`${unchecked} could not be checked`); }

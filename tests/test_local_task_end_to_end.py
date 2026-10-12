@@ -194,6 +194,13 @@ class NewTaskEndToEndTests(unittest.TestCase):
         self.assertNotEqual(argv[argv.index('--permission-mode') + 1], 'plan')
         self.assertIn('Implement this task.', message['text'])
 
+    def test_implement_still_edits_with_a_plan_default_for_new_tasks(self) -> None:
+        # "Implement" is a pick: a Plan default must not turn it into planning.
+        with mock.patch.dict(os.environ, {'KATO_CLAUDE_DEFAULT_MODE': 'plan'}):
+            self.assertEqual(self.create(start_mode='implement').status_code, 202)
+            argv = self.first_message()['argv']
+        self.assertEqual(argv[argv.index('--permission-mode') + 1], 'acceptEdits')
+
     def test_just_open_the_chat_clones_and_sends_nothing(self) -> None:
         self.assertEqual(self.create(start_mode='chat').status_code, 202)
         self.wait_for_clone('LOCAL-1')

@@ -160,3 +160,107 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false
+
+      # The installer THIS build made, kept for windows-sign: what SignPath
+      # signs is the file built here — not a copy taken back out of the
+      # release, which anything that can write the release could swap first.
+      - name: Keep the unsigned installer for signing
+        if: matrix.os == 'windows-latest' && vars.SIGNPATH_PROJECT_SLUG != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-unsigned
+          path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+  # Windows signing through SignPath Foundation — free code signing for
+  # open-source projects. Runs only once the project is set up there: the
+  # repository VARIABLES SIGNPATH_ORGANIZATION_ID / SIGNPATH_PROJECT_SLUG /
+  # SIGNPATH_SIGNING_POLICY_SLUG and the SECRET SIGNPATH_API_TOKEN
+  # (desktop/signpath/README.md). Until then the installer ships unsigned, as
+  # before — nothing here runs.
+  #
+  # After EVERY build is up, so it never races the jobs merging latest.json:
+  # the installer the Windows build kept is signed and put in the draft
+  # release in place of the unsigned one. The auto-updater checks a signature
+  # made over the installer's exact bytes, so that signature — the .sig asset
+  # and its copy in latest.json — is made again over the signed file;
+  # otherwise every installed app would refuse the update. Re-running it signs
+  # the same built file again, never an already-signed one.
+  windows-sign:
+    needs: build
+    # Not skipped when another platform's build failed (a bare `if:` implies
+    # success()): the Windows installer that was built still gets signed, and
+    # one that was not makes this job fail loudly instead of a draft silently
+    # holding an unsigned installer.
+    if: ${{ !cancelled() && vars.SIGNPATH_PROJECT_SLUG != '' }}
+    runs-on: ubuntu-latest
+    # actions: read — SignPath reads this run's job and its artifact.
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find the installer the Windows build kept
+        id: unsigned
+        shell: bash
+        run: |
+          id="$(gh api "repos/$REPO/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name == "windows-installer-unsigned") | .id' | head -n 1)"
+          [ -n "$id" ] || { echo "The Windows build kept no installer to sign — did it fail?"; exit 1; }
+          echo "artifact-id=$id" >> "$GITHUB_OUTPUT"
+
+      # Waits for the signing — and for an approver to approve it in SignPath
+      # (the Foundation requires one per release): up to an hour.
+      - name: Sign it (SignPath Foundation)
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Sign it for the auto-updater again, over the signed bytes
+        shell: bash
+        working-directory: desktop
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npm ci
+          for installer in ../signed/*-setup.exe; do
+            npx tauri signer sign "$installer" < /dev/null
+          done
+
+      - name: Put the signed installer back, and its signature in latest.json
+        shell: bash
+        run: |
+          shopt -s nullglob
+          installers=(signed/*-setup.exe)
+          [ ${#installers[@]} -gt 0 ] || { echo "SignPath returned no installer"; exit 1; }
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --dir feed
+          cp feed/latest.json latest.json
+          for installer in "${installers[@]}"; do
+            name="$(basename "$installer")"
+            jq -e --arg name "$name" 'any(.platforms[]; .url | endswith("/" + $name))' latest.json > /dev/null \
+              || { echo "latest.json has no entry for $name"; exit 1; }
+            gh release upload "$TAG" --repo "$REPO" --clobber "$installer" "$installer.sig"
+            # Every platform entry the updater reaches this installer by.
+            jq --arg name "$name" --rawfile sig "$installer.sig" \
+              '.platforms |= with_entries(if (.value.url | endswith("/" + $name)) then .value.signature = ($sig | rtrimstr("\n")) else . end)' \
+              latest.json > latest.next.json
+            mv latest.next.json latest.json
+          done
+          gh release upload "$TAG" --repo "$REPO" --clobber latest.json
+

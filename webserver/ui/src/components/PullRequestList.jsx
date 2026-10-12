@@ -5,9 +5,9 @@ import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
 import {
   pullRequestBadge,
+  pullRequestButtonState,
   pullRequestCounts,
   pullRequestLabel,
-  pullRequestListTooltip,
   pullRequestTone,
   pullRequestUrls,
 } from '../utils/pullRequestList.js';
@@ -19,18 +19,30 @@ import {
 // that kato could not ask, which is not the same thing.
 //
 // ``onOpen`` runs as the list opens, to look the pull requests up again: they
-// are fetched on demand, never polled.
-export default function PullRequestList({ repositories = [], lookupError = '', onOpen = () => {} }) {
+// are fetched on demand, never polled. ``status`` / ``fetchError`` are that
+// lookup's: loading or failed is said as such, never as an empty list — and a
+// failed one can be tried again from the list (``onOpen``'s promise says when
+// that try is over).
+export default function PullRequestList({
+  repositories: listed = [], status = 'ready', fetchError = '', lookupError = '', onOpen = () => {},
+}) {
   const [open, setOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const rootRef = useRef(null);
   useDismissOnOutsidePointerOrEscape(open, () => setOpen(false), rootRef);
 
+  const button = pullRequestButtonState({ repositories: listed, status, fetchError });
+  const repositories = Array.isArray(listed) ? listed : [];
   const badge = pullRequestBadge(repositories);
   const { open: openCount, total } = pullRequestCounts(repositories);
   const urls = pullRequestUrls(repositories);
   function toggle() {
     if (!open) { onOpen(); }
     setOpen((was) => !was);
+  }
+  function retry() {
+    setRetrying(true);
+    Promise.resolve(onOpen()).finally(() => setRetrying(false));
   }
   // A click is a direct user gesture, so the browser allows the batch;
   // ``noopener,noreferrer`` keeps the pages from reaching back into kato.
@@ -42,7 +54,17 @@ export default function PullRequestList({ repositories = [], lookupError = '', o
       {badge}
     </span>
   ) : null;
-  const note = lookupError ? <p className="composer-mode-popover-note is-warn">{lookupError}</p> : null;
+  let note = lookupError ? <p className="composer-mode-popover-note is-warn">{lookupError}</p> : null;
+  if (status === 'error') {
+    note = (
+      <div className="composer-mode-popover-note is-warn">
+        {`Could not check the pull requests${fetchError ? ` (${fetchError})` : ''}.`}
+        <button type="button" className="composer-mode-release" onClick={retry} disabled={retrying}>
+          {retrying ? 'Checking again…' : 'Try again'}
+        </button>
+      </div>
+    );
+  }
   const rows = repositories.map((repository) => (
     <PullRequestRow key={repository.repositoryId} repository={repository} />
   ));
@@ -67,11 +89,11 @@ export default function PullRequestList({ repositories = [], lookupError = '', o
         id="session-open-pull-request"
         type="button"
         className="session-action pull-request-list-toggle"
-        data-tooltip={pullRequestListTooltip(repositories)}
+        data-tooltip={button.tooltip}
         aria-label={`Pull requests: ${openCount} of ${total} open`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        disabled={total === 0}
+        disabled={button.disabled}
         onClick={toggle}
       >
         <Icon name="external-link" />

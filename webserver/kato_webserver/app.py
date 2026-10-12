@@ -1104,13 +1104,15 @@ def _task_mode_of(app: Flask, task_id: str) -> str:
     """The mode the task's next spawn runs with ('' = kato's configured default).
 
     Plan while the ``kato:wait-planning`` tag holds the task, whatever the
-    operator picked; otherwise the operator's pick.
+    operator picked; otherwise the operator's pick; otherwise the default
+    mode for new tasks (Settings → Claude agent).
     """
+    from kato_core_lib.helpers.plan_mode_store import configured_default_task_mode
     from kato_core_lib.helpers.planning_hold_store import held_permission_mode
     return held_permission_mode(
         task_id,
         (app.config.get('TASK_PLAN_MODE_OVERRIDES') or {}).get(str(task_id), '')
-        or '',
+        or configured_default_task_mode(),
     )
 
 
@@ -1869,6 +1871,10 @@ def _register_http_routes(app: Flask) -> None:
                 'error': f'unknown mode {mode!r}',
                 'allowed': sorted(AGENT_PERMISSION_MODES),
             }), 400
+        # "Edit automatically" picked while a default mode is set: kept as an
+        # explicit acceptEdits, or it would read back as that default.
+        from kato_core_lib.helpers.plan_mode_store import picked_mode_to_store
+        mode = picked_mode_to_store(mode)
         if not _set_task_mode_of(app, task_id, mode):
             return jsonify({'error': 'not available'}), 503
         # ``kato:wait-planning`` only decides the STARTING mode. A pick made

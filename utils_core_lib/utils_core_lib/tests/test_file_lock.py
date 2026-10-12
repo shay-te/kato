@@ -18,6 +18,7 @@ Windows run.
 
 from __future__ import annotations
 
+import errno
 import os
 import tempfile
 import unittest
@@ -25,7 +26,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from utils_core_lib.utils_core_lib import file_lock
-from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
+from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock, hold_exclusive_file_lock
 
 
 class _RecordingMsvcrt(object):
@@ -164,6 +165,73 @@ class NoPlatformPrimitiveTests(unittest.TestCase):
                     entered = True
         self.assertTrue(entered, 'the lock helper did not yield')
 
+
+
+class HoldLockTests(unittest.TestCase):
+    """A lock kept for a process's life: taken, or refused at once."""
+
+    def test_a_second_holder_is_refused_at_once_and_can_take_it_once_freed(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / 'nested' / 'app'
+            first = hold_exclusive_file_lock(target)
+            self.assertIsInstance(first, int)
+            self.assertTrue((Path(td) / 'nested' / 'app.lock').is_file())
+            # A separate open of the same lockfile is a separate holder.
+            self.assertIsNone(hold_exclusive_file_lock(target))
+            os.close(first)
+            second = hold_exclusive_file_lock(target)
+            self.assertIsInstance(second, int)
+            os.close(second)
+
+    def test_the_blocking_lock_and_the_held_one_exclude_each_other(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / 'app'
+            with exclusive_file_lock(target):
+                self.assertIsNone(hold_exclusive_file_lock(target))
+
+    def test_on_windows_it_takes_the_non_blocking_byte_lock(self) -> None:
+        class _NonBlocking(_RecordingMsvcrt):
+            LK_NBLCK = 3
+
+            def locking(self, fileno: int, mode: int, nbytes: int) -> None:
+                self.calls.append(('NBLCK' if mode == self.LK_NBLCK else 'OTHER', fileno, nbytes))
+
+        recorder = _NonBlocking()
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(file_lock, 'fcntl', None), patch.object(file_lock, 'msvcrt', recorder):
+            descriptor = hold_exclusive_file_lock(Path(td) / 'app')
+            self.assertEqual(recorder.calls, [('NBLCK', descriptor, 1)])
+            os.close(descriptor)
+
+    def test_on_windows_a_held_byte_is_refused(self) -> None:
+        class _Held(_RecordingMsvcrt):
+            LK_NBLCK = 3
+
+            def locking(self, fileno: int, mode: int, nbytes: int) -> None:
+                raise OSError(errno.EACCES, 'locked by another process')
+
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(file_lock, 'fcntl', None), patch.object(file_lock, 'msvcrt', _Held()):
+            self.assertIsNone(hold_exclusive_file_lock(Path(td) / 'app'))
+
+    def test_a_filesystem_that_cannot_lock_is_not_held_it_is_an_error(self) -> None:
+        # NFS without lockd, some network mounts: the caller decides.
+        def no_locks(descriptor, operation):
+            raise OSError(errno.ENOLCK, 'No locks available')
+
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(file_lock.fcntl, 'flock', no_locks), \
+                self.assertRaises(OSError) as raised:
+            hold_exclusive_file_lock(Path(td) / 'app')
+        self.assertEqual(raised.exception.errno, errno.ENOLCK)
+
+    def test_a_platform_with_neither_primitive_holds_no_lock(self) -> None:
+        # The last rung, as for exclusive_file_lock: no primitive, no lock.
+        with tempfile.TemporaryDirectory() as td, \
+                patch.object(file_lock, 'fcntl', None), patch.object(file_lock, 'msvcrt', None):
+            descriptor = hold_exclusive_file_lock(Path(td) / 'app')
+            self.assertIsInstance(descriptor, int)
+            os.close(descriptor)
 
 if __name__ == '__main__':
     unittest.main()
