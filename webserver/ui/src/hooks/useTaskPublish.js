@@ -31,7 +31,7 @@ export function useTaskPublish(taskId) {
     hasWorkspace, hasChangesToPush, ready, error,
   } = useTaskPublishState(taskId);
   const {
-    hasPullRequest, pullRequestUrls, pullRequestLookupError,
+    hasPullRequest, pullRequestUrls, pullRequestLookupError, pullRequestRepositories,
   } = useTaskPullRequestState(taskId);
 
   // Re-check both after a button action (push / pull / merge / create-PR /
@@ -120,6 +120,8 @@ export function useTaskPublish(taskId) {
     // request". A bad provider credential answers both the same way, and
     // only this field tells them apart.
     pullRequestLookupError,
+    // Each repository with its open PR (or none / couldn't check).
+    pullRequestRepositories,
     // Publish-state lifecycle from the LOCAL publish child: ``ready`` after a
     // successful fetch, ``error`` when the latest one failed. Lets callers say
     // "checking…" / "couldn't check" instead of a premature "no workspace".

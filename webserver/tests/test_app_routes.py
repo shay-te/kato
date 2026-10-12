@@ -1398,6 +1398,7 @@ class PullRequestStateEndpointTests(unittest.TestCase):
         payload = response.get_json()
         self.assertFalse(payload['has_pull_request'])
         self.assertEqual(payload['pull_request_urls'], [])
+        self.assertEqual(payload['repositories'], [])
         self.assertEqual(payload['task_id'], 'T-1')
 
     def test_returns_false_state_when_method_missing(self):

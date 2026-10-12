@@ -4037,15 +4037,17 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/sessions/<task_id>/pull-request-state')
     def get_task_pull_request_state(task_id: str):
-        """Best-effort PR-existence for the Pull-request button + "open PR"
-        link. Fetched separately from publish-state (tab-load + click, not
-        polled) so its provider retry backoff never blocks the git buttons."""
+        """Best-effort PR-existence for the Pull-request button and the
+        header's pull-request list (each repository's open PR). Fetched
+        separately from publish-state (tab-load + click, not polled) so its
+        provider retry backoff never blocks the git buttons."""
         agent_service = app.config.get('AGENT_SERVICE')
         check = getattr(getattr(agent_service, 'publish', agent_service), 'task_pull_request_state', None)
         if not callable(check):
             return jsonify({
                 'has_pull_request': False,
                 'pull_request_urls': [],
+                'repositories': [],
                 'task_id': task_id,
             })
         state = check(task_id) or {}

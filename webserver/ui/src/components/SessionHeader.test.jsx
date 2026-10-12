@@ -4,7 +4,7 @@
 // dispatch, modal opening.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
   // The header now shows a status chip per agent, polled from here.
@@ -93,6 +93,7 @@ function _defaultTaskPublish(overrides = {}) {
     hasChangesToPush: false,
     hasPullRequest: false,
     pullRequestUrls: [],
+    pullRequestRepositories: [],
     publishStateReady: true,
     publishStateError: false,
     pushBusy: false,
@@ -804,77 +805,45 @@ describe('SessionHeader — fast prompts', () => {
 });
 
 
-describe('SessionHeader — Open pull request button', () => {
+describe('SessionHeader — the task\'s pull requests, per repository', () => {
 
-  const openBtn = () =>
-    screen.getByRole('button', { name: /open pull request in a new tab/i });
+  const listButton = () => screen.getByRole('button', { name: /^Pull requests:/ });
+  const repositories = [
+    { repositoryId: 'api', pullRequest: { id: '3', title: 'T1 api', url: 'https://github.com/o/api/pull/3' }, lookupFailed: false },
+    { repositoryId: 'web', pullRequest: null, lookupFailed: false },
+  ];
+  function renderHeader(overrides = {}) {
+    const publish = _defaultTaskPublish({ pullRequestRepositories: repositories, ...overrides });
+    useTaskPublish.mockReturnValue(publish);
+    render(<SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />);
+    return publish;
+  }
 
-  test('disabled when there is no pull request yet', () => {
-    useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      pullRequestUrls: [],
-    }));
-    render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
-    );
-    expect(openBtn()).toBeDisabled();
+  test('the header shows how many of the task\'s repositories have one open', () => {
+    renderHeader();
+    expect(listButton()).toHaveAccessibleName('Pull requests: 1 of 2 open');
+    expect(listButton()).toHaveAttribute('data-tooltip', expect.stringContaining('Pull requests open in 1 of 2 repositories'));
+    expect(document.querySelector('.pull-request-list-badge').textContent).toBe('1/2');
   });
 
-  test('enabled once a PR url exists', () => {
-    useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      hasPullRequest: true,
-      pullRequestUrls: ['https://bitbucket.org/o/r/pull-requests/1'],
-    }));
-    render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
-    );
-    expect(openBtn()).not.toBeDisabled();
+  test('a click lists every repository — and looks the pull requests up again', () => {
+    const publish = renderHeader();
+    fireEvent.click(listButton());
+    expect(publish.refresh).toHaveBeenCalledTimes(1);
+    const list = screen.getByRole('dialog', { name: 'Pull requests' });
+    expect(within(list).getByText('#3 T1 api')).toBeInTheDocument();
+    expect(within(list).getByText('No pull request yet')).toBeInTheDocument();
   });
 
-  test('clicking opens the PR in a new tab with noopener,noreferrer', () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      hasPullRequest: true,
-      pullRequestUrls: ['https://bitbucket.org/o/r/pull-requests/1'],
-    }));
-    render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
-    );
-    fireEvent.click(openBtn());
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://bitbucket.org/o/r/pull-requests/1',
-      '_blank',
-      'noopener,noreferrer',
-    );
-    openSpy.mockRestore();
+  test('a credential the provider rejects is said in the list', () => {
+    renderHeader({ pullRequestLookupError: 'Cannot read pull requests for web: rejected' });
+    fireEvent.click(listButton());
+    expect(screen.getByText('Cannot read pull requests for web: rejected')).toBeInTheDocument();
   });
 
-  test('multi-repo: opens every PR url', () => {
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
-    useTaskPublish.mockReturnValue(_defaultTaskPublish({
-      hasPullRequest: true,
-      pullRequestUrls: [
-        'https://bitbucket.org/o/api/pull-requests/3',
-        'https://bitbucket.org/o/web/pull-requests/4',
-      ],
-    }));
-    render(
-      <SessionHeader
-        session={_session()}
-        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
-      />,
-    );
-    fireEvent.click(openBtn());
-    expect(openSpy).toHaveBeenCalledTimes(2);
-    openSpy.mockRestore();
+  test('nothing to list yet: the button is disabled', () => {
+    renderHeader({ pullRequestRepositories: [] });
+    expect(listButton()).toBeDisabled();
   });
 });
 

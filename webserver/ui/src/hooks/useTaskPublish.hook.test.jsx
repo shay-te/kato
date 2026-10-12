@@ -199,6 +199,29 @@ describe('useTaskPublish — with taskId', () => {
     });
   });
 
+  test('exposes each repository with its open pull request, or none', async () => {
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true });
+    fetchTaskPullRequestState.mockResolvedValue({
+      has_pull_request: false,
+      pull_request_urls: ['https://example/pr/1'],
+      repositories: [
+        { repository_id: 'api', pull_request: { id: 1, title: 'T1', url: 'https://example/pr/1' }, lookup_failed: false },
+        { repository_id: 'web', pull_request: null, lookup_failed: false },
+        { repository_id: 'lib', pull_request: null, lookup_failed: true },
+        { repository_id: '', pull_request: null },  // nothing to name: dropped
+      ],
+    });
+
+    const { result } = renderHook(() => useTaskPublish('T1'));
+    await waitFor(() => {
+      expect(result.current.pullRequestRepositories).toEqual([
+        { repositoryId: 'api', pullRequest: { id: '1', title: 'T1', url: 'https://example/pr/1' }, lookupFailed: false },
+        { repositoryId: 'web', pullRequest: null, lookupFailed: false },
+        { repositoryId: 'lib', pullRequest: null, lookupFailed: true },
+      ]);
+    });
+  });
+
   test('checks on tab load (mount), NOT on a timer', async () => {
     // The old 10s poll hammered the provider PR lookup and hung the
     // endpoint. Now we fetch once on tab load; advancing time must NOT

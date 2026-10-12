@@ -11671,7 +11671,8 @@ button.settings-prompt-editor-head {
 }
 
 .composer-mode-popover,
-.composer-actions-popover {
+.composer-actions-popover,
+.pull-request-list {
   position: absolute;
   bottom: calc(100% + #{$SPACE-6});
   left: 0;
@@ -11708,6 +11709,137 @@ button.settings-prompt-editor-head {
   color: $C-NEUTRAL-64;
   font-size: $TEXT-11;
   line-height: 1.4;
+}
+
+.composer-mode-popover-note.is-warn { color: $C-ORANGE-50; }
+
+/* The header's pull-request list (PullRequestList.jsx): each repository with
+ * its open pull request, to open or copy. The count is laid over the button's
+ * corner — never extra width, so the header does not re-flow when the pull
+ * requests come in — and the list opens DOWN from the header, at the button's
+ * right edge. */
+.pull-request-list-wrap {
+  position: relative;
+  display: flex;
+}
+
+.pull-request-list-toggle { position: relative; }
+
+/* Open, the list says all its tooltip does — and the tooltip would sit on it. */
+.pull-request-list-toggle[aria-expanded="true"]::before,
+.pull-request-list-toggle[aria-expanded="true"]::after {
+  display: none;
+}
+
+.pull-request-list-badge {
+  position: absolute;
+  top: 0;
+  right: -$SPACE-4;
+  padding: 0 $SPACE-3;
+  color: $C-NEUTRAL-09;
+  font-size: $TEXT-9;
+  font-weight: 700;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.pull-request-list-badge.is-good { background: $C-GREEN-52; }
+.pull-request-list-badge.is-warn { background: $C-ORANGE-50; }
+
+.pull-request-list {
+  top: calc(100% + #{$SPACE-6});
+  bottom: auto;
+  right: 0;
+  left: auto;
+  min-width: 340px;
+  max-width: min(460px, calc(100vw - #{$SPACE-24}));
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.pull-request-list-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Two lines per repository: its name — whole, it is what the list is for —
+ * then its pull request (or why there is none), with the actions beside both. */
+.pull-request-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "repo actions" "status actions";
+  align-items: center;
+  column-gap: $SPACE-8;
+  row-gap: $SPACE-2;
+  padding: $SPACE-6 $SPACE-8;
+  border-radius: $RADIUS-6;
+}
+
+.pull-request-list-row:hover { background: $C-NEUTRAL-100-A06; }
+
+.pull-request-list-repo {
+  grid-area: repo;
+  color: $C-NEUTRAL-96;
+  font-size: $TEXT-12_5;
+  overflow-wrap: anywhere;
+}
+
+.pull-request-list-title,
+.pull-request-list-status {
+  grid-area: status;
+  font-size: $TEXT-12;
+}
+
+.pull-request-list-title {
+  overflow: hidden;
+  color: $C-NEUTRAL-83;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-request-list-status { color: $C-NEUTRAL-64; }
+.pull-request-list-status.is-warn { color: $C-ORANGE-50; }
+
+.pull-request-list-actions {
+  grid-area: actions;
+  display: inline-flex;
+  gap: $SPACE-2;
+}
+
+.pull-request-list-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: $ICON-BOX-SM;
+  height: $ICON-BOX-SM;
+  padding: 0;
+  border: 0;
+  border-radius: $RADIUS-CIRCLE;
+  background: transparent;
+  color: $C-NEUTRAL-64;
+  cursor: pointer;
+}
+
+.pull-request-list-action:hover,
+.pull-request-list-open-all:hover {
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
+}
+
+.pull-request-list-open-all {
+  display: block;
+  width: 100%;
+  margin-top: $SPACE-6;
+  padding: $SPACE-6 $SPACE-8;
+  border: 0;
+  border-radius: $RADIUS-6;
+  background: transparent;
+  color: $C-CYAN-78;
+  font: inherit;
+  font-size: $TEXT-12_5;
+  text-align: left;
+  cursor: pointer;
 }
 
 // The way out of a planning hold, offered where the hold is explained.

@@ -1908,6 +1908,60 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertFalse(result['has_pull_request'])
         self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
 
+    def test_lists_every_repository_with_its_open_pull_request(self) -> None:
+        # The header's PR list: per repository, so none is missed — one has a
+        # PR, one has none, and one the provider could not be asked about.
+        published, unpublished, unreachable = (
+            SimpleNamespace(id='api'), SimpleNamespace(id='web'), SimpleNamespace(id='lib'),
+        )
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+
+        def _find_pull_requests(repository, source_branch='', title_prefix=''):
+            if repository is unreachable:
+                raise RuntimeError('429 Too Many Requests')
+            if repository is published:
+                return [{'id': 17, 'title': 'T1 add login', 'url': 'https://example.com/pr/17',
+                         'source_branch': 'T1'}]
+            return []
+
+        repo.find_pull_requests.side_effect = _find_pull_requests
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([published, unpublished, unreachable], 'T1',
+                                        SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+        self.assertEqual(result['repositories'], [
+            {'repository_id': 'api', 'lookup_failed': False, 'pull_request': {
+                'id': '17', 'title': 'T1 add login', 'url': 'https://example.com/pr/17'}},
+            {'repository_id': 'web', 'pull_request': None, 'lookup_failed': False},
+            # Not "no pull request": kato could not ask.
+            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True},
+        ])
+        self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
+
+    def test_a_rejected_credential_marks_its_repository_unchecked(self) -> None:
+        repo_obj = SimpleNamespace(id='client')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'T1'
+        repo.find_pull_requests.side_effect = RuntimeError('401 Client Error: Unauthorized')
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'T1', SimpleNamespace(id='T1'))):
+            result = service.publish.task_pull_request_state('T1')
+        self.assertEqual(result['repositories'], [
+            {'repository_id': 'client', 'pull_request': None, 'lookup_failed': True},
+        ])
+
+    def test_no_task_or_no_repositories_lists_none(self) -> None:
+        service = AgentService(**_kwargs(repository_service=MagicMock()))
+        self.assertEqual(service.publish.task_pull_request_state('  ')['repositories'], [])
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([], 'T1', SimpleNamespace(id='T1'))):
+            self.assertEqual(service.publish.task_pull_request_state('T1')['repositories'], [])
+
     def test_swallows_branch_needs_push_exception(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()

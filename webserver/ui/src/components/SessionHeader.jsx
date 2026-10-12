@@ -12,6 +12,7 @@ import FastPromptButtons from './FastPromptButtons.jsx';
 import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
+import PullRequestList from './PullRequestList.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
@@ -270,18 +271,6 @@ export default function SessionHeader({
     toastResult(formatPullResult(result));
   }
 
-  // Open the task's pull request(s) on the provider in new browser
-  // tabs. Multi-repo tasks can have one PR per repo, so open them
-  // all (the click is a direct user gesture, so the browser allows
-  // the batch). ``noopener,noreferrer`` keeps the opened pages from
-  // reaching back into the planning UI.
-  function onOpenPullRequest() {
-    if (prUrls.length === 0) { return; }
-    prUrls.forEach((url) => {
-      window.open(url, '_blank', 'noopener,noreferrer');
-    });
-  }
-
   // One derivation drives BOTH the dot and the chip — the same value the tab
   // surfaces use — so the header and tab can never disagree (UNA-2492). The
   // header is always the active task, so the live stream feeds it directly.
@@ -368,20 +357,6 @@ export default function SessionHeader({
   // top of their own guards (PR: skip when every repo already has one).
   const prDisabled = gitDisabled || taskPublish.hasPullRequest;
   const prTitle = prTitleFor(taskPublish);
-  const prUrls = Array.isArray(taskPublish.pullRequestUrls)
-    ? taskPublish.pullRequestUrls.filter(Boolean) : [];
-  const openPrDisabled = prUrls.length === 0;
-  let openPrTitle;
-  if (openPrDisabled) {
-    openPrTitle = 'No pull request yet — open one with the adjacent '
-      + 'Pull request button (or Done) first.';
-  } else if (prUrls.length === 1) {
-    openPrTitle = 'Open the pull request on the provider in a new '
-      + 'browser tab.';
-  } else {
-    openPrTitle = `Open all ${prUrls.length} pull requests `
-      + '(one per repository) in new browser tabs.';
-  }
   // Per AGENTS.md "no logic inside JSX": every label / element /
   // condition that the return statement consumes is precomputed
   // here so the JSX below is pure rendering.
@@ -526,17 +501,12 @@ export default function SessionHeader({
           >
             <BusyIcon busy={taskPublish.prBusy} idle="pull-request" />
           </button>
-          <button
-            id="session-open-pull-request"
-            type="button"
-            className="session-action"
-            data-tooltip={openPrTitle}
-            onClick={onOpenPullRequest}
-            disabled={openPrDisabled}
-            aria-label="Open pull request in a new tab"
-          >
-            <Icon name="external-link" />
-          </button>
+          {/* The task's pull requests, per repository: open or copy each. */}
+          <PullRequestList
+            repositories={taskPublish.pullRequestRepositories}
+            lookupError={taskPublish.pullRequestLookupError}
+            onOpen={taskPublish.refresh}
+          />
           <button
             id="session-update-source"
             type="button"

@@ -19,6 +19,7 @@ to a workspace manager nobody else uses.
 
 from __future__ import annotations
 
+from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.helpers.deadline import run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.service_results import failure
@@ -1233,7 +1234,9 @@ class TaskPublishService(object):
         401s forever while the UI says the branch simply has no PR.
 
         So a PERMANENT failure comes back as text for the caller to surface,
-        while transient ones keep degrading silently as before.
+        while transient ones keep degrading silently as before. Either way a
+        failed lookup returns ``None`` for the pull requests, not ``[]``: the
+        per-repository list must say "couldn't check", never "no pull request".
         """
         try:
             return self._repository_service.find_pull_requests(
@@ -1249,13 +1252,13 @@ class TaskPublishService(object):
             )
             if _is_permanent_auth_failure(exc):
                 repo_id = str(getattr(repository, 'id', '') or 'repository')
-                return [], (
+                return None, (
                     f'Cannot read pull requests for {repo_id}: the provider '
                     f'rejected kato\'s credentials ({exc}){hint}. '
                     f'Pull-request status below may be wrong until this is '
                     f'fixed.'
                 )
-            return [], ''
+            return None, ''
 
     def task_publish_state(self, task_id: str) -> dict[str, object]:
         """LOCAL, INSTANT git-button state — never touches the provider.
@@ -1340,6 +1343,11 @@ class TaskPublishService(object):
           permanently disabled once the FIRST repo was published).
         - ``pull_request_urls`` → the existing PR URL(s), surfaced as the
           "open PR" link.
+        - ``repositories`` → per repository on the task, in order: its
+          ``repository_id``, its open ``pull_request`` (``id`` / ``title`` /
+          ``url``, or None) and ``lookup_failed`` — the provider could not be
+          asked, so "no pull request" would be a guess. The header's PR list,
+          so none is missed (to merge, or to hand to reviewers).
 
         Best-effort: a per-repo lookup failure degrades to "no PR"
         (:meth:`_find_pull_requests_safe`). Fetched on tab-load and on
@@ -1348,11 +1356,12 @@ class TaskPublishService(object):
         """
         normalized = str(task_id or '').strip()
         if not normalized:
-            return {'has_pull_request': False, 'pull_request_urls': []}
+            return {'has_pull_request': False, 'pull_request_urls': [], 'repositories': []}
         repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
         if not repos:
-            return {'has_pull_request': False, 'pull_request_urls': []}
+            return {'has_pull_request': False, 'pull_request_urls': [], 'repositories': []}
         pull_request_urls: list[str] = []
+        repositories: list[dict[str, object]] = []
         repos_missing_pull_request = 0
         # First permanent failure only. One bad credential fails every repo
         # identically, and 25 copies of the same sentence is not a better
@@ -1363,16 +1372,26 @@ class TaskPublishService(object):
             existing, failure = self._find_pull_requests_safe(repository, branch_name)
             if failure and not lookup_error:
                 lookup_error = failure
+            pull_request = None
             if existing:
                 first = existing[0] if isinstance(existing[0], dict) else {}
-                url = str(first.get('url', '') or '')
-                if url:
-                    pull_request_urls.append(url)
+                pull_request = {
+                    field: str(first.get(field, '') or '')
+                    for field in (PullRequestFields.ID, PullRequestFields.TITLE, PullRequestFields.URL)
+                }
+                if pull_request[PullRequestFields.URL]:
+                    pull_request_urls.append(pull_request[PullRequestFields.URL])
             else:
                 repos_missing_pull_request += 1
+            repositories.append({
+                'repository_id': str(getattr(repository, 'id', '') or ''),
+                'pull_request': pull_request,
+                'lookup_failed': existing is None,
+            })
         return {
             'has_pull_request': repos_missing_pull_request == 0,
             'pull_request_urls': pull_request_urls,
+            'repositories': repositories,
             # Carried alongside, never INSTEAD of, the answer: the git
             # buttons must stay usable when the provider is unreachable
             # (see task_publish_state), so this is a note, not a failure.

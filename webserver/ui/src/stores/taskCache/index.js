@@ -145,6 +145,7 @@ export function useTaskPullRequestState(taskId) {
     hasPullRequest: sl.data.hasPullRequest,
     pullRequestUrls: sl.data.pullRequestUrls,
     pullRequestLookupError: sl.data.lookupError,
+    pullRequestRepositories: sl.data.repositories,
   }));
 }
 

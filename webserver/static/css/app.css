@@ -11453,7 +11453,8 @@ button.settings-prompt-editor-head {
 }
 
 .composer-mode-popover,
-.composer-actions-popover {
+.composer-actions-popover,
+.pull-request-list {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
@@ -11490,6 +11491,153 @@ button.settings-prompt-editor-head {
   color: #a3a3a3;
   font-size: 11px;
   line-height: 1.4;
+}
+
+.composer-mode-popover-note.is-warn {
+  color: #f59e0b;
+}
+
+/* The header's pull-request list (PullRequestList.jsx): each repository with
+ * its open pull request, to open or copy. The count is laid over the button's
+ * corner — never extra width, so the header does not re-flow when the pull
+ * requests come in — and the list opens DOWN from the header, at the button's
+ * right edge. */
+.pull-request-list-wrap {
+  position: relative;
+  display: flex;
+}
+
+.pull-request-list-toggle {
+  position: relative;
+}
+
+/* Open, the list says all its tooltip does — and the tooltip would sit on it. */
+.pull-request-list-toggle[aria-expanded=true]::before,
+.pull-request-list-toggle[aria-expanded=true]::after {
+  display: none;
+}
+
+.pull-request-list-badge {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  padding: 0 3px;
+  color: #181818;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.pull-request-list-badge.is-good {
+  background: #34d399;
+}
+
+.pull-request-list-badge.is-warn {
+  background: #f59e0b;
+}
+
+.pull-request-list {
+  top: calc(100% + 6px);
+  bottom: auto;
+  right: 0;
+  left: auto;
+  min-width: 340px;
+  max-width: min(460px, 100vw - 24px);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.pull-request-list-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Two lines per repository: its name — whole, it is what the list is for —
+ * then its pull request (or why there is none), with the actions beside both. */
+.pull-request-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "repo actions" "status actions";
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.pull-request-list-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pull-request-list-repo {
+  grid-area: repo;
+  color: #f5f5f7;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.pull-request-list-title,
+.pull-request-list-status {
+  grid-area: status;
+  font-size: 12px;
+}
+
+.pull-request-list-title {
+  overflow: hidden;
+  color: #d4d4d4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-request-list-status {
+  color: #a3a3a3;
+}
+
+.pull-request-list-status.is-warn {
+  color: #f59e0b;
+}
+
+.pull-request-list-actions {
+  grid-area: actions;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pull-request-list-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #a3a3a3;
+  cursor: pointer;
+}
+
+.pull-request-list-action:hover,
+.pull-request-list-open-all:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f5f5f7;
+}
+
+.pull-request-list-open-all {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #93c5fd;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
 }
 
 .composer-mode-release {
