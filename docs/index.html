@@ -148,6 +148,7 @@
   .tag.block { color: var(--block); background: rgba(255,106,106,0.12); border: 1px solid rgba(255,106,106,0.3); }
   .tag.ask { color: var(--ask); background: rgba(242,177,60,0.12); border: 1px solid rgba(242,177,60,0.3); }
   .grow .lbl { color: var(--ink); } .grow .sub { color: var(--faint); font-size: 12.5px; }
+  .grow .sub code { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
   .sec-points { display: flex; flex-direction: column; gap: 16px; }
   .sp { border-left: 2px solid var(--line-2); padding-left: 16px; }
   .sp.git { border-left-color: var(--allow); }
@@ -158,7 +159,6 @@
   .sandbox h3 { font-size: clamp(22px, 2.6vw, 28px); letter-spacing: -0.015em; margin: 10px 0 10px; line-height: 1.2; }
   :where(.sandbox) > p { color: var(--muted); margin: 0 0 12px; max-width: 76ch; font-size: 14.5px; }
   .sandbox > p b { color: var(--ink); }
-  .sandbox > p code { font-family: var(--mono); font-size: 12.5px; color: var(--allow); background: var(--allow-soft); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
   .sb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 24px; }
   .sb-grid code { white-space: nowrap; }
   .sb-sub { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin: 24px 0 12px; max-width: none; }
@@ -171,6 +171,20 @@
   @media (max-width: 560px) { .sb-layers { grid-template-columns: 1fr; } }
   .sb-limits { margin: 26px 0 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; max-width: 82ch; }
   .sb-limits b { color: var(--ink); }
+  .sb-all { margin-top: 26px; }
+  .sb-all summary { cursor: pointer; list-style: none; font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.04em; color: var(--allow); }
+  .sb-all summary::-webkit-details-marker { display: none; }
+  .sb-all summary::before { content: '+ '; }
+  .sb-all[open] summary::before { content: '− '; }
+  .sb-all summary:hover { text-decoration: underline; }
+  .sb-groups { columns: 2; column-gap: 40px; margin-top: 8px; }
+  @media (max-width: 760px) { .sb-groups { columns: 1; } }
+  .sb-group { break-inside: avoid; padding-top: 12px; }
+  .sb-group h5 { margin: 0 0 6px; font-family: var(--mono); font-size: 11.5px; font-weight: 400; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .sb-group ol { margin: 0; padding-left: 24px; }
+  .sb-group li { margin: 0 0 7px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+  .sb-group li b { color: var(--ink); font-weight: 600; }
+  .sb-group li code { font-family: var(--mono); font-size: 12px; color: var(--allow); white-space: nowrap; }
   @media (max-width: 860px) { .sb-grid { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 560px) { .sb-grid { grid-template-columns: 1fr; } }
 
@@ -306,11 +320,16 @@
       <div class="sec-grid">
         <div class="guard">
           <div class="gh">action guard · block × 4 · ask × 6 · allow × 0</div>
-          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Credential reads</span> · <span class="sub">.env, keychains, tokens</span></span></div>
-          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Network exfiltration</span> · <span class="sub">data leaving the box</span></span></div>
-          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Remote exec &amp; sandbox escape</span></span></div>
-          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Destructive FS</span> · <span class="sub">rm, chmod, out-of-folder writes</span></span></div>
-          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Privilege escalation &amp; persistence</span></span></div>
+          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Credential reads</span> · <span class="sub">.env, SSH keys, keychains, tokens</span></span></div>
+          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Network exfiltration</span> · <span class="sub">uploads, reverse shells</span></span></div>
+          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Remote code execution</span> · <span class="sub"><code>curl … | sh</code> · always</span></span></div>
+          <div class="grow"><span class="tag block">BLOCK</span><span><span class="lbl">Sandbox escape</span> · <span class="sub">always</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Destructive file operations</span> · <span class="sub">rm -rf, chmod · disk wipes always blocked</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Writes outside the task folder</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Persistence</span> · <span class="sub">~/.bashrc, crontab, systemd</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Privilege escalation</span> · <span class="sub">sudo</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">Web access</span> · <span class="sub">fetch, search, connectors</span></span></div>
+          <div class="grow"><span class="tag ask">ASK</span><span><span class="lbl">New or unknown tools</span> · <span class="sub">each new capability needs your OK</span></span></div>
         </div>
         <div class="sec-points">
           <div class="sp git"><h4>Git flows only through Kato</h4><p>The agent's direct git access is blocked (<code>Bash(git:*)</code> on every spawn). Branches, pushes, and PRs happen through Kato — nothing reaches your remote without your click.</p></div>
@@ -323,7 +342,7 @@
         <span class="eyebrow">Optional · Docker sandbox · gVisor by Google</span>
         <h3>Four walls between the agent and your machine.</h3>
         <p>Turn on the sandbox and every Claude Code run goes into a hardened container on Google's gVisor kernel. It sees only the task's folder, can reach only Anthropic's API, and gives up every privilege once it starts.</p>
-        <p><b>Checked, not promised.</b> <code>kato sandbox verify</code> starts a real sandbox and tests 14 of these protections from inside it, and Kato's build fails if a required protection ever goes missing from the container's launch. One switch in Settings; it needs Docker with gVisor. By default, if a protection can't be put in place, Kato won't start the agent.</p>
+        <p>One switch in Settings; it needs Docker with gVisor, so it runs on Linux, or on macOS and Windows inside a Linux VM (Docker Desktop can't run gVisor). By default, if a protection can't be put in place, Kato won't start the agent.</p>
         <p class="sb-sub">How secure is it? To reach your machine, code inside would have to do all four</p>
         <div class="sb-layers">
           <div class="sb-layer"><span class="n">01</span><b>Get past the guard</b><span class="d">Kato's Action Guard stops credential reads, exfiltration and escape attempts before a command runs.</span></div>
@@ -331,21 +350,26 @@
           <div class="sb-layer"><span class="n">03</span><b>Beat the container's limits</b><span class="d">No root, no Linux capabilities once it has started, a read-only filesystem and AppArmor.</span></div>
           <div class="sb-layer"><span class="n">04</span><b>Find a way out</b><span class="d">There is one: Anthropic's API, checked by hostname and pinned certificate. Everything else is dropped.</span></div>
         </div>
-        <p class="sb-sub">Everything the sandbox does</p>
+        <p class="sb-sub">The highlights</p>
         <div class="sb-grid">
-          <div class="sp"><h4>Only the task's folder</h4><p>The task's workspace is the only folder from your computer the container can see.</p></div>
-          <div class="sp"><h4>One way out</h4><p>A default-deny firewall lets traffic reach Anthropic's API and nothing else. Your local network and cloud metadata addresses are blocked.</p></div>
-          <div class="sp"><h4>Checked by name and certificate</h4><p>Each connection's hostname is checked, and Anthropic's TLS certificate is pinned, so a shared address or a mis-issued certificate gets nowhere.</p></div>
-          <div class="sp"><h4>A kernel of its own</h4><p>The container runs under gVisor, Google's open-source user-space kernel (<code>runsc</code>), between the agent and your machine's kernel. There is no switch to run without it.</p></div>
-          <div class="sp"><h4>Stripped privileges</h4><p>A non-root user, every Linux capability gone once it has started, no privilege escalation, AppArmor, and a read-only root filesystem.</p></div>
-          <div class="sp"><h4>Hard limits</h4><p>Memory, CPU, processes, open files and temporary space are capped. Swap and core dumps are off.</p></div>
-          <div class="sp"><h4>A secret scan before every run</h4><p>Kato will not start the agent on a workspace holding credential files — <code>.env</code>, SSH keys, cloud credentials — or anything that looks like a key or token.</p></div>
-          <div class="sp"><h4>Pinned builds</h4><p>The sandbox image is built from a base image pinned by digest and an exact Claude Code version, so a bad upstream release cannot slip in.</p></div>
-          <div class="sp"><h4>Replies checked</h4><p>Every reply is scanned for leaked credentials and for risky commands like <code>curl … | bash</code>, flagged before you act on them.</p></div>
-          <div class="sp"><h4>A tamper-evident record</h4><p>Every run is written to a hash-chained audit log, which you can also ship to a store outside the machine.</p></div>
-          <div class="sp"><h4>Cleaned up, even after a crash</h4><p>A watchdog removes the container if Kato itself dies, so nothing keeps running with your workspace attached.</p></div>
-          <div class="sp"><h4>No shortcuts</h4><p>Kato refuses to run as root, and skipping the permission prompts is allowed only inside the sandbox.</p></div>
+          <div class="sp"><h4>The agent never leaves it</h4><p>Every chat turn, test run and review runs inside. There is no fallback: if the sandbox can't be set up, the run is refused, never moved to your machine.</p></div>
+          <div class="sp"><h4>Google's gVisor kernel</h4><p>A user-space kernel between the agent and your machine's kernel, checked again before every run. There is no switch to run without it.</p></div>
+          <div class="sp"><h4>Only the task's folder</h4><p>Nothing else on your computer is visible. Kato refuses to mount your home folder, system folders, or anything holding keys, passwords or browser data.</p></div>
+          <div class="sp"><h4>One way out</h4><p>Each task gets its own private network whose only exit leads to Anthropic's API — hostname checked, certificate pinned.</p></div>
+          <div class="sp"><h4>A secret scan before every run</h4><p>If the task's folder holds credential files — <code>.env</code>, SSH keys, cloud credentials — or anything that looks like a key or token, the agent doesn't start.</p></div>
+          <div class="sp"><h4>Checked, not promised</h4><p><code>kato sandbox verify</code> runs 14 checks inside a real sandbox, and Kato's build fails if a required protection ever goes missing.</p></div>
         </div>
+        <details class="sb-all">
+          <summary>See all 17 protections</summary>
+          <div class="sb-groups">
+            <div class="sb-group"><h5>The agent stays inside</h5><ol start="1"><li><b>Never leaves.</b> Every agent run goes into the sandbox; if any part of it can't be set up, the run is refused.</li><li><b>Google's gVisor kernel</b>, checked again before every run, with no switch to turn it off.</li><li><b>No privileges:</b> a non-root user, every Linux capability gone once it starts, no privilege escalation, and AppArmor.</li><li><b>A read-only system:</b> the root filesystem is read-only, and temporary folders can't run setuid programs or use device files.</li><li><b>Its own namespaces</b> for shared memory and control groups, kept apart from your machine's.</li><li><b>Only the task's folder</b> is mounted. System folders, the Docker socket, your home folder itself, and folders holding keys, keychains, browser data, mail or messages are refused.</li></ol></div>
+            <div class="sb-group"><h5>One way out</h5><ol start="7"><li><b>A private network per task</b>, whose only exit is a proxy that checks the hostname and lets through only Anthropic's API.</li><li><b>A default-deny firewall</b> inside the container: IPv6 off, DNS only through fixed resolvers, and your local network, the Docker host and cloud metadata addresses blocked.</li><li><b>A pinned certificate:</b> Anthropic's TLS certificate is pinned, so a rogue or mis-issued one is rejected.</li></ol></div>
+            <div class="sb-group"><h5>Around every run</h5><ol start="10"><li><b>A secret scan</b> of file names and contents before the agent starts.</li><li><b>Replies checked</b> for leaked credentials and risky commands like <code>curl … | bash</code>.</li><li><b>A hash-chained audit log</b> of every run, with an optional copy kept off the machine.</li><li><b>Cleanup:</b> a watchdog removes the container if Kato dies, and leftovers are swept at the next start.</li><li><b>Limits</b> on how often runs start, and on memory, CPU, processes, open files and temporary space. No swap, no core dumps.</li></ol></div>
+            <div class="sb-group"><h5>What it's built from</h5><ol start="15"><li><b>Pinned builds:</b> the base image is pinned by digest, and Claude Code by exact version.</li></ol></div>
+            <div class="sb-group"><h5>Proof</h5><ol start="16"><li><b>Checked by machine:</b> <code>kato sandbox verify</code> runs 14 checks inside a real sandbox, and tests fail the build if a required protection disappears or a forbidden one, like <code>--privileged</code>, appears.</li></ol></div>
+            <div class="sb-group"><h5>Rules around it</h5><ol start="17"><li><b>No shortcuts:</b> Kato refuses to run as root, turning off the permission prompts is allowed only inside the sandbox and after a double confirmation at a terminal, and the Action Guard and git-only-through-Kato still apply.</li></ol></div>
+          </div>
+        </details>
         <p class="sb-limits"><b>What no sandbox can stop.</b> The agent still talks to its model, so it can send the model what it reads in the task's folder — that is why Kato scans the folder for secrets before every run. Common container escapes are closed by default; attacks on hardware or firmware are beyond any software, so for those, run Kato on a separate machine or VM.</p>
       </div>
     </div>
