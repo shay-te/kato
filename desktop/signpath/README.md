@@ -9,7 +9,7 @@ The release workflow already holds the signing step (`windows-sign` in `.github/
 From [their terms](https://signpath.org/terms):
 
 - **Two-factor sign-in** on GitHub and on SignPath, for everyone with access.
-- **A code signing policy on the website.** Add the section below to the download page (`docs/index.html`), with the real team.
+- **A code signing policy on the website.** It is in the download page's footer (`docs/index.html`, `#code-signing`), from the section below; keep the two in step when the team changes.
 - **Roles.** Authors change the code, reviewers approve changes from anyone else, and approvers approve each signing.
 - **Signed releases only from this repository**, built by its GitHub Actions on GitHub's own machines. The release workflow already works this way.
 
@@ -61,4 +61,4 @@ Put this on the download page (`docs/index.html`), with the real team:
 >
 > Only the Windows installer built from this repository by its GitHub Actions release workflow is signed.
 >
-> **Privacy:** Kato sends no data to the Kato project and collects no usage data. It connects only to the services you configure — your agent CLI and its provider (Claude Code or Codex), your issue tracker, and your git host — plus the npm registry, to tell you when your agent CLI has an update. The desktop app also checks GitHub for new releases of itself.
+> **Privacy:** Kato collects no data. Read the [privacy policy](https://shay-te.github.io/kato/privacy.html).

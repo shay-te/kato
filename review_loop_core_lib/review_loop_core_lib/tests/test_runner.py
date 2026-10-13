@@ -90,6 +90,27 @@ class StopTests(_Runs):
         self.assertGreaterEqual(state.rounds[-1].finished_at, state.rounds[-1].sent_at)
         self.assertGreater(state.rounds[-1].finished_at, 0)
 
+    def test_a_new_round_never_reads_as_the_last_ones_fix(self) -> None:
+        # Round 2 used to be added while the phase still said round 1's
+        # "awaiting fix": a stop seen there was resumed as a fix cut off — of
+        # findings never sent (CI: the resumed loop hung on them).
+        saved: list[tuple[int, ReviewLoopPhase, float]] = []
+        save = self.store.save
+
+        def recording_save(state: ReviewLoopState) -> bool:
+            current = state.current_round
+            saved.append((state.round, state.phase, current.sent_at if current else 0.0))
+            return save(state)
+
+        self.store.save = recording_save
+        service = self.service(FakeChat(), FakeReviewer(reply(finding('MAJOR')), reply()))
+        self.start(service)
+        self.assertEqual(self.finished(service).status, ReviewLoopStatus.CLEAN)
+        self.assertIn((2, ReviewLoopPhase.WAITING_TO_REVIEW, 0.0), saved)
+        unsent = [entry for entry in saved
+                  if entry[1] is ReviewLoopPhase.AWAITING_FIX and not entry[2]]
+        self.assertEqual(unsent, [])
+
     def test_shutdown_marks_running_loops_interrupted(self) -> None:
         reviewer = FakeReviewer(block_until_cancelled=True)
         service = self.service(FakeChat(), reviewer)

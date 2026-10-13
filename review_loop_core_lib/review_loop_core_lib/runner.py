@@ -436,6 +436,11 @@ class ReviewLoopRunner(object):
         review_round = ReviewRound(number=number, started_at=self._clock())
         with self._lock:
             self._state.rounds.append(review_round)
+            # In the same step: round N must never read as still in round N-1's
+            # phase ("awaiting fix") — a stop seen there is not a fix cut off.
+            self._state.phase = ReviewLoopPhase.WAITING_TO_REVIEW
+            self._state.phase_started_at = review_round.started_at
+            self._state.waiting_for = ''
         self._save()
         return review_round
 

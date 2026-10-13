@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kato privacy policy</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="Kato collects no data. What stays on your computer, and the services Kato connects to — only the ones you set up." />
+<style>
+  :root {
+    --bg: #090b10;
+    --line: rgba(255,255,255,0.07);
+    --ink: #edf0f6;
+    --muted: #98a0b4;
+    --faint: #5a637a;
+    --allow: #37d99d;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--allow); }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 16px; }
+  header { border-bottom: 1px solid var(--line); }
+  .bar { display: flex; align-items: center; height: 58px; }
+  .word { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink); text-decoration: none; }
+  main.wrap { padding: 40px 16px 56px; }
+  h1 { font-size: 32px; line-height: 1.2; margin: 0 0 6px; }
+  .updated { font-family: var(--mono); font-size: 12.5px; color: var(--faint); margin: 0 0 28px; }
+  .lede { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 34px 0 8px; }
+  p, li { color: var(--muted); }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 20px; }
+  li { margin: 0 0 8px; }
+  b { color: var(--ink); font-weight: 600; }
+  code { font-family: var(--mono); font-size: 0.88em; color: var(--ink); }
+  footer { border-top: 1px solid var(--line); padding: 22px 0 40px; color: var(--faint); font-size: 13px; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar"><a class="word" href="./">kato</a></div>
+</header>
+
+<main class="wrap">
+  <h1>Privacy policy</h1>
+  <p class="updated">Last updated 13 October 2026</p>
+
+  <p class="lede"><b>Kato collects no data.</b></p>
+  <p>Kato runs on your computer. It has no telemetry, no analytics and no crash reporting, and it sends nothing to the Kato project or its maintainers.</p>
+
+  <h2>What stays on your computer</h2>
+  <p>Everything Kato keeps is in the <code>.kato</code> folder in your home folder:</p>
+  <ul>
+    <li>your settings, including the tokens and keys you enter;</li>
+    <li>each task's workspace, with its copies of your repositories;</li>
+    <li>chat history, review-loop records and the log file (<code>logs/kato.log</code>).</li>
+  </ul>
+  <p>Uninstalling the desktop app leaves this folder in place. Delete it to remove everything Kato stored.</p>
+
+  <h2>Where Kato connects</h2>
+  <p>Kato connects only to the services you set up, and to check for updates:</p>
+  <ul>
+    <li><b>Your coding agent</b> — Claude Code, Codex or OpenHands. The agent sends your instructions and the code it reads to the AI provider you use with it (for example Anthropic, OpenAI or OpenRouter), under that provider's terms.</li>
+    <li><b>Your issue tracker</b> — YouTrack, Jira, GitHub, GitLab or Bitbucket — to read the tasks assigned to you and post the updates you allow.</li>
+    <li><b>Your git host</b> — GitHub, GitLab, Bitbucket or Azure DevOps — to copy repositories and, when you choose, push branches and open pull requests.</li>
+    <li><b>The npm registry</b>, to check whether your agent's command-line tool has a newer version. Only the tool's name is sent.</li>
+    <li><b>Security scans</b>, if you turn them on. <code>npm audit</code> sends a project's list of dependencies (names and versions) to the npm registry, and Safety downloads PyUp's vulnerability list.</li>
+    <li><b>OpenRouter's public model list</b>, when OpenHands is set up to use OpenRouter, so the settings page can offer its models. No key is sent.</li>
+    <li><b>GitHub</b>, where the desktop app checks for and downloads its own updates.</li>
+    <li><b>Docker image registries</b>, if you use the optional sandbox, to download the images it is built on.</li>
+  </ul>
+
+  <h2>This website</h2>
+  <p>This site is hosted on GitHub Pages, and GitHub may log visits as described in the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" rel="noopener">GitHub Privacy Statement</a>. The site itself has no analytics and sets no cookies. It asks GitHub only for the latest release, to link its downloads.</p>
+
+  <h2>Code signing</h2>
+  <p>The Windows installer is signed through <a href="https://about.signpath.io/" rel="noopener">SignPath.io</a> with a certificate from <a href="https://signpath.org/" rel="noopener">SignPath Foundation</a>. Signing involves only the installer file and none of your data.</p>
+
+  <h2>Questions and changes</h2>
+  <p>Ask in the project's <a href="https://github.com/shay-te/kato/issues" rel="noopener">GitHub issues</a>. Any change to this policy is published on this page with a new date.</p>
+</main>
+
+<footer>
+  <div class="wrap"><a href="./">Kato</a> · <a href="https://github.com/shay-te/kato" rel="noopener">GitHub</a></div>
+</footer>
+</body>
+</html>

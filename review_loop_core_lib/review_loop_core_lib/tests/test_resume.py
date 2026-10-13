@@ -268,6 +268,8 @@ class AFixCutOffMidTurnTests(_Resume):
         chat.silent = {'fix'}
         service = self.service(chat, ScriptedReviewer(MAJOR, CLEAN))
         self.start(service, verify_tests=True)
+        # Round 1 awaits a fix twice — the tests' first: stop in the findings'.
+        self.assertTrue(wait_until(lambda: chat.kinds() == ['tests', 'tests_fix', 'tests', 'fix']))
         stopped = self.stop_at(service, ReviewLoopPhase.AWAITING_FIX, 1)
         self.assertEqual(stopped.rounds[0].tests_fixes, 1)
         self.assertEqual(stopped.summary()['resume'], "nudge the chat to finish round 1's fixes")
@@ -431,6 +433,8 @@ class StepsThatNeverWentOutTests(_Resume):
         chat.silent = {'tests'}
         service = self.service(chat, ScriptedReviewer(CLEAN))
         self.start(service, verify_tests=True)
+        # VERIFYING begins before the request goes out: stop once it has.
+        self.assertTrue(wait_until(lambda: chat.kinds() == ['tests']))
         stopped = self.stop_at(service, ReviewLoopPhase.VERIFYING, 1)
         # Before its review; the tests it needs run again ahead of it.
         self.assertEqual(stopped.summary()['resume'], "run round 1's review again")
