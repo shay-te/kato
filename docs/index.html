@@ -52,6 +52,13 @@
   h1 .a { color: var(--allow); }
   .lede { font-size: clamp(16px, 2vw, 19px); color: var(--muted); max-width: 62ch; margin: 0 0 30px; }
   .lede b { color: var(--ink); font-weight: 600; }
+  .proof { margin-top: 32px; display: flex; align-items: center; gap: 24px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, var(--panel), var(--bg-2)); padding: 20px 24px; }
+  .proof .stat { flex: 0 0 auto; }
+  .proof .num { display: block; font-family: var(--mono); font-size: 40px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; color: var(--allow); }
+  .proof .unit { display: block; margin-top: 6px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+  .proof p { margin: 0; color: var(--muted); font-size: 15.5px; max-width: 64ch; }
+  .proof p b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 560px) { .proof { flex-direction: column; align-items: flex-start; gap: 12px; } }
   .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
   .btn { font-family: var(--mono); font-size: 13.5px; font-weight: 600; padding: 12px 19px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; transition: transform .12s, filter .15s; }
   .btn:active { transform: translateY(1px); }
@@ -159,6 +166,13 @@
   .sp h4 { margin: 0 0 5px; font-size: 15.5px; }
   .sp p { margin: 0; color: var(--muted); font-size: 14px; }
   .sp code { font-family: var(--mono); font-size: 12.5px; color: var(--allow); background: var(--allow-soft); padding: 1px 6px; border-radius: 5px; }
+  .sandbox { margin-top: 28px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, var(--panel), var(--bg-2)); padding: 26px 24px 24px; }
+  .sandbox h3 { font-size: 20px; letter-spacing: -0.01em; margin: 8px 0 6px; }
+  .sandbox > p { color: var(--muted); margin: 0 0 22px; max-width: 72ch; font-size: 14.5px; }
+  .sb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px 24px; }
+  .sb-grid code { white-space: nowrap; }
+  @media (max-width: 860px) { .sb-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .sb-grid { grid-template-columns: 1fr; } }
 
   .logo { border-radius: 7px; display: block; }
   .finale { border-top: 1px solid var(--line); }
@@ -201,6 +215,10 @@
         <a class="btn btn-ghost" href="https://github.com/shay-te/kato" rel="noopener">View on GitHub</a>
         <span class="run">$ pip install -e .&nbsp; · &nbsp;kato up</span>
       </div>
+      <div class="proof">
+        <div class="stat"><span class="num">80%</span><span class="unit">more tickets shipped</span></div>
+        <p><b>Used daily by every developer at Una.</b> Una's lead developer ships 80% more tickets with Kato than with AI coding tools alone, measured from the team's git history.</p>
+      </div>
 
       <!-- one screen: everything the agents do, in one place -->
       <div class="screen" aria-hidden="true">
@@ -217,6 +235,7 @@
           <div class="row"><span class="chip allow"></span><span class="k">Ship</span><span class="m">push branch + open pull request</span><span class="r">on your click</span></div>
         </div>
       </div>
+
     </div>
   </section>
 
@@ -268,9 +287,9 @@
         <p>Coding agents are powerful but sprawling — they run shell commands, touch credentials, and scatter across terminals. Kato turns that into one governed cockpit.</p>
       </div>
       <div class="pillars">
-        <article class="pillar"><div class="pnum">01</div><h3>One place to work every task</h3><p><span class="em">Every ticket the agent is on — across every repo and tracker</span> (YouTrack, Jira, GitHub, GitLab, Bitbucket) — in one tabbed cockpit. No more hopping between terminals, IDEs, and tabs.</p></article>
-        <article class="pillar"><div class="pnum">02</div><h3>One approval popup — so your agents never stall</h3><p><span class="em">Every permission ask, from every task</span> — even backgrounded ones — surfaces in a single modal. Approve once and the agents keep moving; nothing waits on a prompt you couldn't find.</p></article>
-        <article class="pillar"><div class="pnum">03</div><h3>One board for what's approved — and what's pending</h3><p><span class="em">See every decision across every task at a glance</span>: what's allowed, what's waiting on you, what was denied. No guessing which agent is blocked or why.</p></article>
+        <article class="pillar"><div class="pnum">01</div><h3>One place to work every task</h3><p><span class="em">Every ticket the agent is on — across every repo and tracker</span> (YouTrack, Jira, GitHub, GitLab, Bitbucket, Azure DevOps) — in one tabbed cockpit. No more hopping between terminals, IDEs, and tabs.</p></article>
+        <article class="pillar"><div class="pnum">02</div><h3>One approval popup, one record of every decision</h3><p><span class="em">Every permission ask, from every task</span> — even backgrounded ones — surfaces in a single popup, so your agents never stall. Every "Allow always" and "Deny always" is kept in one list you can review and revoke at any time.</p></article>
+        <article class="pillar"><div class="pnum">03</div><h3>Reviewed until it's clean</h3><p><span class="em">An independent, read-only reviewer</span> reads the whole change and posts its findings into the agent's chat. Kato goes round again until nothing blocking is left, and no review starts while the tests fail. The agent answers every finding: fixed with a test, or rejected with evidence.</p></article>
         <article class="pillar"><div class="pnum">04</div><h3>Security you can see — and git only through Kato</h3><p><span class="em">A 3-layer Action Guard</span> blocks credential reads, network exfiltration, remote-exec and sandbox escapes, and asks before dual-use actions. <span class="em">Agents never touch git directly</span> — every push and PR goes through Kato, on your click.</p></article>
       </div>
     </div>
@@ -307,6 +326,25 @@
           <div class="sp"><h4>Nothing ships without you</h4><p>No auto-commit, no auto-push, no auto-resolve. Kato makes the change, runs the tests, and stops.</p></div>
           <div class="sp"><h4>Isolated per-task workspaces</h4><p>Each task runs in its own sandboxed clone. In-review clones are never auto-deleted; Kato never deletes a task or workspace on its own.</p></div>
           <div class="sp"><h4>Approve the repos it may touch</h4><p>One screen to approve which repositories Kato can act on — instead of trusting a config file you can't see.</p></div>
+        </div>
+      </div>
+      <div class="sandbox" id="sandbox">
+        <span class="eyebrow">Optional · Docker sandbox</span>
+        <h3>Turn on the sandbox, and every Claude Code run goes into a hardened container.</h3>
+        <p>One switch in Settings. It needs Docker with gVisor. By default, where a protection below cannot be put in place, Kato refuses to start the agent rather than run it with less.</p>
+        <div class="sb-grid">
+          <div class="sp"><h4>Only the task's folder</h4><p>The task's workspace is the only folder from your computer the container can see.</p></div>
+          <div class="sp"><h4>One way out</h4><p>A default-deny firewall lets traffic reach Anthropic's API and nothing else. Cloud metadata addresses are blocked.</p></div>
+          <div class="sp"><h4>Checked by name and certificate</h4><p>Each connection's hostname is checked, and Anthropic's TLS certificate is pinned, so a shared address or a mis-issued certificate gets nowhere.</p></div>
+          <div class="sp"><h4>A kernel of its own</h4><p>The container runs under gVisor, a user-space kernel between the agent and your machine's. There is no switch to run without it.</p></div>
+          <div class="sp"><h4>Stripped privileges</h4><p>A non-root user, every Linux capability dropped except the few start-up needs, no privilege escalation, AppArmor, and a read-only root filesystem.</p></div>
+          <div class="sp"><h4>Hard limits</h4><p>Memory, CPU, processes, open files and temporary space are capped. Swap and core dumps are off.</p></div>
+          <div class="sp"><h4>A secret scan before every run</h4><p>Kato will not start the agent on a workspace holding credential files — <code>.env</code>, SSH keys, cloud credentials — or anything that looks like a key or token.</p></div>
+          <div class="sp"><h4>Pinned builds</h4><p>The sandbox image is built from a base image pinned by digest and an exact Claude Code version, so a bad upstream release cannot slip in.</p></div>
+          <div class="sp"><h4>Replies checked</h4><p>Every reply is scanned for leaked credentials and for risky commands like <code>curl … | bash</code>, flagged before you act on them.</p></div>
+          <div class="sp"><h4>A tamper-evident record</h4><p>Every run is written to a hash-chained audit log, which you can also ship to a store outside the machine.</p></div>
+          <div class="sp"><h4>Cleaned up, even after a crash</h4><p>A watchdog removes the container if Kato itself dies, so nothing keeps running with your workspace attached.</p></div>
+          <div class="sp"><h4>No shortcuts</h4><p>Kato refuses to run as root, and skipping the permission prompts is allowed only inside the sandbox.</p></div>
         </div>
       </div>
     </div>
