@@ -1,5 +1,7 @@
 # Signing the Windows installer with SignPath
 
+> **Status:** the SignPath Foundation application was declined on 13 October 2026 for low public visibility (stars, forks, outside articles, discussions, institutional backing). They welcome a new application once the project is better known. The website no longer shows the signing policy; put the section below back on the download page before applying again.
+
 Unsigned, the Windows installer makes Microsoft Defender SmartScreen block it ("Windows protected your PC"). [SignPath Foundation](https://signpath.org/) signs open-source projects for free, and Kato qualifies on paper: MIT licence, public repository, and releases built only by GitHub Actions. The certificate is SignPath Foundation's, so Windows shows **SignPath Foundation** as the publisher.
 
 The release workflow already holds the signing step (`windows-sign` in `.github/workflows/desktop-release.yaml`). It stays off until the settings in step 4 exist.
@@ -9,7 +11,7 @@ The release workflow already holds the signing step (`windows-sign` in `.github/
 From [their terms](https://signpath.org/terms):
 
 - **Two-factor sign-in** on GitHub and on SignPath, for everyone with access.
-- **A code signing policy on the website.** It is in the download page's footer (`docs/index.html`, `#code-signing`), from the section below; keep the two in step when the team changes.
+- **A code signing policy on the website.** Add the section below to the download page (`docs/index.html`) before applying, with the real team.
 - **Roles.** Authors change the code, reviewers approve changes from anyone else, and approvers approve each signing.
 - **Signed releases only from this repository**, built by its GitHub Actions on GitHub's own machines. The release workflow already works this way.
 

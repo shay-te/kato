@@ -75,14 +75,14 @@ const TARGET_FILE: &str = "desktop-target.json";
 /// this is a GUI subsystem app (`windows_subsystem = "windows"`), so spawning
 /// a console program pops a black box unless CREATE_NO_WINDOW is set.
 #[cfg(windows)]
-fn hide_console(command: &mut Command) {
+pub(crate) fn hide_console(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
-fn hide_console(_command: &mut Command) {}
+pub(crate) fn hide_console(_command: &mut Command) {}
 
 /// Decode console output that may be UTF-16LE.
 ///

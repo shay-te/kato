@@ -15,6 +15,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod instance;
 mod wsl;
 
 use std::net::{SocketAddr, TcpStream};
@@ -125,7 +126,8 @@ fn main() {
                     }
                     #[cfg(windows)]
                     {
-                        false
+                        // Only ORPHANS: a second window's backend is live.
+                        instance::kill_orphaned_sidecars()
                     }
                 }
             };
@@ -158,6 +160,19 @@ fn main() {
             if configured.is_none() && !port_is_free(preferred) && server_answers(HOST, preferred) {
                 report_fatal(app.handle(), &kato_running_message(preferred, port_holder(preferred)));
                 return Ok(());
+            }
+            // A kato holding this machine's ~/.kato, by its own lock's record:
+            // seen whatever it serves — HTTPS (`kato up`) or nothing (hung) —
+            // where the health check above sees only an HTTP one. Ours would
+            // only be refused by that lock, later and less clearly.
+            if matches!(target, BackendTarget::Native) {
+                let running = instance::instance_file(kato_dir())
+                    .and_then(|path| instance::running_kato(&path, |port| !port_is_free(port)));
+                if let Some(running) = running {
+                    let holder = format!("PID {}", running.pid);
+                    report_fatal(app.handle(), &kato_running_message(running.port, Some(holder)));
+                    return Ok(());
+                }
             }
             let port = match choose_port(configured, port_is_free, port_holder) {
                 Ok(port) => port,
@@ -669,7 +684,12 @@ fn parse_port(text: &str) -> Option<u16> {
 /// strings (a hand edit may have put a number).
 fn settings_port(text: &str) -> Option<u16> {
     let settings: serde_json::Value = serde_json::from_str(text).ok()?;
-    match settings.get("KATO_WEBSERVER_PORT")? {
+    json_port(settings.get("KATO_WEBSERVER_PORT")?)
+}
+
+/// A port in kato's JSON: a string, as kato writes it, or a number.
+fn json_port(value: &serde_json::Value) -> Option<u16> {
+    match value {
         serde_json::Value::String(value) => parse_port(value),
         serde_json::Value::Number(value) => {
             value.as_u64().and_then(|n| u16::try_from(n).ok()).filter(|port| *port > 0)
@@ -763,8 +783,10 @@ fn last_line_for_splash(line: &str) -> String {
 fn kato_running_message(port: u16, holder: Option<String>) -> String {
     let who = holder.map(|h| format!(" ({h})")).unwrap_or_default();
     format!(
-        "Kato is already running on port {port}{who} — most likely `kato up` in a \
-         terminal. Two would work the same tasks: stop it, then reopen Kato."
+        "Kato is already running on port {port}{who} — `kato up` in a terminal, or a \
+         Kato app that didn't fully close. Two would work the same tasks: stop it \
+         (Ctrl+C in its terminal, or end that process in Task Manager or Activity \
+         Monitor), then reopen Kato."
     )
 }
 

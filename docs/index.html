@@ -93,6 +93,7 @@
   .dl-note a { color: var(--allow); }
   .dl-note a:hover { text-decoration: underline; }
   .dl-req { color: var(--faint); }
+  .dl-req b { color: var(--ink); font-weight: 600; }
 
   /* one-screen product mock — shows the value: everything in one place */
   .screen { margin-top: 52px; border: 1px solid var(--line-2); border-radius: 16px; overflow: hidden; background: linear-gradient(180deg, var(--panel), var(--bg-2)); box-shadow: 0 0 0 1px rgba(55,217,157,0.05), 0 30px 70px -34px rgba(55,217,157,0.28); }
@@ -201,9 +202,6 @@
   footer { border-top: 1px solid var(--line); padding: 26px 0 46px; color: var(--faint); font-size: 13px; }
   .foot { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
   footer a { color: var(--muted); } footer a:hover { color: var(--allow); }
-  .signing { margin-top: 22px; max-width: 72ch; line-height: 1.6; }
-  .signing h3 { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
-  .signing p, .signing ul { margin: 0 0 6px; } .signing ul { padding-left: 18px; }
 </style>
 
 <header>
@@ -281,7 +279,7 @@
           <span class="dl-go">Download →</span>
         </a>
       </div>
-      <p class="dl-note">Latest <span id="dl-ver">release</span> · <a href="https://github.com/shay-te/kato/releases" rel="noopener">All versions &amp; release notes →</a><br><span class="dl-req">Requires <code>git</code> and an agent CLI (Claude Code or Codex) on your machine. Docker only for the <a href="#sandbox">optional sandbox</a>.</span></p>
+      <p class="dl-note">Latest <span id="dl-ver">release</span> · <a href="https://github.com/shay-te/kato/releases" rel="noopener">All versions &amp; release notes →</a><br><span class="dl-req">Requires <code>git</code> and an agent CLI (Claude Code or Codex) on your machine. Docker only for the <a href="#sandbox">optional sandbox</a>.<br>The Windows installer isn't code-signed yet: if Windows says "Windows protected your PC", click <b>More info</b> → <b>Run anyway</b>.</span></p>
     </div>
   </section>
 
@@ -400,16 +398,6 @@
   <div class="wrap foot">
     <span>Kato — your autonomous coding sidekick.</span>
     <span><a href="https://github.com/shay-te/kato" rel="noopener">GitHub</a> · <a href="#why">Why Kato</a> · <a href="#security">Security</a> · <a href="privacy.html">Privacy</a></span>
-  </div>
-  <div class="wrap signing" id="code-signing">
-    <h3>Code signing policy</h3>
-    <p>Free code signing provided by <a href="https://about.signpath.io/" rel="noopener">SignPath.io</a>, certificate by <a href="https://signpath.org/" rel="noopener">SignPath Foundation</a>.</p>
-    <ul>
-      <li>Committers and reviewers: <a href="https://github.com/shay-te" rel="noopener">Shay Tessler</a></li>
-      <li>Approvers: <a href="https://github.com/shay-te" rel="noopener">Shay Tessler</a></li>
-    </ul>
-    <p>Only the Windows installer built from this repository by its GitHub Actions release workflow is signed.</p>
-    <p id="privacy">Privacy: Kato collects no data. Read the <a href="privacy.html">privacy policy</a>.</p>
   </div>
 </footer>
 
