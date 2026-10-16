@@ -1129,6 +1129,18 @@ def _set_task_mode_of(app: Flask, task_id: str, mode: str = '') -> bool:
     return True
 
 
+def _tagged_model(app: Flask, task_id: str) -> str:
+    """The model the task's ``kato:model:`` tag selects ('' when none / not Claude)."""
+    reader = getattr(app.config.get('PLANNING_SESSION_RUNNER'), 'tagged_model', None)
+    if not callable(reader):
+        return ''
+    try:
+        return str(reader(task_id) or '')
+    except Exception:
+        app.logger.exception('failed to read the model tag for task %s', task_id)
+        return ''
+
+
 def _get_task_override(app: Flask, key: str, task_id: str) -> str:
     """Read a per-task override (model / effort) from its config store.
 
@@ -1464,6 +1476,8 @@ def create_app(
     register_review_loop_routes(
         app, collect_diffs=lambda task_id: _collect_review_diffs(app, task_id),
     )
+    from kato_webserver.usage_routes import register_usage_routes
+    register_usage_routes(app)
     from kato_webserver.local_task_routes import register_local_task_routes
     register_local_task_routes(
         app,
@@ -1690,7 +1704,10 @@ def _register_http_routes(app: Flask) -> None:
 
     @app.get('/api/sessions/<task_id>/model')
     def get_session_model(task_id: str):
-        return jsonify({'model': _get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id)})
+        # The operator's own pick, else the model the ticket's ``kato:model:``
+        # tag selects — the picker shows what a spawn will actually run.
+        picked = _get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id)
+        return jsonify({'model': picked or _tagged_model(app, task_id)})
 
     @app.post('/api/sessions/<task_id>/model')
     def set_session_model(task_id: str):

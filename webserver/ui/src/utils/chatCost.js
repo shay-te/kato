@@ -53,6 +53,12 @@ export function formatCostMultiple(multiple) {
 // token numbers (the context meter and the cost dot) need exactly this, and
 // two copies of it is how they drift.
 export function formatTokens(count) {
+  // A task that re-reads its context on every turn reaches billions of
+  // cache-read tokens; "1435M" is not a number anyone can compare at a glance.
+  if (count >= 1_000_000_000) {
+    const billions = count / 1_000_000_000;
+    return `${billions >= 10 ? Math.round(billions) : billions.toFixed(1)}B`;
+  }
   if (count >= 1_000_000) {
     const millions = count / 1_000_000;
     return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;

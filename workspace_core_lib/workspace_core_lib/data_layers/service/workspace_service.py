@@ -180,6 +180,7 @@ class WorkspaceService(Service):
                     [str(rid) for rid in (repository_ids or []) if rid]
                     or (list(existing.repository_ids) if existing else [])
                 ),
+                tags=(list(existing.tags) if existing else []),
                 agent_session_id=(
                     existing.agent_session_id if existing else ''
                 ),
@@ -267,6 +268,31 @@ class WorkspaceService(Service):
         return self._mutate(
             task_id, lambda r: setattr(r, 'repository_ids', cleaned),
         )
+
+    def add_tag(self, task_id: str, tag: str) -> bool:
+        """Attach ``tag`` to the task, in the workspace's own metadata.
+
+        Returns True when the tag was newly recorded, False when it was
+        already there (compared case-insensitively, so a re-add is a no-op
+        that keeps the original spelling) or the tag is blank. Raises
+        ``LookupError`` when the task has no workspace to record it in — a
+        silent False there would read as "already tagged".
+        """
+        cleaned = str(tag or '').strip()
+        if not cleaned:
+            return False
+        added = False
+
+        def apply(record: WorkspaceRecord) -> None:
+            nonlocal added
+            if cleaned.lower() in {t.lower() for t in record.tags}:
+                return
+            record.tags = [*record.tags, cleaned]
+            added = True
+
+        if self._mutate(task_id, apply) is None:
+            raise LookupError(f'no workspace for task {task_id!r} to record tag {cleaned!r} in')
+        return added
 
     def delete(self, task_id: str) -> None:
         """Remove a workspace, fast, without blocking anyone else.

@@ -115,6 +115,14 @@ export default function ComposerActionsMenu({
                     {models.map((m) => (
                       <option key={m.id} value={m.id}>{m.label}</option>
                     ))}
+                    {/* A model the catalog does not list — a release pinned by
+                        a ``kato:model:<family>:<version>`` tag, or the pinned
+                        safeguard fallback. Without an option of its own the
+                        <select> shows the FIRST entry, i.e. a model that will
+                        not actually run. */}
+                    {selectedModel && !models.some((m) => m.id === selectedModel) && (
+                      <option key={selectedModel} value={selectedModel}>{selectedModel}</option>
+                    )}
                   </select>
                 </div>
               )}

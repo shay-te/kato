@@ -511,6 +511,12 @@ class KatoCoreLib(CoreLib):
                 ),
             )
         repository_service = RepositoryService(open_cfg, retry_cfg.max_retries)
+        # Repo tags the operator adds from kato live in the workspace metadata,
+        # not on the tracker; resolution reads them from there. Looked up per
+        # call so a replaced workspace manager is the one consulted.
+        repository_service.attach_kato_task_tags(
+            lambda task_id: self._kato_tags_for_task(task_id),
+        )
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does
         # not re-work every still-open PR comment (they're left unresolved for
@@ -833,6 +839,14 @@ class KatoCoreLib(CoreLib):
         if ticket_cfg is None:
             raise ValueError(f'missing issue platform config for: {platform.value}')
         return platform, ticket_cfg
+
+    def _kato_tags_for_task(self, task_id: str) -> list[str]:
+        """The tags kato recorded on a task itself (none without a workspace)."""
+        workspace = (
+            self.workspace_manager.get(task_id)
+            if self.workspace_manager is not None else None
+        )
+        return list(getattr(workspace, 'tags', None) or [])
 
     def _build_notification_service(self, open_cfg: DictConfig) -> NotificationService:
         return NotificationService(

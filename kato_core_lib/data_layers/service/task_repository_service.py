@@ -1,8 +1,9 @@
 """A task's repository set: what it touches, and keeping that in sync.
 
 The third subsystem lifted out of ``AgentService``. One job: reconcile the
-three places a task's repository list is written down — the ticket's
-``kato:repo:`` tags, the workspace's ``.kato-meta.json``, and the clones on
+places a task's repository list is written down — the ``kato:repo:`` tags
+(the ticket's, plus the ones kato records itself in the workspace's
+``.kato-meta.json``), that file's ``repository_ids``, and the clones on
 disk — and let the operator add to it.
 
 The tag→metadata reconcile is throttled per task (``_REPO_RECONCILE_TTL_SECONDS``)
@@ -116,9 +117,12 @@ class TaskRepositoryService(object):
         run in order so a tag failure aborts cloning (the tag is what
         makes the resolution durable across kato restarts):
 
-          1. ``task_service.add_tag(task_id, 'kato:repo:<id>')`` —
-             idempotent on the platform side; YouTrack / Jira return
-             cleanly if the tag already exists.
+          1. Record ``kato:repo:<id>`` on the task in KATO'S OWN store (the
+             workspace metadata) — never on the issue tracker. A tracker only
+             accepts tags it already has, so a new per-repo tag made YouTrack
+             answer 400 and the whole add failed on a platform kato had no
+             need to ask. Repo resolution reads these tags next to the
+             tracker's. Idempotent: re-adding is a no-op.
           2. ``sync_task_repositories(task_id)`` — provisions the
              new repo's clone into the per-task workspace via the
              same code path the operator's Sync icon uses, so a
@@ -173,29 +177,8 @@ class TaskRepositoryService(object):
         )
         from kato_core_lib.helpers.kato_tag_utils import build_repository_tag
         tag_name = build_repository_tag(normalized_repo_id)
-        tag_added = False
         try:
-            # Check whether the tag is already present so the toast can
-            # report "tag already there" rather than implying we did
-            # something we didn't.
-            existing_task = self._lookup_task_for_sync(normalized_task_id)
-            existing_tags = []
-            if existing_task is not None:
-                raw_tags = getattr(existing_task, 'tags', None) or []
-                for entry in raw_tags:
-                    if isinstance(entry, dict):
-                        existing_tags.append(str(entry.get('name', '') or ''))
-                    else:
-                        existing_tags.append(
-                            str(getattr(entry, 'name', entry) or ''),
-                        )
-            already_tagged = any(
-                t.strip().lower() == tag_name.lower()
-                for t in existing_tags
-            )
-            if not already_tagged:
-                self._task_service.add_tag(normalized_task_id, tag_name)
-                tag_added = True
+            tag_added = self._record_task_tag(normalized_task_id, tag_name)
         except Exception as exc:
             self.logger.exception(
                 'failed to add tag %s to task %s', tag_name, normalized_task_id,
@@ -230,6 +213,18 @@ class TaskRepositoryService(object):
             'tag_name': tag_name,
             'sync': sync_result,
         }
+
+    def _record_task_tag(self, task_id: str, tag_name: str) -> bool:
+        """Record ``tag_name`` on the task in kato's workspace metadata.
+
+        Returns True when it was newly recorded, False when already there.
+        Raises when there is nowhere to record it — a task with no workspace
+        cannot be cloned into either, so say so now rather than after a
+        tag that went nowhere.
+        """
+        if self._workspace_manager is None:
+            raise LookupError('workspace manager not wired')
+        return self._workspace_manager.add_tag(task_id, tag_name)
 
     def sync_task_repositories(self, task_id: str, task=None) -> dict[str, object]:
         """Add any task repos missing from the workspace; never remove.

@@ -56,6 +56,11 @@ class WorkspaceRecord(object):
     * ``status`` — lifecycle bucket; one of ``SUPPORTED_WORKSPACE_STATUSES``.
     * ``repository_ids`` — names of repos cloned into the workspace
       (each ends up at ``<workspace>/<repository_id>/``).
+    * ``tags`` — labels the host attached to this task ITSELF, kept beside
+      whatever tags the issue tracker holds. They exist so a host can tag a
+      task without a round trip to a tracker that may refuse the tag (a
+      tracker only accepts tags it already knows). Records written before
+      this field existed deserialize to ``[]``.
     * ``agent_session_id`` — opaque id of the agent conversation
       bound to this workspace (e.g. a Claude session uuid). Optional.
       Generic on purpose: this lib doesn't care which agent.
@@ -80,6 +85,7 @@ class WorkspaceRecord(object):
     task_description: str = ''
     status: str = WORKSPACE_STATUS_PROVISIONING
     repository_ids: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     agent_session_id: str = ''
     agent_backend: str = ''
     cwd: str = ''
@@ -103,6 +109,12 @@ class WorkspaceRecord(object):
             if isinstance(repository_ids_raw, list)
             else []
         )
+        tags_raw = payload.get('tags') or []
+        tags = (
+            [str(tag) for tag in tags_raw if tag]
+            if isinstance(tags_raw, list)
+            else []
+        )
         agent_session_id = read_session_id_from_mapping(payload)
         return cls(
             task_id=str(payload.get('task_id', '') or ''),
@@ -113,6 +125,7 @@ class WorkspaceRecord(object):
                 or WORKSPACE_STATUS_PROVISIONING,
             ),
             repository_ids=repository_ids,
+            tags=tags,
             agent_session_id=agent_session_id,
             cwd=text_from_mapping(payload, 'cwd'),
             resume_on_startup=bool(payload.get('resume_on_startup', True)),

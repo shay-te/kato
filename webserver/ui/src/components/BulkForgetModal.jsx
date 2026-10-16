@@ -3,6 +3,7 @@ import Icon, { BusyIcon } from './Icon.jsx';
 import DialogShell from './DialogShell.jsx';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { DELETE_STATE, deleteQueue } from '../stores/deleteQueueStore.js';
+import { toggledSet } from '../utils/toggledSet.js';
 
 // Pick several tasks and delete them in one go, with per-task progress.
 //
@@ -58,11 +59,7 @@ export default function BulkForgetModal({ sessions = [], onClose, onRun }) {
   const allSelected = rows.length > 0 && rows.every((s) => selected.has(s.task_id));
 
   function toggle(taskId) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(taskId)) { next.delete(taskId); } else { next.add(taskId); }
-      return next;
-    });
+    setSelected((prev) => toggledSet(prev, taskId));
   }
 
   function toggleAll() {

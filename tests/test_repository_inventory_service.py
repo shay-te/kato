@@ -154,6 +154,51 @@ class RepositoryInventoryServiceTests(unittest.TestCase):
 
         self.assertEqual([repository.id for repository in repositories], ['backend'])
 
+    def test_resolve_task_repositories_reads_tags_kato_recorded_itself(self) -> None:
+        # The tracker has no repo tag at all; kato recorded one in its own store.
+        service = RepositoryInventoryService([self.client_repo, self.backend_repo])
+        service.attach_kato_task_tags(
+            lambda task_id: [f'{RepositoryFields.REPOSITORY_TAG_PREFIX}backend']
+            if task_id == 'PROJ-1' else [],
+        )
+        task = build_task(
+            summary='Update client and backend endpoints',
+            tags=['some-other-label'],
+        )
+
+        repositories = service.resolve_task_repositories(task)
+
+        self.assertEqual([repository.id for repository in repositories], ['backend'])
+
+    def test_resolve_task_repositories_merges_tracker_and_kato_tags_without_duplicates(
+        self,
+    ) -> None:
+        service = RepositoryInventoryService([self.client_repo, self.backend_repo])
+        service.attach_kato_task_tags(lambda task_id: [
+            f'{RepositoryFields.REPOSITORY_TAG_PREFIX}backend',
+            f'{RepositoryFields.REPOSITORY_TAG_PREFIX}client',
+            'not-a-repo-tag',
+        ])
+        task = build_task(tags=[f'{RepositoryFields.REPOSITORY_TAG_PREFIX}client'])
+
+        repositories = service.resolve_task_repositories(task)
+
+        self.assertEqual([repository.id for repository in repositories], ['client', 'backend'])
+
+    def test_resolve_task_repositories_survives_unreadable_kato_tags(self) -> None:
+        # A workspace that cannot be read must not stop the tracker's own tags.
+        service = RepositoryInventoryService([self.client_repo, self.backend_repo])
+
+        def unreadable(task_id: str) -> list[str]:
+            raise OSError('metadata locked')
+
+        service.attach_kato_task_tags(unreadable)
+        task = build_task(tags=[f'{RepositoryFields.REPOSITORY_TAG_PREFIX}client'])
+
+        repositories = service.resolve_task_repositories(task)
+
+        self.assertEqual([repository.id for repository in repositories], ['client'])
+
     def test_resolve_task_repositories_matches_multiple_repo_tags(self) -> None:
         service = RepositoryInventoryService([self.client_repo, self.backend_repo])
         task = build_task(

@@ -11,8 +11,12 @@ from kato_core_lib.data_layers.data.fields import (
     TRIAGE_OUTCOME_TAGS,
 )
 from kato_core_lib.helpers.kato_tag_utils import (
+    MODEL_FAMILIES,
+    build_model_tag,
     build_repository_tag,
     build_triage_tag,
+    is_model_tag,
+    model_from_tag,
     repository_id_from_tag,
 )
 
@@ -37,8 +41,13 @@ class NamespaceDerivationTests(unittest.TestCase):
         self.assertEqual(TaskTags.TRIAGE_NEEDS_INFO, 'kato:triage:needs-info')
         self.assertEqual(TaskTags.TRIAGE_QUESTION, 'kato:triage:question')
 
+    def test_model_constants(self):
+        self.assertEqual(TaskTags.MODEL_SEGMENT, 'model')
+        self.assertEqual(TaskTags.MODEL_PREFIX, 'kato:model:')
+
     def test_every_tag_constant_starts_with_namespace(self):
         tags = [
+            TaskTags.MODEL_PREFIX,
             RepositoryFields.REPOSITORY_TAG_PREFIX,
             TaskTags.WAIT_PLANNING,
             TaskTags.WAIT_BEFORE_GIT_PUSH,
@@ -102,3 +111,65 @@ class BuildTriageTagTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ModelFromTagTests(unittest.TestCase):
+    def test_a_family_alone_selects_the_alias_so_the_cli_runs_the_latest(self):
+        for family in MODEL_FAMILIES:
+            with self.subTest(family=family):
+                self.assertEqual(model_from_tag(f'kato:model:{family}'), family)
+
+    def test_a_version_pins_that_release(self):
+        self.assertEqual(model_from_tag('kato:model:sonnet:5.5'), 'claude-sonnet-5-5')
+        self.assertEqual(model_from_tag('kato:model:opus:4.8'), 'claude-opus-4-8')
+        self.assertEqual(model_from_tag('kato:model:fable:5.1'), 'claude-fable-5-1')
+
+    def test_a_major_only_version_is_the_family_at_that_major(self):
+        self.assertEqual(model_from_tag('kato:model:opus:5'), 'claude-opus-5')
+
+    def test_a_zero_minor_is_dropped_as_the_clis_own_ids_do(self):
+        self.assertEqual(model_from_tag('kato:model:opus:5.0'), 'claude-opus-5')
+
+    def test_a_dash_is_accepted_for_the_dot_and_zero_padding_is_ignored(self):
+        self.assertEqual(model_from_tag('kato:model:opus:4-8'), 'claude-opus-4-8')
+        self.assertEqual(model_from_tag('kato:model:haiku:05.05'), 'claude-haiku-5-5')
+
+    def test_case_and_padding_do_not_matter(self):
+        self.assertEqual(model_from_tag('  Kato:Model:Sonnet:5.5 '), 'claude-sonnet-5-5')
+
+    def test_a_malformed_tag_selects_nothing(self):
+        for tag in (
+            'kato:model:', 'kato:model:gpt', 'kato:model:gpt:5', 'kato:model:sonnet:',
+            'kato:model:sonnet:x', 'kato:model:sonnet:5.5.1', 'kato:model:sonnet:5.5:extra',
+            'kato:model:sonnet:5.123',
+        ):
+            with self.subTest(tag=tag):
+                self.assertEqual(model_from_tag(tag), '')
+
+    def test_other_tags_and_non_strings_select_nothing(self):
+        for tag in ('kato:repo:sonnet', 'sonnet', '', None, 5):
+            with self.subTest(tag=tag):
+                self.assertEqual(model_from_tag(tag), '')
+
+
+class IsModelTagTests(unittest.TestCase):
+    def test_a_malformed_model_tag_is_still_a_model_tag(self):
+        # So a typo can be REPORTED rather than silently ignored.
+        self.assertTrue(is_model_tag('kato:model:gpt'))
+        self.assertTrue(is_model_tag('KATO:MODEL:'))
+
+    def test_other_tags_are_not(self):
+        self.assertFalse(is_model_tag('kato:repo:x'))
+        self.assertFalse(is_model_tag('model:sonnet'))
+        self.assertFalse(is_model_tag(None))
+
+
+class BuildModelTagTests(unittest.TestCase):
+    def test_builds_the_tag_with_and_without_a_version(self):
+        self.assertEqual(build_model_tag('sonnet'), 'kato:model:sonnet')
+        self.assertEqual(build_model_tag('sonnet', '5.5'), 'kato:model:sonnet:5.5')
+        self.assertEqual(build_model_tag(' opus ', ' 4.8 '), 'kato:model:opus:4.8')
+
+    def test_what_it_builds_round_trips_through_the_parser(self):
+        self.assertEqual(model_from_tag(build_model_tag('sonnet', '5.5')), 'claude-sonnet-5-5')
+        self.assertEqual(model_from_tag(build_model_tag('haiku')), 'haiku')

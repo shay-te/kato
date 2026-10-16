@@ -403,6 +403,36 @@ on that model), kato offers a one-click retry on a pinned LOWER model, like VS C
   user turn, read before the respawn). Operator-triggered, never automatic — it is a recovery
   for a false-positive flag, not a silent safeguard bypass.
 
+### Task tags kato owns (repo + model)
+```
+"+ Add repository" (Files tab) → TaskRepositoryService.add_task_repository
+   → WorkspaceService.add_tag(task, 'kato:repo:<id>')   ← kato's OWN store (.kato-meta.json `tags`)
+   → sync_task_repositories (clone + task branch)         ← the tracker is NEVER written
+RepositoryInventoryService.resolve_task_repositories reads tracker tags ∪ those kato recorded
+   (attach_kato_task_tags, wired in kato_core_lib.py) — one choke point for all 8 resolve callers.
+```
+**Do not POST a `kato:repo:` tag to the tracker.** A tracker only accepts tags it already has, and
+the per-repo tag is minted per repository, so YouTrack answered `400` and the whole add failed (UNA-3264).
+`WorkspaceService.create` preserves `tags` (it is called on every provisioning pass).
+
+`kato:model:<family>[:<version>]` on a ticket picks the task's STARTING Claude model: `kato:model:sonnet`
+= the alias (the CLI runs the latest), `kato:model:sonnet:5.5` = pinned `claude-sonnet-5-5`
+(`kato_tag_utils.model_from_tag`; families `fable|opus|sonnet|haiku`; a malformed tag is ignored and
+warned ONCE). `WaitPlanningService.observe_model_tag` records it per task (`task_model_tag_store`,
+`~/.kato/task_model_tags.json`) from the same two places the planning hold is observed; the spawn funnel
+`PlanningSessionRunner.start_session` applies it: **explicit pick (chat picker) > tag > configured
+default**, and never to a chat that is on another agent. The picker's `GET /api/sessions/<id>/model`
+answers the tagged model so the UI shows what will run.
+
+### Usage dialog (header chart button → `GET /api/usage`)
+Tokens per task, read from the Claude transcripts (`claude_core_lib/helpers/transcript_usage.py`), summed
+over EVERY chat the task had (current + `previous_session_ids`). **Count each API message once, by
+`message.id`** — Claude logs one line per content block and repeats the whole `usage` on each (7,169 lines
+for 3,026 messages measured), so summing lines overstates ~2.4x. Cache reads are >90% of the total and are
+shown apart from output and fresh input, never folded into "input". `TranscriptUsageReader` parses only the
+bytes appended since the last read (a 185 MB transcript: 0.4s cold, ~5ms warm). Codex chats are named as
+uncounted, not silently dropped. Not polled: read when the dialog opens and on Refresh.
+
 ### False-success guards (important — previously bugs)
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer

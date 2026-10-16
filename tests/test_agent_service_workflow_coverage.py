@@ -273,45 +273,53 @@ class AddTaskRepositoryTests(unittest.TestCase):
         self.assertFalse(result['added'])
         self.assertIn('not in the kato', result['error'])
 
-    def test_returns_error_when_tag_fails(self) -> None:
+    def test_returns_error_when_the_tag_cannot_be_recorded(self) -> None:
         repo = MagicMock()
         type(repo).repositories = property(
             lambda self: [SimpleNamespace(id='r1')],
         )
-        task_service = MagicMock()
-        task_service.add_tag.side_effect = RuntimeError('platform fail')
+        workspace_manager = MagicMock()
+        workspace_manager.add_tag.side_effect = LookupError('no workspace for task')
         service = AgentService(**_kwargs(
-            repository_service=repo, task_service=task_service,
+            repository_service=repo, workspace_manager=workspace_manager,
         ))
         service.logger = MagicMock()
-        with patch.object(service.repositories, '_lookup_task_for_sync',
-                          return_value=SimpleNamespace(id='T1', tags=[])):
+        with patch.object(service.repositories, 'sync_task_repositories') as sync:
             result = service.repositories.add_task_repository('T1', 'r1')
         self.assertFalse(result['added'])
+        self.assertIn('failed to tag task', result['error'])
+        # A tag that went nowhere must not be followed by a clone.
+        sync.assert_not_called()
 
-    def test_skips_tag_when_already_tagged(self) -> None:
-        # The "already tagged" path doesn't call add_tag.
-        from kato_core_lib.data_layers.data.fields import RepositoryFields
+    def test_returns_error_when_no_workspace_manager_is_wired(self) -> None:
+        repo = MagicMock()
+        type(repo).repositories = property(
+            lambda self: [SimpleNamespace(id='r1')],
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        result = service.repositories.add_task_repository('T1', 'r1')
+        self.assertFalse(result['added'])
+        self.assertIn('workspace manager not wired', result['error'])
+
+    def test_already_recorded_tag_reports_tag_not_added_and_skips_the_tracker(self) -> None:
         repo = MagicMock()
         type(repo).repositories = property(
             lambda self: [SimpleNamespace(id='r1')],
         )
         task_service = MagicMock()
+        workspace_manager = MagicMock()
+        workspace_manager.add_tag.return_value = False
         service = AgentService(**_kwargs(
             repository_service=repo, task_service=task_service,
-            workspace_manager=MagicMock(),
+            workspace_manager=workspace_manager,
         ))
-        existing = SimpleNamespace(
-            id='T1',
-            tags=[f'{RepositoryFields.REPOSITORY_TAG_PREFIX}r1'],
-        )
-        with patch.object(service.repositories, '_lookup_task_for_sync',
-                          return_value=existing), \
-             patch.object(service.repositories, 'sync_task_repositories',
+        with patch.object(service.repositories, 'sync_task_repositories',
                           return_value={'synced': True}):
             result = service.repositories.add_task_repository('T1', 'r1')
         task_service.add_tag.assert_not_called()
         self.assertFalse(result['tag_added'])
+        self.assertTrue(result['added'])
 
 
 class SyncTaskRepositoriesTests(unittest.TestCase):

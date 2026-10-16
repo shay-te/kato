@@ -89,6 +89,18 @@ class WorkspaceRecordTests(unittest.TestCase):
         })
         self.assertEqual(record.repository_ids, ['ok', 'also-ok'])
 
+    def test_tags_round_trip_and_default_empty(self) -> None:
+        record = WorkspaceRecord(task_id='PROJ-1', tags=['repo:a'])
+        self.assertEqual(WorkspaceRecord.from_dict(record.to_dict()).tags, ['repo:a'])
+        # Every workspace already on disk predates the field.
+        self.assertEqual(WorkspaceRecord.from_dict({'task_id': 'PROJ-1'}).tags, [])
+
+    def test_from_dict_drops_blank_tags_and_survives_a_non_list(self) -> None:
+        kept = WorkspaceRecord.from_dict({'task_id': 'PROJ-1', 'tags': ['ok', '', None]})
+        self.assertEqual(kept.tags, ['ok'])
+        corrupted = WorkspaceRecord.from_dict({'task_id': 'PROJ-1', 'tags': 'not-a-list'})
+        self.assertEqual(corrupted.tags, [])
+
     def test_from_dict_handles_invalid_repository_ids_field(self) -> None:
         # If the on-disk JSON has been corrupted to a non-list, treat
         # it as empty rather than raising — load must never crash.

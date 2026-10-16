@@ -61,6 +61,9 @@ class RepositoryInventoryService(Service):
         )
         self._repositories_config = repositories_config
         self._tag_cache: dict[str, object] = {}
+        # task_id -> tags kato recorded on the task itself (see
+        # ``attach_kato_task_tags``). None until the host wires it.
+        self._kato_task_tags = None
         # Explicit ``kato.repositories`` config is materialised
         # immediately — it's just a dict→namespace transform, so there
         # is no I/O cost. Validation (duplicate id / alias detection)
@@ -150,6 +153,15 @@ class RepositoryInventoryService(Service):
 
         RepositoryConnectionsValidator(self).validate()
 
+    def attach_kato_task_tags(self, kato_task_tags) -> None:
+        """Wire ``task_id -> [tag, ...]`` for the tags kato holds itself.
+
+        Repository tags (``kato:repo:<id>``) are read from the tracker's tags
+        AND from these, so a repo the operator adds from kato counts without
+        the tracker ever being asked to carry a tag it may refuse.
+        """
+        self._kato_task_tags = kato_task_tags
+
     def resolve_task_repositories(self, task) -> list[object]:
         tagged_repositories = self._repositories_from_task_tags(task)
         if tagged_repositories:
@@ -171,7 +183,7 @@ class RepositoryInventoryService(Service):
         raise ValueError(f'no configured repository matched task {task.id}')
 
     def _repositories_from_task_tags(self, task) -> list[object]:
-        repository_tags = self._repository_tags(task)
+        repository_tags = [*self._repository_tags(task), *self._kato_repository_tags(task)]
         if not repository_tags:
             return []
         ignored_lower = {
@@ -456,6 +468,25 @@ class RepositoryInventoryService(Service):
         for alias in getattr(repository, 'aliases', []) or []:
             aliases.append(normalized_lower_text(alias))
         return [alias for alias in aliases if alias]
+
+    def _kato_repository_tags(self, task) -> list[str]:
+        """The repo ids named by tags kato recorded on ``task`` itself."""
+        if self._kato_task_tags is None:
+            return []
+        try:
+            recorded = self._kato_task_tags(str(getattr(task, 'id', '') or ''))
+        except Exception:
+            # A workspace that cannot be read must not stop the tracker's own
+            # tags from resolving the task.
+            self.logger.exception(
+                'could not read kato-side tags for task %s', getattr(task, 'id', ''),
+            )
+            return []
+        return [
+            repository_tag
+            for repository_tag in map(repository_id_from_tag, recorded or [])
+            if repository_tag
+        ]
 
     @staticmethod
     def _repository_tags(task) -> list[str]:

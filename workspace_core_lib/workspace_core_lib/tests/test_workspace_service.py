@@ -107,6 +107,31 @@ class WorkspaceServiceTests(unittest.TestCase):
         assert record is not None
         self.assertEqual(record.repository_ids, ['a', 'b'])
 
+    def test_add_tag_records_once_and_ignores_case_and_blanks(self) -> None:
+        self.service.create(task_id='PROJ-1')
+        self.assertTrue(self.service.add_tag('PROJ-1', 'repo:Alpha'))
+        # A re-add — any case — is a no-op that keeps the first spelling.
+        self.assertFalse(self.service.add_tag('PROJ-1', 'REPO:alpha'))
+        self.assertFalse(self.service.add_tag('PROJ-1', '   '))
+        self.assertEqual(self.service.get('PROJ-1').tags, ['repo:Alpha'])
+        self.assertTrue(self.service.add_tag('PROJ-1', 'repo:beta'))
+        self.assertEqual(
+            self.service.get('PROJ-1').tags, ['repo:Alpha', 'repo:beta'],
+        )
+
+    def test_add_tag_without_a_workspace_raises_instead_of_reading_as_already_tagged(
+        self,
+    ) -> None:
+        with self.assertRaises(LookupError):
+            self.service.add_tag('NOPE-1', 'repo:alpha')
+
+    def test_create_idempotent_preserves_tags(self) -> None:
+        self.service.create(task_id='PROJ-1')
+        self.service.add_tag('PROJ-1', 'repo:alpha')
+        # A later provisioning pass must not erase what the host tagged.
+        self.service.create(task_id='PROJ-1', repository_ids=['alpha'])
+        self.assertEqual(self.service.get('PROJ-1').tags, ['repo:alpha'])
+
     def test_create_idempotent_preserves_session_id_and_cwd(self) -> None:
         self.service.create(task_id='PROJ-1')
         self.service.update_agent_session(

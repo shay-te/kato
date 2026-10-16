@@ -40,7 +40,9 @@ from kato_core_lib.data_layers.service.workspace_provisioning_service import (
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.plan_mode_store import PLAN_MODE
+from kato_core_lib.helpers.kato_tag_utils import is_model_tag, model_from_tag
 from kato_core_lib.helpers.planning_hold_store import set_planning_hold
+from kato_core_lib.helpers.task_model_tag_store import set_task_model_tag
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_execution_utils import skip_task_result
 from kato_core_lib.helpers.ticket_image_utils import download_ticket_images
@@ -108,6 +110,9 @@ class WaitPlanningService(object):
         # ~/.kato, and a service built for a unit test must not write holds
         # that a later test's spawn then reads as real.
         self._track_planning_holds = bool(track_planning_holds)
+        # (task id, tag) pairs already reported as malformed, so a typo in a
+        # ``kato:model:`` tag is said once rather than on every scan.
+        self._warned_model_tags: set[tuple[str, str]] = set()
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     # ----- public API -----
@@ -160,6 +165,7 @@ class WaitPlanningService(object):
         # Before the no-tag return: a task back in the queue WITHOUT the tag is
         # exactly the sighting that releases its hold.
         self.observe_planning_hold(task)
+        self.observe_model_tag(task)
         if not mode:
             return None
         tag = (
@@ -228,10 +234,68 @@ class WaitPlanningService(object):
         )
         self._stop_live_editing_session(task_id)
 
+    def observe_model_tag(self, task: Task) -> None:
+        """Remember the model the ticket's ``kato:model:`` tag selects.
+
+        ``kato:model:sonnet`` selects the latest sonnet; ``kato:model:sonnet:5.5``
+        pins that release. The model is recorded per task so every later spawn
+        (a message after the chat went idle, a comment run, a restart) uses it
+        without the ticket in hand — and released when the tag leaves the ticket.
+        It is the task's STARTING model: the operator's own pick in the chat
+        outranks it.
+
+        Called from the same two places as :meth:`observe_planning_hold`, and
+        gated by the same switch: the record lives in one file under ``~/.kato``.
+        """
+        if not self._track_planning_holds:
+            return
+        task_id = str(getattr(task, 'id', '') or '').strip()
+        model = self._selected_model(task_id, task)
+        try:
+            changed = set_task_model_tag(task_id, model)
+        except Exception:
+            self.logger.exception(
+                'failed to record the model tag for task %s', task_id,
+            )
+            return
+        if not changed:
+            return
+        if model:
+            self.logger.info(
+                'task %s: its %s tag selects model %s for every agent spawn '
+                "(the operator's own pick still wins)",
+                task_id, TaskTags.MODEL_PREFIX.rstrip(':'), model,
+            )
+        else:
+            self.logger.info(
+                'task %s: no model tag on the ticket — it runs on the '
+                'configured model again', task_id,
+            )
+
+    def _selected_model(self, task_id: str, task: Task) -> str:
+        """The model of the first valid ``kato:model:`` tag; malformed ones are reported."""
+        selected = ''
+        for tag in getattr(task, 'tags', None) or []:
+            text = str(tag or '').strip()
+            if not is_model_tag(text):
+                continue
+            model = model_from_tag(text)
+            if model:
+                selected = selected or model
+            elif (task_id, text.lower()) not in self._warned_model_tags:
+                self._warned_model_tags.add((task_id, text.lower()))
+                self.logger.warning(
+                    'task %s: ignoring tag %r — expected kato:model:<family> or '
+                    'kato:model:<family>:<version> (e.g. kato:model:sonnet:5.5)',
+                    task_id, text,
+                )
+        return selected
+
     def sync_planning_holds(self, tasks) -> None:
-        """:meth:`observe_planning_hold` for each of ``tasks``."""
+        """:meth:`observe_planning_hold` and :meth:`observe_model_tag` for each of ``tasks``."""
         for task in tasks or []:
             self.observe_planning_hold(task)
+            self.observe_model_tag(task)
 
     # ----- internals -----
 

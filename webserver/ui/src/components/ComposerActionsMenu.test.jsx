@@ -79,6 +79,21 @@ describe('ComposerActionsMenu', () => {
     expect(screen.getByRole('combobox', { name: /select model/i })).toHaveValue('opus');
   });
 
+  // A release pinned by a ``kato:model:<family>:<version>`` tag is not in the
+  // catalog (which lists aliases). The <select> used to fall back to showing
+  // its FIRST option — a model that would not actually run.
+  test('a model the catalog does not list is shown as itself, not as the first option', () => {
+    open({ models: MODELS, selectedModel: 'claude-sonnet-5-5' });
+    const select = screen.getByRole('combobox', { name: /select model/i });
+    expect(select).toHaveValue('claude-sonnet-5-5');
+    expect(screen.getByRole('option', { name: 'claude-sonnet-5-5' })).toBeInTheDocument();
+  });
+
+  test('a listed model gets no extra option', () => {
+    open({ models: MODELS, selectedModel: 'sonnet' });
+    expect(screen.getAllByRole('option')).toHaveLength(MODELS.length);
+  });
+
   test('changing the model reports the id', () => {
     const onModelChange = vi.fn();
     open({ models: MODELS, selectedModel: 'opus', onModelChange });

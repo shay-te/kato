@@ -42,6 +42,18 @@ describe('Header', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
+  test('clicking the usage button fires onOpenUsage', () => {
+    const onOpenUsage = vi.fn();
+    render(<Header {..._baseProps({ onOpenUsage })} />);
+    fireEvent.click(screen.getByLabelText('Open usage'));
+    expect(onOpenUsage).toHaveBeenCalledTimes(1);
+  });
+
+  test('the usage button is disabled when nothing can open it', () => {
+    render(<Header {..._baseProps()} />);
+    expect(screen.getByLabelText('Open usage')).toBeDisabled();
+  });
+
   test('clicking the refresh button fires onRefresh', () => {
     const onRefresh = vi.fn();
     render(<Header {..._baseProps({ onRefresh })} />);

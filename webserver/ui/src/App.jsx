@@ -35,6 +35,7 @@ import AgentVersionBanner from './components/AgentVersionBanner.jsx';
 import UiBuildBanner from './components/UiBuildBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
+import UsageDialog from './components/UsageDialog.jsx';
 import TabList from './components/TabList.jsx';
 import TaskPalette from './components/TaskPalette.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
@@ -623,6 +624,11 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  // The Usage dialog is mounted only while open, so its transcript read
+  // happens when the operator asks for it and never in the background.
+  const [usageOpen, setUsageOpen] = useState(false);
+  const openUsage = useCallback(() => setUsageOpen(true), []);
+  const closeUsage = useCallback(() => setUsageOpen(false), []);
 
   const pendingPermissions = usePendingPermissions();
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
@@ -1175,7 +1181,9 @@ export default function App() {
         onStatusClick={toggleOrchestrator}
         statusActive={orchestratorOpen}
         onOpenSettings={openSettings}
+        onOpenUsage={openUsage}
       />
+      {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
       <SettingsDrawer
         open={settingsOpen}
         onClose={closeSettings}

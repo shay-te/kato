@@ -1,8 +1,8 @@
 """Backend ↔ UI contract test for /add-repository.
 
-Real Flask app + real AgentService. The success path needs real
-provider integration (a working YouTrack/Jira tag-write + a real
-clone-able remote URL), which a hermetic test can't provide. The
+Real Flask app + real AgentService. The success path needs a
+real clone-able remote URL, which a hermetic test can't provide (the tag
+itself is kato's own — see test_add_repository_tag_stays_in_kato). The
 shape coverage we CAN do:
 
   * empty repository_id → 400 with the exact error UI shows inline

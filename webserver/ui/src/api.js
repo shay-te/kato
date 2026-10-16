@@ -97,6 +97,14 @@ export function fetchSessionList() {
   return fetchJson('/api/sessions');
 }
 
+// Tokens each task has consumed, read from the agent's own transcripts on the
+// host. Returns ``{ tasks: [{ task_id, summary, status, usage, … }], totals,
+// … }``. A big first read can take a few seconds, so callers get a hard
+// timeout instead of a promise that never settles.
+export function fetchUsage() {
+  return fetchJson('/api/usage', { timeoutMs: 120000 });
+}
+
 // Every unanswered permission ask across ALL live sessions (not just the
 // focused tab's SSE stream) — so the modal can pop no matter which task is
 // in view. Returns ``{ pending: [{ task_id, type, request_id, request, … }] }``.

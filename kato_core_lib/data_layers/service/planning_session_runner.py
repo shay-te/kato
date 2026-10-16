@@ -16,6 +16,7 @@ from __future__ import annotations
 from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 import time
 from collections.abc import Callable
+from pathlib import PureWindowsPath
 from dataclasses import dataclass
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
@@ -48,6 +49,7 @@ from kato_core_lib.helpers.remote_control_store import (
     schedule_remote_control_for_spawn,
 )
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
+from kato_core_lib.helpers.task_model_tag_store import task_model_tag
 from kato_core_lib.helpers.workspace_refusal_guidance import (
     KATO_AGENT_GUIDANCE,
 )
@@ -290,6 +292,34 @@ class PlanningSessionRunner(object):
         except Exception:
             return self._defaults
         return self._defaults_by_backend.get(backend, self._defaults)
+
+    def tagged_model(self, task_id: str) -> str:
+        """The model the task's ``kato:model:`` tag selects — Claude chats only.
+
+        The tag names a Claude model, so a task whose chat is on another agent
+        (Codex, ...) must not be handed it: that CLI would refuse a model it has
+        never heard of and the chat would not start. Public because the
+        webserver's model picker must show the model a spawn will actually use.
+        """
+        if not self._task_runs_on_claude(task_id):
+            return ''
+        return task_model_tag(task_id)
+
+    def _task_runs_on_claude(self, task_id: str) -> bool:
+        resolver = getattr(self._session_manager, 'backend_for', None)
+        if callable(resolver):
+            try:
+                backend = str(resolver(task_id) or '').strip().lower()
+            except Exception:
+                backend = ''
+            if backend:
+                return backend == AgentBackend.CLAUDE.value
+        # No answer from the manager: the configured backend's own binary.
+        # PureWindowsPath: it reads both ``\`` and ``/`` separators, so the
+        # same line is right for ``C:\bin\claude.exe`` and ``/usr/bin/claude``
+        # whichever OS kato runs on.
+        binary = PureWindowsPath(str(self._defaults.binary or ''))
+        return binary.stem.lower() == AgentBackend.CLAUDE.value
 
     @property
     def session_manager(self) -> ClaudeSessionManager:
@@ -786,6 +816,10 @@ class PlanningSessionRunner(object):
         # The CLI this task's chat is actually on. Resolved per spawn, not
         # captured at boot: the operator picks it with the agent tabs.
         defaults = self._defaults_for(task_id)
+        # Model precedence: the caller's explicit pick (the chat's model picker),
+        # then the model the ticket's ``kato:model:`` tag selects, then the
+        # configured default. The tag is the task's STARTING model, not a lock.
+        model = model or self.tagged_model(task_id)
         session = self._session_manager.start_session(
             task_id=task_id,
             task_summary=task_summary,

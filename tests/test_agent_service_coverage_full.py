@@ -729,25 +729,27 @@ class TaskPullRequestIdTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# sync_task_repositories: existing_task is None  (2555 -> 2564 branch)
+# add_task_repository: the tag is kato's own, the tracker is never asked
 # --------------------------------------------------------------------------
 
 
 class AddTaskRepositoryTagTests(unittest.TestCase):
-    def test_no_existing_task_still_adds_tag(self) -> None:
-        # 2555->2564: _lookup_task_for_sync returns None so the
-        # existing-tags collection loop is skipped, already_tagged is
-        # False, and add_tag fires.
+    def test_tag_is_recorded_in_the_workspace_and_never_sent_to_the_tracker(self) -> None:
+        # YouTrack answers 400 to a tag it does not already have, which failed
+        # the whole add. The tag lives in kato's workspace metadata instead.
         task_service = MagicMock()
+        workspace_manager = MagicMock()
+        workspace_manager.add_tag.return_value = True
         repository_service = SimpleNamespace(
             repositories=[SimpleNamespace(id='repo-b')],
         )
         service = _bare_service(
             task_service=task_service,
             repository_service=repository_service,
+            workspace_manager=workspace_manager,
         )
         service.logger = MagicMock()
-        service.repositories._lookup_task_for_sync = MagicMock(return_value=None)
+        service.repositories._lookup_task_for_sync = MagicMock()
         # Short-circuit the heavy provisioning step after the tag phase.
         service.repositories.sync_task_repositories = MagicMock(
             return_value={'synced': []}
@@ -755,9 +757,11 @@ class AddTaskRepositoryTagTests(unittest.TestCase):
 
         result = service.repositories.add_task_repository('PROJ-1', 'repo-b')
 
-        service.repositories._lookup_task_for_sync.assert_called_once_with('PROJ-1')
-        task_service.add_tag.assert_called_once()
+        workspace_manager.add_tag.assert_called_once_with('PROJ-1', 'kato:repo:repo-b')
+        task_service.add_tag.assert_not_called()
+        service.repositories._lookup_task_for_sync.assert_not_called()
         self.assertTrue(result['tag_added'])
+        self.assertEqual(result['tag_name'], 'kato:repo:repo-b')
 
 
 # --------------------------------------------------------------------------

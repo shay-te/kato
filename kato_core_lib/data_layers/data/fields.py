@@ -94,6 +94,12 @@ class TaskTags(object):
     # Claude — performs the push when approved.
     WAIT_BEFORE_GIT_PUSH = f'{KATO_TAG_NAMESPACE}:wait-before-git-push'
 
+    # Model pick: ``kato:model:<family>`` runs the task on that family's
+    # latest model; ``kato:model:<family>:<version>`` pins one release
+    # (``kato:model:sonnet:5.5``). Parse it via ``kato_tag_utils``.
+    MODEL_SEGMENT = 'model'
+    MODEL_PREFIX = f'{KATO_TAG_NAMESPACE}:{MODEL_SEGMENT}:'
+
     # Triage workflow: when ``TRIAGE_INVESTIGATE`` is on a task, kato
     # spends one Claude turn investigating (read-only — no edits, no
     # PRs) and replaces it with one of the outcome tags below. The

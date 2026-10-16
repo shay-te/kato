@@ -25,6 +25,7 @@ export default function Header({
   onStatusClick,
   statusActive = false,
   onOpenSettings,
+  onOpenUsage,
 }) {
   // Refresh re-scans tickets + reloads workspace state — show the thick
   // spinner on the button while that's in flight (and block a double-tap).
@@ -92,6 +93,16 @@ export default function Header({
           not icons (the waiting-task chip is portaled in here, so no reading
           of this file could have shown that). A class only reaches what asks
           for it. */}
+      <button
+        type="button"
+        className="header-icon-btn"
+        data-tooltip="Usage — how many tokens each task has consumed."
+        aria-label="Open usage"
+        onClick={onOpenUsage}
+        disabled={typeof onOpenUsage !== 'function'}
+      >
+        <Icon name="chart" />
+      </button>
       <button
         type="button"
         className="header-icon-btn"
