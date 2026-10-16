@@ -1,4 +1,10 @@
-"""``GET /api/usage`` — how many tokens each task has consumed.
+"""``GET /api/usage`` — how many tokens each task has consumed, and what that is worth.
+
+Each task's ``usage`` carries token counts AND an estimated API-equivalent
+``cost``, priced per message at its own model's published rates
+(``claude_core_lib.helpers.model_pricing``), split per model with each model's
+first and last use — so a task that switched model shows both. A model with no
+price on file is listed in ``unpriced_models``, never counted as free.
 
 Read from the agent's own transcripts, not from anything kato counted itself:
 the transcript is the one record that survives a restart, a lazily-resumed
@@ -24,12 +30,14 @@ from flask import Flask, jsonify
 
 from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 from agent_core_lib.agent_core_lib.session.backend_chats import backends_with_chats, parked_chat
+from claude_core_lib.claude_core_lib.helpers.model_pricing import PRICES_AS_OF
 from claude_core_lib.claude_core_lib.helpers.transcript_usage import (
     TranscriptUsageReader,
     add_usage,
     empty_usage,
 )
 from claude_core_lib.claude_core_lib.session.history import find_session_file
+from kato_core_lib.helpers.model_label_utils import model_display_label
 
 _CLAUDE = AgentBackend.CLAUDE.value
 
@@ -73,6 +81,7 @@ def collect_usage(session_manager, workspace_manager, reader: TranscriptUsageRea
         other_agents = _other_backends(record)
         uncounted.update(other_agents)
         add_usage(totals, usage)
+        _label_models(usage)
         tasks.append({
             'task_id': _first_text(
                 getattr(workspace, 'task_id', ''), getattr(record, 'task_id', ''),
@@ -86,12 +95,26 @@ def collect_usage(session_manager, workspace_manager, reader: TranscriptUsageRea
             'usage': usage,
         })
     tasks.sort(key=lambda task: (-task['usage']['total'], task['task_id']))
+    _label_models(totals)
     return {
         'tasks': tasks,
         'totals': totals,
         'uncounted_backends': sorted(uncounted),
+        # The date of the rates behind every ``cost`` figure, so the page can
+        # say how old the estimate's prices are.
+        'pricing_as_of': PRICES_AS_OF,
         'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     }
+
+
+def _label_models(usage: dict) -> None:
+    """Give each model a name a person reads (``claude-opus-5-5`` -> ``Opus 5.5``).
+
+    Named here, once, so the page never formats a model id itself and a task's
+    row, its chips and its table can't name the same model two ways.
+    """
+    for model, slot in usage['models'].items():
+        slot['label'] = model_display_label(model) or 'unknown'
 
 
 def _claude_transcripts(record, workspace) -> list[str]:

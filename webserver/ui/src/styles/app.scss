@@ -13541,9 +13541,11 @@ button.settings-prompt-editor-head {
 }
 
 /* Usage dialog — tokens each task has consumed.
- * Colours carry meaning and repeat everywhere they appear: green = what the
- * model wrote, blue = what was sent to it new, grey = context re-read from
- * cache (the bulk of the total, and the cheapest, so it is the quiet one). */
+ * The three summary tiles keep their colours: green = what the model wrote,
+ * blue = what was sent to it new, grey = context re-read from cache (the bulk
+ * of the total, and the cheapest, so it is the quiet one). A row's bar is ONE
+ * length in one colour — tokens against the biggest task — so it carries no
+ * colour meaning of its own. */
 .adopt-session-modal.usage-dialog { width: min(920px, 94vw); }
 
 .usage-body {
@@ -13585,6 +13587,10 @@ button.settings-prompt-editor-head {
 }
 
 .usage-tile-hint { font-size: $TEXT-11; color: $C-NEUTRAL-45; }
+
+/* One line under the tiles saying what a bar is. It is not progress toward a
+ * limit: it is a task's tokens against the biggest task's. */
+.usage-caption { margin: 0; font-size: $TEXT-11_5; color: $C-NEUTRAL-64; }
 
 .usage-toolbar {
   display: flex;
@@ -13689,10 +13695,7 @@ button.settings-prompt-editor-head {
   border-radius: $RADIUS-PILL;
 }
 
-.usage-bar-seg { flex: none; height: 100%; }
-.usage-bar-seg--output { background: $C-GREEN-52; }
-.usage-bar-seg--fresh { background: $C-CYAN-52; }
-.usage-bar-seg--cache { background: $C-NEUTRAL-45; }
+.usage-bar-fill { flex: none; height: 100%; background: $C-CYAN-52; }
 
 .usage-row-meta {
   grid-area: meta;
@@ -13704,10 +13707,39 @@ button.settings-prompt-editor-head {
   font-variant-numeric: tabular-nums;
 }
 
+/* The models a task ran on, in the order it first used them. */
+.usage-model-chips { display: inline-flex; align-items: center; gap: $SPACE-4; }
+
+.usage-model-chip {
+  padding: 0 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-96;
+}
+
+.usage-model-arrow,
+.usage-model-more { color: $C-NEUTRAL-45; }
+
+.usage-unpriced { margin-left: $SPACE-6; font-size: $TEXT-11; color: $C-NEUTRAL-45; }
+
 .usage-row-detail {
   padding: $SPACE-4 $SPACE-12 $SPACE-12;
   border-top: 1px solid $C-NEUTRAL-16;
 }
+
+/* The money is in the details: the total, then how it splits. */
+.usage-cost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: $SPACE-2 $SPACE-12;
+  margin: $SPACE-8 0 0;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-79;
+}
+
+.usage-cost strong { color: $C-NEUTRAL-96; font-variant-numeric: tabular-nums; }
+.usage-cost-split { color: $C-NEUTRAL-64; font-variant-numeric: tabular-nums; }
 
 .usage-models {
   width: 100%;

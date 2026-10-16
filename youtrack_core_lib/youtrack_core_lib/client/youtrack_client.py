@@ -168,16 +168,73 @@ class YouTrackClient(YouTrackClientBase):
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
     def add_tag(self, issue_id: str, tag_name: str) -> None:
-        """Attach ``tag_name`` to a YouTrack issue.
+        """Attach ``tag_name`` to a YouTrack issue, creating the tag if needed.
 
-        Tags are first-class objects; the request POSTs to
-        ``/api/issues/<id>/tags`` with ``{name: <tag_name>}``.
+        YouTrack identifies a tag by its database ID — ``POST
+        /api/issues/<id>/tags`` takes ``{"id": ...}``, and the ``{"name": ...}``
+        this used to send is refused with ``400 Bad Request``. So the tag's id is
+        found first (among the tags this token can see), the tag is created when
+        there is none, and only then is it attached.
+
+        Idempotent: a tag already on the issue is left alone.
         """
+        if self._issue_tag_id(issue_id, tag_name):
+            return
+        tag_id = self._visible_tag_id(tag_name) or self._create_tag(tag_name)
         response = self._post_with_retry(
             f'/api/issues/{issue_id}/tags',
+            params={'fields': 'id,name'},
+            json={'id': tag_id},
+        )
+        self.raise_for_status_with_detail(response)
+
+    # Tags the token can see are listed a page at a time; a workspace with more
+    # than this many is not scanned past it (the tag is then created, and
+    # YouTrack refuses a duplicate name with a clear error rather than a
+    # silent second tag).
+    _TAG_PAGE_SIZE = 200
+    _TAG_MAX_PAGES = 25
+
+    def _visible_tag_id(self, tag_name: str) -> str:
+        """The id of the tag named ``tag_name`` among those this token can see, or ''.
+
+        Matched exactly but ignoring case (so ``Scope:A`` is not duplicated as
+        ``scope:a``), and client-side rather than through the ``query`` parameter:
+        a precaution, since tag names like ``scope:value`` contain the ``:`` that
+        YouTrack's search syntax uses, and a miss here would create a duplicate.
+        """
+        wanted = normalized_text(tag_name).lower()
+        for page_number in range(self._TAG_MAX_PAGES):
+            response = self._get_with_retry(
+                '/api/tags',
+                params={
+                    'fields': 'id,name',
+                    '$top': self._TAG_PAGE_SIZE,
+                    '$skip': page_number * self._TAG_PAGE_SIZE,
+                },
+            )
+            self.raise_for_status_with_detail(response)
+            page = self._json_items(response)
+            for item in page:
+                if isinstance(item, dict) and normalized_text(item.get('name', '')).lower() == wanted:
+                    return str(item.get('id', '') or '')
+            if len(page) < self._TAG_PAGE_SIZE:
+                break
+        return ''
+
+    def _create_tag(self, tag_name: str) -> str:
+        """Create the tag (owned by the token's user) and return its id."""
+        response = self._post_with_retry(
+            '/api/tags',
+            params={'fields': 'id,name'},
             json={'name': tag_name},
         )
-        response.raise_for_status()
+        self.raise_for_status_with_detail(response)
+        payload = response.json()
+        tag_id = str(payload.get('id', '') or '') if isinstance(payload, dict) else ''
+        if not tag_id:
+            raise RuntimeError(f'YouTrack created the tag {tag_name!r} but returned no id for it')
+        return tag_id
 
     def remove_tag(self, issue_id: str, tag_name: str) -> None:
         """Detach ``tag_name`` from a YouTrack issue.

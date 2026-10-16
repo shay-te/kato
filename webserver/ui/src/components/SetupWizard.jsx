@@ -77,9 +77,14 @@ const REQUIRED_TICKET_FIELDS = {
 
 // The AI agent that runs the work. Only backends kato can actually boot
 // with are selectable (validate_env: openhands | claude); OpenRouter is the
-// OpenHands runtime pointed at OpenRouter's API. Codex ships as a transport
-// lib but is not yet a bootable backend — shown disabled so nobody wedges
-// their config on an unsupported value.
+// OpenHands runtime pointed at OpenRouter's API.
+//
+// Codex is shown disabled HERE because this step picks the MAIN agent (the one
+// that implements tickets on its own) and ``KATO_AGENT_BACKEND=codex`` is
+// rejected — selecting it would wedge the config on an unsupported value. It is
+// NOT unavailable: Codex runs as a chat tab beside Claude, switched on by
+// default (``KATO_CODEX_ENABLED``) once kato is set up. The card says so, because
+// "not yet available" read as "kato cannot use my installed Codex".
 const AGENT_CHOICES = [
   {
     id: 'claude',
@@ -118,7 +123,8 @@ const AGENT_CHOICES = [
     id: 'codex',
     backend: 'codex',
     label: 'Codex agent',
-    blurb: 'Not yet available as a runtime backend',
+    blurb: 'Not a main agent yet. Once set up, Codex still gets its own chat tab '
+      + 'next to Claude (needs the `codex` CLI).',
     required: [],
     optional: [],
     disabled: true,

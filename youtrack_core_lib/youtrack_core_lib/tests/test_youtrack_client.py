@@ -624,31 +624,143 @@ class YouTrackAddPullRequestCommentTests(unittest.TestCase):
         self.assertEqual(mock_post.call_count, 1)
 
 
+def _tag_list(*pairs):
+    """A ``/api/tags`` style response: ``[(id, name), ...]``."""
+    return mock_response(json_data=[{'id': tag_id, 'name': name} for tag_id, name in pairs])
+
+
 class YouTrackAddTagTests(unittest.TestCase):
-    def test_posts_to_tags_endpoint(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        response = mock_response()
+    """A tag is attached by its database ID — ``{"name": ...}`` is a 400."""
 
-        with patch.object(client, '_post', return_value=response) as mock_post:
-            client.add_tag('PROJ-1', 'priority:high')
+    def setUp(self) -> None:
+        self.client = YouTrackClient('https://youtrack.example', 'yt-token')
 
-        mock_post.assert_called_once_with(
-            '/api/issues/PROJ-1/tags',
-            json={'name': 'priority:high'},
+    def test_a_tag_already_on_the_issue_is_left_alone(self) -> None:
+        with patch.object(self.client, '_get', return_value=_tag_list(('9-1', 'scope:a'))) as get, \
+             patch.object(self.client, '_post') as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        post.assert_not_called()
+        get.assert_called_once()
+
+    def test_an_existing_tag_is_attached_by_id_not_by_name(self) -> None:
+        attach = mock_response(json_data={})
+        gets = [_tag_list(), _tag_list(('6-3', 'other'), ('6-4', 'scope:a'))]
+
+        with patch.object(self.client, '_get', side_effect=gets), \
+             patch.object(self.client, '_post', return_value=attach) as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        post.assert_called_once_with(
+            '/api/issues/PROJ-1/tags', params={'fields': 'id,name'}, json={'id': '6-4'},
         )
-        response.raise_for_status.assert_called_once()
+        attach.raise_for_status.assert_called_once()
+
+    def test_the_tag_is_found_whatever_its_case_so_no_duplicate_is_created(self) -> None:
+        gets = [_tag_list(), _tag_list(('6-4', 'Scope:A'))]
+
+        with patch.object(self.client, '_get', side_effect=gets), \
+             patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(post.call_args.kwargs['json'], {'id': '6-4'})
+
+    def test_a_missing_tag_is_created_and_then_attached(self) -> None:
+        created = mock_response(json_data={'id': '6-9', 'name': 'scope:a'})
+        attach = mock_response(json_data={})
+
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), _tag_list()]), \
+             patch.object(self.client, '_post', side_effect=[created, attach]) as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        self.assertEqual(post.call_args_list[0].args, ('/api/tags',))
+        self.assertEqual(post.call_args_list[0].kwargs['json'], {'name': 'scope:a'})
+        self.assertEqual(post.call_args_list[1].args, ('/api/issues/PROJ-1/tags',))
+        self.assertEqual(post.call_args_list[1].kwargs['json'], {'id': '6-9'})
+
+    def test_the_tag_list_is_searched_page_by_page(self) -> None:
+        gets = [_tag_list(), _tag_list(('1', 'a'), ('2', 'b')), _tag_list(('3', 'scope:a'))]
+
+        with patch.object(YouTrackClient, '_TAG_PAGE_SIZE', 2), \
+             patch.object(self.client, '_get', side_effect=gets) as get, \
+             patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        self.assertEqual(get.call_args_list[1].kwargs['params']['$skip'], 0)
+        self.assertEqual(get.call_args_list[2].kwargs['params']['$skip'], 2)
+        self.assertEqual(post.call_args.kwargs['json'], {'id': '3'})
+
+    def test_a_tag_not_in_the_scanned_pages_is_created(self) -> None:
+        gets = [_tag_list(), _tag_list(('1', 'a')), _tag_list(('2', 'b'))]
+        created = mock_response(json_data={'id': '6-9'})
+
+        with patch.object(YouTrackClient, '_TAG_PAGE_SIZE', 1), \
+             patch.object(YouTrackClient, '_TAG_MAX_PAGES', 2), \
+             patch.object(self.client, '_get', side_effect=gets) as get, \
+             patch.object(self.client, '_post', side_effect=[created, mock_response(json_data={})]):
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        self.assertEqual(get.call_count, 3)  # the issue's tags + 2 scanned pages, then give up
+
+    def test_entries_that_are_not_tags_are_skipped(self) -> None:
+        listing = mock_response(json_data=[None, 'junk', {'id': '6-4', 'name': 'scope:a'}])
+
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), listing]), \
+             patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+            self.client.add_tag('PROJ-1', 'scope:a')
+
+        self.assertEqual(post.call_args.kwargs['json'], {'id': '6-4'})
+
+    def test_a_created_tag_with_no_id_is_an_error_and_nothing_is_attached(self) -> None:
+        for payload in ({}, ['not', 'a', 'dict']):
+            with self.subTest(payload=payload):
+                with patch.object(self.client, '_get', side_effect=[_tag_list(), _tag_list()]), \
+                     patch.object(self.client, '_post', return_value=mock_response(json_data=payload)) as post:
+                    with self.assertRaisesRegex(RuntimeError, 'returned no id'):
+                        self.client.add_tag('PROJ-1', 'scope:a')
+                post.assert_called_once()  # the create — the attach never happened
+
+    def test_a_refusal_carries_youtracks_own_explanation(self) -> None:
+        refused = mock_response(
+            status_code=400, json_data={'error_description': 'Tag name is invalid'},
+        )
+        refused.raise_for_status.side_effect = Exception('400 Client Error')
+
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), _tag_list()]), \
+             patch.object(self.client, '_post', return_value=refused):
+            with self.assertRaisesRegex(Exception, 'Tag name is invalid'):
+                self.client.add_tag('PROJ-1', 'scope:a')
+
+    def test_a_failed_attach_raises_so_the_caller_can_say_so(self) -> None:
+        refused = mock_response(status_code=403)
+        refused.raise_for_status.side_effect = Exception('403 Forbidden')
+
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), _tag_list(('6-4', 'scope:a'))]), \
+             patch.object(self.client, '_post', return_value=refused):
+            with self.assertRaisesRegex(Exception, '403'):
+                self.client.add_tag('PROJ-1', 'scope:a')
+
+    def test_a_failed_tag_listing_raises_instead_of_creating_a_duplicate(self) -> None:
+        broken = mock_response(status_code=403)
+        broken.raise_for_status.side_effect = Exception('403 Forbidden')
+
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), broken]), \
+             patch.object(self.client, '_post') as post:
+            with self.assertRaisesRegex(Exception, '403'):
+                self.client.add_tag('PROJ-1', 'scope:a')
+
+        post.assert_not_called()
 
     def test_retries_on_timeout(self) -> None:
-        client = YouTrackClient('https://youtrack.example', 'yt-token')
-        response = mock_response()
+        with patch.object(self.client, '_get', side_effect=[_tag_list(), _tag_list(('6-4', 'my-tag'))]), \
+             patch.object(
+                 self.client, '_post',
+                 side_effect=[ClientTimeout('timeout'), mock_response(json_data={})],
+             ) as post:
+            self.client.add_tag('PROJ-1', 'my-tag')
 
-        with patch.object(
-            client, '_post',
-            side_effect=[ClientTimeout('timeout'), response],
-        ) as mock_post:
-            client.add_tag('PROJ-1', 'my-tag')
-
-        self.assertEqual(mock_post.call_count, 2)
+        self.assertEqual(post.call_count, 2)
 
 
 class YouTrackRemoveTagTests(unittest.TestCase):
@@ -1245,6 +1357,11 @@ class ImageAttachmentSourceTests(unittest.TestCase):
             self.assertEqual(len(written), 1)
             self.assertEqual(Path(written[0]).name, 'bug.png')
             self.assertEqual(Path(written[0]).read_bytes(), b'\x89PNG')
+
+
+class YouTrackClientTagSupportTests(unittest.TestCase):
+    def test_it_has_real_tags_so_a_mirror_applies_to_it(self) -> None:
+        self.assertTrue(YouTrackClient.supports_tags)
 
 
 if __name__ == '__main__':

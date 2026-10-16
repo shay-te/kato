@@ -256,6 +256,138 @@ class TranscriptUsageTests(unittest.TestCase):
         self.assertEqual(into['last_at'], '2026-10-02T00:00:00Z')
         self.assertEqual(into['models']['m']['turns'], 1)
 
+    # ----- what it cost -----
+
+    def test_each_message_is_priced_at_its_own_models_rates(self) -> None:
+        # Opus 5.5: $4 in / $20 out / $0.20 read.  Sonnet 5.5: $2 / $10 / $0.20.
+        self._write(
+            _line('a', _usage(1_000_000, 100_000, 5_000_000, 0), model='claude-opus-5-5'),
+            _line('b', _usage(1_000_000, 100_000, 5_000_000, 0), model='claude-sonnet-5-5'),
+        )
+        usage = self.reader.read(self.path)
+        opus = usage['models']['claude-opus-5-5']['cost']
+        sonnet = usage['models']['claude-sonnet-5-5']['cost']
+        self.assertEqual(opus, {'output': 2.0, 'fresh': 4.0, 'cache_read': 1.0, 'total': 7.0})
+        self.assertEqual(sonnet, {'output': 1.0, 'fresh': 2.0, 'cache_read': 1.0, 'total': 4.0})
+        self.assertEqual(usage['cost'], {'output': 3.0, 'fresh': 6.0, 'cache_read': 2.0, 'total': 11.0})
+        self.assertEqual(usage['unpriced_models'], [])
+
+    def test_a_model_switched_mid_task_is_split_by_who_answered(self) -> None:
+        self._write(
+            _line('a', _usage(0, 10, 100, 0), model='claude-opus-5-5', at='2026-10-01T10:00:00Z'),
+            _line('b', _usage(0, 20, 200, 0), model='claude-opus-5-5', at='2026-10-01T11:00:00Z'),
+            _line('c', _usage(0, 30, 300, 0), model='claude-sonnet-5-5', at='2026-10-01T12:00:00Z'),
+            _line('d', _usage(0, 40, 400, 0), model='claude-sonnet-5-5', at='2026-10-02T09:00:00Z'),
+        )
+        usage = self.reader.read(self.path)
+        opus = usage['models']['claude-opus-5-5']
+        sonnet = usage['models']['claude-sonnet-5-5']
+        self.assertEqual((opus['turns'], opus['output']), (2, 30))
+        self.assertEqual((sonnet['turns'], sonnet['output']), (2, 70))
+        self.assertEqual((opus['first_at'], opus['last_at']),
+                         ('2026-10-01T10:00:00Z', '2026-10-01T11:00:00Z'))
+        self.assertEqual((sonnet['first_at'], sonnet['last_at']),
+                         ('2026-10-01T12:00:00Z', '2026-10-02T09:00:00Z'))
+        self.assertEqual(usage['turns'], 4)
+        self.assertTrue(opus['priced'] and sonnet['priced'])
+
+    def test_a_1h_cache_write_is_priced_at_twice_input_and_counted_once(self) -> None:
+        usage_block = {**_usage(0, 0, 0, 1_000_000),
+                       'cache_creation': {'ephemeral_1h_input_tokens': 400_000,
+                                          'ephemeral_5m_input_tokens': 600_000}}
+        self._write(_line('a', usage_block, model='claude-opus-5-5'))
+        usage = self.reader.read(self.path)
+        # 600k x 1.25 x $4 + 400k x 2 x $4 per million.
+        self.assertAlmostEqual(usage['cost']['fresh'], 6.2)
+        # The 1h tokens are PART of cache_write, never added on top of it.
+        self.assertEqual(usage['cache_write'], 1_000_000)
+        self.assertEqual(usage['total'], 1_000_000)
+
+    def test_a_repeated_line_keeps_the_final_1h_figure(self) -> None:
+        early = {**_usage(0, 0, 0, 500_000), 'cache_creation': {'ephemeral_1h_input_tokens': 100_000}}
+        final = {**_usage(0, 0, 0, 500_000), 'cache_creation': {'ephemeral_1h_input_tokens': 500_000}}
+        self._write(
+            _line('a', early, model='claude-opus-5-5'),
+            _line('a', final, model='claude-opus-5-5'),
+        )
+        usage = self.reader.read(self.path)
+        self.assertEqual(usage['turns'], 1)
+        self.assertAlmostEqual(usage['cost']['fresh'], 500_000 * 2 * 4.0 / 1_000_000)
+
+    def test_a_model_with_no_price_is_listed_and_adds_nothing_to_the_cost(self) -> None:
+        self._write(
+            _line('a', _usage(0, 1_000_000, 0, 0), model='claude-opus-5-5'),
+            _line('b', _usage(0, 1_000_000, 0, 0), model='claude-made-up-9'),
+        )
+        usage = self.reader.read(self.path)
+        self.assertEqual(usage['unpriced_models'], ['claude-made-up-9'])
+        self.assertFalse(usage['models']['claude-made-up-9']['priced'])
+        self.assertEqual(usage['models']['claude-made-up-9']['cost']['total'], 0.0)
+        self.assertEqual(usage['cost']['total'], 20.0)
+        # Its tokens are still counted — only its price is unknown.
+        self.assertEqual(usage['output'], 2_000_000)
+
+    def test_haiku_5_5_is_priced_per_message_not_from_the_totals(self) -> None:
+        # One small prompt on the cheap card, one over 100K on the dear card.
+        # Priced from the sums (110,000 input in total) both would be dear.
+        self._write(
+            _line('small', _usage(50_000, 0, 0, 0), model='claude-haiku-5-5'),
+            _line('large', _usage(60_000, 0, 0, 0), model='claude-haiku-5-5'),
+        )
+        self.assertAlmostEqual(self.reader.read(self.path)['cost']['fresh'],
+                               50_000 * 0.10 / 1_000_000 + 60_000 * 0.10 / 1_000_000)
+        # A transcript only ever grows, so a different file needs a reader of
+        # its own rather than a rewrite under the first one's remembered offset.
+        self._write(
+            _line('small', _usage(50_000, 0, 0, 0), model='claude-haiku-5-5'),
+            _line('large', _usage(110_000, 0, 0, 0), model='claude-haiku-5-5'),
+        )
+        self.assertAlmostEqual(TranscriptUsageReader().read(self.path)['cost']['fresh'],
+                               50_000 * 0.10 / 1_000_000 + 110_000 * 0.50 / 1_000_000)
+
+    def test_add_usage_merges_cost_unpriced_models_and_each_models_span(self) -> None:
+        one = Path(self._tmp.name) / 'one.jsonl'
+        two = Path(self._tmp.name) / 'two.jsonl'
+        one.write_text(
+            _line('a', _usage(0, 1_000_000, 0, 0), model='claude-opus-5-5',
+                  at='2026-10-03T00:00:00Z')
+            + _line('x', _usage(0, 5, 0, 0), model='claude-made-up-9', at='2026-10-03T00:00:00Z'),
+            encoding='utf-8',
+        )
+        two.write_text(
+            _line('b', _usage(0, 1_000_000, 0, 0), model='claude-opus-5-5',
+                  at='2026-10-01T00:00:00Z')
+            + _line('y', _usage(0, 5, 0, 0), model='claude-other-model', at='2026-10-01T00:00:00Z'),
+            encoding='utf-8',
+        )
+        combined = add_usage(empty_usage(), self.reader.read(one))
+        add_usage(combined, self.reader.read(two))
+
+        self.assertEqual(combined['cost']['output'], 40.0)
+        self.assertEqual(combined['cost']['total'], 40.0)
+        self.assertEqual(combined['unpriced_models'], ['claude-made-up-9', 'claude-other-model'])
+        opus = combined['models']['claude-opus-5-5']
+        self.assertEqual(opus['cost']['total'], 40.0)
+        self.assertEqual(opus['turns'], 2)
+        self.assertEqual((opus['first_at'], opus['last_at']),
+                         ('2026-10-01T00:00:00Z', '2026-10-03T00:00:00Z'))
+        self.assertTrue(opus['priced'])
+
+    def test_add_usage_still_accepts_a_record_from_before_cost_existed(self) -> None:
+        into = empty_usage()
+        add_usage(into, {'output': 5, 'total': 5, 'turns': 1,
+                         'models': {'claude-opus-5-5': {'output': 5, 'total': 5, 'turns': 1}}})
+        self.assertEqual(into['cost']['total'], 0.0)
+        self.assertEqual(into['unpriced_models'], [])
+        self.assertTrue(into['models']['claude-opus-5-5']['priced'])
+        self.assertEqual(into['models']['claude-opus-5-5']['first_at'], '')
+
+    def test_a_fresh_totals_record_carries_no_cost_and_no_unpriced_models(self) -> None:
+        usage = empty_usage()
+        self.assertEqual(usage['cost']['total'], 0.0)
+        self.assertEqual(usage['unpriced_models'], [])
+        self.assertEqual(self.reader.read(Path(self._tmp.name) / 'missing.jsonl'), empty_usage())
+
 
 if __name__ == '__main__':
     unittest.main()

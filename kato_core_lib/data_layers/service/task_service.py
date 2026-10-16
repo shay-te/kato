@@ -143,6 +143,15 @@ class TaskService(Service):
     def add_pull_request_comment(self, issue_id: str, pull_request_url: str) -> None:
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
+    def supports_tags(self, issue_id: str) -> bool:
+        """Whether ``issue_id``'s platform has real tags a mirrored tag can go on.
+
+        False where ``add_tag`` could only borrow another field (Bitbucket
+        issues have no tags) — a caller that merely mirrors a tag skips those
+        rather than overwrite something the operator set by hand.
+        """
+        return self._task_data_access.supports_tags
+
     def add_tag(self, issue_id: str, tag_name: str) -> None:
         self._task_data_access.add_tag(issue_id, tag_name)
 

@@ -83,6 +83,10 @@ class NoTrackerClient(object):
     instead of pretending the ticket was updated.
     """
 
+    # There is no ticket to put a tag on, so a mirrored tag is skipped rather
+    # than attempted and failed.
+    supports_tags = False
+
     provider_name = 'local'
     max_retries = 1
 
@@ -157,6 +161,10 @@ class LocalAwareTaskService(TaskService):
             super().add_pull_request_comment(issue_id, pull_request_url)
             return
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
+
+    def supports_tags(self, issue_id: str) -> bool:
+        # A task created in kato keeps its tags in kato's own store.
+        return True if self.is_local(issue_id) else super().supports_tags(issue_id)
 
     def add_tag(self, issue_id: str, tag_name: str) -> None:
         if not self.is_local(issue_id):

@@ -19,6 +19,7 @@ from flask import Flask
 
 from agent_core_lib.agent_core_lib.session.record import AgentSessionRecord
 from kato_webserver.usage_routes import collect_usage, register_usage_routes
+from claude_core_lib.claude_core_lib.helpers.model_pricing import PRICES_AS_OF
 from claude_core_lib.claude_core_lib.helpers.transcript_usage import TranscriptUsageReader
 
 
@@ -238,6 +239,77 @@ class UsageRoutesTests(unittest.TestCase):
         state = next(iter(reader._files.values()))
         client.get('/api/usage')
         self.assertIs(next(iter(reader._files.values())), state)
+
+    # ----- cost and model names -----
+
+    def test_a_task_carries_its_estimated_cost_in_the_three_groups(self) -> None:
+        # Opus 5.5 at $4 in / $20 out / $0.20 read: 1M of each.
+        self._transcript('-work-T1', 'aaaa1111', _turn(
+            'm1', model='claude-opus-5-5', inp=1_000_000, out=1_000_000, read=1_000_000,
+        ))
+        payload = self._collect(
+            self._manager(AgentSessionRecord(task_id='T1', agent_session_id='aaaa1111')),
+            self._workspaces(),
+        )
+        cost = payload['tasks'][0]['usage']['cost']
+        self.assertEqual(cost, {'output': 20.0, 'fresh': 4.0, 'cache_read': 0.2, 'total': 24.2})
+        self.assertEqual(payload['totals']['cost'], cost)
+        self.assertEqual(payload['tasks'][0]['usage']['unpriced_models'], [])
+
+    def test_every_model_is_named_the_way_a_person_reads_it(self) -> None:
+        self._transcript(
+            '-work-T1', 'aaaa1111',
+            _turn('a', out=1, model='claude-opus-5-5'),
+            _turn('b', out=1, model='claude-opus-5'),
+            _turn('c', out=1, model='claude-haiku-4-5-20251001'),
+            _turn('d', out=1, model='claude-made-up-9'),
+            _turn('e', out=1, model=''),
+        )
+        payload = self._collect(
+            self._manager(AgentSessionRecord(task_id='T1', agent_session_id='aaaa1111')),
+            self._workspaces(),
+        )
+        labels = {model: slot['label'] for model, slot in payload['tasks'][0]['usage']['models'].items()}
+        self.assertEqual(labels, {
+            'claude-opus-5-5': 'Opus 5.5',
+            'claude-opus-5': 'Opus 5',
+            'claude-haiku-4-5-20251001': 'Haiku 4.5',
+            'claude-made-up-9': 'claude-made-up-9',
+            '': 'unknown',
+        })
+        # The grand total's models are named too, from the same helper.
+        self.assertEqual(payload['totals']['models']['claude-opus-5-5']['label'], 'Opus 5.5')
+
+    def test_a_model_without_a_price_is_named_and_the_task_says_so(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111', _turn('a', out=1_000_000, model='claude-made-up-9'))
+        payload = self._collect(
+            self._manager(AgentSessionRecord(task_id='T1', agent_session_id='aaaa1111')),
+            self._workspaces(),
+        )
+        usage = payload['tasks'][0]['usage']
+        self.assertEqual(usage['unpriced_models'], ['claude-made-up-9'])
+        self.assertEqual(usage['cost']['total'], 0.0)
+        self.assertFalse(usage['models']['claude-made-up-9']['priced'])
+
+    def test_a_model_switched_between_chats_is_one_task_with_two_model_rows(self) -> None:
+        self._transcript('-work-T1', 'old0001',
+                         _turn('a', model='claude-opus-5-5', out=100, at='2026-10-01T10:00:00Z'))
+        self._transcript('-work-T1', 'current',
+                         _turn('b', model='claude-sonnet-5-5', out=300, at='2026-10-02T10:00:00Z'))
+        payload = self._collect(
+            self._manager(AgentSessionRecord(
+                task_id='T1', agent_session_id='current', previous_session_ids=['old0001'],
+            )),
+            self._workspaces(),
+        )
+        models = payload['tasks'][0]['usage']['models']
+        self.assertEqual(sorted(models), ['claude-opus-5-5', 'claude-sonnet-5-5'])
+        self.assertEqual(models['claude-opus-5-5']['last_at'], '2026-10-01T10:00:00Z')
+        self.assertEqual(models['claude-sonnet-5-5']['first_at'], '2026-10-02T10:00:00Z')
+
+    def test_the_report_says_which_day_its_prices_are_from(self) -> None:
+        payload = self._collect(self._manager(), self._workspaces())
+        self.assertEqual(payload['pricing_as_of'], PRICES_AS_OF)
 
 
 if __name__ == '__main__':

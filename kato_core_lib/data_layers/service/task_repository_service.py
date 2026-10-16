@@ -34,6 +34,12 @@ from kato_core_lib.helpers.task_lookup_utils import find_assigned_or_review_task
 # enough that one Done press (push → PR) pays for a single ticket lookup.
 _REPO_RECONCILE_TTL_SECONDS = 20.0
 
+# How long the operator waits on the issue tracker while kato mirrors a tag onto
+# the ticket. The tag is already recorded and the repo cloned by then, so an
+# unresponsive tracker (YouTrack retries for a while on its own) must not hold
+# the "Add repository" action open.
+_TICKET_TAG_DEADLINE_SECONDS = 20.0
+
 # How long to wait on the agent when computing the "restart the tab" hint.
 # Short on purpose: the hint is cosmetic, the git work is already done, and an
 # unresponsive agent must not keep the operator's UI waiting.
@@ -113,21 +119,26 @@ class TaskRepositoryService(object):
     ) -> dict[str, object]:
         """Tag the task with ``kato:repo:<id>`` and clone the repo.
 
-        Drives the Files-tab "+ Add repository" flow. Two steps,
+        Drives the Files-tab "+ Add repository" flow. Steps 1 and 2
         run in order so a tag failure aborts cloning (the tag is what
         makes the resolution durable across kato restarts):
 
           1. Record ``kato:repo:<id>`` on the task in KATO'S OWN store (the
-             workspace metadata) — never on the issue tracker. A tracker only
-             accepts tags it already has, so a new per-repo tag made YouTrack
-             answer 400 and the whole add failed on a platform kato had no
-             need to ask. Repo resolution reads these tags next to the
-             tracker's. Idempotent: re-adding is a no-op.
+             workspace metadata). This is the source of truth and does not
+             depend on the issue tracker: the tracker may refuse a tag (YouTrack
+             answered 400 to the first per-repo tag it was sent by name), and
+             the add must not hinge on that. Repo resolution reads these tags
+             next to the tracker's. Idempotent: re-adding is a no-op.
           2. ``sync_task_repositories(task_id)`` — provisions the
              new repo's clone into the per-task workspace via the
              same code path the operator's Sync icon uses, so a
              single missing repo is treated identically to a fresh
              multi-repo task.
+          3. Best effort: put the same tag on the TICKET in the issue tracker,
+             so the ticket shows the repo too. This can fail — the tracker may
+             refuse the tag, be unreachable, or have no tags at all — and none
+             of that fails the add: the tag is already recorded in kato and the
+             repo cloned. What happened is reported as ``ticket_tag``.
 
         Returns the sync result enriched with ``tag_added`` so the
         UI toast can distinguish "already tagged, just cloned" from
@@ -211,8 +222,63 @@ class TaskRepositoryService(object):
             'repository_id': normalized_repo_id,
             'tag_added': tag_added,
             'tag_name': tag_name,
+            'ticket_tag': self._mirror_tag_to_ticket(normalized_task_id, tag_name),
             'sync': sync_result,
         }
+
+    def _mirror_tag_to_ticket(self, task_id: str, tag_name: str) -> dict[str, str]:
+        """Best effort: put ``tag_name`` on the ticket in the issue tracker too.
+
+        Never raises and never lets the tracker hold the caller up. Returns
+        ``{'status': 'added' | 'unsupported' | 'failed', 'error': <why>}``:
+
+        * ``added`` — the tracker accepted the tag (an idempotent re-add counts);
+        * ``unsupported`` — the tracker has no tags to put it on (Bitbucket
+          issues, or an install with no tracker). Skipped on purpose, not tried:
+          the only way to "add" one there is to overwrite another field;
+        * ``failed`` — refused, unreachable, or too slow. ``error`` carries the
+          tracker's own explanation so the operator can act on it.
+
+        Each call tries again, so re-adding the repo is the retry.
+        """
+        try:
+            supported = self._task_service.supports_tags(task_id)
+        except Exception:
+            # Cannot tell — try, and let the tracker's answer decide.
+            supported = True
+        if not supported:
+            return {
+                'status': 'unsupported',
+                'error': 'this issue tracker has no tags to put it on',
+            }
+
+        def attempt() -> dict[str, str]:
+            try:
+                self._task_service.add_tag(task_id, tag_name)
+            except Exception as exc:
+                self.logger.warning(
+                    'could not put tag %s on the ticket of task %s: %s',
+                    tag_name, task_id, exc,
+                )
+                return {'status': 'failed', 'error': str(exc) or type(exc).__name__}
+            self.logger.info('tagged the ticket of task %s with %s', task_id, tag_name)
+            return {'status': 'added', 'error': ''}
+
+        return run_with_deadline(
+            attempt,
+            seconds=_TICKET_TAG_DEADLINE_SECONDS,
+            default={
+                'status': 'failed',
+                'error': (
+                    f'the issue tracker did not answer within '
+                    f'{int(_TICKET_TAG_DEADLINE_SECONDS)}s'
+                ),
+            },
+            on_timeout=lambda: self.logger.warning(
+                'tagging the ticket of task %s timed out; the tag is recorded in '
+                'kato and the repository cloned', task_id,
+            ),
+        )
 
     def _record_task_tag(self, task_id: str, tag_name: str) -> bool:
         """Record ``tag_name`` on the task in kato's workspace metadata.

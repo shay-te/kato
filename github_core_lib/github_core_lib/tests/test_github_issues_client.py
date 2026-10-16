@@ -923,3 +923,8 @@ class GitHubIssuesPaginationTests(unittest.TestCase):
             ),
             ('/x', {'per_page': 1, 'page': 5}),
         )
+
+
+class GitHubIssuesClientTagSupportTests(unittest.TestCase):
+    def test_it_has_real_tags_so_a_mirror_applies_to_it(self) -> None:
+        self.assertTrue(GitHubIssuesClient.supports_tags)

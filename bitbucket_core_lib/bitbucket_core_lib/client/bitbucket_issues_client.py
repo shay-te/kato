@@ -23,6 +23,11 @@ from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 class BitbucketIssuesClient(IssueClientBase):
     provider_name = 'bitbucket'
+    # Bitbucket Cloud issues have no tags. ``add_tag`` below stands one in with
+    # the single-valued ``component`` — acceptable for the tag it was written
+    # for, but a caller that merely wants to mirror a tag onto the issue must
+    # not overwrite a component somebody set by hand, so it is told to skip.
+    supports_tags = False
 
     def __init__(
         self,

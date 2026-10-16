@@ -60,6 +60,12 @@ MAX_IMAGE_ATTACHMENTS = 20
 class IssueClientBase(RetryingClientBase):
     """Shared issue-client helpers; provider subclasses add endpoints/maps."""
 
+    # Whether the provider has real, free-form tags (labels) an issue can carry
+    # alongside its other fields. A host that only wants to MIRROR a tag onto an
+    # issue asks first: on a provider without them ``add_tag`` has to borrow some
+    # other field, and borrowing one the operator set by hand overwrites it.
+    supports_tags: bool = True
+
     # ----- record building -----
 
     def _build_record(

@@ -1335,3 +1335,8 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
         self.assertEqual(
             JiraClient._adf_mention_ids(
                 {'type': 'mention', 'attrs': {'id': '', 'text': '@'}}), [])
+
+
+class JiraClientTagSupportTests(unittest.TestCase):
+    def test_it_has_real_tags_so_a_mirror_applies_to_it(self) -> None:
+        self.assertTrue(JiraClient.supports_tags)

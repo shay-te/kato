@@ -423,6 +423,9 @@ describe('SetupWizard AI agent steps — every boot-mandatory key is asked here'
     expect(screen.getByRole('radio', { name: /OpenRouter/ })).toBeInTheDocument();
     const codex = screen.getByRole('radio', { name: /Codex agent/ });
     expect(codex).toBeDisabled();
+    // ...but it does not claim Codex is unusable: it still gets a chat tab.
+    expect(codex).toHaveTextContent(/own chat tab next to Claude/);
+    expect(codex).not.toHaveTextContent(/not yet available/i);
     // Nothing picked yet → Next is gated.
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });

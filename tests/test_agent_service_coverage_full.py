@@ -729,14 +729,14 @@ class TaskPullRequestIdTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# add_task_repository: the tag is kato's own, the tracker is never asked
+# add_task_repository: the tag is kato's own; the ticket is tagged best effort
 # --------------------------------------------------------------------------
 
 
 class AddTaskRepositoryTagTests(unittest.TestCase):
-    def test_tag_is_recorded_in_the_workspace_and_never_sent_to_the_tracker(self) -> None:
-        # YouTrack answers 400 to a tag it does not already have, which failed
-        # the whole add. The tag lives in kato's workspace metadata instead.
+    def test_tag_is_recorded_in_the_workspace_and_then_mirrored_to_the_ticket(self) -> None:
+        # Kato's own store is the source of truth (the tracker may refuse a tag
+        # it has not seen); the ticket is then tagged too, best effort.
         task_service = MagicMock()
         workspace_manager = MagicMock()
         workspace_manager.add_tag.return_value = True
@@ -758,10 +758,12 @@ class AddTaskRepositoryTagTests(unittest.TestCase):
         result = service.repositories.add_task_repository('PROJ-1', 'repo-b')
 
         workspace_manager.add_tag.assert_called_once_with('PROJ-1', 'kato:repo:repo-b')
-        task_service.add_tag.assert_not_called()
+        task_service.add_tag.assert_called_once_with('PROJ-1', 'kato:repo:repo-b')
+        # No ticket lookup is needed to decide any of this.
         service.repositories._lookup_task_for_sync.assert_not_called()
         self.assertTrue(result['tag_added'])
         self.assertEqual(result['tag_name'], 'kato:repo:repo-b')
+        self.assertEqual(result['ticket_tag'], {'status': 'added', 'error': ''})
 
 
 # --------------------------------------------------------------------------

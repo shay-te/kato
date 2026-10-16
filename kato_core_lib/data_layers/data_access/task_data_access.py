@@ -38,6 +38,11 @@ class TaskDataAccess(DataAccess):
         return getattr(self._client, 'provider_name', 'issue_platform')
 
     @property
+    def supports_tags(self) -> bool:
+        """Whether the issue platform has real tags (see ``IssueClientBase.supports_tags``)."""
+        return bool(getattr(self._client, 'supports_tags', True))
+
+    @property
     def max_retries(self) -> int:
         return retry_count(getattr(self._client, 'max_retries', 1))
 

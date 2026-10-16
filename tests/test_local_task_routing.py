@@ -17,6 +17,7 @@ from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAcces
 from kato_core_lib.data_layers.service.local_task_routing import (
     LocalAwareTaskService,
     LocalAwareTaskStateService,
+    NoTrackerClient,
     local_task_as_task,
 )
 from kato_core_lib.helpers.agent_comment_classification import (
@@ -186,6 +187,37 @@ class ByIdTests(_Routing):
         self.assertEqual(self.tasks.local_tasks, self.store)
         self.assertTrue(self.tasks.is_local(task_id))
         self.assertFalse(self.tasks.is_local('UNA-1'))
+
+
+class TagSupportTests(_Routing):
+    """Whether a tag can be MIRRORED onto a ticket: asked of the platform, by id."""
+
+    def _with_tracker_flag(self, supports) -> LocalAwareTaskService:
+        tracker = _Tracker({'UNA-1': 'Todo'})
+        if supports is not None:
+            tracker.supports_tags = supports
+        return LocalAwareTaskService(
+            self.config, TaskDataAccess(self.config, tracker), self.store,
+        )
+
+    def test_a_platform_is_assumed_to_have_tags_unless_it_says_otherwise(self) -> None:
+        self.assertTrue(self.tasks.supports_tags('UNA-1'))
+        self.assertTrue(self._with_tracker_flag(None).supports_tags('UNA-1'))
+
+    def test_a_platform_without_tags_says_so(self) -> None:
+        self.assertFalse(self._with_tracker_flag(False).supports_tags('UNA-1'))
+
+    def test_a_task_created_in_kato_always_has_tags_in_kato_s_own_store(self) -> None:
+        service = self._with_tracker_flag(False)
+        self.assertTrue(service.supports_tags(self.local(LocalTaskState.OPEN)))
+
+    def test_an_install_with_no_tracker_has_no_ticket_to_tag(self) -> None:
+        self.assertFalse(NoTrackerClient().supports_tags)
+        service = LocalAwareTaskService(
+            self.config, TaskDataAccess(self.config, NoTrackerClient()), self.store,
+        )
+        self.assertFalse(service.supports_tags('UNA-1'))
+        self.assertTrue(service.supports_tags(self.local(LocalTaskState.OPEN)))
 
 
 class ConversionTests(unittest.TestCase):

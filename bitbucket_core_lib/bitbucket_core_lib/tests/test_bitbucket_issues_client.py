@@ -501,6 +501,15 @@ class BitbucketIssuesClientAddRemoveTagTests(unittest.TestCase):
         mock_put.assert_not_called()
 
 
+class BitbucketIssuesClientTagSupportTests(unittest.TestCase):
+    def test_it_says_it_has_no_tags_so_a_mirror_skips_it(self) -> None:
+        # ``add_tag`` borrows the single-valued component; a caller that only
+        # wants to mirror a tag must not be allowed to overwrite one set by hand.
+        self.assertFalse(BitbucketIssuesClient.supports_tags)
+        client = BitbucketIssuesClient('https://api.bitbucket.org/2.0', 'bb-token', 'workspace', 'repo')
+        self.assertFalse(client.supports_tags)
+
+
 class BitbucketIssuesClientTagHelpersTests(unittest.TestCase):
     def test_task_tags_extracts_string_values(self) -> None:
         tags = BitbucketIssuesClient._task_tags(['repo:client', 'priority:high'])

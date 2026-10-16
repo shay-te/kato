@@ -20,6 +20,11 @@ transcript:
   so ``cache_read`` is usually >90% of the raw total. It is reported as its own
   field, never folded into ``input``, so a reader can see what a task actually
   wrote to the model versus what it merely re-read.
+* **Tokens are not what a task cost.** The three groups are priced very
+  differently (a cache read is a small fraction of an output token), so each
+  message is also priced at its own model's published rates and the dollars are
+  kept per model and in the same three groups. A model with no price on file is
+  listed in ``unpriced_models`` — never counted as free.
 
 Pure I/O with no host types, so it stays trivially testable.
 """
@@ -31,6 +36,13 @@ import os
 import threading
 
 from agent_core_lib.agent_core_lib.helpers.context_accounting import sum_usage_tokens
+from claude_core_lib.claude_core_lib.helpers.model_pricing import (
+    add_cost,
+    empty_cost,
+    is_priced,
+    message_cost,
+    rounded_cost,
+)
 
 # transcript ``usage`` key -> the short name the totals use.
 _USAGE_FIELDS = (
@@ -58,6 +70,8 @@ def empty_usage() -> dict:
         'turns': 0,
         'first_at': '',
         'last_at': '',
+        'cost': empty_cost(),
+        'unpriced_models': [],
         'models': {},
     }
 
@@ -72,10 +86,15 @@ def add_usage(into: dict, other: dict) -> dict:
         into[name] += int(other.get(name, 0) or 0)
     into['first_at'] = _earliest(into['first_at'], str(other.get('first_at', '') or ''))
     into['last_at'] = _latest(into['last_at'], str(other.get('last_at', '') or ''))
+    add_cost(into['cost'], other.get('cost'))
+    into['unpriced_models'] = sorted({*into['unpriced_models'], *(other.get('unpriced_models') or [])})
     for model, counts in (other.get('models') or {}).items():
-        slot = into['models'].setdefault(model, _empty_model_usage())
+        slot = into['models'].setdefault(model, _empty_model_usage(model))
         for name in (*COUNT_NAMES, 'total', 'turns'):
             slot[name] += int(counts.get(name, 0) or 0)
+        slot['first_at'] = _earliest(slot['first_at'], str(counts.get('first_at', '') or ''))
+        slot['last_at'] = _latest(slot['last_at'], str(counts.get('last_at', '') or ''))
+        add_cost(slot['cost'], counts.get('cost'))
     return into
 
 
@@ -166,20 +185,30 @@ class _FileState:
         # own (its position) so it is counted once rather than merged into
         # another id-less message.
         message_id = str(message.get('id') or f'@{position}')
+        # How many of the written tokens were a 1-hour cache entry (priced at
+        # twice the input rate, against 1.25x for the default 5 minutes). Not a
+        # counter of its own: it is part of ``cache_write``, so adding it to the
+        # total would count those tokens twice.
+        write_1h = sum_usage_tokens(
+            usage.get('cache_creation'), ('ephemeral_1h_input_tokens',),
+        )
+        at = str(event.get('timestamp') or '')
         seen = self.messages.get(message_id)
         if seen is None:
             self.messages[message_id] = {
-                'model': model, 'counts': counts, 'at': str(event.get('timestamp') or ''),
+                'model': model, 'counts': counts, 'at': at, 'write_1h': write_1h,
             }
             return
         # A repeat of the same API message: usage only ever grows as the reply
         # streams in, so the larger figure per field is the final one.
         for name in COUNT_NAMES:
             seen['counts'][name] = max(seen['counts'][name], counts[name])
-        seen['at'] = _latest(seen['at'], str(event.get('timestamp') or ''))
+        seen['write_1h'] = max(seen['write_1h'], write_1h)
+        seen['at'] = _latest(seen['at'], at)
 
     def totals(self) -> dict:
         usage = empty_usage()
+        unpriced: set[str] = set()
         for message in self.messages.values():
             counts = message['counts']
             total = sum(counts.values())
@@ -189,16 +218,40 @@ class _FileState:
             usage['turns'] += 1
             usage['first_at'] = _earliest(usage['first_at'], message['at'])
             usage['last_at'] = _latest(usage['last_at'], message['at'])
-            slot = usage['models'].setdefault(message['model'], _empty_model_usage())
+            slot = usage['models'].setdefault(
+                message['model'], _empty_model_usage(message['model']),
+            )
             for name in COUNT_NAMES:
                 slot[name] += counts[name]
             slot['total'] += total
             slot['turns'] += 1
+            slot['first_at'] = _earliest(slot['first_at'], message['at'])
+            slot['last_at'] = _latest(slot['last_at'], message['at'])
+            # Priced per message: a rate can depend on that request's prompt
+            # length, which no total can reconstruct.
+            cost = message_cost(message['model'], counts, message['write_1h'])
+            if cost is None:
+                unpriced.add(message['model'])
+            else:
+                add_cost(slot['cost'], cost)
+                add_cost(usage['cost'], cost)
+        usage['unpriced_models'] = sorted(unpriced)
+        usage['cost'] = rounded_cost(usage['cost'])
+        for slot in usage['models'].values():
+            slot['cost'] = rounded_cost(slot['cost'])
         return usage
 
 
-def _empty_model_usage() -> dict:
-    return {**{name: 0 for name in COUNT_NAMES}, 'total': 0, 'turns': 0}
+def _empty_model_usage(model: str) -> dict:
+    return {
+        **dict.fromkeys(COUNT_NAMES, 0),
+        'total': 0,
+        'turns': 0,
+        'first_at': '',
+        'last_at': '',
+        'priced': is_priced(model),
+        'cost': empty_cost(),
+    }
 
 
 def _read_head(path: str) -> bytes:

@@ -32,6 +32,12 @@ def _make_client(**kwargs) -> ConcreteIssueClient:
 # IssueRecord + constants
 # ---------------------------------------------------------------------------
 
+
+class IssueClientTagSupportTests(unittest.TestCase):
+    def test_a_provider_is_assumed_to_have_tags_unless_it_says_otherwise(self) -> None:
+        self.assertTrue(IssueClientBase.supports_tags)
+        self.assertTrue(ConcreteIssueClient.supports_tags)
+
 class IssueRecordTests(unittest.TestCase):
     def test_constants(self) -> None:
         self.assertEqual(ISSUE_COMMENT_AUTHOR, 'author')

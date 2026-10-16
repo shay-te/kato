@@ -210,30 +210,34 @@ class F4_AddPullRequestComment(unittest.TestCase):
 # F5 — Add tag
 # ---------------------------------------------------------------------------
 class F5_AddTag(unittest.TestCase):
-    """Flow: add_tag POSTs to the tags endpoint with the tag name."""
+    """Flow: a missing tag is created, then attached to the issue by its id."""
 
     def test_flow(self):
         client = _client()
-        ok = mock_response(json_data={})
+        none_yet = mock_response(json_data=[])
+        created = mock_response(json_data={'id': '6-7', 'name': 'urgent'})
+        attached = mock_response(json_data={})
 
-        with patch.object(client, '_post', return_value=ok) as mock_post:
-            client.add_tag('PROJ-1', 'urgent')
+        with patch.object(client, '_get', return_value=none_yet):
+            with patch.object(client, '_post', side_effect=[created, attached]) as mock_post:
+                client.add_tag('PROJ-1', 'urgent')
 
-        mock_post.assert_called_once()
-        path = mock_post.call_args[0][0]
-        self.assertIn('PROJ-1', path)
-        self.assertIn('tags', path)
-        sent_name = mock_post.call_args[1].get('json', {}).get('name')
-        self.assertEqual(sent_name, 'urgent')
+        create_call, attach_call = mock_post.call_args_list
+        self.assertEqual(create_call[0][0], '/api/tags')
+        self.assertEqual(create_call[1]['json'], {'name': 'urgent'})
+        self.assertIn('PROJ-1', attach_call[0][0])
+        self.assertIn('tags', attach_call[0][0])
+        self.assertEqual(attach_call[1]['json'], {'id': '6-7'})
 
     def test_raises_on_http_error(self):
         client = _client()
         err = mock_response(status_code=500)
         err.raise_for_status.side_effect = Exception('server error')
 
-        with patch.object(client, '_post', return_value=err):
-            with self.assertRaises(Exception):
-                client.add_tag('PROJ-1', 'urgent')
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])):
+            with patch.object(client, '_post', return_value=err):
+                with self.assertRaises(Exception):
+                    client.add_tag('PROJ-1', 'urgent')
 
 
 # ---------------------------------------------------------------------------

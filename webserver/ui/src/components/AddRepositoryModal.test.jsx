@@ -241,6 +241,117 @@ describe('AddRepositoryModal — selection + submit', () => {
     expect(onAdded).toHaveBeenCalled();
   });
 
+  // ----- the toast: what happened to the TICKET, not just to kato -----
+  //
+  // The tag is recorded in kato first; the issue tracker is then tried as a
+  // best-effort mirror and may refuse, stay silent, or have no tags at all.
+  // None of that fails the add, so the toast is the only place the operator
+  // learns the ticket was not tagged.
+
+  async function addAndReadToast(body) {
+    fetchInventoryRepositories.mockResolvedValue({
+      ok: true, body: { repositories: [_repo('alpha')] },
+    });
+    addTaskRepository.mockResolvedValue({ ok: true, body });
+    renderModal({ taskId: 'TASK-1' });
+    await waitFor(() => expect(screen.getByText('alpha')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('alpha'));
+    fireEvent.click(screen.getByRole('button', { name: /Add to task/i }));
+    await waitFor(() => expect(toast.show).toHaveBeenCalled());
+    return toast.show.mock.calls[0][0];
+  }
+
+  const CLONED = { added_repositories: ['alpha'] };
+
+  test('a ticket the tracker refused is listed FIRST and the toast never expires', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'failed', error: '400 Client Error: Bad Request' },
+      sync: CLONED,
+    });
+
+    expect(shown.kind).toBe('warning');
+    expect(shown.durationMs).toBe(0);
+    const lines = shown.message.split('\n');
+    expect(lines[0]).toBe('✗ ticket NOT tagged: 400 Client Error: Bad Request');
+    // Kato's own tag and the clone still succeeded, and say so.
+    expect(shown.message).toContain('✓ tagged task with kato:repo:alpha');
+    expect(shown.message).toContain('✓ cloned 1 repo(s): alpha');
+  });
+
+  test('a refused ticket with no reason given still says why it matters', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'failed', error: '' },
+      sync: CLONED,
+    });
+
+    expect(shown.message.split('\n')[0]).toBe('✗ ticket NOT tagged: the issue tracker refused it');
+  });
+
+  test('a ticket that was tagged is reported and the toast is a plain success', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'added', error: '' },
+      sync: CLONED,
+    });
+
+    expect(shown.kind).toBe('success');
+    expect(shown.durationMs).toBe(8000);
+    expect(shown.message).toContain('✓ tagged the ticket too');
+    expect(shown.message).not.toContain('✗');
+  });
+
+  test('a tracker with no tags is a note, not a failure', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'unsupported', error: 'this issue tracker has no tags to put it on' },
+      sync: CLONED,
+    });
+
+    expect(shown.kind).toBe('success');
+    expect(shown.durationMs).toBe(8000);
+    expect(shown.message).toContain('• ticket not tagged: this issue tracker has no tags to put it on');
+  });
+
+  test('a failed clone never expires, even when kato recorded the tag', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'added', error: '' },
+      sync: { failed_repositories: [{ repository_id: 'alpha', error: 'auth failed' }] },
+    });
+
+    expect(shown.kind).toBe('warning');
+    expect(shown.durationMs).toBe(0);
+    expect(shown.message).toContain('✗ clone failed: alpha: auth failed');
+  });
+
+  test('a reply with no ticket information adds no ticket line', async () => {
+    const shown = await addAndReadToast({
+      tag_added: true, tag_name: 'kato:repo:alpha', sync: CLONED,
+    });
+
+    expect(shown.message).not.toContain('ticket');
+    expect(shown.kind).toBe('success');
+  });
+
+  test('everything already in place is a quiet warning that still times out', async () => {
+    const shown = await addAndReadToast({
+      tag_added: false,
+      tag_name: 'kato:repo:alpha',
+      ticket_tag: { status: 'added', error: '' },
+      sync: {},
+    });
+
+    expect(shown.kind).toBe('warning');
+    expect(shown.durationMs).toBe(8000);
+  });
+
   test('error path: api returns ok:false → toast error + modal stays open (onClose not called)', async () => {
     fetchInventoryRepositories.mockResolvedValue({
       ok: true,

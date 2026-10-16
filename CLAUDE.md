@@ -406,13 +406,22 @@ on that model), kato offers a one-click retry on a pinned LOWER model, like VS C
 ### Task tags kato owns (repo + model)
 ```
 "+ Add repository" (Files tab) → TaskRepositoryService.add_task_repository
-   → WorkspaceService.add_tag(task, 'kato:repo:<id>')   ← kato's OWN store (.kato-meta.json `tags`)
-   → sync_task_repositories (clone + task branch)         ← the tracker is NEVER written
+   1. WorkspaceService.add_tag(task, 'kato:repo:<id>')   ← kato's OWN store (.kato-meta.json `tags`): SOURCE OF TRUTH
+   2. sync_task_repositories (clone + task branch)
+   3. _mirror_tag_to_ticket → task_service.add_tag        ← best effort; result `ticket_tag`
 RepositoryInventoryService.resolve_task_repositories reads tracker tags ∪ those kato recorded
    (attach_kato_task_tags, wired in kato_core_lib.py) — one choke point for all 8 resolve callers.
 ```
-**Do not POST a `kato:repo:` tag to the tracker.** A tracker only accepts tags it already has, and
-the per-repo tag is minted per repository, so YouTrack answered `400` and the whole add failed (UNA-3264).
+**The add must never hinge on the tracker.** Step 3 reports `{status: added | unsupported | failed,
+error}` and never fails the add: bounded by `_TICKET_TAG_DEADLINE_SECONDS` (20s), carries the tracker's own
+error text, and re-adding the repo is the retry. The UI toast lists a failed ticket tag FIRST and never expires.
+Per tracker: **YouTrack** attaches a tag by its database id, never by name (`{"name":…}` is the 400 from
+UNA-3264) — `YouTrackClient.add_tag` finds the tag among those the token sees (client-side and case-insensitive, as a
+precaution against `:` in `query=`), creates it if missing, then attaches by id; the tag is private to the token's user.
+**Jira / GitHub / GitLab** labels are free-form and auto-created. **Bitbucket** issues have no tags
+(`supports_tags = False` → mirror skipped: its `add_tag` borrows the single-valued `component` and would
+overwrite one set by hand), and so does an install with no tracker. `supports_tags` lives on
+`IssueClientBase` and reaches kato via `TaskDataAccess` → `TaskService.supports_tags(issue_id)`.
 `WorkspaceService.create` preserves `tags` (it is called on every provisioning pass).
 
 `kato:model:<family>[:<version>]` on a ticket picks the task's STARTING Claude model: `kato:model:sonnet`
@@ -432,6 +441,29 @@ for 3,026 messages measured), so summing lines overstates ~2.4x. Cache reads are
 shown apart from output and fresh input, never folded into "input". `TranscriptUsageReader` parses only the
 bytes appended since the last read (a 185 MB transcript: 0.4s cold, ~5ms warm). Codex chats are named as
 uncounted, not silently dropped. Not polled: read when the dialog opens and on Refresh.
+
+**A row leads with TOKENS and one plain bar; dollars are in the details.** The bar's length is the
+task's tokens against the biggest task's (`usageBarPercent`) — one colour, no segments. It is NOT progress
+toward a limit (kato knows of none), and it was never split into green/blue/grey again after that confused
+the operator twice: the split is nearly identical for every task (cache re-reads are ~96% of the tokens), so
+the colours only drew one thin sliver to puzzle over. **The bar must never depend on a price** — it once did,
+and an older kato (no `cost` in `/api/usage`) drew every bar empty, because the rebuilt UI reloads itself
+before the backend is restarted. Cost is OPTIONAL everywhere on the page (`hasCost`): absent → no `$`, no
+Cost column, no false $0.
+
+The money — `cost` — is priced once, on the server. `claude_core_lib/helpers/model_pricing.py` is the ONE
+price table (dollars per MTok; `PRICES_AS_OF` is the date of the rates — change both together).
+`TranscriptUsageReader` prices EACH MESSAGE at its own model's rate and keeps `cost` {output, fresh,
+cache_read, total} per model and in total — **per message, never from totals**: Haiku 5.5 has a second rate
+card above a 100K-token prompt, a cache read is 0.1x input on most models but 0.05x on Opus 5.5 and 0.025x
+on Fable 5.1 (so never a shared multiplier), and a cache write is 1.25x (5m) or 2x (1h) — the split is read
+from the transcript's `cache_creation`, and is PART of `cache_write`, never added to the total. A model with
+no entry is listed in `unpriced_models` / `priced: false` and is NEVER counted as $0: the details show `$X+`
+or `—`. A mid-task model switch needs no special handling — every message carries its own `message.model`, so
+the task simply has two model rows (each with `first_at`/`last_at`, shown in first-use order, plus chips on the
+row). The route adds `label` per model via `kato_core_lib/helpers/model_label_utils.py` (the one name helper)
+so the page never formats a model id. Figures are API-equivalent ESTIMATES (a subscription is not billed per
+token) and the footnote says so. Do not add a second price table or compute cost in JS.
 
 ### False-success guards (important — previously bugs)
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"

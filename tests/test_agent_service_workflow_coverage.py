@@ -302,7 +302,7 @@ class AddTaskRepositoryTests(unittest.TestCase):
         self.assertFalse(result['added'])
         self.assertIn('workspace manager not wired', result['error'])
 
-    def test_already_recorded_tag_reports_tag_not_added_and_skips_the_tracker(self) -> None:
+    def test_already_recorded_tag_reports_tag_not_added_but_retries_the_ticket(self) -> None:
         repo = MagicMock()
         type(repo).repositories = property(
             lambda self: [SimpleNamespace(id='r1')],
@@ -317,7 +317,10 @@ class AddTaskRepositoryTests(unittest.TestCase):
         with patch.object(service.repositories, 'sync_task_repositories',
                           return_value={'synced': True}):
             result = service.repositories.add_task_repository('T1', 'r1')
-        task_service.add_tag.assert_not_called()
+        # Kato already had the tag, so nothing new was recorded there — but the
+        # ticket is tried again: re-adding the repo is the retry for a ticket
+        # that was not tagged the first time.
+        task_service.add_tag.assert_called_once_with('T1', 'kato:repo:r1')
         self.assertFalse(result['tag_added'])
         self.assertTrue(result['added'])
 
