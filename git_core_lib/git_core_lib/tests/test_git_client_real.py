@@ -75,6 +75,36 @@ class GitClientMixinRealRepoTests(unittest.TestCase):
         _git(self.work, 'push', '-u', 'origin', 'main')
         self.client = _GitOnly()
 
+    # ----- history_mentions -----
+
+    def _merge_on_the_host(self, message: str) -> None:
+        """Someone else's clone pushes a commit to origin/main."""
+        other = Path(self._tmp.name) / 'other'
+        _git(Path(self._tmp.name), 'clone', str(self.origin), str(other))
+        (other / 'feature.txt').write_text(message, encoding='utf-8')
+        _git(other, 'add', 'feature.txt')
+        _git(other, 'commit', '-m', message)
+        _git(other, 'push', 'origin', 'main')
+
+    def test_history_mentions_finds_a_merge_made_elsewhere(self) -> None:
+        self._merge_on_the_host('PROJ-12: add the endpoint (#4)')
+        self.assertTrue(self.client.history_mentions(str(self.work), 'main', 'PROJ-12([^0-9]|$)'))
+        # Anchored: PROJ-1 is not PROJ-12.
+        self.assertFalse(self.client.history_mentions(str(self.work), 'main', 'PROJ-1([^0-9]|$)'))
+
+    def test_history_mentions_only_counts_commits_after_since(self) -> None:
+        import time
+        self._merge_on_the_host('PROJ-12: add the endpoint')
+        self.assertTrue(self.client.history_mentions(str(self.work), 'main', 'PROJ-12', since=time.time() - 3600))
+        self.assertFalse(self.client.history_mentions(str(self.work), 'main', 'PROJ-12', since=time.time() + 3600))
+
+    def test_history_mentions_refuses_what_it_cannot_tell(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.client.history_mentions(str(self.work), 'no-such-branch', 'PROJ-12')
+        for branch, pattern in (('', 'PROJ-12'), ('--all', 'PROJ-12'), ('main', '')):
+            with self.assertRaises(ValueError):
+                self.client.history_mentions(str(self.work), branch, pattern)
+
     # ----- _current_branch -----
 
     def test_current_branch_returns_real_checked_out_branch(self) -> None:

@@ -5,6 +5,7 @@ from unittest.mock import patch
 from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
     BITBUCKET_PAGE_LENGTH,
     BitbucketClient,
+    _query_string,
 )
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 from provider_client_base.provider_client_base.testing import (
@@ -67,6 +68,9 @@ class BitbucketClientTests(unittest.TestCase):
                 PullRequestFields.ID: '7',
                 PullRequestFields.TITLE: 'PROJ-1: fix it already',
                 PullRequestFields.URL: 'https://bitbucket/pr/7',
+                PullRequestFields.STATE: '',
+                PullRequestFields.DESTINATION_BRANCH: '',
+                PullRequestFields.CREATED_AT: '',
             },
         )
         assert_client_headers_and_timeout(self, client, 'bb-token', 30)
@@ -533,6 +537,9 @@ class BitbucketClientTests(unittest.TestCase):
                     PullRequestFields.ID: '17',
                     PullRequestFields.TITLE: 'PROJ-1 fix it already',
                     PullRequestFields.URL: 'https://bitbucket/pr/17',
+                    PullRequestFields.STATE: '',
+                    PullRequestFields.DESTINATION_BRANCH: '',
+                    PullRequestFields.CREATED_AT: '',
                 }
             ],
         )
@@ -540,6 +547,92 @@ class BitbucketClientTests(unittest.TestCase):
             '/repositories/workspace/repo/pullrequests',
             params={'pagelen': BITBUCKET_PAGE_LENGTH},
         )
+
+    def test_find_pull_requests_in_every_state_repeats_each_state_and_filters_the_branch(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+
+        with patch.object(
+            client, '_get', return_value=mock_response(json_data={'values': []}),
+        ) as mock_get:
+            client.find_pull_requests('workspace', 'repo', source_branch='PROJ-1', state='all')
+
+        mock_get.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests',
+            params={
+                'pagelen': BITBUCKET_PAGE_LENGTH,
+                'state': ['OPEN', 'MERGED', 'DECLINED', 'SUPERSEDED'],
+                'q': 'source.branch.name = "PROJ-1"',
+            },
+        )
+
+    def test_find_pull_requests_in_every_state_without_a_branch_sends_no_query(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+
+        with patch.object(
+            client, '_get', return_value=mock_response(json_data={'values': []}),
+        ) as mock_get:
+            client.find_pull_requests('workspace', 'repo', state='all')
+
+        mock_get.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests',
+            params={
+                'pagelen': BITBUCKET_PAGE_LENGTH,
+                'state': ['OPEN', 'MERGED', 'DECLINED', 'SUPERSEDED'],
+            },
+        )
+
+    def test_find_pull_requests_rejects_an_unsupported_state_without_a_request(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+
+        with patch.object(client, '_get') as mock_get:
+            with self.assertRaisesRegex(ValueError, 'unsupported pull request state filter'):
+                client.find_pull_requests('workspace', 'repo', state='MERGED')
+
+        mock_get.assert_not_called()
+
+    def test_find_pull_requests_normalizes_every_pull_request_state(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        cases = [
+            ('OPEN', 'open'),
+            ('MERGED', 'merged'),
+            ('DECLINED', 'declined'),
+            ('SUPERSEDED', 'declined'),
+            ('SOMETHING_NEW', ''),
+        ]
+        response = mock_response(
+            json_data={
+                'values': [
+                    {
+                        'id': index,
+                        PullRequestFields.TITLE: f'PR {index}',
+                        'links': {'html': {'href': f'https://bitbucket/pr/{index}'}},
+                        'source': {'branch': {'name': 'PROJ-1'}},
+                        'destination': {'branch': {'name': 'main'}},
+                        'state': bitbucket_state,
+                        'created_on': '2026-01-01T00:00:00.000000+00:00',
+                    }
+                    for index, (bitbucket_state, _) in enumerate(cases, start=1)
+                ]
+            }
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            prs = client.find_pull_requests(
+                'workspace', 'repo', source_branch='PROJ-1', state='all',
+            )
+
+        self.assertEqual(
+            [pr[PullRequestFields.STATE] for pr in prs],
+            [expected for _, expected in cases],
+        )
+        self.assertEqual(
+            {(pr[PullRequestFields.DESTINATION_BRANCH], pr[PullRequestFields.CREATED_AT]) for pr in prs},
+            {('main', '2026-01-01T00:00:00.000000+00:00')},
+        )
+
+    def test_query_string_escapes_quotes_and_backslashes(self) -> None:
+        self.assertEqual(_query_string('feature/x'), '"feature/x"')
+        self.assertEqual(_query_string('a"b\\c'), '"a\\"b\\\\c"')
 
     def test_find_pull_requests_returns_all_when_no_filters(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')

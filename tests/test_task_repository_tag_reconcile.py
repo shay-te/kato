@@ -178,6 +178,7 @@ class TaskRepositoryTagReconcileTests(unittest.TestCase):
         # can notice a newly-tagged repo.
         task = SimpleNamespace(id=self.task_id, summary='s', description='')
         self.service._task_preflight_service = MagicMock()
+        self.service._task_preflight_service.skip_if_waiting_its_turn.return_value = None
         self.service._task_preflight_service.prepare_task_execution_context.return_value = None
         with patch.object(self.service.repositories, '_lookup_task_for_sync') as lookup:
             self.service.process_assigned_task(task)

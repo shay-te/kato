@@ -1059,3 +1059,30 @@ class BraceEncodedMentionTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SubtaskDefaultsTests(unittest.TestCase):
+    """A provider without sub-tasks refuses every sub-task call, by name."""
+
+    def test_every_subtask_call_refuses(self) -> None:
+        from provider_client_base.provider_client_base.client.issue_client_base import IssueClientBase
+        from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
+
+        client = IssueClientBase.__new__(IssueClientBase)
+        self.assertFalse(client.supports_subtasks)
+        calls = [
+            lambda: client.create_subtask('P-1', 'summary', 'description'),
+            lambda: client.find_subtask('P-1', 'marker'),
+            lambda: client.assign_issue('P-2', 'someone'),
+            lambda: client.get_issues_status(['P-2'], 'State'),
+            lambda: client.list_comments('P-1'),
+            lambda: client.add_preformatted_comment('P-1', 'intro', 'block'),
+            lambda: client.update_preformatted_comment('P-1', '7', 'intro', 'block'),
+            lambda: client.current_user(),
+        ]
+        for call in calls:
+            with self.assertRaises(NotImplementedError) as caught:
+                call()
+            self.assertIn('cannot hold work as sub-tasks', str(caught.exception))
+        self.assertEqual(IssueStatus('P-2').exists, True)
+        self.assertEqual(IssueComment('9').body, '')

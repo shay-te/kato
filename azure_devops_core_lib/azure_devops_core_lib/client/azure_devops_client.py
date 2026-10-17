@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 from provider_client_base.provider_client_base.data.fields import (
     PullRequestFields,
+    PullRequestStates,
     ReviewCommentFields,
 )
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
@@ -47,6 +48,17 @@ _TRUNCATED_MARKER = '\n\n…(description truncated)'
 # so is ``unknown`` (a thread created without a status): only a thread someone
 # closed is left out, the way other providers leave out resolved discussions.
 _RESOLVED_THREAD_STATUSES = frozenset({'fixed', 'wontfix', 'closed', 'bydesign'})
+
+# A pull request's ``status`` as Azure names it: ``completed`` is merged,
+# ``abandoned`` closed without merging.
+_PULL_REQUEST_STATES = {
+    'active': PullRequestStates.OPEN,
+    'completed': PullRequestStates.MERGED,
+    'abandoned': PullRequestStates.DECLINED,
+}
+# The lookup filter as ``searchCriteria.status`` takes it.
+_LOOKUP_STATUS_PARAMS = {PullRequestStates.OPEN: 'active', PullRequestStates.ALL: 'all'}
+_BRANCH_REF_PREFIX = 'refs/heads/'
 
 # Azure numbers comments per THREAD (every thread starts at 1), so a comment
 # id alone is not unique on a pull request. The id handed out joins the two.
@@ -102,8 +114,13 @@ class AzureDevOpsClient(PullRequestClientBase):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
-        params = {**_API, 'searchCriteria.status': 'active', '$top': 100}
+        params = {
+            **_API,
+            'searchCriteria.status': _LOOKUP_STATUS_PARAMS[self._lookup_state(state)],
+            '$top': 100,
+        }
         normalized_source_branch = normalized_text(source_branch)
         if normalized_source_branch:
             params['searchCriteria.sourceRefName'] = _branch_ref(normalized_source_branch)
@@ -215,8 +232,8 @@ class AzureDevOpsClient(PullRequestClientBase):
 
     @classmethod
     def _normalize_pr(cls, payload: Any) -> dict[str, str]:
-        """``{id, title, url}`` with the WEB url — the payload's own ``url``
-        is the REST resource, which is no use to a person."""
+        """The normalized pull request with the WEB url — the payload's own
+        ``url`` is the REST resource, which is no use to a person."""
         web_url = normalized_text(
             dict_from_mapping(payload, 'repository').get('webUrl', ''),
         ).rstrip('/')
@@ -225,6 +242,9 @@ class AzureDevOpsClient(PullRequestClientBase):
             payload,
             id_key='pullRequestId',
             url=f'{web_url}/pullrequest/{pull_request_id}' if web_url else '',
+            state=cls._mapped_state(text_from_mapping(payload, 'status'), _PULL_REQUEST_STATES),
+            destination_branch=_branch_name(text_from_mapping(payload, 'targetRefName')),
+            created_at=text_from_mapping(payload, 'creationDate'),
         )
 
     # ----- review comments -----
@@ -346,7 +366,12 @@ class AzureDevOpsClient(PullRequestClientBase):
 def _branch_ref(branch: object) -> str:
     """A full ref: Azure names branches ``refs/heads/<name>`` everywhere."""
     text = normalized_text(branch)
-    return text if text.startswith('refs/') else f'refs/heads/{text}'
+    return text if text.startswith('refs/') else f'{_BRANCH_REF_PREFIX}{text}'
+
+
+def _branch_name(ref: object) -> str:
+    """The branch a ``refs/heads/<name>`` ref names (any other ref as it is)."""
+    return normalized_text(ref).removeprefix(_BRANCH_REF_PREFIX)
 
 
 def _fitted_description(description: object) -> str:

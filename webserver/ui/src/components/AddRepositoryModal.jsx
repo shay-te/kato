@@ -1,43 +1,17 @@
-import { useMemo, useState } from 'react';
-import { addTaskRepository, fetchInventoryRepositories } from '../api.js';
+import { addTaskRepository } from '../api.js';
 import { toast } from '../stores/toastStore.js';
-import { apiErrorMessage } from '../utils/apiError.js';
 import { REPOSITORY_TAG_PREFIX } from '../utils/katoTags.js';
-import { usePickerData } from '../hooks/usePickerData.js';
-import SearchPickerModal from './SearchPickerModal.jsx';
+import RepositoryPickerModal from './RepositoryPickerModal.jsx';
 
-// "+ Add repository" picker for the Files tab. Lists every repo in kato's
-// inventory, filters out ones already on the task (client-side), and on
-// confirm runs the platform-side tag write + workspace clone in one call.
-// Config over the shared <SearchPickerModal>.
+// "+ Add repository" picker for the Files tab: the shared repository picker
+// (every repo in kato's inventory, the ones already on the task left out), and
+// on confirm the platform-side tag write + workspace clone in one call.
 export default function AddRepositoryModal({
   taskId,
   alreadyAttachedIds = new Set(),
   onClose,
   onAdded,
 }) {
-  const [query, setQuery] = useState('');
-  const { data: repositories, loading, error } = usePickerData(async () => {
-    const result = await fetchInventoryRepositories();
-    if (!result.ok) { throw new Error(apiErrorMessage(result, 'failed to load repositories')); }
-    return Array.isArray(result.body?.repositories) ? result.body.repositories : [];
-  }, [], []);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const attached = new Set(
-      Array.from(alreadyAttachedIds || []).map((id) => String(id).toLowerCase()),
-    );
-    return (repositories || []).filter((repo) => {
-      const id = String(repo.id || '').toLowerCase();
-      if (attached.has(id)) { return false; }
-      if (!needle) { return true; }
-      const haystack = `${id}\n${repo.owner || ''}\n${repo.repo_slug || ''}`
-        .toLowerCase();
-      return haystack.includes(needle);
-    });
-  }, [repositories, query, alreadyAttachedIds]);
-
   async function onConfirm(repo) {
     const result = await addTaskRepository(taskId, repo.id);
     if (!result.ok) {
@@ -94,7 +68,7 @@ export default function AddRepositoryModal({
   }
 
   return (
-    <SearchPickerModal
+    <RepositoryPickerModal
       ariaLabel="Add repository to task"
       title={<>Add repository to {taskId}</>}
       onClose={onClose}
@@ -107,35 +81,11 @@ export default function AddRepositoryModal({
           attached to the task are filtered out.
         </>
       )}
-      searchPlaceholder="Search by id, owner, or slug…"
-      query={query}
-      onQueryChange={setQuery}
-      items={filtered}
-      loading={loading}
-      error={error}
-      loadingText="Loading repositories…"
-      emptyText={repositories.length === 0
-        ? 'No repositories configured in kato.'
-        : 'Every repository in the inventory is already attached to this task.'}
-      getItemId={(repo) => repo.id}
+      alreadyAttachedIds={alreadyAttachedIds}
+      allAttachedText="Every repository in the inventory is already attached to this task."
       confirmLabel="Add to task"
       busyLabel="Adding…"
-      onConfirm={onConfirm}
-      renderRow={(repo) => (
-        <>
-          <div className="adopt-session-row-top">
-            <span className="adopt-session-cwd">{repo.id}</span>
-            <span className="adopt-session-meta">
-              {repo.owner && repo.repo_slug
-                ? `${repo.owner}/${repo.repo_slug}`
-                : (repo.owner || repo.repo_slug || '')}
-            </span>
-          </div>
-          {repo.local_path && (
-            <div className="adopt-session-preview">{repo.local_path}</div>
-          )}
-        </>
-      )}
+      onPick={onConfirm}
     />
   );
 }

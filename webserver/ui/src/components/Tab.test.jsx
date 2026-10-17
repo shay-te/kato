@@ -621,3 +621,56 @@ describe('Tab — the dot while the review loop reviews', () => {
   });
 });
 
+
+describe('Tab — a plan\'s tasks', () => {
+  const SUBTASK = 'Subtask of UNA-3267: Event registration';
+
+  test('a sub-task shows its parent as a fixed mark, and only the name as its label', () => {
+    const { container } = render(
+      <Tab session={_session({ task_id: 'UNA-3285', task_summary: SUBTASK })} onSelect={() => {}} />,
+    );
+    expect(screen.getByRole('img', { name: 'Subtask of UNA-3267' })).toBeInTheDocument();
+    expect(container.querySelector('.tab-label-title')).toHaveTextContent(/^Event registration$/);
+  });
+
+  test('renaming a sub-task edits the name only; the mark stays its own', () => {
+    const onRename = vi.fn();
+    const session = _session({ task_id: 'UNA-3285', task_summary: SUBTASK });
+    const { container, rerender } = render(<Tab session={session} onSelect={() => {}} onRename={onRename} />);
+    fireEvent.click(screen.getByRole('button', { name: /rename the una-3285 tab/i }));
+    const input = container.querySelector('.tab-label-rename');
+    expect(input).toHaveValue('Event registration');
+    fireEvent.change(input, { target: { value: 'Sign-up for events' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onRename).toHaveBeenCalledWith('UNA-3285', 'Sign-up for events');
+    // Renamed: still a sub-task of UNA-3267 (the mark reads the ticket, not the name).
+    rerender(<Tab session={session} displayName="Sign-up for events" onSelect={() => {}} onRename={onRename} />);
+    expect(screen.getByRole('img', { name: 'Subtask of UNA-3267' })).toBeInTheDocument();
+    expect(container.querySelector('.tab-label-title')).toHaveTextContent(/^Sign-up for events$/);
+  });
+
+  test('an ordinary task has no sub-task mark', () => {
+    render(<Tab session={_session()} onSelect={() => {}} />);
+    expect(screen.queryByRole('img', { name: /subtask of/i })).toBeNull();
+  });
+
+  test('the task a plan was split from carries the split\'s mark, and its card says where it is', () => {
+    vi.useFakeTimers();
+    try {
+      const plan = { plan_id: 'p', status: 'running', step_count: 17, counts: { satisfied: 3 } };
+      const { container, rerender } = render(
+        <Tab session={_session({ plan_queue: plan })} onSelect={() => {}} />,
+      );
+      expect(container.querySelector('.tab-plan-queue-badge.is-running'))
+        .toHaveAttribute('aria-label', 'Split plan: Running · 3/17 done');
+      fireEvent.mouseEnter(container.querySelector('li'));
+      act(() => { vi.advanceTimersByTime(400); });
+      expect(document.querySelector('.tab-tooltip')).toHaveTextContent('Split planRunning · 3/17 done');
+      fireEvent.mouseLeave(container.querySelector('li'));
+      rerender(<Tab session={_session({ plan_queue: null })} onSelect={() => {}} />);
+      expect(container.querySelector('.tab-plan-queue-badge')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

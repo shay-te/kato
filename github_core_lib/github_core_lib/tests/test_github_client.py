@@ -1,7 +1,11 @@
 import unittest
 from unittest.mock import patch
 
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
 
 from github_core_lib.github_core_lib.client.github_client import GitHubClient
 from provider_client_base.provider_client_base.testing import (
@@ -47,6 +51,9 @@ class GitHubClientTests(unittest.TestCase):
                 PullRequestFields.ID: '17',
                 PullRequestFields.TITLE: 'PROJ-1: fix it already',
                 PullRequestFields.URL: 'https://github.com/owner/repo/pull/17',
+                PullRequestFields.STATE: '',
+                PullRequestFields.DESTINATION_BRANCH: '',
+                PullRequestFields.CREATED_AT: '',
             },
         )
         assert_client_headers_and_timeout(self, client, 'gh-token', 30)
@@ -366,6 +373,9 @@ class GitHubClientTests(unittest.TestCase):
                     PullRequestFields.ID: '17',
                     PullRequestFields.TITLE: 'PROJ-1 fix it already',
                     PullRequestFields.URL: 'https://github.com/owner/repo/pull/17',
+                    PullRequestFields.STATE: '',
+                    PullRequestFields.DESTINATION_BRANCH: '',
+                    PullRequestFields.CREATED_AT: '',
                 }
             ],
         )
@@ -373,6 +383,89 @@ class GitHubClientTests(unittest.TestCase):
             '/repos/owner/repo/pulls',
             params={'state': 'open', 'per_page': 100, 'head': 'owner:PROJ-1'},
         )
+
+    def test_find_pull_requests_default_request_is_unchanged_without_a_branch(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])) as mock_get:
+            client.find_pull_requests('owner', 'repo')
+
+        mock_get.assert_called_once_with(
+            '/repos/owner/repo/pulls',
+            params={'state': 'open', 'per_page': 100},
+        )
+
+    def test_find_pull_requests_in_every_state_asks_github_for_all(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])) as mock_get:
+            client.find_pull_requests('owner', 'repo', source_branch='PROJ-1', state='all')
+
+        mock_get.assert_called_once_with(
+            '/repos/owner/repo/pulls',
+            params={'state': 'all', 'per_page': 100, 'head': 'owner:PROJ-1'},
+        )
+
+    def test_find_pull_requests_rejects_an_unsupported_state_without_a_request(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+
+        with patch.object(client, '_get') as mock_get:
+            with self.assertRaisesRegex(ValueError, 'unsupported pull request state filter'):
+                client.find_pull_requests('owner', 'repo', state='closed')
+
+        mock_get.assert_not_called()
+
+    def test_find_pull_requests_normalizes_open_merged_and_declined(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+
+        def pull_request(number, state, merged_at, base):
+            return {
+                'number': number,
+                PullRequestFields.TITLE: f'PR {number}',
+                'html_url': f'https://github.com/owner/repo/pull/{number}',
+                'head': {'ref': 'PROJ-1'},
+                'base': {'ref': base},
+                'state': state,
+                'merged_at': merged_at,
+                'created_at': f'2026-01-0{number}T00:00:00Z',
+            }
+
+        response = mock_response(
+            json_data=[
+                pull_request(1, 'open', None, 'main'),
+                pull_request(2, 'closed', '2026-02-01T00:00:00Z', 'release'),
+                pull_request(3, 'closed', None, 'main'),
+            ]
+        )
+        with patch.object(client, '_get', return_value=response):
+            pull_requests = client.find_pull_requests(
+                'owner', 'repo', source_branch='PROJ-1', state=PullRequestStates.ALL,
+            )
+
+        self.assertEqual(
+            [
+                (
+                    pr[PullRequestFields.ID],
+                    pr[PullRequestFields.STATE],
+                    pr[PullRequestFields.DESTINATION_BRANCH],
+                    pr[PullRequestFields.CREATED_AT],
+                )
+                for pr in pull_requests
+            ],
+            [
+                ('1', 'open', 'main', '2026-01-01T00:00:00Z'),
+                ('2', 'merged', 'release', '2026-01-02T00:00:00Z'),
+                ('3', 'declined', 'main', '2026-01-03T00:00:00Z'),
+            ],
+        )
+
+    def test_pull_request_state_merged_at_wins_and_unknown_is_empty(self) -> None:
+        self.assertEqual(
+            GitHubClient._pull_request_state({'state': 'open', 'merged_at': 'x'}),
+            PullRequestStates.MERGED,
+        )
+        self.assertEqual(GitHubClient._pull_request_state({'state': 'draft'}), '')
+        self.assertEqual(GitHubClient._pull_request_state({}), '')
 
     def test_find_pull_requests_returns_all_open_when_no_filters(self) -> None:
         client = GitHubClient('https://api.github.com', 'gh-token')

@@ -10,6 +10,7 @@ import {
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import FastPromptButtons from './FastPromptButtons.jsx';
 import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
+import PlanQueueButton from './planQueue/PlanQueueButton.jsx';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import PullRequestList from './PullRequestList.jsx';
@@ -448,6 +449,7 @@ export default function SessionHeader({
               name it describes — a chip up here could only ever describe one
               agent, and duplicated what the tab already says. */}
           <ReviewLoopButton session={session} />
+          <PlanQueueButton session={session} />
           <HeaderSeparator />
           <FastPromptButtons agentName={agentName} onSendPrompt={onSendPrompt} />
           {searchSlot}
@@ -599,6 +601,7 @@ export function SessionHeaderPlaceholder() {
           moment a task is picked. */}
       <div className="session-header-actions" aria-hidden="true">
         <ReviewLoopButton disabled />
+        <PlanQueueButton disabled />
         <HeaderSeparator />
         <FastPromptButtons disabled />
         {buttons.slice(0, 1).map(placeholderButton)}

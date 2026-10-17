@@ -5,6 +5,7 @@ import { describe, test, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import PlanPane from './PlanPane.jsx';
+import { planQueueView } from './planQueue/planQueueViewStore.js';
 
 describe('PlanPane', () => {
   test('renders the plan markdown', () => {
@@ -47,4 +48,20 @@ test('the plan can be dismissed like every other centre-pane body', () => {
 test('no close button when the host offers no handler', () => {
   render(<PlanPane content="# hi" />);
   expect(screen.queryByRole('button', { name: /close plan/i })).toBeNull();
+});
+
+test('a plan can be split into a queue of small tasks from here', () => {
+  const seen = [];
+  const unsubscribe = planQueueView.subscribe((request) => seen.push(request.taskId));
+  render(<PlanPane content="# hi" taskId="UNA-1" />);
+  fireEvent.click(screen.getByRole('button', { name: /split plan/i }));
+  unsubscribe();
+  expect(seen.at(-1)).toBe('UNA-1');
+});
+
+test('nothing to split without a plan, or without the task it belongs to', () => {
+  const { rerender } = render(<PlanPane content="" taskId="UNA-1" />);
+  expect(screen.queryByRole('button', { name: /split plan/i })).toBeNull();
+  rerender(<PlanPane content="# hi" />);
+  expect(screen.queryByRole('button', { name: /split plan/i })).toBeNull();
 });

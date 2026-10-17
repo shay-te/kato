@@ -54,6 +54,7 @@ class ContractPullRequestProvider(object):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = 'open',
     ) -> list[PullRequest]:
         return [PullRequest(id='1', title=title_prefix)]
 
@@ -136,7 +137,32 @@ class VcsProviderContractsTests(unittest.TestCase):
         )
         self.assertEqual(
             list(inspect.signature(PullRequestProvider.find_pull_requests).parameters),
-            ['self', 'repo_owner', 'repo_slug', 'source_branch', 'title_prefix'],
+            ['self', 'repo_owner', 'repo_slug', 'source_branch', 'title_prefix', 'state'],
+        )
+
+    def test_find_pull_requests_defaults_to_open_pull_requests(self) -> None:
+        parameters = inspect.signature(PullRequestProvider.find_pull_requests).parameters
+        self.assertEqual(parameters['state'].default, 'open')
+        self.assertEqual(parameters['state'].kind, inspect.Parameter.KEYWORD_ONLY)
+
+    def test_pull_request_lifecycle_fields_default_to_empty(self) -> None:
+        pull_request = PullRequest(id='17', title='Fix', url='https://example.com/pr/17')
+
+        self.assertEqual(pull_request.state, '')
+        self.assertEqual(pull_request.destination_branch, '')
+        self.assertEqual(pull_request.created_at, '')
+
+    def test_pull_request_carries_its_lifecycle_fields(self) -> None:
+        pull_request = PullRequest(
+            id='17',
+            state='merged',
+            destination_branch='main',
+            created_at='2026-01-02T03:04:05Z',
+        )
+
+        self.assertEqual(
+            (pull_request.state, pull_request.destination_branch, pull_request.created_at),
+            ('merged', 'main', '2026-01-02T03:04:05Z'),
         )
 
     def test_issue_provider_signature_names_are_stable(self) -> None:

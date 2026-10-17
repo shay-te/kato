@@ -82,6 +82,10 @@ test('expanded prompt pins the collapse toggle to the TOP, not the bottom', () =
     '.chat-sticky-prompt.is-expanded .chat-sticky-prompt-text',
   );
   assertDeclaration(expandedText, 'padding-top', '32px');
+  // Still a sticky header when expanded: capped, its text scrolling inside,
+  // so a long prompt can never cover its own turn's rows.
+  assertDeclaration(expandedText, 'max-height', '40vh');
+  assertDeclaration(expandedText, 'overflow-y', 'auto');
   // With a top-right jump-to-comment icon present, the toggle steps left.
   const withJump = ruleBody(
     '.chat-sticky-prompt.is-expanded.has-comment-jump .chat-sticky-prompt-expand',

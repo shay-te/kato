@@ -250,7 +250,39 @@ class PullRequestDataAccessTests(unittest.TestCase):
             repo_slug='repo',
             source_branch='PROJ-1',
             title_prefix='PROJ-1 ',
+            state='open',
         )
+
+    def _lookup_data_access(self):
+        config = types.SimpleNamespace(
+            base_url="https://bitbucket.example",
+            token="bb-token",
+            owner="workspace",
+            repo_slug="repo",
+            destination_branch="main",
+        )
+        client = types.SimpleNamespace(
+            provider_name='bitbucket',
+            find_pull_requests=Mock(return_value=[]),
+        )
+        return PullRequestDataAccess(config, client), client
+
+    def test_find_pull_requests_passes_the_state_filter_through(self) -> None:
+        data_access, client = self._lookup_data_access()
+
+        data_access.find_pull_requests(source_branch='PROJ-1', state='all')
+
+        self.assertEqual(client.find_pull_requests.call_args.kwargs['state'], 'all')
+
+    def test_find_pull_requests_rejects_a_state_that_is_not_text(self) -> None:
+        data_access, client = self._lookup_data_access()
+
+        for state in (['all'], None):
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(PermissionError, 'state'):
+                    data_access.find_pull_requests(source_branch='PROJ-1', state=state)
+
+        client.find_pull_requests.assert_not_called()
 
     def test_resolves_review_comment_via_client(self) -> None:
         config = types.SimpleNamespace(

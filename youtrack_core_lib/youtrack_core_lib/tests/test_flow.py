@@ -9,7 +9,7 @@ full parsing, retry, and assembly logic runs.
 from __future__ import annotations
 
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import DEFAULT, call, patch
 
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client import YouTrackClient
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import (
@@ -570,6 +570,265 @@ class F15_MultipleIssues(unittest.TestCase):
 
         self.assertEqual(len(tasks), 3)
         self.assertEqual([t.id for t in tasks], ['PROJ-1', 'PROJ-2', 'PROJ-3'])
+
+
+# ---------------------------------------------------------------------------
+# Sub-task flows — against an in-memory YouTrack
+# ---------------------------------------------------------------------------
+
+_AT_0900 = 1792227600000  # 2026-10-17T09:00:00Z in epoch ms
+_MINUTE_MS = 60_000
+
+
+def _refused(description: str, status_code: int = 400):
+    response = mock_response(status_code=status_code, json_data={'error_description': description})
+    response.raise_for_status.side_effect = Exception(f'{status_code} Client Error')
+    return response
+
+
+class _FakeYouTrack:
+    """Just enough of YouTrack's REST API for the sub-task calls.
+
+    Holds issues, their assignee / parent / sprints and comments, applies the
+    two commands the client sends (``subtask of X``, ``Assignee Y``), and
+    pages collections by ``$top`` + ``$skip`` like the real server.
+    """
+
+    def __init__(self, *, default_assignee=None, sticky_assignee=False, sprints=(), refusing_sprints=()):
+        self.default_assignee = default_assignee  # a project default for new issues
+        self.sticky_assignee = sticky_assignee    # a workflow that puts it straight back
+        self.parent_sprints = list(sprints)       # [(board id, sprint id)] PROJ-1 is in
+        self.refusing_sprints = set(refusing_sprints)
+        self.sprint_members: list[tuple[str, str, str]] = []
+        self.users = {'bot': 'Delivery Bot', 'alice': 'Alice Smith', 'lead': 'Project Lead'}
+        self.clock = _AT_0900
+        self.issues = {'PROJ-1': self._new_issue('2-1', 'Parent', '', assignee='bot')}
+        self.comments: dict[str, list[dict]] = {'PROJ-1': []}
+
+    def _tick(self) -> int:
+        self.clock += _MINUTE_MS
+        return self.clock
+
+    def _new_issue(self, database_id, summary, description, *, assignee=None):
+        return {
+            'id': database_id, 'project': '0-5', 'summary': summary,
+            'description': description, 'assignee': assignee, 'parent': '',
+            'state': 'Open', 'created': self._tick(),
+        }
+
+    # ----- GET -----
+
+    def get(self, path, params=None, **_kwargs):
+        params = params or {}
+        if path == '/api/users/me':
+            return mock_response(json_data={'login': 'bot'})
+        if path == '/api/issues':
+            return self._page(self._search(params['query']), params)
+        parts = path.strip('/').split('/')  # api, issues, <id>[, <collection>]
+        issue_id = parts[2]
+        if len(parts) == 4 and parts[3] == 'sprints':
+            return mock_response(json_data=[
+                {'id': sprint, 'agile': {'id': board}} for board, sprint in self.parent_sprints
+            ])
+        if len(parts) == 4 and parts[3] == 'comments':
+            return self._page(self.comments.get(issue_id, []), params)
+        issue = self.issues[issue_id]
+        if params['fields'] == 'project(id)':
+            return mock_response(json_data={'project': {'id': issue['project']}})
+        return mock_response(json_data={'customFields': [self._assignee_field(issue)]})
+
+    def _search(self, query):
+        if query.startswith('subtask of: '):
+            parent = query[len('subtask of: '):]
+            return [
+                {'idReadable': issue_id, 'description': issue['description']}
+                for issue_id, issue in self.issues.items() if issue['parent'] == parent
+            ]
+        wanted = {issue_id.upper() for issue_id in query[len('issue id: '):].split(', ')}
+        return [
+            self._status_payload(issue_id, issue)
+            for issue_id, issue in self.issues.items() if issue_id in wanted
+        ]
+
+    def _status_payload(self, issue_id, issue):
+        return {
+            'idReadable': issue_id,
+            'created': issue['created'],
+            'customFields': [
+                {'name': 'State', 'value': {'name': issue['state']}},
+                self._assignee_field(issue),
+            ],
+            'parent': {'issues': [{'idReadable': issue['parent']}] if issue['parent'] else []},
+        }
+
+    def _assignee_field(self, issue):
+        login = issue['assignee']
+        value = {'login': login, 'fullName': self.users[login]} if login else None
+        return {'name': 'Assignee', 'value': value}
+
+    @staticmethod
+    def _page(items, params):
+        skip = params['$skip']
+        return mock_response(json_data=items[skip:skip + params['$top']])
+
+    # ----- POST -----
+
+    def post(self, path, params=None, json=None, **_kwargs):
+        if path == '/api/issues':
+            number = len(self.issues) + 1
+            issue_id = f'PROJ-{number}'
+            self.issues[issue_id] = self._new_issue(
+                f'2-{number}', json['summary'], json['description'],
+                assignee=self.default_assignee,
+            )
+            self.comments[issue_id] = []
+            return mock_response(json_data={'id': f'2-{number}', 'idReadable': issue_id})
+        if path == '/api/commands':
+            return self._command(json['query'], json['issues'][0]['idReadable'])
+        parts = path.strip('/').split('/')
+        if parts[1] == 'agiles':
+            board, sprint = parts[2], parts[4]
+            if (board, sprint) in self.refusing_sprints:
+                return _refused('Sprint is archived')
+            self.sprint_members.append((board, sprint, json['id']))
+            return mock_response(json_data={})
+        issue_comments = self.comments[parts[2]]
+        if len(parts) == 5:  # api, issues, <id>, comments, <comment id>
+            next(c for c in issue_comments if c['id'] == parts[4])['text'] = json['text']
+            return mock_response(json_data={})
+        comment = {
+            'id': f'4-{sum(len(c) for c in self.comments.values()) + 1}',
+            'text': json['text'], 'created': self._tick(),
+            'author': {'login': 'bot', 'fullName': self.users['bot']},
+        }
+        issue_comments.append(comment)
+        return mock_response(json_data={'id': comment['id']})
+
+    def _command(self, query, issue_id):
+        name, _, value = query.rpartition(' ')
+        issue = self.issues[issue_id]
+        if name == 'subtask of':
+            issue['parent'] = value
+        elif value == 'Unassigned':
+            issue['assignee'] = issue['assignee'] if self.sticky_assignee else None
+        elif value in self.users:
+            issue['assignee'] = value
+        else:
+            return _refused(f'Unknown user: {value}')
+        return mock_response(json_data={})
+
+
+def _serve(client, youtrack):
+    """Route the client's HTTP verbs to ``youtrack`` (and keep logs quiet)."""
+    return patch.multiple(client, _get=youtrack.get, _post=youtrack.post, logger=DEFAULT)
+
+
+# ---------------------------------------------------------------------------
+# F16 — Split an issue: create a sub-task, and find it again on a retry
+# ---------------------------------------------------------------------------
+class F16_CreateSubtask(unittest.TestCase):
+    """Flow: parent's project → create → link → default assignee cleared → sprints joined."""
+
+    def test_flow(self):
+        youtrack = _FakeYouTrack(
+            default_assignee='lead',
+            sprints=[('a-1', 's-1'), ('a-2', 's-2')],
+            refusing_sprints=[('a-2', 's-2')],
+        )
+        client = _client()
+
+        with _serve(client, youtrack) as mocks:
+            sub_task = client.create_subtask('PROJ-1', 'Part A', 'Do part A.\n<!-- part:a -->')
+            # A retried create looks first, and finds the sub-task it made.
+            found = client.find_subtask('PROJ-1', '<!-- part:a -->')
+            missing = client.find_subtask('PROJ-1', '<!-- part:b -->')
+            status = client.get_issues_status([sub_task], 'State')[sub_task]
+
+        self.assertEqual(sub_task, 'PROJ-2')
+        self.assertEqual(found, 'PROJ-2')
+        self.assertEqual(missing, '')
+        self.assertEqual(youtrack.issues['PROJ-2']['parent'], 'PROJ-1')
+        self.assertIsNone(youtrack.issues['PROJ-2']['assignee'])  # the default was cleared
+        self.assertEqual(status.parent_id, 'PROJ-1')
+        self.assertEqual(status.assignee, '')
+        self.assertEqual(status.state, 'Open')
+        # The refusing sprint is only logged; the other one has it.
+        self.assertEqual(youtrack.sprint_members, [('a-1', 's-1', '2-2')])
+        mocks['logger'].exception.assert_called_once()
+
+    def test_a_sub_task_that_stays_assigned_is_an_error(self):
+        youtrack = _FakeYouTrack(default_assignee='lead', sticky_assignee=True, sprints=[('a-1', 's-1')])
+        client = _client()
+
+        with _serve(client, youtrack):
+            with self.assertRaisesRegex(RuntimeError, 'PROJ-2 is still assigned to lead'):
+                client.create_subtask('PROJ-1', 'Part A', 'body')
+
+        self.assertEqual(youtrack.sprint_members, [])
+
+
+# ---------------------------------------------------------------------------
+# F17 — Follow sub-tasks: who has each one, and in which state
+# ---------------------------------------------------------------------------
+class F17_FollowSubtasks(unittest.TestCase):
+    """Flow: create two sub-tasks, one is taken, read all of them in one query."""
+
+    def test_flow(self):
+        youtrack = _FakeYouTrack()
+        client = _client()
+
+        with _serve(client, youtrack):
+            me = client.current_user()
+            part_a = client.create_subtask('PROJ-1', 'Part A', 'a')
+            part_b = client.create_subtask('PROJ-1', 'Part B', 'b')
+            client.assign_issue(part_a, 'alice')
+            client.assign_issue(part_b, me)
+            client.assign_issue(part_b, '')
+            statuses = client.get_issues_status([part_a, part_b, 'PROJ-99'], 'State')
+            with self.assertRaisesRegex(Exception, 'Unknown user: nobody'):
+                client.assign_issue(part_a, 'nobody')
+
+        self.assertEqual(me, 'bot')
+        self.assertEqual(list(statuses), ['PROJ-2', 'PROJ-3', 'PROJ-99'])
+        self.assertEqual(statuses['PROJ-2'].assignee, 'alice')
+        self.assertEqual(statuses['PROJ-2'].assignee_name, 'Alice Smith')
+        self.assertEqual(statuses['PROJ-2'].created_at, '2026-10-17T09:02:00+00:00')
+        self.assertEqual(statuses['PROJ-3'].assignee, '')
+        self.assertTrue(statuses['PROJ-3'].exists)
+        self.assertFalse(statuses['PROJ-99'].exists)
+
+
+# ---------------------------------------------------------------------------
+# F18 — A record kept in one comment, rewritten in place
+# ---------------------------------------------------------------------------
+class F18_PreformattedRecordComment(unittest.TestCase):
+    """Flow: add a code-block comment, read it back unchanged, rewrite it in place."""
+
+    def test_flow(self):
+        youtrack = _FakeYouTrack()
+        client = _client()
+        record = 'PROJ-2  alice  In Progress\n  PROJ-3  -      Open'
+
+        youtrack.comments['PROJ-1'].append({
+            'id': '4-1', 'text': 'a human note', 'created': _AT_0900,
+            'author': {'login': 'alice', 'fullName': 'Alice Smith'},
+        })
+
+        with _serve(client, youtrack):
+            comment_id = client.add_preformatted_comment('PROJ-1', 'Sub-tasks:', record)
+            first_read = client.list_comments('PROJ-1')
+            client.update_preformatted_comment('PROJ-1', comment_id, 'Sub-tasks:', record + '\n  PROJ-4  -  Open')
+            second_read = client.list_comments('PROJ-1')
+
+        self.assertTrue(comment_id)
+        # Newest first, and the block's lines read back exactly as written.
+        self.assertEqual([c.comment_id for c in first_read], [comment_id, '4-1'])
+        self.assertEqual(first_read[0].body, f'Sub-tasks:\n\n```\n{record}\n```')
+        self.assertEqual(first_read[0].author, 'bot')
+        self.assertEqual(first_read[1].author, 'alice')
+        # Rewritten in place: still two comments, the record's id unchanged.
+        self.assertEqual([c.comment_id for c in second_read], [comment_id, '4-1'])
+        self.assertTrue(second_read[0].body.endswith('PROJ-4  -  Open\n```'))
 
 
 if __name__ == '__main__':

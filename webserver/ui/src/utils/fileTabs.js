@@ -50,11 +50,35 @@ export function tabKeyFor(info) {
 //   - New file: inserted immediately after the current active tab
 //     (or appended if there is no active tab / it's not found) and
 //     made active.
+// What a tab shows. ``PLAN_QUEUE`` is not a file: it is the task's plan board,
+// opened as a tab so it lives in the strip like the files do (pinned, dragged,
+// closed the same way) instead of covering the whole window.
+export const TAB_VIEW = Object.freeze({ FILE: 'file', DIFF: 'diff', PLAN_QUEUE: 'plan_queue' });
+
+const TAB_VIEWS = new Set(Object.values(TAB_VIEW));
+
 // Which view a tab should show after an open: stated > remembered > default.
 export function pickTabView(requested, existing) {
-  if (requested === 'diff' || requested === 'file') { return requested; }
+  if (TAB_VIEWS.has(requested)) { return requested; }
   const remembered = existing && existing.view;
-  return remembered === 'diff' || remembered === 'file' ? remembered : 'file';
+  return TAB_VIEWS.has(remembered) ? remembered : TAB_VIEW.FILE;
+}
+
+// The open request for a task's plan-board tab, named "UNA-1 Split plan" /
+// "UNA-1 Plan board". Its "path" is a name no file can have, so it is one tab
+// per task and never collides with a real file.
+export function planQueueTab(taskId, label = 'Split plan') {
+  return {
+    absolutePath: `plan-queue:${taskId}`,
+    relativePath: `${taskId} ${label || 'Split plan'}`,
+    view: TAB_VIEW.PLAN_QUEUE,
+  };
+}
+
+// A tab that shows a view of the task, not a file — nothing to load, diff or
+// reveal in the file tree.
+export function isViewTab(tab) {
+  return !!tab && tab.view === TAB_VIEW.PLAN_QUEUE;
 }
 
 

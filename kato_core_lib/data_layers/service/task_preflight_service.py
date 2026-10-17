@@ -50,6 +50,7 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         repository_approval_service=None,
         runtime_posture_supplier: Callable[[], object] | None = None,
         logger=None,
+        plan_step_gate: Callable[[Task], str] | None = None,
     ) -> None:
         self._task_model_access_validator = task_model_access_validator
         self._task_service = task_service
@@ -83,6 +84,12 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         # the next task without reinstantiating this service.
         self._runtime_posture_supplier = runtime_posture_supplier
         self._active_blocking_comment_log_state: dict[str, str] = {}
+        # ``task -> reason it must wait`` ('' = it may start): a plan's sub-task
+        # assigned before its turn waits until what it waits for is merged and
+        # done (``plan_queue/step_gate.py``). Late-bound — the plan queue is
+        # built after this service.
+        self._plan_step_gate = plan_step_gate
+        self._plan_wait_log_state: dict[str, str] = {}
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     def prepare_task_execution_context(
@@ -727,6 +734,26 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         blocking_comment: str,
     ) -> dict[str, object]:
         self._log_active_blocking_comment_once(task.id, blocking_comment)
+        return skip_task_result(task.id)
+
+    def skip_if_waiting_its_turn(self, task: Task) -> dict[str, object] | None:
+        """A skip result while ``task`` — a plan's sub-task — must wait its
+        turn; ``None`` once it may start (or it is no plan's sub-task)."""
+        plan_wait = self._plan_step_wait(task)
+        return self._skip_waiting_plan_step(task, plan_wait) if plan_wait else None
+
+    def _plan_step_wait(self, task: Task) -> str:
+        if self._plan_step_gate is None:
+            return ''
+        try:
+            return str(self._plan_step_gate(task) or '')
+        except Exception as exc:  # a broken gate must not start work out of order
+            return f'its plan could not be checked: {exc}'
+
+    def _skip_waiting_plan_step(self, task: Task, reason: str) -> dict[str, object]:
+        if self._plan_wait_log_state.get(task.id) != reason:
+            self._plan_wait_log_state[task.id] = reason
+            self.logger.info('not starting task %s yet: %s', task.id, reason)
         return skip_task_result(task.id)
 
     def _log_active_blocking_comment_once(self, task_id: str, blocking_comment: str) -> None:

@@ -37,6 +37,7 @@ class PullRequestProvider(Protocol):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = 'open',
     ) -> list[PullRequest]:
         raise NotImplementedError
 

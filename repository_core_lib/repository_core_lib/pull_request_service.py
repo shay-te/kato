@@ -71,6 +71,7 @@ class PullRequestService(object):
         repo_slug: str,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = 'open',
     ) -> list[dict[str, str]]:
         client = self._factory.get(repository_type)
         return client.find_pull_requests(
@@ -78,6 +79,7 @@ class PullRequestService(object):
             repo_slug=repo_slug,
             source_branch=source_branch,
             title_prefix=title_prefix,
+            state=state,
         )
 
     def reply_to_review_comment(

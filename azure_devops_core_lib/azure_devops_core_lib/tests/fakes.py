@@ -92,6 +92,8 @@ def pull_request(pull_request_id: int = 42, title: str = 'UNA-1 Fix login', **ex
         'title': title,
         'sourceRefName': 'refs/heads/UNA-1',
         'targetRefName': 'refs/heads/main',
+        'status': 'active',
+        'creationDate': '2026-03-01T10:00:00.0000000Z',
         'url': f'{BASE_URL}/acme/_apis/git/repositories/r-guid/pullRequests/{pull_request_id}',
         'repository': {'webUrl': f'{BASE_URL}/acme/Web%20App/_git/api'},
         **extra,

@@ -1,5 +1,6 @@
 import Icon from './Icon.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
+import { planQueueView } from './planQueue/planQueueViewStore.js';
 
 // Centre-pane view for the agent's plan (``<workspace>/plan.md``).
 // Presentational: App owns the plan poll + content (it also needs the
@@ -7,13 +8,23 @@ import MarkdownContent from './MarkdownContent.jsx';
 // component just renders the markdown for review. Auto-opened when the
 // agent presents a fresh plan via ExitPlanMode while in plan mode.
 
-export default function PlanPane({ content, onClose }) {
+export default function PlanPane({ content, onClose, taskId = '' }) {
   const text = String(content || '').trim();
   return (
     <section id="plan-pane">
       <header className="plan-pane-header">
         <span className="plan-pane-title">Plan</span>
         <span className="plan-pane-pill">review</span>
+        {text && taskId ? (
+          <button
+            type="button"
+            className="plan-pane-split"
+            onClick={() => planQueueView.open(taskId, 'Split plan')}
+            data-tooltip="Split this plan into small tasks that run as a queue — each waits for the ones it depends on to be merged."
+          >
+            <Icon name="board" /> Split plan
+          </button>
+        ) : null}
         {/* Every other centre-pane body can be dismissed — a file tab has
             its ✕, the orchestrator feed has one. The plan opens ITSELF (the
             watcher auto-shows a fresh plan), so it was the one view that

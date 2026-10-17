@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from provider_client_base.provider_client_base.pull_request_client_base import (
     PullRequestClientBase,
     coerce_line_number,
 )
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from tests.utils import assert_client_headers_and_timeout, mock_response
 
@@ -180,7 +184,29 @@ class NormalizedPullRequestTests(unittest.TestCase):
             PullRequestFields.ID: '17',
             PullRequestFields.TITLE: 'PROJ-1: fix it already',
             PullRequestFields.URL: 'https://example.com/pr/17',
+            PullRequestFields.STATE: '',
+            PullRequestFields.DESTINATION_BRANCH: '',
+            PullRequestFields.CREATED_AT: '',
         })
+
+    def test_carries_state_destination_branch_and_created_at(self) -> None:
+        result = PullRequestClientBase._normalized_pull_request(
+            {'id': 3},
+            id_key='id',
+            state=PullRequestStates.MERGED,
+            destination_branch=' main ',
+            created_at=' 2026-01-02T03:04:05Z ',
+        )
+        self.assertEqual(result[PullRequestFields.STATE], 'merged')
+        self.assertEqual(result[PullRequestFields.DESTINATION_BRANCH], 'main')
+        self.assertEqual(result[PullRequestFields.CREATED_AT], '2026-01-02T03:04:05Z')
+
+    def test_missing_branch_and_date_values_become_empty_strings(self) -> None:
+        result = PullRequestClientBase._normalized_pull_request(
+            {'id': 3}, id_key='id', destination_branch=None, created_at=None,
+        )
+        self.assertEqual(result[PullRequestFields.DESTINATION_BRANCH], '')
+        self.assertEqual(result[PullRequestFields.CREATED_AT], '')
 
     def test_raises_for_missing_id_key(self) -> None:
         with self.assertRaisesRegex(ValueError, 'invalid pull request response payload'):
@@ -219,6 +245,39 @@ class NormalizedPullRequestTests(unittest.TestCase):
         result = PullRequestClientBase._normalized_pull_request({'number': 99}, id_key='number')
         self.assertEqual(result[PullRequestFields.ID], '99')
         self.assertIsInstance(result[PullRequestFields.ID], str)
+
+
+# ---------------------------------------------------------------------------
+# PullRequestClientBase — _lookup_state / _mapped_state
+# ---------------------------------------------------------------------------
+
+class LookupStateTests(unittest.TestCase):
+    def test_open_and_all_are_the_lookup_filters(self) -> None:
+        self.assertEqual(PullRequestClientBase._lookup_state('open'), PullRequestStates.OPEN)
+        self.assertEqual(PullRequestClientBase._lookup_state('all'), PullRequestStates.ALL)
+
+    def test_case_and_surrounding_space_are_ignored(self) -> None:
+        self.assertEqual(PullRequestClientBase._lookup_state(' ALL '), PullRequestStates.ALL)
+
+    def test_any_other_filter_raises(self) -> None:
+        for state in ('merged', 'declined', 'closed', '', None):
+            with self.subTest(state=state):
+                with self.assertRaisesRegex(ValueError, 'unsupported pull request state filter'):
+                    PullRequestClientBase._lookup_state(state)
+
+
+class MappedStateTests(unittest.TestCase):
+    _STATES = {'opened': PullRequestStates.OPEN, 'merged': PullRequestStates.MERGED}
+
+    def test_maps_the_provider_name_in_any_case(self) -> None:
+        self.assertEqual(
+            PullRequestClientBase._mapped_state(' MERGED ', self._STATES),
+            PullRequestStates.MERGED,
+        )
+
+    def test_an_unlisted_or_missing_name_is_empty(self) -> None:
+        self.assertEqual(PullRequestClientBase._mapped_state('weird', self._STATES), '')
+        self.assertEqual(PullRequestClientBase._mapped_state(None, self._STATES), '')
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +517,15 @@ class FieldConstantsTests(unittest.TestCase):
         self.assertEqual(PullRequestFields.REPOSITORY_ID, 'repository_id')
         self.assertEqual(PullRequestFields.PULL_REQUESTS, 'pull_requests')
         self.assertEqual(PullRequestFields.FAILED_REPOSITORIES, 'failed_repositories')
+        self.assertEqual(PullRequestFields.STATE, 'state')
+        self.assertEqual(PullRequestFields.CREATED_AT, 'created_at')
+
+    def test_pull_request_states(self) -> None:
+        self.assertEqual(PullRequestStates.OPEN, 'open')
+        self.assertEqual(PullRequestStates.MERGED, 'merged')
+        self.assertEqual(PullRequestStates.DECLINED, 'declined')
+        self.assertEqual(PullRequestStates.ALL, 'all')
+        self.assertEqual(PullRequestStates.LOOKUP_FILTERS, ('open', 'all'))
 
     def test_review_comment_fields(self) -> None:
         self.assertEqual(ReviewCommentFields.PULL_REQUEST_ID, 'pull_request_id')
@@ -480,7 +548,7 @@ class FieldConstantsTests(unittest.TestCase):
 
 class PullRequestClientBaseFlowTests(unittest.TestCase):
     def test_create_then_find_pull_request_flow(self) -> None:
-        client = ConcretePRClient('https://api.example.com', 'tok', timeout=30)
+        ConcretePRClient('https://api.example.com', 'tok', timeout=30)
         created = PullRequestClientBase._normalized_pull_request(
             {'number': 42, PullRequestFields.TITLE: 'Feature X'},
             id_key='number',

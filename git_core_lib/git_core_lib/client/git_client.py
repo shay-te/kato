@@ -236,6 +236,33 @@ class GitClientMixin:
         result = self._run_git(local_path, args, failure_message, repository)
         return result.stdout.strip()
 
+    def history_mentions(
+        self,
+        local_path: str,
+        branch: str,
+        pattern: str,
+        *,
+        since: float = 0.0,
+        repository=None,
+    ) -> bool:
+        """Does ``origin/<branch>`` hold a commit whose message matches
+        ``pattern`` (an extended regex), made after ``since`` (epoch seconds;
+        0 = any time)?
+
+        Fetches the branch first, so a merge made on the host is seen. For work
+        merged without a change request, where the history is the only record.
+        Raises when git can't tell — "could not ask" is never "not merged".
+        """
+        name = str(branch or '').strip()
+        if not name or name.startswith('-') or not str(pattern or ''):
+            raise ValueError(f'cannot read the history of {branch!r} for {pattern!r}')
+        self._run_git(local_path, ['fetch', 'origin', name], f'failed to fetch {name}', repository)
+        args = ['log', f'origin/{name}', '--extended-regexp', f'--grep={pattern}', '--format=%H', '-n', '1']
+        if since:
+            args.insert(2, f'--since=@{int(since)}')
+        found = self._git_stdout(local_path, args, f'failed to read the history of {name}', repository)
+        return bool(found)
+
     def restore_paths(
         self, local_path: str, relative_paths: list[str], source: str = 'HEAD',
     ) -> list[str]:

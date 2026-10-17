@@ -3,6 +3,7 @@ from omegaconf import DictConfig
 from core_lib.data_layers.data_access.data_access import DataAccess
 from core_lib.rule_validator.rule_validator import RuleValidator, ValueRuleValidator
 
+from provider_client_base.provider_client_base.data.fields import PullRequestStates
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from kato_core_lib.data_layers.data.fields import PullRequestFields, ReviewCommentFields
 from repository_core_lib.repository_core_lib.pull_request_service import PullRequestService
@@ -28,6 +29,7 @@ pull_request_lookup_rule_validator = RuleValidator(
     [
         ValueRuleValidator(PullRequestFields.SOURCE_BRANCH, (str, type(None))),
         ValueRuleValidator('title_prefix', (str, type(None))),
+        ValueRuleValidator(PullRequestFields.STATE, str, nullable=False),
     ]
 )
 
@@ -109,11 +111,13 @@ class PullRequestDataAccess(DataAccess):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
         pull_request_lookup_rule_validator.validate_dict(
             {
                 PullRequestFields.SOURCE_BRANCH: source_branch,
                 'title_prefix': title_prefix,
+                PullRequestFields.STATE: state,
             }
         )
         return self._client.find_pull_requests(
@@ -121,6 +125,7 @@ class PullRequestDataAccess(DataAccess):
             **self._repository_kwargs(),
             source_branch=source_branch,
             title_prefix=title_prefix,
+            state=state,
         )
 
     def resolve_review_comment(self, comment: ReviewComment) -> None:

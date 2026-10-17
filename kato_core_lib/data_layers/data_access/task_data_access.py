@@ -43,6 +43,13 @@ class TaskDataAccess(DataAccess):
         return bool(getattr(self._client, 'supports_tags', True))
 
     @property
+    def subtask_tracker(self):
+        """The issue client itself when it can hold work as sub-tasks (create,
+        assign, read state and comments — see ``IssueClientBase.supports_subtasks``),
+        else None. The plan queue's tracker mode talks to it directly."""
+        return self._client if getattr(self._client, 'supports_subtasks', False) is True else None
+
+    @property
     def max_retries(self) -> int:
         return retry_count(getattr(self._client, 'max_retries', 1))
 

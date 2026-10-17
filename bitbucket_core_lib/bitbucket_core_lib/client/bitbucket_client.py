@@ -4,18 +4,35 @@ from typing import Any
 
 from bitbucket_core_lib.bitbucket_core_lib.client.auth import bitbucket_basic_auth_header
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from utils_core_lib.utils_core_lib.text_utils import (
     dict_from_mapping,
     list_from_mapping,
     normalized_text,
     text_from_attr,
+    text_from_mapping,
 )
 
 # Bitbucket rejected pagelen values around 100 in live API checks ("Invalid pagelen"),
 # so keep PR and PR-comment pagination at a smaller safe value.
 BITBUCKET_PAGE_LENGTH = 50
+
+# A pull request's ``state`` as Bitbucket names it. SUPERSEDED (replaced by
+# another pull request) was closed without merging, like DECLINED.
+_PULL_REQUEST_STATES = {
+    'open': PullRequestStates.OPEN,
+    'merged': PullRequestStates.MERGED,
+    'declined': PullRequestStates.DECLINED,
+    'superseded': PullRequestStates.DECLINED,
+}
+# Bitbucket lists only OPEN pull requests unless ``state`` is given; it takes
+# one ``state`` per value, repeated, to ask for several.
+_ALL_STATE_PARAMS = ['OPEN', 'MERGED', 'DECLINED', 'SUPERSEDED']
 
 
 class BitbucketClient(PullRequestClientBase):
@@ -96,15 +113,18 @@ class BitbucketClient(PullRequestClientBase):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
+        normalized_source_branch = normalized_text(source_branch)
         response = self._get_with_retry(
             f'/repositories/{repo_owner}/{repo_slug}/pullrequests',
-            params={'pagelen': BITBUCKET_PAGE_LENGTH},
+            params=self._find_pull_requests_params(
+                self._lookup_state(state), normalized_source_branch,
+            ),
         )
         response.raise_for_status()
         payload = response.json() or {}
         values = list_from_mapping(payload, 'values')
-        normalized_source_branch = normalized_text(source_branch)
         normalized_title_prefix = normalized_text(title_prefix)
         matches: list[dict[str, str]] = []
         for item in values:
@@ -192,14 +212,31 @@ class BitbucketClient(PullRequestClientBase):
             payload['destination'] = {'branch': {'name': destination_branch}}
         return payload
 
+    @staticmethod
+    def _find_pull_requests_params(lookup_state: str, source_branch: str) -> dict[str, Any]:
+        params: dict[str, Any] = {'pagelen': BITBUCKET_PAGE_LENGTH}
+        if lookup_state != PullRequestStates.ALL:
+            return params
+        params['state'] = list(_ALL_STATE_PARAMS)
+        if source_branch:
+            # Every pull request the repository ever had runs to many pages;
+            # the branch's own are a handful. Filtered on the server, the
+            # branch's merged pull request is on page one, not lost past it.
+            params['q'] = f'source.branch.name = {_query_string(source_branch)}'
+        return params
+
     @classmethod
     def _normalize_pr(cls, payload: dict[str, Any]) -> dict[str, str]:
         links = dict_from_mapping(payload, 'links')
         html_link = dict_from_mapping(links, 'html')
+        destination = dict_from_mapping(payload, 'destination')
         return cls._normalized_pull_request(
             payload,
             id_key=PullRequestFields.ID,
             url=html_link.get('href', ''),
+            state=cls._mapped_state(text_from_mapping(payload, 'state'), _PULL_REQUEST_STATES),
+            destination_branch=text_from_mapping(dict_from_mapping(destination, 'branch'), 'name'),
+            created_at=text_from_mapping(payload, 'created_on'),
         )
 
     @classmethod
@@ -254,3 +291,9 @@ class BitbucketClient(PullRequestClientBase):
             )
             comments.append(comment)
         return [comment for comment in comments if comment.comment_id]
+
+
+def _query_string(value: str) -> str:
+    """``value`` as a double-quoted string literal of Bitbucket's ``q`` language."""
+    escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+    return f'"{escaped}"'

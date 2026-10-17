@@ -14,6 +14,8 @@ import { ENTRY_SOURCE } from '../constants/entrySource.js';
 import { formatToolUse, toolUseFilePath } from '../utils/formatToolUse.js';
 import { parseCommentRunPrompt } from '../utils/commentRunPrompt.js';
 import { parseReviewLoopPrompt, stickyPromptLabel } from './reviewLoop/reviewLoopPrompt.js';
+import { PLAN_SPLIT_PROMPT_LABEL, isPlanSplitPrompt, planQuestionFrom } from './planQueue/planQueuePrompt.js';
+import { planQueueView } from './planQueue/planQueueViewStore.js';
 import { reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
 import { commentStatusKey } from '../utils/commentStatus.js';
 import { useCopyAction } from '../hooks/useCopyAction.js';
@@ -977,7 +979,13 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
   // The review loop's findings arrive as a user turn too — labelled as
   // kato's, never as "You asked", with a way into the loop view.
   const loopRef = parseReviewLoopPrompt(promptText);
-  const promptLabel = stickyPromptLabel(promptText);
+  // So does the plan queue's request to split the plan — kato's, in its own colour.
+  const splitPrompt = isPlanSplitPrompt(promptText);
+  // And a plan sub-task's question the operator put to this chat.
+  const questionFrom = planQuestionFrom(promptText);
+  const promptLabel = splitPrompt ? PLAN_SPLIT_PROMPT_LABEL
+    : questionFrom ? `Kato · question from ${questionFrom}`
+      : stickyPromptLabel(promptText);
   const commentStatus = commentRef && commentStatusMap
     ? String(commentStatusMap.get(commentStatusKey(commentRef.file, commentRef.line)) || '')
     : '';
@@ -992,6 +1000,7 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
     // step it left of the top-right jump-to-comment icon so they don't stack.
     hasCommentJump && 'has-comment-jump',
     loopRef && 'is-review-loop',
+    (splitPrompt || questionFrom) && 'is-plan-split',
   );
   const textWrapClass = cx(
     'chat-sticky-prompt-text-wrap',
@@ -1063,6 +1072,17 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
       <Icon name="loop" />
     </button>
   ) : null;
+  const openPlan = splitPrompt ? (
+    <button
+      type="button"
+      className="chat-sticky-prompt-open-plan tooltip-start"
+      data-tooltip="Open the split plan — the tasks the agent proposed, to review and approve."
+      aria-label="Open the split plan"
+      onClick={() => planQueueView.open('', 'Split plan')}
+    >
+      <Icon name="board" />
+    </button>
+  ) : null;
   const jumpToComment = hasCommentJump ? (
     <button
       type="button"
@@ -1091,6 +1111,7 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
           <span className="chat-sticky-prompt-label-row">
             <span className="chat-sticky-prompt-label">{promptLabel}</span>
             {openLoop}
+            {openPlan}
             {jumpToStart}
           </span>
           {promptTime && (

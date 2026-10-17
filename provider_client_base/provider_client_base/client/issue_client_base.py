@@ -11,6 +11,7 @@ peer import — provider libs import it from ``provider_client_base`` only.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ from provider_client_base.provider_client_base.data.issue_record import (
     ISSUE_COMMENT_BODY,
     IssueRecord,
 )
+from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
     is_addressed_elsewhere_from_mentions,
@@ -65,6 +67,64 @@ class IssueClientBase(RetryingClientBase):
     # issue asks first: on a provider without them ``add_tag`` has to borrow some
     # other field, and borrowing one the operator set by hand overwrites it.
     supports_tags: bool = True
+
+    # Whether the provider can hold work as SUB-TASKS of an issue: create one
+    # (unassigned), assign it, read several issues' state and assignee at once,
+    # and read an issue's comments with their ids and times. A host that splits
+    # an issue into sub-tasks other people may pick up needs all of it; on a
+    # provider without it every call below refuses.
+    supports_subtasks: bool = False
+
+    def create_subtask(self, parent_id: str, summary: str, description: str) -> str:
+        """Create an UNASSIGNED sub-task of ``parent_id``; return its readable id.
+
+        Unassigned even where the project assigns new issues to someone by
+        default: the provider clears such an assignee, or raises if it can't.
+        On a tracker with sprints, the sub-task joins its parent's sprints.
+        """
+        raise self._no_subtasks()
+
+    def find_subtask(self, parent_id: str, marker: str) -> str:
+        """The readable id of ``parent_id``'s sub-task whose description holds
+        ``marker`` ('' when none) — so a retried create finds the first."""
+        raise self._no_subtasks()
+
+    def assign_issue(self, issue_id: str, assignee: str) -> None:
+        """Assign the issue to ``assignee`` (a stable handle); '' unassigns it."""
+        raise self._no_subtasks()
+
+    def get_issues_status(self, issue_ids: Sequence[str], state_field: str) -> dict[str, IssueStatus]:
+        """Each issue's ``state_field`` value, assignee, creation time and parent.
+
+        One entry per id asked for; an issue the tracker does not have comes
+        back with ``exists=False`` rather than failing the whole read.
+        """
+        raise self._no_subtasks()
+
+    def list_comments(self, issue_id: str) -> list[IssueComment]:
+        """Every comment on the issue, newest first, unfiltered (unlike the
+        comments folded into a task's description for an agent)."""
+        raise self._no_subtasks()
+
+    def add_preformatted_comment(self, issue_id: str, intro: str, preformatted: str) -> str:
+        """A comment of one line of text and a block shown exactly as written
+        (a code block), whose lines read back unchanged from ``list_comments``.
+        Returns the new comment's id ('' when the tracker gives none)."""
+        raise self._no_subtasks()
+
+    def update_preformatted_comment(self, issue_id: str, comment_id: str, intro: str, preformatted: str) -> None:
+        """Rewrite one of the account's own comments (made by
+        ``add_preformatted_comment``) in place — so a record that changes stays
+        one comment instead of piling up new ones."""
+        raise self._no_subtasks()
+
+    def current_user(self) -> str:
+        """The stable handle of the account this client works as. Raises when
+        it can't be told — never guesses."""
+        raise self._no_subtasks()
+
+    def _no_subtasks(self) -> NotImplementedError:
+        return NotImplementedError(f'{type(self).__name__} cannot hold work as sub-tasks')
 
     # ----- record building -----
 

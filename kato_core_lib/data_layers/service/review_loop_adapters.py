@@ -46,11 +46,10 @@ from kato_core_lib.helpers.review_loop_guidance import (
     REVIEW_LOOP_FIXER_GUIDANCE,
     REVIEW_LOOP_REVIEWER_GUIDANCE,
 )
+from kato_core_lib.data_layers.service.read_only_investigation import read_only_task_investigation
 from kato_core_lib.helpers.workspace_repo_utils import (
     resolve_session_cwd,
-    sibling_repository_dirs,
     task_repository_clones,
-    task_workspace_root,
 )
 
 REVIEW_LOOPS_DIR_ENV = 'KATO_REVIEW_LOOPS_DIR'
@@ -98,19 +97,29 @@ def chat_mode_refusal(task_id: str) -> str:
 
 
 class KatoChatChannel(object):
-    """The task's main chat, as the review loop sees it."""
+    """The task's main chat, as the review loop sees it — and the plan queue,
+    which proposes a split there.
 
-    def __init__(self, *, comment_runs, session_manager, workspace_manager) -> None:
+    ``mode_refusal`` says which chat modes refuse the request: the review loop's
+    fixes need a chat that can edit (``chat_mode_refusal``); a split is only
+    read and answered, so Plan mode suits it.
+    """
+
+    def __init__(
+        self, *, comment_runs, session_manager, workspace_manager, mode_refusal=None, label='review loop',
+    ) -> None:
+        self._label = label  # names what kato sends, in its logs and a respawned chat
         self._get_comment_runs = provider_for(comment_runs)
         self._get_session_manager = provider_for(session_manager)
         self._get_workspace_manager = provider_for(workspace_manager)
+        self._mode_refusal = chat_mode_refusal if mode_refusal is None else mode_refusal
 
     @property
     def _delivery(self):
         return self._get_comment_runs().chat_delivery
 
     def readiness(self, task_id: str) -> ChatReadiness:
-        refusal = chat_mode_refusal(task_id)
+        refusal = self._mode_refusal(task_id)
         if refusal:
             return ChatReadiness.refuse(refusal)
         delivery = self._delivery
@@ -159,7 +168,7 @@ class KatoChatChannel(object):
         return self._delivery.deliver(
             task_id,
             prompt,
-            label='review loop',
+            label=self._label,
             cwd_for=lambda: self._chat_cwd(task_id),
             force_respawn=force_respawn,
         )
@@ -195,17 +204,11 @@ class KatoReviewer(object):
     def review(
         self, prompt: str, *, task_id: str, cancel_event: threading.Event, model: str = '',
     ) -> str:
-        workspace_manager = self._get_workspace_manager()
-        clones = task_repository_clones(workspace_manager, task_id)
-        return self._get_implementation_service().investigate(
+        return read_only_task_investigation(
+            self._get_implementation_service(),
+            self._get_workspace_manager(),
+            task_id,
             prompt,
-            # In a repo clone, never the bare task folder (see
-            # ``resolve_session_cwd``); the task folder is reachable through
-            # ``additional_dirs`` and, in docker mode, the mount.
-            cwd=clones[0] if clones else '',
-            additional_dirs=sibling_repository_dirs(workspace_manager, task_id),
-            sandbox_root=task_workspace_root(workspace_manager, task_id),
-            task_id=task_id,
             log_label=f'{task_id} review loop',
             cancel_event=cancel_event,
             timeout_seconds=self._timeout_seconds,

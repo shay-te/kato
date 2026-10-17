@@ -172,7 +172,28 @@ class PullRequestServiceFindPullRequestsTests(unittest.TestCase):
             repo_slug='repo',
             source_branch='feature/proj-1',
             title_prefix='PROJ-1',
+            state='open',
         )
+
+    def test_passes_the_state_filter_through(self):
+        service, _, client = _service_with_client()
+        client.find_pull_requests.return_value = []
+        service.find_pull_requests(
+            Platform.AZURE,
+            repo_owner='org/project',
+            repo_slug='repo',
+            source_branch='feature/proj-1',
+            state='all',
+        )
+        _, kwargs = client.find_pull_requests.call_args
+        self.assertEqual(kwargs['state'], 'all')
+
+    def test_default_state_is_open(self):
+        service, _, client = _service_with_client()
+        client.find_pull_requests.return_value = []
+        service.find_pull_requests(Platform.GITHUB, repo_owner='octo', repo_slug='repo')
+        _, kwargs = client.find_pull_requests.call_args
+        self.assertEqual(kwargs['state'], 'open')
 
     def test_default_source_branch_is_empty_string(self):
         service, _, client = _service_with_client()

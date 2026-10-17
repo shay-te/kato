@@ -807,6 +807,7 @@ class ProcessAssignedTaskShortCircuitsTests(unittest.TestCase):
 
     def test_returns_when_preflight_skips_task(self) -> None:
         preflight = MagicMock()
+        preflight.skip_if_waiting_its_turn.return_value = None  # no plan's sub-task
         preflight.prepare_task_execution_context.return_value = None
         service = AgentService(**_kwargs(task_preflight_service=preflight))
         from kato_core_lib.data_layers.data.task import Task
@@ -815,6 +816,7 @@ class ProcessAssignedTaskShortCircuitsTests(unittest.TestCase):
 
     def test_returns_dict_when_preflight_returns_dict(self) -> None:
         preflight = MagicMock()
+        preflight.skip_if_waiting_its_turn.return_value = None  # no plan's sub-task
         preflight.prepare_task_execution_context.return_value = {'status': 'skipped'}
         service = AgentService(**_kwargs(task_preflight_service=preflight))
         from kato_core_lib.data_layers.data.task import Task

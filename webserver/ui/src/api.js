@@ -785,6 +785,106 @@ export function fetchReviewLoopArtifact(taskId, loopId, round, kind) {
   ));
 }
 
+// ----- plan queue: an approved plan split into tasks, run as a queue -----
+
+function planQueueUrl(planId, suffix = '') {
+  return `/api/plan-queues/${encodeURIComponent(planId)}${suffix}`;
+}
+
+// ``{ plans: [{ plan_id, source_task_id, status, counts, … }] }``.
+export function fetchPlanQueues() {
+  return fetchJson('/api/plan-queues');
+}
+
+export function fetchPlanQueue(planId) {
+  return fetchJson(planQueueUrl(planId));
+}
+
+function taskPlanQueueUrl(taskId, suffix = '') {
+  return `/api/sessions/${encodeURIComponent(taskId)}/plan-queue${suffix}`;
+}
+
+// Ask an agent to split the task's plan.md — or, with ``splitFolder``, to take
+// the split the operator already wrote as files in that folder of the task
+// (202 with the new plan).
+export function proposePlanQueue(taskId, { model = '', splitFolder = '' } = {}) {
+  const body = {};
+  if (model) { body.model = model; }
+  if (splitFolder) { body.split_folder = splitFolder; }
+  return postEnvelope(taskPlanQueueUrl(taskId), body);
+}
+
+// ``{ folders: [{ path, files, context }] }`` — the task folder's folders that
+// hold a split written as files.
+export function fetchPlanQueueSplitFolders(taskId) {
+  return fetchJson(taskPlanQueueUrl(taskId, '/split-folders'));
+}
+
+export function revisePlanQueue(planId, feedback) {
+  return postEnvelope(planQueueUrl(planId, '/revise'), { feedback });
+}
+
+export function retryPlanQueueProposal(planId) {
+  return postEnvelope(planQueueUrl(planId, '/retry-proposal'), {});
+}
+
+// ``repositories``: ones the operator added for the plan's tasks (e.g. a shared
+// library every task builds on) — allowed from now on, beside the task's own.
+export function editPlanQueueSteps(planId, steps, repositories = []) {
+  return postEnvelope(planQueueUrl(planId, '/steps'), { steps, repositories }, 'PUT');
+}
+
+// ``shared`` true puts the steps on the tracker as sub-tasks of the plan's
+// ticket; false keeps them kato's own tasks. Always stated — creating tickets is
+// the operator's explicit choice, never a default.
+export function approvePlanQueue(planId, { run = false, shared = false } = {}) {
+  return postEnvelope(planQueueUrl(planId, '/approve'), { run, shared, start_mode: 'implement' });
+}
+
+export function takeOverPlanQueue(planId) {
+  return postEnvelope(planQueueUrl(planId, '/take-over'), {});
+}
+
+// The task's plan as published on the tracker (the task is its ticket or one
+// of its sub-tasks) — followed here, read-only, until taken over.
+export function fetchSharedPlanQueue(taskId) {
+  return fetchJson(taskPlanQueueUrl(taskId, '/shared'));
+}
+
+// ``action``: 'run' | 'pause' | 'stop'.
+export function controlPlanQueue(planId, action) {
+  return postEnvelope(planQueueUrl(planId, `/${action}`), {});
+}
+
+export function discardPlanQueue(planId) {
+  return postEnvelope(planQueueUrl(planId), {}, 'DELETE');
+}
+
+// ``action``: 'satisfy' | 'retry' | 'cancel' | 'check'.
+export function planQueueStepAction(planId, stepId, action) {
+  return postEnvelope(planQueueUrl(planId, `/steps/${encodeURIComponent(stepId)}/${action}`), {});
+}
+
+// A plan sub-task's question, put to the chat its plan was split in.
+// ``{ parent, question: { status, answer, error, … } | null }`` — ``parent``
+// '' for a task that is no plan's sub-task.
+function planQuestionUrl(taskId) {
+  return `/api/sessions/${encodeURIComponent(taskId)}/plan-question`;
+}
+
+export function fetchPlanQuestion(taskId) {
+  return fetchJson(planQuestionUrl(taskId));
+}
+
+// ``questions``: the agent's AskUserQuestion questions, as they came.
+export function askPlanQuestion(taskId, questions) {
+  return postEnvelope(planQuestionUrl(taskId), { questions });
+}
+
+export function cancelPlanQuestion(taskId) {
+  return postEnvelope(planQuestionUrl(taskId), {}, 'DELETE');
+}
+
 export function triggerScan() {
   return requestEnvelope('/api/scan/trigger', { method: 'POST' });
 }

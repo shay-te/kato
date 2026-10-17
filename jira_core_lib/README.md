@@ -10,10 +10,21 @@ provider.
 from jira_core_lib.jira_core_lib.jira_core_lib import JiraCoreLib
 
 jira = JiraCoreLib(cfg).issue
-jira.get_assigned_tasks(assignee='kato', states=['To Do', 'In Progress'])
-jira.add_comment(task_id='PROJ-123', body='…')
-jira.move_task_to_state(task_id='PROJ-123', state='In Review')
+jira.get_assigned_tasks('PROJ', 'bot-account', ['To Do', 'In Progress'])
+jira.add_comment('PROJ-123', '…')
+jira.move_issue_to_state('PROJ-123', 'status', 'In Review')
+
+# Sub-tasks (supports_subtasks = True)
+key = jira.create_subtask('PROJ-123', 'Summary', 'Description with a marker')  # unassigned
+jira.find_subtask('PROJ-123', 'marker')            # the key, or ''
+jira.assign_issue(key, jira.current_user())        # '' unassigns
+jira.get_issues_status(['PROJ-123', key], 'status')
+comment_id = jira.add_preformatted_comment(key, 'Progress:', 'kept\n  exactly\n')
+jira.update_preformatted_comment(key, comment_id, 'Progress:', 'changed\n')
+jira.list_comments(key)                            # newest first, unfiltered
 ```
+
+Comment bodies and descriptions are sent as ADF (Jira Cloud REST v3).
 
 ## Config
 
@@ -32,7 +43,7 @@ Default schema in [`jira_core_lib/config/`](jira_core_lib/config/).
 
 ## Where this fits
 
-Selected by kato when `KATO_ISSUE_PLATFORM=jira`. Routed through
+Selected by the host when its issue platform is `jira`. Routed through
 `task_core_lib`'s `TaskClientFactory`.
 
 ## Tests

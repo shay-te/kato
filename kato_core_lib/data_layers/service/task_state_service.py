@@ -47,6 +47,16 @@ class TaskStateService(Service):
         """
         self._move_task_to_configured_state(issue_id, 'done')
 
+    def state_names(self) -> dict[str, str]:
+        """The configured workflow: the state field and its In Progress / In
+        Review / Done values — what a ticket's state is read against."""
+        return {
+            'field': self._configured_state_field('progress'),
+            'progress': self._configured_state_value('progress'),
+            'review': self._configured_state_value('review'),
+            'done': self._configured_state_value('done'),
+        }
+
     def move_task_to_open(self, issue_id: str) -> None:
         self._task_data_access.move_task_to_state(
             issue_id,

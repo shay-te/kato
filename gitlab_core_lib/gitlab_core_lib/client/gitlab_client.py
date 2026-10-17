@@ -5,8 +5,24 @@ from urllib.parse import quote
 
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
 from utils_core_lib.utils_core_lib.text_utils import dict_from_mapping, list_from_mapping, normalized_text, text_from_attr, text_from_mapping
+
+
+# A merge request's ``state`` as GitLab names it. ``locked`` is a transient
+# lock while GitLab works on an open merge request.
+_MERGE_REQUEST_STATES = {
+    'opened': PullRequestStates.OPEN,
+    'locked': PullRequestStates.OPEN,
+    'merged': PullRequestStates.MERGED,
+    'closed': PullRequestStates.DECLINED,
+}
+# The lookup filter in GitLab's own words.
+_LOOKUP_STATE_PARAMS = {PullRequestStates.OPEN: 'opened', PullRequestStates.ALL: 'all'}
 
 
 class GitLabClient(PullRequestClientBase):
@@ -58,8 +74,9 @@ class GitLabClient(PullRequestClientBase):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
-        params = {'state': 'opened', 'per_page': 100}
+        params = {'state': _LOOKUP_STATE_PARAMS[self._lookup_state(state)], 'per_page': 100}
         normalized_source_branch = normalized_text(source_branch)
         if normalized_source_branch:
             params['source_branch'] = normalized_source_branch
@@ -141,6 +158,9 @@ class GitLabClient(PullRequestClientBase):
             payload,
             id_key='iid',
             url=payload.get('web_url', '') if isinstance(payload, dict) else '',
+            state=cls._mapped_state(text_from_mapping(payload, 'state'), _MERGE_REQUEST_STATES),
+            destination_branch=text_from_mapping(payload, 'target_branch'),
+            created_at=text_from_mapping(payload, 'created_at'),
         )
 
     @classmethod

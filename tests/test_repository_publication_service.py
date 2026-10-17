@@ -133,3 +133,28 @@ class RepositoryPublicationServiceTests(unittest.TestCase):
             commit_message='Fix',
             default_commit_message='Address review comments',
         )
+
+    def test_find_pull_requests_asks_for_open_pull_requests_by_default(self) -> None:
+        repository = types.SimpleNamespace(id='client')
+        data_access = self.repository_service._pull_request_data_access.return_value
+        data_access.find_pull_requests.return_value = [{PullRequestFields.ID: '17'}]
+
+        result = self.service.find_pull_requests(
+            repository, source_branch='feature/client', title_prefix='PROJ-1 ',
+        )
+
+        self.assertEqual(result, [{PullRequestFields.ID: '17'}])
+        data_access.find_pull_requests.assert_called_once_with(
+            source_branch='feature/client',
+            title_prefix='PROJ-1 ',
+            state='open',
+        )
+
+    def test_find_pull_requests_passes_the_state_filter_through(self) -> None:
+        repository = types.SimpleNamespace(id='client')
+        data_access = self.repository_service._pull_request_data_access.return_value
+        data_access.find_pull_requests.return_value = []
+
+        self.service.find_pull_requests(repository, source_branch='feature/client', state='all')
+
+        self.assertEqual(data_access.find_pull_requests.call_args.kwargs['state'], 'all')

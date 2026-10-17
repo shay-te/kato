@@ -245,6 +245,10 @@ class F2_PullRequestReviewFlow(unittest.TestCase):
                 'number': 42,
                 PullRequestFields.TITLE: 'Add retry to uploader',
                 'html_url': f'https://github.com/{OWNER}/{REPO}/pull/42',
+                'state': 'open',
+                'merged_at': None,
+                'base': {'ref': 'main'},
+                'created_at': '2026-03-01T10:00:00Z',
             }
         )
         with patch.object(client, '_post', return_value=create_resp) as mock_post:
@@ -271,6 +275,9 @@ class F2_PullRequestReviewFlow(unittest.TestCase):
                 PullRequestFields.ID: '42',
                 PullRequestFields.TITLE: 'Add retry to uploader',
                 PullRequestFields.URL: f'https://github.com/{OWNER}/{REPO}/pull/42',
+                PullRequestFields.STATE: 'open',
+                PullRequestFields.DESTINATION_BRANCH: 'main',
+                PullRequestFields.CREATED_AT: '2026-03-01T10:00:00Z',
             },
         )
 

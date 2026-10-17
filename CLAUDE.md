@@ -79,6 +79,10 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 │                                 the main chat, repeat until clean. Generic + kato-free: imports
 │                                 only stdlib + utils_core_lib; the host implements its ports
 │                                 (kato: data_layers/service/review_loop_adapters.py)
+├── plan_queue_core_lib        ← plan queue: split an approved plan into small tasks that wait for
+│                                 each other (merged AND done) and release them in order. Generic +
+│                                 kato-free: stdlib + utils_core_lib; host ports in
+│                                 kato_core_lib/data_layers/service/plan_queue/ (one module each)
 ├── local_task_core_lib        ← tasks created in kato's own UI (no tracker): one JSON store of
 │                                 LOCAL-<n> tasks — summary, description, tags, state, comments.
 │                                 Kato-free; imports only stdlib + utils_core_lib
@@ -344,6 +348,90 @@ done, and nothing is ever sent after the last round. The loop's between-rounds m
 fixes, first ids, sweep-next, tests digest) is DERIVED from the saved rounds at every round
 (`progress.loop_memory`) — never carried in locals — so a resumed loop judges each review
 exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
+
+### Plan queue (split a plan into small dependent tasks)
+```
+"Split plan" (task toolbar / plan pane) → the task's plan TAB in the centre strip
+  → POST /api/sessions/<task>/plan-queue
+  → snapshot <workspace>/plan.md into the plan (DONE wipes the workspace) → PROPOSING
+    — or {split_folder}: a split the operator already WROTE as files (split_folders.py: a folder
+      directly in the task folder, ≥2 numbered *.md, README = overview) → one step per file, its
+      text kept EXACTLY as the brief; the proposer only names steps, depends_on and repositories
+  → ProposalWorker asks IN THE TASK'S CHAT (`plan_queue/split_in_chat.py`: the review loop's
+    `KatoChatChannel` — same sender + per-task lock, minus its Plan-mode refusal), pointing at
+    plan.md / the split files instead of pasting them; the agent answers there with a
+    <task-split> block → validate_split (the ONE validator — proposer output, chat replies AND
+    manual edits) → PROPOSED (one auto-repair retry; then PROPOSE_FAILED)
+  → the operator STEERS IT IN THE CHAT ("merge those two", "we already have X"): every tick, a
+    newer chat reply carrying a <task-split> replaces the proposal (`chat_seen_at`); also the
+    tab's edit / remove / revise → Approve (+ Run)
+  → PlanTicker every 5s (stateless; reads everything from the saved plan):
+      track each released step's task → once its task is DONE, poll its PRs (branch = task id,
+      state=all, destination = the plan's branch, CREATED AFTER the release) → MERGED → satisfied
+      → a step whose every parent is satisfied → ready → released (local: create LOCAL-n
+        "UNA-1234 · Task n: …" IN_PROGRESS + start the chat in implement mode)
+```
+**A dependent step starts only when every parent is merged AND its task is done**, and then
+clones the destination branch fresh — no stacked branches, no cloning from another workspace.
+Kato still never publishes: the step parks for push like any task; merging and moving it to
+done are the operator's. The merge verdict ignores PRs created before the step's release
+(`CLOCK_SKEW_SECONDS`) — branch names repeat (LOCAL ids restart after a store reset; the same
+plan split twice), and an old merged PR must never release a dependent early. "Could not ask"
+(`ProbeError`, from `RepositoryService.pull_request_states`, which raises) is never "no PR";
+probes back off 15→300s, ≤4 per tick, "Check now" resets. No PR at all after DONE → "no pull
+request found — Count as done" (a no-changes step). No queue cap: kato's own limits apply.
+Every change is compare-and-set through `PlanRegistry.mutate` (saved only on change). Pause /
+Stop stop RELEASES only — a released task is an ordinary task. Restart: PROPOSING →
+PROPOSE_FAILED, RUNNING → PAUSED (press Run), never resumed on its own. Plans live in
+`~/.kato/plan_queues/` (`KATO_PLAN_QUEUES_DIR`); the split one-shot's timeout is
+`KATO_PLAN_SPLIT_TIMEOUT_SECONDS` (1800, ≥60 — waiting for the chat to be free, then its answer). Built only when local tasks are (`plan_queue`
+is `None` otherwise). UI: `components/planQueue/` — a TAB among the task's file tabs
+(`planQueueTab` in `utils/fileTabs.js`: a virtual tab, `view: plan_queue`, path
+`plan-queue:<task>`; `PlanQueueView` is its pane) — NEVER a popup: a proposal takes minutes and a
+modal blocked the whole window. It shows the split folders found + "split plan.md", the
+proposal, then a READ-ONLY board (Waiting / In progress / In review / Waiting for merge / Done;
+cards never move by hand; only a stuck card offers Retry / Count as done; a card's code opens its
+task). Polled only while the tab shows; `planQueueChanges` refreshes the toolbar button at once. Its states are the QUEUE's
+axis (`planQueueHelpers.js`) — never `session.working`, never `AGENT_STATUS_KIND` (a node test
+greps the folder). The task a plan was split from carries the board mark on its TAB while the plan
+is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`; no timer of
+its own); a sub-task's tab shows `Subtask of UNA-1:` as a fixed mark, not as its name, and a rename
+edits only the name (`subtaskLabel.js`, pinned to `step_footer.subtask_summary` by a test).
+
+**Asking the plan's chat.** A sub-task's AskUserQuestion form offers "Ask UNA-1's chat"
+(`ParentQuestionPanel` → `plan_question_routes.py` → `plan_queue/parent_question.py`): the questions
+go to the chat the plan was split in (header `Kato plan queue · question from <id>`, labelled as
+kato's there, pinned to `planQueuePrompt.js`), through the shared `chat_question.ChatQuestion` (the
+split uses it too: wait for the chat to be free, send, read the reply), and the answer shows in the
+form. The operator still picks and sends the answer — kato never answers an agent's question.
+
+**Shared mode (YouTrack / Jira) — the tracker is the record, so a teammate and THEIR kato see the
+same plan.** Offered at Approve only when the tracker can hold sub-tasks
+(`IssueClientBase.supports_subtasks`) and the plan's ticket is a tracker ticket; the operator
+CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a default, it writes tickets.
+- Approve creates one UNASSIGNED sub-task per step (`plan_queue/tracker_launcher.py`; unassigned
+  is the fail-safe hold — pickup only takes tickets assigned to kato's user), titled
+  `Subtask of UNA-1: …`, its description = brief + a footer (`step_footer.py`: part of / waits for /
+  repositories by git-host slug / `plan-step:` marker). The driver posts ONE comment on the parent
+  (`plan_record_on_tracker.py`): the record (`plan_queue_core_lib/plan_record.py`), REWRITTEN in
+  place as the plan moves, never one comment per change.
+- Status comes only from shared facts: the sub-task's state + assignee (tracker, one read per plan
+  per 60s), its PRs by branch (= ticket id, counted from the ticket's CREATION, so a PR opened
+  before its turn counts), and — for a Done ticket with no PR — the destination's history
+  (`GitClientMixin.history_mentions`, anchored id). A step taken early or handed back moves the
+  board; whoever has a sub-task is shown on its card; kato never assigns over a person.
+- One DRIVER per plan (an install id in `<plan_queues>/host.json` + the token's user): only it
+  releases (assigns to the user kato polls for). Every other kato FOLLOWS read-only; "Take over"
+  republishes the record naming itself. Records are untrusted: author must be the driver user,
+  every task a real sub-task of the parent, and a later record may not change who waits for whom.
+- Every kato's pickup keeps the order (`step_gate.py`, checked FIRST in `process_assigned_task` —
+  before triage and wait-planning, which clone and start a chat too, so a `kato:wait-planning` tag
+  cannot jump it): a sub-task assigned before its turn waits until its parents are merged and done,
+  with no clone, comment or state change (log: `not starting task X yet: it waits for …`). A ticket carrying the record never gets
+  implemented whole again (`PLAN_RECORD_COMMENT_PREFIX` blocks execution). A sub-task's
+  repositories come from its footer before tags (another kato names repos differently).
+- Unverified against live servers (YouTrack sprint add, Jira `/rest/api/3/search` deprecation,
+  `"assignee": null` on create) — each client's report lists what to check.
 
 ### New task (local tasks — no tracker)
 ```

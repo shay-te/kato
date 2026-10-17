@@ -353,6 +353,7 @@ def _run_boot_reconciliation(app) -> None:
     _reset_stuck_workspace_statuses(app)
     _requeue_stuck_comments(app)
     _mark_interrupted_review_loops(app)
+    _mark_interrupted_plan_queues(app)
     _log_known_session_ids(app)
     _cleanup_done_tasks_at_boot(app)
 
@@ -367,6 +368,7 @@ def _start_post_boot_workers(app) -> None:
     _start_pending_comment_work_after_ui(app)
     _start_resume_prompt_watcher(app)
     _start_comment_run_watcher(app)
+    _start_plan_queue(app)
     _start_workspace_trash_reaper(app)
     _warm_up_repository_inventory(app)
 
@@ -1663,6 +1665,41 @@ def _mark_interrupted_review_loops(app) -> None:
         app.logger.info(
             'marked %d review loop(s) interrupted by the restart', closed,
         )
+
+
+def _mark_interrupted_plan_queues(app) -> None:
+    """Boot: a plan that was running is paused, a proposal in progress failed.
+
+    Nothing the previous process had in motion carries on unasked — the
+    operator presses Run again. Best-effort: never aborts boot.
+    """
+    queue = getattr(getattr(app, 'service', None), 'plan_queue', None)
+    if queue is None:
+        return
+    from kato_core_lib.data_layers.service.plan_queue.wiring import (
+        mark_interrupted_plan_queues,
+    )
+    try:
+        mark_interrupted_plan_queues(queue)
+    except Exception:
+        app.logger.exception('failed to pause interrupted plan queues at boot')
+
+
+def _start_plan_queue(app) -> None:
+    """Bind the plan queue's launcher (the webserver's local-task starter)
+    and start its background tick. Without a webserver nothing is launched:
+    plans are still tracked, but no step is started. Best-effort."""
+    queue = getattr(getattr(app, 'service', None), 'plan_queue', None)
+    if queue is None:
+        return
+    try:
+        flask_app = getattr(app, 'planning_flask_app', None)
+        if flask_app is not None:
+            from kato_webserver.plan_queue_launcher import LocalStepLauncher
+            queue.bind_launcher(LocalStepLauncher(flask_app))
+        queue.start()
+    except Exception:
+        app.logger.exception('failed to start the plan queue')
 
 
 def _requeue_stuck_comments(app) -> None:

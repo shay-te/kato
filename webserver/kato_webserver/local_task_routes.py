@@ -14,21 +14,16 @@ The model / effort / mode are applied BEFORE the chat starts: the CLI fixes
 
 from __future__ import annotations
 
-import threading
 from typing import Callable
 
 from flask import Flask, jsonify, request
 
 from kato_core_lib.data_layers.service.local_task_service import (
     START_MODES,
-    START_PERMISSION_MODE,
-    START_IMPLEMENT,
     START_PLAN,
     LocalTaskRejected,
-    opening_message,
 )
-from kato_core_lib.helpers.mission_logging_utils import log_mission_step
-from kato_core_lib.helpers.plan_mode_store import picked_mode_to_store
+from kato_webserver.local_task_starter import LocalTaskStarter
 
 
 def register_local_task_routes(
@@ -40,7 +35,12 @@ def register_local_task_routes(
     start_chat: Callable[[str, str], object],
     run_in_background: Callable[[Callable[[], None], str], None] | None = None,
 ) -> None:
-    background = run_in_background or _daemon_thread
+    starter = LocalTaskStarter(
+        app, set_mode=set_mode, set_override=set_override,
+        start_chat=start_chat, run_in_background=run_in_background,
+    )
+    # The plan queue starts its local steps through the same starter.
+    app.config['LOCAL_TASK_STARTER'] = starter
 
     def _service():
         return getattr(app.config.get('AGENT_SERVICE'), 'local_tasks', None)
@@ -72,47 +72,7 @@ def register_local_task_routes(
             status = 403 if exc.unapproved else 400
             return jsonify({'error': str(exc), 'unapproved_repositories': exc.unapproved}), status
         task_id = str(task.id)
-        # "Implement" is a pick: once a default mode for new tasks is set it
-        # is kept explicitly, or a Plan default would make "Implement this
-        # task" a planning turn. "Chat" picks nothing — the default applies.
-        mode = START_PERMISSION_MODE[start_mode]
-        if start_mode == START_IMPLEMENT:
-            mode = picked_mode_to_store(mode)
-        set_mode(task_id, mode)
-        _persist_mode(task_id, mode)
-        set_override('TASK_MODEL_OVERRIDES', task_id, str(body.get('model') or '').strip())
-        set_override('TASK_EFFORT_OVERRIDES', task_id, effort)
-        background(lambda: _prepare_and_start(task_id, start_mode), f'local-task-{task_id}')
+        starter.start(task_id, start_mode, model=str(body.get('model') or ''), effort=effort)
         return jsonify({
             'task_id': task_id, 'summary': task.summary, 'start_mode': start_mode,
         }), 202
-
-    def _prepare_and_start(task_id: str, start_mode: str) -> None:
-        service = _service()
-        try:
-            ready = service.prepare(task_id)
-        except Exception:
-            app.logger.exception('preparing local task %s failed', task_id)
-            ready = False
-        if not ready:
-            log_mission_step(
-                app.logger, task_id,
-                'the repositories could not be prepared — the chat was not started',
-            )
-            return
-        message = opening_message(start_mode)
-        if not message:
-            return
-        with app.app_context():
-            start_chat(task_id, message)
-
-
-def _persist_mode(task_id: str, mode: str) -> None:
-    # Best-effort, as the agent-mode route does: the in-memory pick already
-    # governs this run's spawn; the file only carries it across a restart.
-    from kato_core_lib.helpers.plan_mode_store import set_task_mode
-    set_task_mode(task_id, mode)
-
-
-def _daemon_thread(work: Callable[[], None], name: str) -> None:
-    threading.Thread(target=work, name=name, daemon=True).start()

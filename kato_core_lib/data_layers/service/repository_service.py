@@ -20,6 +20,7 @@ from git_core_lib.git_core_lib.helpers.git_clean_utils import (
 )
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import RepositoryFields
+from provider_client_base.provider_client_base.data.fields import PullRequestStates
 from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_attr,
@@ -909,11 +910,45 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
         return self._publication_service.find_pull_requests(
             repository,
             source_branch=source_branch,
             title_prefix=title_prefix,
+            state=state,
+        )
+
+    def pull_request_states(
+        self,
+        repository,
+        *,
+        source_branch: str,
+    ) -> list[dict[str, str]]:
+        """Every pull request ``source_branch`` has on ``repository``, any state.
+
+        Each is the provider's normalized pull request: ``id``, ``url``,
+        ``state`` (``open`` / ``merged`` / ``declined``, ``''`` if unknown),
+        ``destination_branch``, ``created_at``.
+
+        Unlike :meth:`find_pull_requests`, this never answers ``[]`` for "could
+        not ask": a pull request API that cannot be prepared, or a provider
+        call that fails, RAISES. Whoever asks whether a branch was merged
+        reads ``[]`` as "this branch has no pull request", so a swallowed
+        failure would be a wrong answer, not a missing one.
+        """
+        branch = normalized_text(source_branch)
+        if not branch:
+            # Without a branch the lookup is every pull request the
+            # repository has — never what "this branch's states" means.
+            raise ValueError(
+                f'a source branch is required to read pull request states '
+                f'for repository {repository.id}'
+            )
+        self._prepare_pull_request_api(repository)
+        return self._pull_request_data_access(repository).find_pull_requests(
+            source_branch=branch,
+            state=PullRequestStates.ALL,
         )
 
     def _resolve_branch_state(self, repository, normalized_branch: str):

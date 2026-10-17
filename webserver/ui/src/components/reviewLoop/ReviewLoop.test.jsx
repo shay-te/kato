@@ -595,6 +595,36 @@ describe('ReviewLoopButton / chip / tab badge — the indicators', () => {
 });
 
 describe('the transcript — kato\'s message is labelled as kato\'s', () => {
+  test('the plan queue\'s split request is kato\'s too, in its own colour, and opens the split', async () => {
+    const { planQueueView } = await import('../planQueue/planQueueViewStore.js');
+    const seen = [];
+    const unsubscribe = planQueueView.subscribe((request) => seen.push([request.taskId, request.label]));
+    const { container } = render(
+      <EventLog entries={[{ source: 'history', raw: { type: 'user', uuid: 'u9', message: {
+        content: 'WORKSPACE SCOPE …\n\nKato plan queue · split the plan\n\nRead tasks/00.md …',
+      } } }]} />,
+    );
+    expect(screen.getByText('Kato · plan split')).toBeInTheDocument();
+    expect(screen.queryByText('You asked')).not.toBeInTheDocument();
+    expect(container.querySelector('.chat-sticky-prompt')).toHaveClass('is-plan-split');
+    act(() => { fireEvent.click(screen.getByRole('button', { name: 'Open the split plan' })); });
+    unsubscribe();
+    expect(seen.at(-1)).toEqual(['', 'Split plan']);
+  });
+
+  test('a plan sub-task\'s question put to this chat is kato\'s, naming the sub-task', () => {
+    const { container } = render(
+      <EventLog entries={[{ source: 'history', raw: { type: 'user', uuid: 'u8', message: {
+        content: 'Kato plan queue · question from UNA-3274\n\nUNA-3274, one of the tasks …',
+      } } }]} />,
+    );
+    expect(screen.getByText('Kato · question from UNA-3274')).toBeInTheDocument();
+    expect(screen.queryByText('You asked')).not.toBeInTheDocument();
+    expect(container.querySelector('.chat-sticky-prompt')).toHaveClass('is-plan-split');
+    // Not the split request: nothing to open.
+    expect(screen.queryByRole('button', { name: 'Open the split plan' })).toBeNull();
+  });
+
   function renderChat(text) {
     return render(
       <EventLog entries={[{ source: 'history', raw: { type: 'user', uuid: 'u1', message: { content: text } } }]} />,

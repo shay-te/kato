@@ -25,6 +25,8 @@ class YouTrackCommentFields:
     AUTHOR = 'author'
     LOGIN = 'login'
     NAME = 'name'
+    FULL_NAME = 'fullName'
+    CREATED = 'created'
 
 
 class YouTrackCustomFieldFields:

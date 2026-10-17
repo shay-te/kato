@@ -1,6 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
+import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
+import { planStatusLine } from './planQueue/planQueueHelpers.js';
+import { subtaskParent, withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
 import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
@@ -110,9 +113,12 @@ export default function Tab({
   // them, so the input inherits a number that is correct by construction.
   const [renameBoxWidth, setRenameBoxWidth] = useState(0);
   const labelRef = useRef(null);
-  const label = String(
+  // A plan's sub-task: "Subtask of UNA-3267:" is a fixed mark beside the id,
+  // never part of the name — so a rename edits only the name after it.
+  const parentTaskId = subtaskParent(session?.task_summary);
+  const label = withoutSubtaskPrefix(String(
     displayName || session?.task_summary || '',
-  ).trim();
+  ).trim());
 
   function startRename() {
     setRenameWidth(measureWidth(liRef.current));
@@ -413,11 +419,17 @@ export default function Tab({
       >
         <span className={dotClass} />
         <ReviewLoopTabBadge loop={session.review_loop || null} />
+        <PlanQueueTabBadge plan={session.plan_queue || null} />
         <span
           ref={labelRef}
           className={cx('tab-label', renaming && 'is-renaming')}
         >
           <strong className="tab-label-id">{session.task_id}</strong>
+          {parentTaskId ? (
+            <span className="tab-label-subtask" role="img" aria-label={`Subtask of ${parentTaskId}`}>
+              <Icon name="subtask" />
+            </span>
+          ) : null}
           {renaming ? (
             <input
               className="tab-label-rename"
@@ -583,6 +595,9 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   // own sentence, separate from the agent's status row above.
   const loopLine = reviewLoopSentence(session?.review_loop || null, Date.now() / 1000);
   if (loopLine) { rows.push({ label: 'Review loop', value: loopLine }); }
+  // The plan split from this task, while it runs (its own axis, like the loop).
+  const planLine = planStatusLine(session?.plan_queue || null);
+  if (planLine) { rows.push({ label: 'Split plan', value: planLine }); }
   const pushedPr = String(
     session?.pr_url || session?.pull_request_url || '',
   ).trim();

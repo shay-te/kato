@@ -338,3 +338,27 @@ test('classifyStatusEntry: a loop\'s progress lines do NOT notify', function () 
     assert.equal(classifyStatusEntry(_entry(line)), null);
   }
 });
+
+test('classifyStatusEntry: the plan queue announces what the operator acts on', function () {
+  for (const [event, title, kind] of [
+    ['proposed 4 steps', 'Plan split ready to review', NOTIFICATION_KIND.ATTENTION],
+    ['the split proposal failed: no <task-split> block', 'Plan split failed', NOTIFICATION_KIND.ERROR],
+    ['released LOCAL-7', 'Plan task started', NOTIFICATION_KIND.STARTED],
+    ['could not start api: the repository is not approved', 'Plan task could not start', NOTIFICATION_KIND.ERROR],
+    ['could not create step api: tracker refused', 'Plan task could not start', NOTIFICATION_KIND.ERROR],
+    ['LOCAL-7: declined', 'Plan task: pull request declined', NOTIFICATION_KIND.ATTENTION],
+    ['finished — every step is done', 'Plan finished', NOTIFICATION_KIND.COMPLETED],
+  ]) {
+    const r = classifyStatusEntry(_entry(`Mission UNA-1: plan queue: ${event}`));
+    assert.equal(r.title, title, event);
+    assert.equal(r.kind, kind, event);
+    assert.equal(r.taskId, 'UNA-1');
+    assert.equal(r.body, `UNA-1: ${event}`);
+  }
+});
+
+test('classifyStatusEntry: the plan queue\'s progress lines do NOT notify', function () {
+  for (const event of ['approved', 'running', 'LOCAL-7: in_review', 'LOCAL-7: merged', 'created T-1 for step api']) {
+    assert.equal(classifyStatusEntry(_entry(`Mission UNA-1: plan queue: ${event}`)), null, event);
+  }
+});

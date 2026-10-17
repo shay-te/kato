@@ -163,6 +163,9 @@ class RepositoryInventoryService(Service):
         self._kato_task_tags = kato_task_tags
 
     def resolve_task_repositories(self, task) -> list[object]:
+        planned_repositories = self._repositories_from_plan_footer(task)
+        if planned_repositories:
+            return planned_repositories
         tagged_repositories = self._repositories_from_task_tags(task)
         if tagged_repositories:
             return tagged_repositories
@@ -181,6 +184,29 @@ class RepositoryInventoryService(Service):
         if len(repositories) == 1:
             return [repositories[0]]
         raise ValueError(f'no configured repository matched task {task.id}')
+
+    def _repositories_from_plan_footer(self, task) -> list[object]:
+        """A plan's sub-task names where it works in its own description (by
+        each repository's name on its git host — the same for every kato), read
+        before tags, which another kato may not see or may name differently."""
+        from kato_core_lib.data_layers.service.plan_queue.step_footer import parse_footer
+
+        footer = parse_footer(getattr(task, 'description', ''))
+        if footer is None or not footer.repositories:
+            return []
+        found: list[object] = []
+        missing: list[str] = []
+        for label in footer.repositories:
+            repository = self._resolve_repository_for_tag(label)
+            if repository is None:
+                missing.append(label)
+            elif repository not in found:
+                found.append(repository)
+        if missing:
+            raise ValueError(
+                f'task {task.id} works in {", ".join(missing)}, which this kato has no repository for',
+            )
+        return found
 
     def _repositories_from_task_tags(self, task) -> list[object]:
         repository_tags = [*self._repository_tags(task), *self._kato_repository_tags(task)]

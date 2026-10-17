@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 
 from provider_client_base.provider_client_base.retrying_client_base import RetryingClientBase
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
-from utils_core_lib.utils_core_lib.text_utils import normalized_text
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
+from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text, normalized_text
 
 
 def coerce_line_number(value: object) -> int | str:
@@ -35,6 +40,9 @@ class PullRequestClientBase(RetryingClientBase, ABC):
         *,
         id_key: str,
         url: object = '',
+        state: str = '',
+        destination_branch: object = '',
+        created_at: object = '',
     ) -> dict[str, str]:
         if not isinstance(payload, dict) or id_key not in payload:
             raise ValueError('invalid pull request response payload')
@@ -42,7 +50,32 @@ class PullRequestClientBase(RetryingClientBase, ABC):
             PullRequestFields.ID: normalized_text(payload[id_key]),
             PullRequestFields.TITLE: normalized_text(payload.get(PullRequestFields.TITLE, '')),
             PullRequestFields.URL: normalized_text(url),
+            PullRequestFields.STATE: normalized_text(state),
+            PullRequestFields.DESTINATION_BRANCH: normalized_text(destination_branch),
+            PullRequestFields.CREATED_AT: normalized_text(created_at),
         }
+
+    @staticmethod
+    def _lookup_state(state: object) -> str:
+        """``state`` as a lookup filter: ``open`` (the default) or ``all``.
+
+        Anything else raises rather than falling back to one of them — a
+        caller asking for a filter no provider can answer must hear so, not
+        get open pull requests and read them as the answer.
+        """
+        lookup = normalized_lower_text(state)
+        if lookup not in PullRequestStates.LOOKUP_FILTERS:
+            raise ValueError(f'unsupported pull request state filter: {state!r}')
+        return lookup
+
+    @staticmethod
+    def _mapped_state(provider_state: object, states: Mapping[str, str]) -> str:
+        """The normalized state for a provider's own state name (any case).
+
+        ``states`` maps the provider's lowercased names to
+        :class:`PullRequestStates`; a name it does not list yields ``''``.
+        """
+        return states.get(normalized_lower_text(provider_state), '')
 
     @staticmethod
     def _review_comment_from_values(
@@ -116,6 +149,7 @@ class PullRequestClientBase(RetryingClientBase, ABC):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
         raise NotImplementedError
 

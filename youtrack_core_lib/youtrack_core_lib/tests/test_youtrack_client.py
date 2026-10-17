@@ -2,8 +2,9 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
+from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client import YouTrackClient
 from youtrack_core_lib.youtrack_core_lib.data.fields import (
     TaskCommentFields,
@@ -1441,3 +1442,577 @@ class YouTrackGetTaskByIdTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=broken):
             with self.assertRaises(Exception):
                 client.get_task('PROJ-9')
+
+
+# ---------------------------------------------------------------------------
+# Sub-tasks
+# ---------------------------------------------------------------------------
+
+# 2026-10-17 at 09:30, 10:00 and 11:15 UTC, as YouTrack sends them (epoch ms).
+_AT_0930 = 1792229400000
+_AT_1000 = 1792231200000
+_AT_1115 = 1792235700000
+
+
+def _subtask_client(**kwargs) -> YouTrackClient:
+    # One attempt per request: the failure cases must not sleep through retries.
+    return YouTrackClient('https://youtrack.example', 'yt-token', max_retries=1, **kwargs)
+
+
+def _refused(description: str, status_code: int = 400):
+    """A YouTrack error response carrying its own explanation."""
+    response = mock_response(status_code=status_code, json_data={'error_description': description})
+    response.raise_for_status.side_effect = Exception(f'{status_code} Client Error')
+    return response
+
+
+def _assignee_read(value):
+    """``GET /api/issues/<id>?fields=customFields(name,value(login))``."""
+    return mock_response(json_data={'customFields': [
+        {'name': 'Priority', 'value': {'name': 'Normal'}},
+        {'name': 'Assignee', 'value': value},
+    ]})
+
+
+class YouTrackSubtaskSupportTests(unittest.TestCase):
+    def test_it_can_hold_work_as_sub_tasks(self) -> None:
+        self.assertTrue(YouTrackClient.supports_subtasks)
+
+
+class YouTrackCreateSubtaskTests(unittest.TestCase):
+    """Create in the parent's project, link, make sure it is unassigned, join sprints."""
+
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+        self.project = mock_response(json_data={'project': {'id': '0-5'}})
+        self.created = mock_response(json_data={'id': '2-99', 'idReadable': 'PROJ-9'})
+        self.assignee_reads = [_assignee_read(None)]
+        self.commands = [mock_response(json_data={}), mock_response(json_data={})]
+        self.sprints = mock_response(json_data=[
+            {'id': 's-1', 'agile': {'id': 'a-1'}},
+            {'id': 's-2', 'agile': {'id': 'a-2'}},
+        ])
+        self.sprint_adds = [mock_response(json_data={}), mock_response(json_data={})]
+
+    def _get(self, path, **kwargs):
+        fields = kwargs['params']['fields']
+        if path == '/api/issues/PROJ-1' and fields == 'project(id)':
+            return self.project
+        if path == '/api/issues/PROJ-9' and fields == 'customFields(name,value(login))':
+            return self.assignee_reads.pop(0)
+        if path == '/api/issues/PROJ-1/sprints' and fields == 'id,agile(id)':
+            return self.sprints
+        raise AssertionError(f'unexpected GET {path} {kwargs}')
+
+    def _post(self, path, **kwargs):
+        if path == '/api/issues':
+            return self.created
+        if path == '/api/commands':
+            return self.commands.pop(0)
+        if path.startswith('/api/agiles/'):
+            return self.sprint_adds.pop(0)
+        raise AssertionError(f'unexpected POST {path} {kwargs}')
+
+    def _create(self):
+        with patch.object(self.client, '_get', side_effect=self._get) as get, \
+             patch.object(self.client, '_post', side_effect=self._post) as post, \
+             patch.object(self.client, 'logger') as logger:
+            result = self.client.create_subtask('PROJ-1', 'Part A', 'body <!-- m-1 -->')
+        return result, get, post, logger
+
+    def _commands_sent(self, post) -> list[str]:
+        return [c.kwargs['json']['query'] for c in post.call_args_list if c.args[0] == '/api/commands']
+
+    def test_creates_in_the_parents_project_links_it_and_joins_its_sprints(self) -> None:
+        result, get, post, logger = self._create()
+
+        self.assertEqual(result, 'PROJ-9')
+        self.assertEqual(get.call_args_list, [
+            call('/api/issues/PROJ-1', params={'fields': 'project(id)'}),
+            call('/api/issues/PROJ-9', params={'fields': 'customFields(name,value(login))'}),
+            call('/api/issues/PROJ-1/sprints', params={'fields': 'id,agile(id)'}),
+        ])
+        self.assertEqual(post.call_args_list, [
+            call(
+                '/api/issues',
+                params={'fields': 'id,idReadable'},
+                json={'project': {'id': '0-5'}, 'summary': 'Part A', 'description': 'body <!-- m-1 -->'},
+            ),
+            call('/api/commands', json={'query': 'subtask of PROJ-1', 'issues': [{'idReadable': 'PROJ-9'}]}),
+            # A sprint takes the issue by its DATABASE id, not the readable one.
+            call('/api/agiles/a-1/sprints/s-1/issues', json={'id': '2-99'}),
+            call('/api/agiles/a-2/sprints/s-2/issues', json={'id': '2-99'}),
+        ])
+        logger.exception.assert_not_called()
+
+    def test_an_issue_a_project_default_assigned_is_unassigned(self) -> None:
+        self.assignee_reads = [_assignee_read({'login': 'lead'}), _assignee_read(None)]
+
+        result, get, post, _logger = self._create()
+
+        self.assertEqual(result, 'PROJ-9')
+        self.assertEqual(self._commands_sent(post), ['subtask of PROJ-1', 'Assignee Unassigned'])
+        self.assertEqual(self.assignee_reads, [])  # re-read after unassigning
+
+    def test_an_issue_that_stays_assigned_raises_and_joins_no_sprint(self) -> None:
+        self.assignee_reads = [_assignee_read({'login': 'lead'}), _assignee_read({'login': 'lead'})]
+
+        with self.assertRaisesRegex(RuntimeError, 'PROJ-9 is still assigned to lead'):
+            self._create()
+
+        self.assertEqual(len(self.sprint_adds), 2)  # no sprint was touched
+
+    def test_a_multi_user_assignee_with_someone_in_it_is_assigned(self) -> None:
+        self.assignee_reads = [_assignee_read([{'login': 'lead'}]), _assignee_read([])]
+
+        result, _get, post, _logger = self._create()
+
+        self.assertEqual(result, 'PROJ-9')
+        self.assertEqual(self._commands_sent(post), ['subtask of PROJ-1', 'Assignee Unassigned'])
+
+    def test_an_issue_with_no_assignee_field_is_unassigned(self) -> None:
+        self.assignee_reads = [mock_response(json_data={'customFields': [
+            'junk', {'name': 'Priority', 'value': {'name': 'Normal'}},
+        ]})]
+
+        _result, _get, post, _logger = self._create()
+
+        self.assertEqual(self._commands_sent(post), ['subtask of PROJ-1'])
+
+    def test_sprints_that_cannot_be_read_are_only_logged(self) -> None:
+        self.sprints = _refused('no access to the board', status_code=403)
+
+        result, _get, post, logger = self._create()
+
+        self.assertEqual(result, 'PROJ-9')
+        self.assertFalse(any(c.args[0].startswith('/api/agiles/') for c in post.call_args_list))
+        logger.exception.assert_called_once()
+
+    def test_a_sprint_that_refuses_is_logged_and_the_next_still_joined(self) -> None:
+        self.sprint_adds = [_refused('sprint is archived'), mock_response(json_data={})]
+
+        result, _get, post, logger = self._create()
+
+        self.assertEqual(result, 'PROJ-9')
+        self.assertEqual(
+            [c.args[0] for c in post.call_args_list if c.args[0].startswith('/api/agiles/')],
+            ['/api/agiles/a-1/sprints/s-1/issues', '/api/agiles/a-2/sprints/s-2/issues'],
+        )
+        logger.exception.assert_called_once()
+        self.assertEqual(logger.exception.call_args.args[1:], ('PROJ-9', 's-1', 'a-1'))
+
+    def test_sprint_entries_without_both_ids_are_skipped(self) -> None:
+        self.sprints = mock_response(json_data=[
+            None, 'junk', {'id': 's-1'}, {'agile': {'id': 'a-1'}},
+            {'id': 's-2', 'agile': 'junk'}, {'id': 's-3', 'agile': {'id': 'a-3'}},
+        ])
+
+        _result, _get, post, _logger = self._create()
+
+        self.assertEqual(
+            [c.args[0] for c in post.call_args_list if c.args[0].startswith('/api/agiles/')],
+            ['/api/agiles/a-3/sprints/s-3/issues'],
+        )
+
+    def test_a_parent_without_a_project_raises_before_anything_is_created(self) -> None:
+        for payload in ({}, {'project': None}, {'project': {'id': ''}}, ['junk']):
+            with self.subTest(payload=payload):
+                self.project = mock_response(json_data=payload)
+                with patch.object(self.client, '_get', side_effect=self._get), \
+                     patch.object(self.client, '_post') as post:
+                    with self.assertRaisesRegex(ValueError, 'no project for issue PROJ-1'):
+                        self.client.create_subtask('PROJ-1', 'Part A', 'body')
+                post.assert_not_called()
+
+    def test_an_unreadable_parent_carries_youtracks_explanation(self) -> None:
+        self.project = _refused('Issue not found', status_code=404)
+
+        with patch.object(self.client, '_get', side_effect=self._get), \
+             patch.object(self.client, '_post') as post:
+            with self.assertRaisesRegex(Exception, 'Issue not found'):
+                self.client.create_subtask('PROJ-1', 'Part A', 'body')
+        post.assert_not_called()
+
+    def test_a_created_issue_without_both_ids_is_an_error_and_is_not_linked(self) -> None:
+        for payload in ({'id': '2-99'}, {'idReadable': 'PROJ-9'}, ['junk']):
+            with self.subTest(payload=payload):
+                self.created = mock_response(json_data=payload)
+                with patch.object(self.client, '_get', side_effect=self._get), \
+                     patch.object(self.client, '_post', side_effect=self._post) as post:
+                    with self.assertRaisesRegex(RuntimeError, 'project 0-5 but returned no id'):
+                        self.client.create_subtask('PROJ-1', 'Part A', 'body')
+                post.assert_called_once()  # the create — nothing after it
+
+    def test_a_refused_create_carries_youtracks_explanation(self) -> None:
+        self.created = _refused('Summary is required')
+
+        with patch.object(self.client, '_get', side_effect=self._get), \
+             patch.object(self.client, '_post', side_effect=self._post):
+            with self.assertRaisesRegex(Exception, 'Summary is required'):
+                self.client.create_subtask('PROJ-1', '', 'body')
+
+    def test_a_failed_link_names_the_issue_it_left_behind(self) -> None:
+        self.commands = [_refused('Command is not applicable')]
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'created PROJ-9 but could not make it a sub-task of PROJ-1: .*Command is not applicable',
+        ):
+            self._create()
+
+        self.assertEqual(len(self.assignee_reads), 1)  # never got as far as the assignee
+
+
+class YouTrackFindSubtaskTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    def test_returns_the_sub_task_whose_description_holds_the_marker(self) -> None:
+        listing = mock_response(json_data=[
+            {'idReadable': 'PROJ-8', 'description': 'another part'},
+            {'idReadable': 'PROJ-9', 'description': 'Part A\n<!-- m-1 -->'},
+        ])
+
+        with patch.object(self.client, '_get', return_value=listing) as get:
+            self.assertEqual(self.client.find_subtask('PROJ-1', '<!-- m-1 -->'), 'PROJ-9')
+
+        get.assert_called_once_with('/api/issues', params={
+            'query': 'subtask of: PROJ-1',
+            'fields': 'idReadable,description',
+            '$top': 100,
+            '$skip': 0,
+        })
+
+    def test_stops_reading_pages_once_it_is_found(self) -> None:
+        pages = [
+            mock_response(json_data=[{'idReadable': 'PROJ-7'}, {'idReadable': 'PROJ-8', 'description': 'x'}]),
+            mock_response(json_data=[{'idReadable': 'PROJ-9', 'description': 'm-1'}, {'idReadable': 'PROJ-10'}]),
+            mock_response(json_data=[]),
+        ]
+
+        with patch.object(YouTrackClient, '_PAGE_SIZE', 2), \
+             patch.object(self.client, '_get', side_effect=pages) as get:
+            self.assertEqual(self.client.find_subtask('PROJ-1', 'm-1'), 'PROJ-9')
+
+        self.assertEqual([c.kwargs['params']['$skip'] for c in get.call_args_list], [0, 2])
+
+    def test_no_sub_task_holding_the_marker_is_empty(self) -> None:
+        listing = mock_response(json_data=['junk', {'idReadable': 'PROJ-8', 'description': None}])
+
+        with patch.object(self.client, '_get', return_value=listing):
+            self.assertEqual(self.client.find_subtask('PROJ-1', 'm-1'), '')
+
+    def test_a_blank_marker_matches_nothing_and_asks_nothing(self) -> None:
+        with patch.object(self.client, '_get') as get:
+            self.assertEqual(self.client.find_subtask('PROJ-1', ''), '')
+        get.assert_not_called()
+
+
+class YouTrackAssignIssueTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    def test_assigns_by_login_with_a_command(self) -> None:
+        with patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+            self.client.assign_issue('PROJ-9', 'alice')
+
+        post.assert_called_once_with(
+            '/api/commands',
+            json={'query': 'Assignee alice', 'issues': [{'idReadable': 'PROJ-9'}]},
+        )
+
+    def test_a_blank_assignee_unassigns(self) -> None:
+        for blank in ('', '   ', None):
+            with self.subTest(assignee=blank):
+                with patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+                    self.client.assign_issue('PROJ-9', blank)
+                self.assertEqual(post.call_args.kwargs['json']['query'], 'Assignee Unassigned')
+
+    def test_a_refusal_carries_youtracks_explanation(self) -> None:
+        with patch.object(self.client, '_post', return_value=_refused('Unknown user: nobody')):
+            with self.assertRaisesRegex(Exception, 'Unknown user: nobody'):
+                self.client.assign_issue('PROJ-9', 'nobody')
+
+
+class YouTrackGetIssuesStatusTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    @staticmethod
+    def _issue(issue_id, *, state=None, assignee=None, created=None, parent=None):
+        return {
+            'idReadable': issue_id,
+            'created': created,
+            'customFields': [
+                {'name': 'State', 'value': {'name': state} if state else None},
+                {'name': 'Assignee', 'value': assignee},
+            ],
+            'parent': {'issues': [{'idReadable': parent}] if parent else []},
+        }
+
+    def test_no_ids_asks_nothing(self) -> None:
+        for ids in ([], ['', '   ']):
+            with self.subTest(ids=ids):
+                with patch.object(self.client, '_get') as get:
+                    self.assertEqual(self.client.get_issues_status(ids, 'State'), {})
+                get.assert_not_called()
+
+    def test_reads_every_issue_in_one_query(self) -> None:
+        listing = mock_response(json_data=[
+            self._issue(
+                'PROJ-2', state='In Progress', created=_AT_1000, parent='PROJ-1',
+                assignee={'login': 'alice', 'fullName': 'Alice Smith'},
+            ),
+            self._issue('PROJ-3', state='Open'),
+            self._issue('PROJ-77', state='Open'),  # returned, not asked for
+        ])
+
+        with patch.object(self.client, '_get', return_value=listing) as get:
+            statuses = self.client.get_issues_status(['PROJ-2', 'PROJ-3', 'PROJ-404'], 'State')
+
+        get.assert_called_once_with('/api/issues', params={
+            'query': 'issue id: PROJ-2, PROJ-3, PROJ-404',
+            'fields': (
+                'idReadable,created,customFields(name,value(name,login,fullName)),'
+                'parent(issues(idReadable))'
+            ),
+            '$top': 100,
+            '$skip': 0,
+        })
+        self.assertEqual(statuses, {
+            'PROJ-2': IssueStatus(
+                'PROJ-2', state='In Progress', assignee='alice', assignee_name='Alice Smith',
+                created_at='2026-10-17T10:00:00+00:00', parent_id='PROJ-1',
+            ),
+            'PROJ-3': IssueStatus('PROJ-3', state='Open'),
+            'PROJ-404': IssueStatus('PROJ-404', exists=False),
+        })
+
+    def test_the_state_comes_from_the_field_asked_for(self) -> None:
+        issue = self._issue('PROJ-2', state='Open')
+        issue['customFields'].append({'name': 'Stage', 'value': {'name': 'Review'}})
+
+        with patch.object(self.client, '_get', return_value=mock_response(json_data=[issue])):
+            statuses = self.client.get_issues_status(['PROJ-2'], 'Stage')
+
+        self.assertEqual(statuses['PROJ-2'].state, 'Review')
+
+    def test_ids_are_matched_ignoring_case_and_asked_for_once(self) -> None:
+        listing = mock_response(json_data=[self._issue('PROJ-2', state='Open')])
+
+        with patch.object(self.client, '_get', return_value=listing) as get:
+            statuses = self.client.get_issues_status(['proj-2', ' proj-2 '], 'State')
+
+        self.assertEqual(get.call_args.kwargs['params']['query'], 'issue id: proj-2')
+        self.assertEqual(statuses, {'proj-2': IssueStatus('proj-2', state='Open')})
+
+    def test_every_page_is_read(self) -> None:
+        pages = [
+            mock_response(json_data=[self._issue('PROJ-2', state='Open')]),
+            mock_response(json_data=[self._issue('PROJ-3', state='Done')]),
+            mock_response(json_data=[]),
+        ]
+
+        with patch.object(YouTrackClient, '_PAGE_SIZE', 1), \
+             patch.object(self.client, '_get', side_effect=pages) as get:
+            statuses = self.client.get_issues_status(['PROJ-2', 'PROJ-3'], 'State')
+
+        self.assertEqual([c.kwargs['params']['$skip'] for c in get.call_args_list], [0, 1, 2])
+        self.assertEqual(statuses['PROJ-3'].state, 'Done')
+
+    def test_malformed_entries_read_as_empty_values(self) -> None:
+        listing = mock_response(json_data=[
+            'junk',
+            {
+                'idReadable': 'PROJ-2',
+                'created': 'yesterday',
+                'customFields': ['junk', {'name': 'State', 'value': 'not-a-value'}],
+                'parent': None,
+            },
+        ])
+
+        with patch.object(self.client, '_get', return_value=listing):
+            statuses = self.client.get_issues_status(['PROJ-2'], 'State')
+
+        self.assertEqual(statuses, {'PROJ-2': IssueStatus('PROJ-2')})
+
+    def test_a_failed_read_carries_youtracks_explanation(self) -> None:
+        with patch.object(self.client, '_get', return_value=_refused('Invalid query')):
+            with self.assertRaisesRegex(Exception, 'Invalid query'):
+                self.client.get_issues_status(['PROJ-2'], 'State')
+
+
+class YouTrackListCommentsTests(unittest.TestCase):
+    def test_every_comment_newest_first_across_pages(self) -> None:
+        client = _subtask_client()
+        pages = [
+            mock_response(json_data=[
+                {'id': 'c-1', 'text': 'first', 'created': _AT_0930,
+                 'author': {'login': 'alice', 'fullName': 'Alice Smith'}},
+                {'id': 'c-3', 'text': 'third', 'created': _AT_1115,
+                 'author': {'login': 'bob', 'fullName': 'Bob Jones'}},
+            ]),
+            mock_response(json_data=[
+                {'id': 'c-2', 'text': 'second', 'created': _AT_1000,
+                 'author': {'login': 'alice', 'fullName': 'Alice Smith'}},
+            ]),
+        ]
+
+        with patch.object(YouTrackClient, '_PAGE_SIZE', 2), \
+             patch.object(client, '_get', side_effect=pages) as get:
+            comments = client.list_comments('PROJ-1')
+
+        self.assertEqual(get.call_args_list, [
+            call('/api/issues/PROJ-1/comments', params={
+                'fields': 'id,text,created,author(login,fullName)', '$top': 2, '$skip': 0,
+            }),
+            call('/api/issues/PROJ-1/comments', params={
+                'fields': 'id,text,created,author(login,fullName)', '$top': 2, '$skip': 2,
+            }),
+        ])
+        self.assertEqual(comments, [
+            IssueComment('c-3', author='bob', author_name='Bob Jones', body='third',
+                         created_at='2026-10-17T11:15:00+00:00'),
+            IssueComment('c-2', author='alice', author_name='Alice Smith', body='second',
+                         created_at='2026-10-17T10:00:00+00:00'),
+            IssueComment('c-1', author='alice', author_name='Alice Smith', body='first',
+                         created_at='2026-10-17T09:30:00+00:00'),
+        ])
+
+    def test_no_comment_is_filtered_out(self) -> None:
+        # The task-description policy hides all of these; this read must not.
+        client = _subtask_client(
+            bot_login='bot', include_comments=False, require_bot_mention=True,
+            operational_comment_prefixes=('Agent note:',),
+        )
+        listing = mock_response(json_data=[
+            {'id': 'c-1', 'text': '@alice please take this', 'created': _AT_0930},
+            {'id': 'c-2', 'text': 'Agent note: started', 'created': _AT_1000},
+        ])
+
+        with patch.object(client, '_get', return_value=listing):
+            bodies = [comment.body for comment in client.list_comments('PROJ-1')]
+
+        self.assertEqual(bodies, ['Agent note: started', '@alice please take this'])
+
+    def test_the_text_is_kept_exactly_as_written(self) -> None:
+        client = _subtask_client()
+        text = 'Plan:\n\n```\n  indented line\nlast line \n```\n'
+        listing = mock_response(json_data=[{'id': 'c-1', 'text': text, 'created': _AT_1000}])
+
+        with patch.object(client, '_get', return_value=listing):
+            self.assertEqual(client.list_comments('PROJ-1')[0].body, text)
+
+    def test_a_comment_without_a_time_or_author_sorts_last_with_empty_values(self) -> None:
+        client = _subtask_client()
+        listing = mock_response(json_data=[
+            'junk',
+            {'id': 'c-9', 'text': None, 'author': 'junk'},
+            {'id': 'c-1', 'text': 'dated', 'created': _AT_0930},
+        ])
+
+        with patch.object(client, '_get', return_value=listing):
+            comments = client.list_comments('PROJ-1')
+
+        self.assertEqual(comments, [
+            IssueComment('c-1', body='dated', created_at='2026-10-17T09:30:00+00:00'),
+            IssueComment('c-9'),
+        ])
+
+    def test_a_server_that_ignores_skip_is_read_only_up_to_the_page_cap(self) -> None:
+        client = _subtask_client()
+        always_full = mock_response(json_data=[{'id': 'c-1', 'text': 'again', 'created': _AT_0930}])
+
+        with patch.object(YouTrackClient, '_PAGE_SIZE', 1), \
+             patch.object(YouTrackClient, '_MAX_PAGINATION_PAGES', 3), \
+             patch.object(client, '_get', return_value=always_full) as get, \
+             patch.object(client, 'logger') as logger:
+            comments = client.list_comments('PROJ-1')
+
+        self.assertEqual(len(comments), 3)
+        self.assertEqual(get.call_count, 3)
+        logger.warning.assert_called_once()
+
+    def test_a_failed_read_raises(self) -> None:
+        client = _subtask_client()
+        with patch.object(client, '_get', return_value=_refused('Issue not found', status_code=404)):
+            with self.assertRaisesRegex(Exception, 'Issue not found'):
+                client.list_comments('PROJ-404')
+
+
+class YouTrackPreformattedCommentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    def test_posts_the_intro_a_blank_line_and_a_fenced_block_and_returns_its_id(self) -> None:
+        created = mock_response(json_data={'id': '4-17', '$type': 'IssueComment'})
+        with patch.object(self.client, '_post', return_value=created) as post:
+            comment_id = self.client.add_preformatted_comment('PROJ-1', 'Plan:', 'line 1\n  line 2')
+
+        self.assertEqual(comment_id, '4-17')
+        post.assert_called_once_with(
+            '/api/issues/PROJ-1/comments',
+            params={'fields': 'id'},
+            json={'text': 'Plan:\n\n```\nline 1\n  line 2\n```'},
+        )
+
+    def test_an_answer_without_an_id_returns_empty(self) -> None:
+        for payload in ({}, None, ['junk']):
+            with self.subTest(payload=payload):
+                with patch.object(self.client, '_post', return_value=mock_response(json_data=payload)):
+                    self.assertEqual(self.client.add_preformatted_comment('PROJ-1', 'Plan:', 'x'), '')
+
+    def test_a_refused_add_carries_youtracks_explanation(self) -> None:
+        with patch.object(self.client, '_post', return_value=_refused('Text is too long')):
+            with self.assertRaisesRegex(Exception, 'Text is too long'):
+                self.client.add_preformatted_comment('PROJ-1', 'Plan:', 'x')
+
+    def test_an_update_rewrites_that_comment_in_the_same_form(self) -> None:
+        with patch.object(self.client, '_post', return_value=mock_response(json_data={})) as post:
+            self.client.update_preformatted_comment('PROJ-1', '4-17', 'Plan (v2):', 'line 1\nline 3')
+
+        post.assert_called_once_with(
+            '/api/issues/PROJ-1/comments/4-17',
+            json={'text': 'Plan (v2):\n\n```\nline 1\nline 3\n```'},
+        )
+
+    def test_a_refused_update_carries_youtracks_explanation(self) -> None:
+        refused = _refused('You are not the author of this comment', status_code=403)
+        with patch.object(self.client, '_post', return_value=refused):
+            with self.assertRaisesRegex(Exception, 'not the author of this comment'):
+                self.client.update_preformatted_comment('PROJ-1', '4-17', 'Plan:', 'x')
+
+
+class YouTrackCurrentUserTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    def test_returns_the_login_as_youtrack_reports_it(self) -> None:
+        with patch.object(
+            self.client, '_get', return_value=mock_response(json_data={'login': 'Jane.Doe'}),
+        ) as get:
+            self.assertEqual(self.client.current_user(), 'Jane.Doe')
+
+        get.assert_called_once_with('/api/users/me', params={'fields': 'login'})
+
+    def test_no_login_in_the_answer_raises(self) -> None:
+        for payload in ({}, {'login': ''}, {'login': 'me'}, {'login': ' ME '}, None, ['junk']):
+            with self.subTest(payload=payload):
+                with patch.object(self.client, '_get', return_value=mock_response(json_data=payload)):
+                    with self.assertRaisesRegex(RuntimeError, 'did not report the login'):
+                        self.client.current_user()
+
+    def test_a_refused_read_raises_with_youtracks_explanation(self) -> None:
+        with patch.object(self.client, '_get', return_value=_refused('Unauthorized', status_code=401)):
+            with self.assertRaisesRegex(Exception, 'Unauthorized'):
+                self.client.current_user()
+
+    def test_an_unreachable_tracker_raises(self) -> None:
+        with patch.object(self.client, '_get', side_effect=ClientTimeout('timed out')):
+            with self.assertRaises(ClientTimeout):
+                self.client.current_user()
+
+    def test_the_best_effort_resolver_is_unchanged_and_still_swallows(self) -> None:
+        with patch.object(self.client, '_get', side_effect=ClientTimeout('timed out')), \
+             patch.object(self.client, 'logger'):
+            self.assertEqual(self.client._fetch_current_user_logins(), ())

@@ -111,7 +111,10 @@ class AzureRepositoryEndToEndTests(unittest.TestCase):
         self.assertEqual(found, [{
             'id': '42', 'title': 'UNA-1 Fix login',
             'url': 'https://dev.azure.com/acme/Web%20App/_git/api/pullrequest/42',
+            'state': '', 'destination_branch': '', 'created_at': '',
         }])
+        # The default lookup still asks for active pull requests only.
+        self.assertEqual(calls[0]['params']['searchCriteria.status'], 'active')
         # The PAT, as Azure takes one, on the API host derived from the remote.
         self.assertEqual(
             calls[0]['headers']['Authorization'],
@@ -130,6 +133,49 @@ class AzureRepositoryEndToEndTests(unittest.TestCase):
             'https://dev.azure.com/acme/Web%20App/_git/api/pullrequestcreate'
             '?sourceRef=UNA-1&targetRef=main',
         )
+
+    def test_a_branchs_pull_requests_in_every_state(self) -> None:
+        service = self._service('https://acme@dev.azure.com/acme/Web%20App/_git/api')
+        repo_api = 'https://dev.azure.com/acme/Web%20App/_apis/git/repositories/api'
+        web_url = 'https://dev.azure.com/acme/Web%20App/_git/api'
+        calls = self._http({
+            ('GET', f'{repo_api}/pullrequests'): _Response({'value': [
+                {
+                    'pullRequestId': 42, 'title': 'UNA-1 Fix login', 'status': 'completed',
+                    'sourceRefName': 'refs/heads/UNA-1', 'targetRefName': 'refs/heads/main',
+                    'creationDate': '2026-03-01T10:00:00Z', 'repository': {'webUrl': web_url},
+                },
+                {
+                    'pullRequestId': 40, 'title': 'UNA-1 First try', 'status': 'abandoned',
+                    'sourceRefName': 'refs/heads/UNA-1', 'targetRefName': 'refs/heads/develop',
+                    'creationDate': '2026-02-01T10:00:00Z', 'repository': {'webUrl': web_url},
+                },
+            ]}),
+        })
+        repository = service.get_repository('api')
+
+        states = service.pull_request_states(repository, source_branch='UNA-1')
+
+        self.assertEqual(
+            [
+                (pr['id'], pr['url'], pr['state'], pr['destination_branch'], pr['created_at'])
+                for pr in states
+            ],
+            [
+                ('42', f'{web_url}/pullrequest/42', 'merged', 'main', '2026-03-01T10:00:00Z'),
+                ('40', f'{web_url}/pullrequest/40', 'declined', 'develop', '2026-02-01T10:00:00Z'),
+            ],
+        )
+        self.assertEqual(calls[0]['params']['searchCriteria.status'], 'all')
+        self.assertEqual(calls[0]['params']['searchCriteria.sourceRefName'], 'refs/heads/UNA-1')
+
+    def test_a_failed_state_lookup_raises_instead_of_finding_nothing(self) -> None:
+        service = self._service('https://acme@dev.azure.com/acme/Web%20App/_git/api')
+        self._http({})  # every request answers 404
+        repository = service.get_repository('api')
+
+        with self.assertRaises(requests.HTTPError):
+            service.pull_request_states(repository, source_branch='UNA-1')
 
     def test_an_on_prem_azure_devops_server(self) -> None:
         service = self._service('https://tfs.corp/tfs/Coll/proj/_git/api')

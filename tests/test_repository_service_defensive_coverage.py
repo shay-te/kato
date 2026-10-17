@@ -6,13 +6,11 @@ Each test names the line(s) it pins. Most are small fail-safe paths
 
 from __future__ import annotations
 
-import subprocess
 import tempfile
-import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 from kato_core_lib.data_layers.service.repository_service import (
     RepositoryHasNoChangesError,
@@ -98,8 +96,17 @@ class FindPullRequestsTests(unittest.TestCase):
         )
         self.assertEqual(result, [{'id': '17'}])
         publication.find_pull_requests.assert_called_once_with(
-            repo, source_branch='feat/x', title_prefix='PROJ-',
+            repo, source_branch='feat/x', title_prefix='PROJ-', state='open',
         )
+
+    def test_delegates_the_state_filter(self) -> None:
+        service = _make_service()
+        publication = MagicMock()
+        publication.find_pull_requests.return_value = []
+        service._publication_service = publication
+        repo = SimpleNamespace(id='client')
+        service.find_pull_requests(repo, source_branch='feat/x', state='all')
+        self.assertEqual(publication.find_pull_requests.call_args.kwargs['state'], 'all')
 
 
 class BranchNeedsPushDefensiveTests(unittest.TestCase):

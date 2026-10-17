@@ -95,6 +95,9 @@ class CreatePullRequestTests(unittest.TestCase):
             'id': '42',
             'title': 'UNA-1 Fix login',
             'url': 'https://dev.azure.com/acme/Web%20App/_git/api/pullrequest/42',
+            'state': 'open',
+            'destination_branch': 'main',
+            'created_at': '2026-03-01T10:00:00.0000000Z',
         })
 
     def test_no_destination_means_the_repositorys_default_branch(self) -> None:
@@ -170,6 +173,52 @@ class FindPullRequestsTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 azure = client({('GET', f'{REPO_PATH}/pullrequests'): FakeResponse(payload)})
                 self.assertEqual(azure.find_pull_requests(OWNER, SLUG), [])
+
+    def test_every_state_asks_azure_for_all(self) -> None:
+        azure = client({('GET', f'{REPO_PATH}/pullrequests'): FakeResponse({'value': []})})
+        azure.find_pull_requests(OWNER, SLUG, source_branch='UNA-1', state='all')
+        self.assertEqual(azure.session.calls[0]['kwargs']['params'], {
+            'api-version': '7.1',
+            'searchCriteria.status': 'all',
+            '$top': 100,
+            'searchCriteria.sourceRefName': 'refs/heads/UNA-1',
+        })
+
+    def test_an_unsupported_state_is_refused_before_any_request(self) -> None:
+        azure = client({})
+        with self.assertRaisesRegex(ValueError, 'unsupported pull request state filter'):
+            azure.find_pull_requests(OWNER, SLUG, state='completed')
+        self.assertEqual(azure.session.calls, [])
+
+    def test_each_status_is_normalized(self) -> None:
+        cases = [
+            ('active', 'open'),
+            ('completed', 'merged'),
+            ('abandoned', 'declined'),
+            ('notSet', ''),
+        ]
+        listing = FakeResponse({'value': [
+            pull_request(index, status=status)
+            for index, (status, _) in enumerate(cases, start=1)
+        ]})
+        azure = client({('GET', f'{REPO_PATH}/pullrequests'): listing})
+        found = azure.find_pull_requests(OWNER, SLUG, source_branch='UNA-1', state='all')
+        self.assertEqual([item['state'] for item in found], [expected for _, expected in cases])
+
+    def test_the_destination_is_the_branch_name_and_the_creation_date_is_kept(self) -> None:
+        listing = FakeResponse({'value': [
+            pull_request(1, targetRefName='refs/heads/release/2.0'),
+            pull_request(2, targetRefName='refs/pull/7/merge'),
+        ]})
+        azure = client({('GET', f'{REPO_PATH}/pullrequests'): listing})
+        found = azure.find_pull_requests(OWNER, SLUG)
+        self.assertEqual(
+            [(item['destination_branch'], item['created_at']) for item in found],
+            [
+                ('release/2.0', '2026-03-01T10:00:00.0000000Z'),
+                ('refs/pull/7/merge', '2026-03-01T10:00:00.0000000Z'),
+            ],
+        )
 
 
 class ListCommentsTests(unittest.TestCase):

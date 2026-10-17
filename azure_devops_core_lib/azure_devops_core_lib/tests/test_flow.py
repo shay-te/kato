@@ -94,5 +94,27 @@ class PullRequestLifecycleFlow(unittest.TestCase):
         )
 
 
+class MergeDetectionFlow(unittest.TestCase):
+
+    def test_a_completed_pull_request_reads_as_merged_into_its_target(self) -> None:
+        merged = pull_request(
+            42, 'UNA-1 Fix login', status='completed', targetRefName='refs/heads/develop',
+        )
+        abandoned = pull_request(41, 'UNA-1 First try', status='abandoned')
+        azure = client({
+            ('GET', f'{REPO_PATH}/pullrequests'): FakeResponse({'value': [merged, abandoned]}),
+        })
+
+        found = azure.find_pull_requests(OWNER, SLUG, source_branch='UNA-1', state='all')
+
+        self.assertEqual(
+            [(item['id'], item['state'], item['destination_branch']) for item in found],
+            [('42', 'merged', 'develop'), ('41', 'declined', 'main')],
+        )
+        params = azure.session.calls[0]['kwargs']['params']
+        self.assertEqual(params['searchCriteria.status'], 'all')
+        self.assertEqual(params['searchCriteria.sourceRefName'], 'refs/heads/UNA-1')
+
+
 if __name__ == '__main__':
     unittest.main()

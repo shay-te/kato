@@ -45,6 +45,7 @@ _MAX_KATO_LINES = {
     'jira_core_lib': 0,
     'local_task_core_lib': 0,
     'openrouter_core_lib': 0,
+    'plan_queue_core_lib': 0,
     'review_loop_core_lib': 0,
     'task_core_lib': 0,
     # ---- known debt — clean these up; lower the number, never raise it ----

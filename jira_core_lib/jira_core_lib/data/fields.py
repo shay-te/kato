@@ -18,12 +18,31 @@ class JiraIssueFields(object):
     ATTACHMENT = 'attachment'
     LABELS = 'labels'
     STATUS = 'status'
+    PROJECT = 'project'
+    ISSUE_TYPE = 'issuetype'
+    PARENT = 'parent'
+    ASSIGNEE = 'assignee'
+    CREATED = 'created'
 
 
 class JiraCommentFields(object):
+    ID = 'id'
     BODY = 'body'
     AUTHOR = 'author'
+    CREATED = 'created'
+    # A user object (comment author, assignee, ``/myself``).
+    ACCOUNT_ID = 'accountId'
     DISPLAY_NAME = 'displayName'
+
+
+class JiraProjectFields(object):
+    KEY = 'key'
+    ISSUE_TYPES = 'issueTypes'
+
+
+class JiraIssueTypeFields(object):
+    ID = 'id'
+    SUBTASK = 'subtask'
 
 
 class JiraAttachmentFields(object):

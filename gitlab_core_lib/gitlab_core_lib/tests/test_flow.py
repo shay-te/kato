@@ -286,6 +286,9 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
             'iid': 42,
             'title': 'Add caching layer',
             'web_url': 'https://gitlab.example/acme/web-app/-/merge_requests/42',
+            'state': 'opened',
+            'target_branch': 'main',
+            'created_at': '2026-03-01T10:00:00.000Z',
         }
 
         def router(verb, url, kwargs):
@@ -351,6 +354,9 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
                 PullRequestFields.TITLE: 'Add caching layer',
                 PullRequestFields.URL:
                     'https://gitlab.example/acme/web-app/-/merge_requests/42',
+                PullRequestFields.STATE: 'open',
+                PullRequestFields.DESTINATION_BRANCH: 'main',
+                PullRequestFields.CREATED_AT: '2026-03-01T10:00:00.000Z',
             },
         )
 
@@ -514,12 +520,71 @@ class F3_FindMergeRequestsBySourceBranch(unittest.TestCase):
                     PullRequestFields.TITLE: 'Add caching layer',
                     PullRequestFields.URL:
                         'https://gitlab.example/acme/web-app/-/merge_requests/42',
+                    PullRequestFields.STATE: '',
+                    PullRequestFields.DESTINATION_BRANCH: '',
+                    PullRequestFields.CREATED_AT: '',
                 }
             ],
         )
         # The query restricts to opened MRs on the requested branch.
         params = client.session.calls[0]['kwargs']['params']
         self.assertEqual(params['state'], 'opened')
+        self.assertEqual(params['source_branch'], 'feature/caching')
+
+
+class F3b_FindMergeRequestsInEveryState(unittest.TestCase):
+    """Flow: was the branch's merge request merged? Ask for every state."""
+
+    def test_flow(self):
+        mrs_url = _url(f'/projects/{ENCODED_PROJECT}/merge_requests')
+        payload = [
+            {
+                'iid': 42,
+                'title': 'Add caching layer',
+                'web_url': 'https://gitlab.example/acme/web-app/-/merge_requests/42',
+                'source_branch': 'feature/caching',
+                'target_branch': 'main',
+                'state': 'merged',
+                'created_at': '2026-03-01T10:00:00.000Z',
+            },
+            {
+                'iid': 40,
+                'title': 'Add caching layer (first try)',
+                'web_url': 'https://gitlab.example/acme/web-app/-/merge_requests/40',
+                'source_branch': 'feature/caching',
+                'target_branch': 'develop',
+                'state': 'closed',
+                'created_at': '2026-02-01T10:00:00.000Z',
+            },
+        ]
+
+        def router(verb, url, kwargs):
+            if verb == 'GET' and url == mrs_url:
+                return _response(json_data=payload)
+            raise AssertionError(f'unexpected {verb} {url}')
+
+        client = _mr_client(router)
+        matches = client.find_pull_requests(
+            'acme', 'web-app', source_branch='feature/caching', state='all',
+        )
+
+        self.assertEqual(
+            [
+                (
+                    match[PullRequestFields.ID],
+                    match[PullRequestFields.STATE],
+                    match[PullRequestFields.DESTINATION_BRANCH],
+                    match[PullRequestFields.CREATED_AT],
+                )
+                for match in matches
+            ],
+            [
+                ('42', 'merged', 'main', '2026-03-01T10:00:00.000Z'),
+                ('40', 'declined', 'develop', '2026-02-01T10:00:00.000Z'),
+            ],
+        )
+        params = client.session.calls[0]['kwargs']['params']
+        self.assertEqual(params['state'], 'all')
         self.assertEqual(params['source_branch'], 'feature/caching')
 
 

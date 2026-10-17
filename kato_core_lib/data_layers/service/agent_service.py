@@ -244,6 +244,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             task_branch_publishability_validator=TaskBranchPublishabilityValidator(
                 self._repository_service,
             ),
+            plan_step_gate=self._plan_step_wait_reason,
         )
         self._task_publisher = task_publisher or TaskPublisher(
             self._task_service,
@@ -342,6 +343,36 @@ class AgentService(MissionStepLoggerMixin, Service):
                 prepare_workspace=self._wait_planning_service.resolve_planning_context,
             )
 
+        # The plan queue: an approved plan split into small steps, each
+        # released once the steps it depends on are done and merged. The
+        # queue is ``plan_queue_core_lib``; ``plan_queue/`` holds kato's
+        # adapters, one capability per module. Its steps run as local tasks,
+        # so without the local task service there is no plan queue.
+        self._plan_queue_service = None
+        self._plan_questions = None
+        if self._local_task_service is not None:
+            from kato_core_lib.data_layers.service.plan_queue.wiring import (
+                build_parent_questions,
+                build_plan_queue_service,
+            )
+            self._plan_queue_service = build_plan_queue_service(
+                workspace_manager=later(self, '_workspace_manager'),
+                repository_service=later(self, '_repository_service'),
+                local_task_store=self._task_service.local_tasks,
+                logger=later(self, 'logger'),
+                comment_runs=self._task_comment_run_service,
+                session_manager=later(self, '_session_manager'),
+                task_service=later(self, '_task_service'),
+                task_state_service=later(self, '_task_state_service'),
+            )
+            # A plan sub-task's question, asked in the chat its plan was split in.
+            self._plan_questions = build_parent_questions(
+                queue=later(self, '_plan_queue_service'),
+                comment_runs=self._task_comment_run_service,
+                session_manager=later(self, '_session_manager'),
+                workspace_manager=later(self, '_workspace_manager'),
+            )
+
         # Comments (operator diff comments + provider PR review comments) are
         # their own subsystem: one store, one queue, one scheduler. They were
         # 42% of this class; the logic lives in TaskCommentService now and
@@ -418,6 +449,21 @@ class AgentService(MissionStepLoggerMixin, Service):
     def review_loop_default_model(self) -> str:
         """The model a review runs on when the operator picks none."""
         return str(getattr(self._implementation_service, 'investigation_model', '') or '')
+
+    @property
+    def plan_queue(self):
+        """Plans split into steps run as a queue; None when not wired.
+
+        See ``plan_queue_core_lib`` (the queue) and ``plan_queue/`` (kato's
+        adapters behind it).
+        """
+        return self._plan_queue_service
+
+    @property
+    def plan_questions(self):
+        """A plan sub-task's question put to its plan's chat; None when not
+        wired (see ``plan_queue/parent_question.py``)."""
+        return self._plan_questions
 
     @property
     def local_tasks(self):
@@ -552,6 +598,16 @@ class AgentService(MissionStepLoggerMixin, Service):
             shut_down_review_loops(self._review_loop_service)
         except Exception:
             self.logger.exception('error stopping review loops')
+        try:
+            if self._plan_queue_service is not None:
+                from kato_core_lib.data_layers.service.plan_queue.wiring import (
+                    shut_down_plan_queues,
+                )
+                shut_down_plan_queues(self._plan_queue_service)
+            if self._plan_questions is not None:
+                self._plan_questions.shutdown()
+        except Exception:
+            self.logger.exception('error stopping the plan queue')
         if self._parallel_task_runner is not None:
             try:
                 # DO NOT WAIT. ``wait=True`` blocks until every in-flight scan
@@ -747,6 +803,15 @@ class AgentService(MissionStepLoggerMixin, Service):
         # ticket-platform call; a task with no workspace is a no-op.
         self.repositories.reconcile_task_repositories(str(task.id), task=task)
 
+        # A plan's sub-task assigned before its turn (a teammate, or by hand)
+        # waits until what it waits for is merged and done — checked BEFORE
+        # triage and wait-planning, which clone and start a chat too: a tag on
+        # the sub-task must not jump the plan's order. (The reconcile above is
+        # a no-op for a task that has no workspace yet.)
+        waiting = self._task_preflight_service.skip_if_waiting_its_turn(task)
+        if waiting is not None:
+            return waiting
+
         # No in-memory "already processed" short-circuit. The ticket system
         # (state + comments) is the single source of truth: successful tasks
         # have already been moved out of the scanned states, and skipped/
@@ -806,6 +871,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         if self._should_pause_for_push_approval(task):
             return self._pause_for_push_approval(task, prepared_task, execution)
         return self.publish.publish_execution(task, prepared_task, execution)
+
+    def _plan_step_wait_reason(self, task: Task) -> str:
+        """Why a plan's sub-task must not start yet ('' = it may)."""
+        from kato_core_lib.data_layers.service.plan_queue.step_gate import plan_step_wait_reason
+        return plan_step_wait_reason(getattr(self, '_plan_queue_service', None), task)
 
     @staticmethod
     def _should_pause_for_push_approval(task: Task) -> bool:

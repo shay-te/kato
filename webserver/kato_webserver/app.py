@@ -1486,6 +1486,10 @@ def create_app(
         effort_levels=lambda: _discover_chat_effort_levels(app),
         start_chat=lambda task_id, text: _spawn_or_reject_chat_session(app, task_id, text),
     )
+    from kato_webserver.plan_queue_routes import register_plan_queue_routes
+    register_plan_queue_routes(app, effort_levels=lambda: _discover_chat_effort_levels(app))
+    from kato_webserver.plan_question_routes import register_plan_question_routes
+    register_plan_question_routes(app)
     return app
 
 
@@ -6999,6 +7003,7 @@ def _records_as_dicts(
     backend_by_task = _backend_by_task(session_manager, workspace_records)
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
     review_loop_by_task = _review_loop_summaries(agent_service)
+    plan_queue_by_task = _plan_queue_summaries(agent_service)
     return [
         _workspace_record_to_dict(
             record,
@@ -7010,6 +7015,7 @@ def _records_as_dicts(
             pending_permission_tool_by_task=pending_permission_tool_by_task,
             backend_by_task=backend_by_task,
             review_loop_by_task=review_loop_by_task,
+            plan_queue_by_task=plan_queue_by_task,
         )
         for record in workspace_records
     ]
@@ -7030,6 +7036,22 @@ def _review_loop_summaries(agent_service) -> dict[str, dict]:
     except Exception:
         return {}
     return summaries if isinstance(summaries, dict) else {}
+
+
+def _plan_queue_summaries(agent_service) -> dict[str, dict]:
+    """``task_id -> its live plan queue`` for the tab list — memory only.
+
+    The plan split from that task, while it is neither finished nor cancelled:
+    its tab shows the split's mark without a timer of its own.
+    """
+    queue = getattr(agent_service, 'plan_queue', None)
+    if queue is None:
+        return {}
+    try:
+        live = queue.live_by_source()
+    except Exception:
+        return {}
+    return live if isinstance(live, dict) else {}
 
 
 #: Record fields the tab list does NOT send. Nothing in the UI reads them, and
@@ -7306,9 +7328,11 @@ def _workspace_record_to_dict(
     pending_permission_tool_by_task: dict[str, str] | None = None,
     backend_by_task: dict[str, str] | None = None,
     review_loop_by_task: dict[str, dict] | None = None,
+    plan_queue_by_task: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['review_loop'] = (review_loop_by_task or {}).get(record.task_id)
+    payload['plan_queue'] = (plan_queue_by_task or {}).get(record.task_id)
     # WORKSPACE records carry no backend — they predate agent tabs and are
     # about the clone on disk, not the chat. Without this the UI had nothing
     # to name the agent with and fell back to the literal word "Agent" on the

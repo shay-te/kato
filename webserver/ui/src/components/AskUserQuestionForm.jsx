@@ -14,6 +14,9 @@ import {
 // "answering" = replying to that pending request — see PermissionModal.)
 export default function AskUserQuestionForm({
   questions, onAnswer, onDismiss, draftKey = '',
+  // Shown above the questions, scrolling with them — the plan's chat's
+  // answer for a plan sub-task (``ParentQuestionPanel``).
+  aside = null,
 }) {
   const qs = Array.isArray(questions) ? questions.filter(Boolean) : [];
   // Answers are mirrored to storage on every change and read back on mount,
@@ -79,6 +82,7 @@ export default function AskUserQuestionForm({
           Dismiss / Send answer actions below stay pinned and reachable
           no matter how many questions/options Claude asked. */}
       <div className="ask-question-scroll">
+      {aside}
       {qs.map((q, i) => {
         const multi = !!q.multiSelect;
         const opts = Array.isArray(q.options) ? q.options : [];

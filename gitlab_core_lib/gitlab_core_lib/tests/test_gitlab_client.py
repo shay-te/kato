@@ -58,6 +58,9 @@ class GitLabClientCreatePullRequestTests(unittest.TestCase):
                 PullRequestFields.ID: '9',
                 PullRequestFields.TITLE: 'PROJ-1: fix it already',
                 PullRequestFields.URL: 'https://gitlab.example/group/repo/-/merge_requests/9',
+                PullRequestFields.STATE: '',
+                PullRequestFields.DESTINATION_BRANCH: '',
+                PullRequestFields.CREATED_AT: '',
             },
         )
         assert_client_headers_and_timeout(self, client, 'gl-token', 30)
@@ -352,12 +355,84 @@ class GitLabClientFindPullRequestsTests(unittest.TestCase):
                     PullRequestFields.ID: '9',
                     PullRequestFields.TITLE: 'PROJ-1 fix it already',
                     PullRequestFields.URL: 'https://gitlab.example/group/repo/-/merge_requests/9',
+                    PullRequestFields.STATE: '',
+                    PullRequestFields.DESTINATION_BRANCH: '',
+                    PullRequestFields.CREATED_AT: '',
                 }
             ],
         )
         mock_get.assert_called_once_with(
             '/projects/group%2Fsubgroup%2Frepo/merge_requests',
             params={'state': 'opened', 'per_page': 100, 'source_branch': 'PROJ-1'},
+        )
+
+    def test_default_request_without_a_branch_is_unchanged(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])) as mock_get:
+            client.find_pull_requests('owner', 'repo')
+
+        mock_get.assert_called_once_with(
+            '/projects/owner%2Frepo/merge_requests',
+            params={'state': 'opened', 'per_page': 100},
+        )
+
+    def test_every_state_asks_gitlab_for_all(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+
+        with patch.object(client, '_get', return_value=mock_response(json_data=[])) as mock_get:
+            client.find_pull_requests('owner', 'repo', source_branch='PROJ-1', state='all')
+
+        mock_get.assert_called_once_with(
+            '/projects/owner%2Frepo/merge_requests',
+            params={'state': 'all', 'per_page': 100, 'source_branch': 'PROJ-1'},
+        )
+
+    def test_rejects_an_unsupported_state_without_a_request(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+
+        with patch.object(client, '_get') as mock_get:
+            with self.assertRaisesRegex(ValueError, 'unsupported pull request state filter'):
+                client.find_pull_requests('owner', 'repo', state='merged')
+
+        mock_get.assert_not_called()
+
+    def test_normalizes_every_merge_request_state(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        cases = [
+            ('opened', 'open'),
+            ('locked', 'open'),
+            ('merged', 'merged'),
+            ('closed', 'declined'),
+            ('something-new', ''),
+        ]
+        response = mock_response(
+            json_data=[
+                {
+                    'iid': index,
+                    PullRequestFields.TITLE: f'MR {index}',
+                    'web_url': f'https://u/{index}',
+                    'source_branch': 'PROJ-1',
+                    'target_branch': 'main',
+                    'state': gitlab_state,
+                    'created_at': '2026-01-01T00:00:00.000Z',
+                }
+                for index, (gitlab_state, _) in enumerate(cases, start=1)
+            ]
+        )
+
+        with patch.object(client, '_get', return_value=response):
+            prs = client.find_pull_requests(
+                'owner', 'repo', source_branch='PROJ-1', state='all',
+            )
+
+        self.assertEqual(
+            [pr[PullRequestFields.STATE] for pr in prs],
+            [expected for _, expected in cases],
+        )
+        self.assertEqual(
+            {(pr[PullRequestFields.DESTINATION_BRANCH], pr[PullRequestFields.CREATED_AT]) for pr in prs},
+            {('main', '2026-01-01T00:00:00.000Z')},
         )
 
     def test_returns_all_open_when_no_filters(self) -> None:

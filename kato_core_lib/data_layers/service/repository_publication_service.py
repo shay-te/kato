@@ -4,6 +4,7 @@ from core_lib.data_layers.service.service import Service
 
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.helpers.logging_utils import configure_logger
+from provider_client_base.provider_client_base.data.fields import PullRequestStates
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
@@ -113,6 +114,7 @@ class RepositoryPublicationService(Service):
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
         if not self._ensure_pr_api_or_log_once(repository, 'lookup'):
             return []
@@ -121,6 +123,7 @@ class RepositoryPublicationService(Service):
         ).find_pull_requests(
             source_branch=source_branch,
             title_prefix=title_prefix,
+            state=state,
         )
 
     def _ensure_pr_api_or_log_once(self, repository, operation: str) -> bool:

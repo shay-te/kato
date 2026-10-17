@@ -10,6 +10,18 @@ const REVIEW_LOOP_OUTCOMES = {
   interrupted: { title: 'Review loop interrupted', kind: NOTIFICATION_KIND.STATUS_CHANGE },
 };
 
+// The plan queue events that are announced; every other one (approved,
+// running, a step's status change) is progress and stays quiet. Matched
+// against the text after "plan queue: " (plan_queue_core_lib's own words).
+const PLAN_QUEUE_EVENTS = [
+  { re: /^proposed \d+ steps/, title: 'Plan split ready to review', kind: NOTIFICATION_KIND.ATTENTION },
+  { re: /^the split proposal failed/, title: 'Plan split failed', kind: NOTIFICATION_KIND.ERROR },
+  { re: /^released /, title: 'Plan task started', kind: NOTIFICATION_KIND.STARTED },
+  { re: /^could not (start|create) /, title: 'Plan task could not start', kind: NOTIFICATION_KIND.ERROR },
+  { re: /^\S+: declined$/, title: 'Plan task: pull request declined', kind: NOTIFICATION_KIND.ATTENTION },
+  { re: /^finished/, title: 'Plan finished', kind: NOTIFICATION_KIND.COMPLETED },
+];
+
 const PATTERNS = [
   {
     re: /^task (\S+) tagged kato:wait-planning/,
@@ -173,6 +185,16 @@ const PATTERNS = [
         taskId: m[1],
         kind: outcome.kind,
       };
+    },
+  },
+  {
+    // Logged against the plan's SOURCE task, so the notification opens the
+    // task whose toolbar holds the plan board.
+    re: /^Mission (\S+): plan queue: (.+)/,
+    build: (m) => {
+      const event = PLAN_QUEUE_EVENTS.find((entry) => entry.re.test(m[2]));
+      if (!event) { return null; }
+      return { title: event.title, body: `${m[1]}: ${m[2]}`, taskId: m[1], kind: event.kind };
     },
   },
 ];

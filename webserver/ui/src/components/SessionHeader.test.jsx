@@ -724,12 +724,16 @@ describe('SessionHeader — fast prompts', () => {
   test('the review loop is its own group: a loop glyph, then a separator', () => {
     // "add seperator for the review loop button. and choose icon that looks
     // like a loop" — it must not read as one of the fast prompts beside it.
+    // The plan board shares its group: both run work over the whole task,
+    // neither is a prompt.
     renderHeader();
     const actions = [...document.querySelector('.session-header-actions').children];
     expect(actions[0].getAttribute('aria-label')).toBe('Review loop');
     expect(actions[0].querySelector('[data-icon="loop"]')).not.toBeNull();
-    expect(actions[1].getAttribute('role')).toBe('separator');
-    expect(actions[2].getAttribute('aria-label')).toBe('Code review');
+    expect(actions[1].getAttribute('aria-label')).toBe('Split plan');
+    expect(actions[1].querySelector('[data-icon="board"]')).not.toBeNull();
+    expect(actions[2].getAttribute('role')).toBe('separator');
+    expect(actions[3].getAttribute('aria-label')).toBe('Code review');
   });
 
   test('the toolbar is fenced into prompts, search, git, and task actions', () => {

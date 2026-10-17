@@ -8,6 +8,24 @@ class PullRequestFields(object):
     REPOSITORY_ID = 'repository_id'
     PULL_REQUESTS = 'pull_requests'
     FAILED_REPOSITORIES = 'failed_repositories'
+    STATE = 'state'
+    CREATED_AT = 'created_at'
+
+
+class PullRequestStates(object):
+    """A pull request's normalized lifecycle state, plus the lookup filter.
+
+    A normalized pull request's ``state`` is OPEN, MERGED or DECLINED (closed
+    without merging), whatever the provider calls them; ``''`` when the
+    provider sent a state it does not map, so an unknown state is never read
+    as merged. ALL is a lookup filter only: ``find_pull_requests(state=ALL)``
+    asks for every state where the default asks for open ones.
+    """
+    OPEN = 'open'
+    MERGED = 'merged'
+    DECLINED = 'declined'
+    ALL = 'all'
+    LOOKUP_FILTERS = (OPEN, ALL)
 
 
 class ReviewCommentFields(object):

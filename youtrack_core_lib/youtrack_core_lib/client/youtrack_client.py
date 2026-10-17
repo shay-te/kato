@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from typing import Any
 
+from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import YouTrackClientBase
 from youtrack_core_lib.youtrack_core_lib.data.fields import (
     YouTrackAttachmentFields,
@@ -12,6 +15,8 @@ from youtrack_core_lib.youtrack_core_lib.data.fields import (
 from youtrack_core_lib.youtrack_core_lib.data.task import Task
 from utils_core_lib.utils_core_lib.text_utils import (
     alphanumeric_lower_text,
+    dict_from_mapping,
+    list_from_mapping,
     normalized_text,
     text_from_mapping,
 )
@@ -19,6 +24,24 @@ from utils_core_lib.utils_core_lib.text_utils import (
 
 class YouTrackClient(YouTrackClientBase):
     provider_name = 'youtrack'
+    supports_subtasks = True
+    ISSUES_PATH = '/api/issues'
+    READABLE_ID = 'idReadable'
+    # The custom field holding an issue's assignee, and the value a command
+    # gives it to clear it.
+    ASSIGNEE_FIELD = 'Assignee'
+    UNASSIGNED_VALUE = 'Unassigned'
+    ISSUE_STATUS_FIELDS = (
+        f'{READABLE_ID},created,'
+        'customFields(name,value(name,login,fullName)),'
+        f'parent(issues({READABLE_ID}))'
+    )
+    LISTED_COMMENT_FIELDS = (
+        f'{YouTrackCommentFields.ID},{YouTrackCommentFields.TEXT},'
+        f'{YouTrackCommentFields.CREATED},'
+        f'{YouTrackCommentFields.AUTHOR}'
+        f'({YouTrackCommentFields.LOGIN},{YouTrackCommentFields.FULL_NAME})'
+    )
     EVENT_FIELDS = 'id,presentation,$type'
     FIELD_VALUE_FIELDS = 'id,name,$type'
     COMMENT_FIELDS = ','.join(
@@ -85,7 +108,7 @@ class YouTrackClient(YouTrackClientBase):
 
     def validate_connection(self, project: str, assignee: str, states: list[str]) -> None:
         response = self._get_with_retry(
-            '/api/issues',
+            self.ISSUES_PATH,
             params={
                 'query': self._build_assigned_tasks_query(project, assignee, states),
                 'fields': 'idReadable',
@@ -95,34 +118,14 @@ class YouTrackClient(YouTrackClientBase):
         self.raise_for_status_with_detail(response)
 
     def get_assigned_tasks(self, project: str, assignee: str, states: list[str]) -> list[Task]:
-        # Paginate via ``$top`` + ``$skip`` so teams with more than
-        # one page of in-progress issues don't silently miss tasks
-        # beyond the first 100. YouTrack returns whatever's available;
-        # we stop once a page comes back smaller than the page size.
+        # Every page is read, so teams with more than one page of in-progress
+        # issues don't silently miss tasks beyond the first 100.
         query = self._build_assigned_tasks_query(project, assignee, states)
-        page_size = 100
-        skip = 0
-        all_items: list[object] = []
-        while True:
-            response = self._get_with_retry(
-                '/api/issues',
-                params={
-                    'query': query,
-                    'fields': 'idReadable,summary,description',
-                    '$top': page_size,
-                    '$skip': skip,
-                },
-            )
-            self.raise_for_status_with_detail(response)
-            page = list(self._json_items(response))
-            if not page:
-                break
-            all_items.extend(page)
-            if len(page) < page_size:
-                break
-            skip += page_size
         return self._normalize_issue_tasks(
-            all_items,
+            list(self._paged_items(
+                self.ISSUES_PATH,
+                {'query': query, 'fields': 'idReadable,summary,description'},
+            )),
             to_task=self._to_task,
         )
 
@@ -344,6 +347,291 @@ class YouTrackClient(YouTrackClientBase):
             f'issue {issue_id} field {field_name} did not move to state '
             f'{state_name}; current state is {current_state}'
         )
+
+    # ----- sub-tasks -----
+
+    def create_subtask(self, parent_id: str, summary: str, description: str) -> str:
+        """Create an unassigned sub-task of ``parent_id``; return its readable id.
+
+        YouTrack has no "parent" to set when an issue is created, so the issue
+        is created in the parent's project and then linked with the command
+        ``subtask of <parent>``. A project may assign every new issue to
+        someone by default; that assignee is cleared, and a sub-task that stays
+        assigned is an error — others pick these up, and one silently assigned
+        to the project lead would never be picked up by anyone.
+
+        Joining the parent's sprints is best effort: a board this token can't
+        change must not fail a sub-task that already exists.
+        """
+        database_id, readable_id = self._create_issue(
+            self._issue_project_id(parent_id), summary, description,
+        )
+        try:
+            self._apply_command(readable_id, f'subtask of {parent_id}')
+        except Exception as exc:
+            # The issue exists but no ``find_subtask`` will ever find it, so
+            # the error names it — a retry would otherwise leave a second one.
+            raise RuntimeError(
+                f'YouTrack created {readable_id} but could not make it a '
+                f'sub-task of {parent_id}: {exc}'
+            ) from exc
+        self._ensure_unassigned(readable_id)
+        self._join_parent_sprints(parent_id, database_id, readable_id)
+        return readable_id
+
+    def find_subtask(self, parent_id: str, marker: str) -> str:
+        """The readable id of ``parent_id``'s sub-task whose description holds
+        ``marker``, or ''. A blank marker would match any sub-task, so it
+        matches none."""
+        if not marker:
+            return ''
+        for issue in self._paged_items(
+            self.ISSUES_PATH,
+            {'query': f'subtask of: {parent_id}', 'fields': 'idReadable,description'},
+        ):
+            if isinstance(issue, dict) and marker in str(issue.get('description') or ''):
+                return text_from_mapping(issue, self.READABLE_ID)
+        return ''
+
+    def assign_issue(self, issue_id: str, assignee: str) -> None:
+        """Assign the issue to the login ``assignee`` (YouTrack's ``me`` alias
+        works too); '' unassigns it."""
+        value = normalized_text(assignee) or self.UNASSIGNED_VALUE
+        self._apply_command(issue_id, f'{self.ASSIGNEE_FIELD} {value}')
+
+    def get_issues_status(
+        self,
+        issue_ids: Sequence[str],
+        state_field: str,
+    ) -> dict[str, IssueStatus]:
+        """State, assignee, creation time and parent of several issues, in ONE query.
+
+        Keyed by the ids asked for (blank and repeated ids dropped). An id the
+        query does not return — deleted, moved to another id, or out of this
+        token's reach — reads as ``exists=False``; an issue returned but not
+        asked for is ignored.
+        """
+        wanted = list(dict.fromkeys(
+            normalized_text(issue_id) for issue_id in issue_ids if normalized_text(issue_id)
+        ))
+        if not wanted:
+            return {}
+        # Matched ignoring case: YouTrack resolves ``proj-1`` as ``PROJ-1``.
+        found = {
+            text_from_mapping(issue, self.READABLE_ID).upper(): issue
+            for issue in self._paged_items(
+                self.ISSUES_PATH,
+                {'query': f'issue id: {", ".join(wanted)}', 'fields': self.ISSUE_STATUS_FIELDS},
+            )
+            if isinstance(issue, dict)
+        }
+        statuses: dict[str, IssueStatus] = {}
+        for issue_id in wanted:
+            issue = found.get(issue_id.upper())
+            statuses[issue_id] = (
+                self._issue_status(issue_id, issue, state_field)
+                if issue else IssueStatus(issue_id, exists=False)
+            )
+        return statuses
+
+    def list_comments(self, issue_id: str) -> list[IssueComment]:
+        """Every comment on the issue, newest first.
+
+        Unfiltered — unlike ``_get_issue_comments``, whose comments become the
+        agent's task description and pass the @-mention and visibility policy.
+        The text is kept exactly as stored, so a code block's lines read back
+        unchanged.
+        """
+        comments = [
+            comment
+            for comment in self._paged_items(
+                f'/api/issues/{issue_id}/comments',
+                {'fields': self.LISTED_COMMENT_FIELDS},
+            )
+            if isinstance(comment, dict)
+        ]
+        comments.sort(key=self._created_ms, reverse=True)
+        return [self._issue_comment(comment) for comment in comments]
+
+    def add_preformatted_comment(self, issue_id: str, intro: str, preformatted: str) -> str:
+        """One comment: ``intro``, a blank line, then ``preformatted`` in a
+        fenced code block, which YouTrack's Markdown shows exactly as written.
+        Returns the new comment's id ('' when YouTrack sends none)."""
+        response = self._post_with_retry(
+            f'/api/issues/{issue_id}/comments',
+            params={'fields': YouTrackCommentFields.ID},
+            json={'text': self._preformatted_text(intro, preformatted)},
+        )
+        self.raise_for_status_with_detail(response)
+        return text_from_mapping(response.json(), YouTrackCommentFields.ID)
+
+    def update_preformatted_comment(
+        self,
+        issue_id: str,
+        comment_id: str,
+        intro: str,
+        preformatted: str,
+    ) -> None:
+        """Rewrite a comment made by ``add_preformatted_comment`` in place, in
+        the same form, so a record that changes stays one comment."""
+        response = self._post_with_retry(
+            f'/api/issues/{issue_id}/comments/{comment_id}',
+            json={'text': self._preformatted_text(intro, preformatted)},
+        )
+        self.raise_for_status_with_detail(response)
+
+    @staticmethod
+    def _preformatted_text(intro: str, preformatted: str) -> str:
+        return f'{intro}\n\n```\n{preformatted}\n```'
+
+    def current_user(self) -> str:
+        """The login this token works as, from ``/api/users/me``.
+
+        Raises when it can't be told — unlike the best-effort
+        ``_fetch_current_user_logins`` behind the @-mention filter. An answer
+        of ``me`` is the alias echoed back, not a login, so it raises too.
+        """
+        response = self._get_with_retry('/api/users/me', params={'fields': 'login'})
+        self.raise_for_status_with_detail(response)
+        login = text_from_mapping(response.json(), 'login')
+        if not login or login.lower() in self._BOT_LOGIN_ALIASES:
+            raise RuntimeError('YouTrack did not report the login this token works as')
+        return login
+
+    def _issue_project_id(self, issue_id: str) -> str:
+        response = self._get_with_retry(
+            f'/api/issues/{issue_id}',
+            params={'fields': 'project(id)'},
+        )
+        self.raise_for_status_with_detail(response)
+        project_id = text_from_mapping(dict_from_mapping(response.json(), 'project'), 'id')
+        if not project_id:
+            raise ValueError(f'YouTrack returned no project for issue {issue_id}')
+        return project_id
+
+    def _create_issue(self, project_id: str, summary: str, description: str) -> tuple[str, str]:
+        """Create an issue in ``project_id``; return its (database id, readable id)."""
+        response = self._post_with_retry(
+            self.ISSUES_PATH,
+            params={'fields': 'id,idReadable'},
+            json={'project': {'id': project_id}, 'summary': summary, 'description': description},
+        )
+        self.raise_for_status_with_detail(response)
+        payload = response.json()
+        database_id = text_from_mapping(payload, 'id')
+        readable_id = text_from_mapping(payload, self.READABLE_ID)
+        if not database_id or not readable_id:
+            raise RuntimeError(
+                f'YouTrack created an issue in project {project_id} but returned no id for it'
+            )
+        return database_id, readable_id
+
+    def _apply_command(self, issue_id: str, command: str) -> None:
+        """Run a YouTrack command (``subtask of X``, ``Assignee Y``) on one issue."""
+        response = self._post_with_retry(
+            '/api/commands',
+            json={'query': command, 'issues': [{self.READABLE_ID: issue_id}]},
+        )
+        self.raise_for_status_with_detail(response)
+
+    def _ensure_unassigned(self, issue_id: str) -> None:
+        """Clear an assignee a project default put on a new issue; raise if it stays."""
+        if not self._issue_assignee_login(issue_id):
+            return
+        self.assign_issue(issue_id, '')
+        still_assigned = self._issue_assignee_login(issue_id)
+        if still_assigned:
+            raise RuntimeError(
+                f'YouTrack issue {issue_id} is still assigned to {still_assigned} '
+                'after unassigning it'
+            )
+
+    def _issue_assignee_login(self, issue_id: str) -> str:
+        response = self._get_with_retry(
+            f'/api/issues/{issue_id}',
+            params={'fields': 'customFields(name,value(login))'},
+        )
+        self.raise_for_status_with_detail(response)
+        return text_from_mapping(
+            self._custom_field_value(response.json(), self.ASSIGNEE_FIELD), 'login',
+        )
+
+    def _join_parent_sprints(self, parent_id: str, database_id: str, issue_id: str) -> None:
+        """Add the new issue to each sprint its parent is in; failures are logged."""
+        sprints = self._best_effort_issue_response_items(
+            parent_id,
+            item_label='sprints',
+            path=f'/api/issues/{parent_id}/sprints',
+            params={'fields': 'id,agile(id)'},
+        )
+        for sprint in sprints:
+            sprint_id = text_from_mapping(sprint, 'id')
+            agile_id = text_from_mapping(dict_from_mapping(sprint, 'agile'), 'id')
+            if not sprint_id or not agile_id:
+                continue
+            try:
+                response = self._post_with_retry(
+                    f'/api/agiles/{agile_id}/sprints/{sprint_id}/issues',
+                    json={'id': database_id},
+                )
+                self.raise_for_status_with_detail(response)
+            except Exception:
+                self.logger.exception(
+                    'failed to add %s to sprint %s of board %s', issue_id, sprint_id, agile_id,
+                )
+
+    def _issue_status(self, issue_id: str, issue: dict[str, Any], state_field: str) -> IssueStatus:
+        assignee = self._custom_field_value(issue, self.ASSIGNEE_FIELD)
+        parents = list_from_mapping(dict_from_mapping(issue, 'parent'), 'issues')
+        return IssueStatus(
+            issue_id,
+            state=text_from_mapping(self._custom_field_value(issue, state_field), 'name'),
+            assignee=text_from_mapping(assignee, YouTrackCommentFields.LOGIN),
+            assignee_name=text_from_mapping(assignee, YouTrackCommentFields.FULL_NAME),
+            created_at=self._created_at(issue),
+            parent_id=text_from_mapping(parents[0], self.READABLE_ID) if parents else '',
+        )
+
+    @classmethod
+    def _issue_comment(cls, comment: dict[str, Any]) -> IssueComment:
+        author = dict_from_mapping(comment, YouTrackCommentFields.AUTHOR)
+        return IssueComment(
+            text_from_mapping(comment, YouTrackCommentFields.ID),
+            author=text_from_mapping(author, YouTrackCommentFields.LOGIN),
+            author_name=text_from_mapping(author, YouTrackCommentFields.FULL_NAME),
+            # Not normalized: stripping would change what was written.
+            body=str(comment.get(YouTrackCommentFields.TEXT) or ''),
+            created_at=cls._created_at(comment),
+        )
+
+    @staticmethod
+    def _custom_field_value(issue: object, field_name: str) -> dict[str, Any]:
+        """The value of the issue's custom field ``field_name``; ``{}`` when the
+        issue has no such field or it is empty. A multi-value field (a project
+        may make Assignee one) reads as its first value — without that, an
+        assigned multi-user Assignee would read as unassigned."""
+        for field in list_from_mapping(issue, 'customFields'):
+            if not isinstance(field, dict) or field.get(YouTrackCustomFieldFields.NAME) != field_name:
+                continue
+            value = field.get('value')
+            if isinstance(value, list):
+                value = value[0] if value else None
+            return value if isinstance(value, dict) else {}
+        return {}
+
+    @staticmethod
+    def _created_ms(item: dict[str, Any]) -> int:
+        """``created`` in epoch milliseconds; 0 when YouTrack sent none."""
+        created = item.get(YouTrackCommentFields.CREATED)
+        return created if isinstance(created, int) else 0
+
+    @classmethod
+    def _created_at(cls, item: dict[str, Any]) -> str:
+        """``created`` as ISO-8601 UTC (``2026-10-17T10:00:00+00:00``); '' when absent."""
+        created = cls._created_ms(item)
+        if not created:
+            return ''
+        return datetime.fromtimestamp(created / 1000, tz=timezone.utc).isoformat()
 
     def _to_task(self, payload: dict[str, Any]) -> Task:
         issue_id = payload['idReadable']

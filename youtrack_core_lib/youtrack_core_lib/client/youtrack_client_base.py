@@ -1,7 +1,7 @@
 """Base HTTP client for YouTrack with shared task-building helpers."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from provider_client_base.provider_client_base.client.issue_client_base import (
@@ -437,3 +437,34 @@ class YouTrackClientBase(IssueClientBase):
         response = self._get_with_retry(path, params=params)
         response.raise_for_status()
         return self._json_items(response, items_key=items_key)
+
+    # Collections are read ``$top`` items at a time; a shorter page is the last.
+    _PAGE_SIZE = 100
+
+    def _paged_items(self, path: str, params: dict[str, Any]) -> Iterator[Any]:
+        """Every item of a YouTrack collection, one ``$top`` + ``$skip`` page at a time.
+
+        YouTrack answers whatever is available, so a page shorter than
+        ``_PAGE_SIZE`` ends the read. A generator, so a caller looking for ONE
+        item stops requesting pages once it has it. Bounded by
+        ``_MAX_PAGINATION_PAGES`` so a server that ignores ``$skip`` can't
+        loop forever — a hit is logged, never a silent truncation.
+        """
+        for page_number in range(self._MAX_PAGINATION_PAGES):
+            response = self._get_with_retry(
+                path,
+                params={
+                    **params,
+                    '$top': self._PAGE_SIZE,
+                    '$skip': page_number * self._PAGE_SIZE,
+                },
+            )
+            self.raise_for_status_with_detail(response)
+            page = self._json_items(response)
+            yield from page
+            if len(page) < self._PAGE_SIZE:
+                return
+        self.logger.warning(
+            'pagination hit the %d-page cap for %s; later pages skipped',
+            self._MAX_PAGINATION_PAGES, path,
+        )

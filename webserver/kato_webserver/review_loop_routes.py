@@ -14,13 +14,12 @@ The loop itself is ``review_loop_core_lib``; kato's wiring is
 
 from __future__ import annotations
 
-import re
-
 from typing import Callable
 
 from flask import Flask, jsonify, request
 
 from kato_core_lib.helpers.model_label_utils import model_display_label
+from kato_webserver.model_request_utils import requested_model
 
 
 def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], list]) -> None:
@@ -59,7 +58,7 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
         if problem:
             return jsonify({'error': problem}), 400
         stages = _requested_stages(body)
-        model, problem = _requested_model(body)
+        model, problem = requested_model(body)
         if problem:
             return jsonify({'error': problem}), 400
         summary, description = _task_text(app, task_id)
@@ -151,23 +150,6 @@ _STAGE_DEFAULTS = {
     'confirm_clean': True,
     'extra_sweep': True,
 }
-
-
-# A model id as the CLIs take it: an alias (``opus``) or a pinned id
-# (``claude-opus-5-5[1m]``). It goes into argv, never through a shell; the
-# pattern only keeps junk from reaching the spawn as a confusing CLI error.
-_MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,99}')
-
-
-def _requested_model(body: object) -> tuple[str, str]:
-    """``(model, problem)``; an absent / empty model is the reviewer's default."""
-    source = body if isinstance(body, dict) else {}
-    model = source.get('model')
-    if model is None or model == '':
-        return '', ''
-    if not isinstance(model, str) or not _MODEL_ID.fullmatch(model.strip()):
-        return '', f'model must be a model id, got {model!r}'
-    return model.strip(), ''
 
 
 def _requested_stages(body: object) -> dict[str, bool]:

@@ -32,6 +32,13 @@ from utils_core_lib.utils_core_lib.text_utils import (
 
 AGENT_COMPLETION_COMMENT_PREFIX = 'Kato completed task '
 
+#: The plan queue's record on a plan's ticket (the list of its sub-tasks and
+#: who waits for whom). A ticket carrying it was split: kato never implements
+#: it whole again (it blocks execution like a completion comment would).
+PLAN_RECORD_COMMENT_PREFIX = 'Kato plan queue — '
+#: The plan queue's notes on a sub-task (cancelled, counted as done).
+PLAN_STEP_COMMENT_PREFIX = 'Kato plan queue: '
+
 #: A refusal posted BEFORE any work started. Still present on the ticket means
 #: the same blocking condition is presumed unresolved, so a re-scan skips the
 #: task rather than retrying into the same wall.
@@ -49,6 +56,8 @@ AGENT_COMMENT_PREFIXES = (
     'Kato agent stopped working on this task:',
     'Kato addressed review comment ',
     AGENT_COMPLETION_COMMENT_PREFIX,
+    PLAN_RECORD_COMMENT_PREFIX,
+    PLAN_STEP_COMMENT_PREFIX,
 )
 
 AGENT_RETRY_BLOCKING_PREFIXES = PRE_START_BLOCKING_PREFIXES + (
@@ -58,6 +67,7 @@ AGENT_RETRY_BLOCKING_PREFIXES = PRE_START_BLOCKING_PREFIXES + (
 AGENT_EXECUTION_BLOCKING_PREFIXES = AGENT_RETRY_BLOCKING_PREFIXES + (
     AGENT_COMPLETION_COMMENT_PREFIX,
     'Kato agent started working on this task',
+    PLAN_RECORD_COMMENT_PREFIX,
 )
 
 #: The operator's explicit "go again" override. Posting it AFTER a blocking

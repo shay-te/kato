@@ -11,6 +11,9 @@ import {
   closeTab,
   loopStripId,
   pickTabView,
+  planQueueTab,
+  isViewTab,
+  TAB_VIEW,
   findTab,
   patchTab,
   placeOpenedTab,
@@ -440,3 +443,20 @@ test('the remembered scroll/fold state survives a plain re-open', () => {
   assert.equal(tab.diffScrollTop, 820);
 });
 
+
+
+test('the plan board opens as one tab per task, and keeps its view', () => {
+  const info = planQueueTab('UNA-1', 'Plan board');
+  assert.deepEqual(info, { absolutePath: 'plan-queue:UNA-1', relativePath: 'UNA-1 Plan board', view: TAB_VIEW.PLAN_QUEUE });
+  assert.equal(planQueueTab('UNA-1').relativePath, 'UNA-1 Split plan');  // the task, in the tab's name
+  assert.equal(planQueueTab('UNA-1', '').relativePath, 'UNA-1 Split plan');
+  // Re-opened by an opener that names no view, it stays the board.
+  assert.equal(pickTabView(undefined, { view: TAB_VIEW.PLAN_QUEUE }), TAB_VIEW.PLAN_QUEUE);
+  assert.equal(pickTabView(TAB_VIEW.PLAN_QUEUE, { view: 'file' }), TAB_VIEW.PLAN_QUEUE);
+  assert.equal(pickTabView('nonsense', { view: 'nonsense' }), 'file');
+  const { tabs, activeKey } = upsertTab([], null, { ...info, openRequestId: 1 }, 'UNA-1');
+  assert.equal(activeKey, 'plan-queue:UNA-1');
+  assert.equal(isViewTab(tabs[0]), true);
+  assert.equal(isViewTab({ view: 'diff' }), false);
+  assert.equal(isViewTab(null), false);
+});

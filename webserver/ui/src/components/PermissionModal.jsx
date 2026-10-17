@@ -12,6 +12,7 @@ import { backendLabel } from './AgentBackendChip.jsx';
 import ApprovalPlacementToggle from './ApprovalPlacementToggle.jsx';
 import DialogShell from './DialogShell.jsx';
 import AskUserQuestionForm from './AskUserQuestionForm.jsx';
+import ParentQuestionPanel from './planQueue/ParentQuestionPanel.jsx';
 import ExitPlanModeForm from './ExitPlanModeForm.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
 
@@ -265,6 +266,7 @@ export default function PermissionModal({
           key={requestId}
           draftKey={requestId}
           questions={askQuestions}
+          aside={<ParentQuestionPanel taskId={taskCode} questions={askQuestions} />}
           onAnswer={(answerText) => onDecide({
             allow: false, rationale: answerText, remember: false,
             requestId, toolName, command,

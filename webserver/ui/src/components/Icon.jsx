@@ -81,6 +81,10 @@ const LINE_ICONS = {
     + 'l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09'
     + 'a1.65 1.65 0 0 0-1.51 1z',
   'chart': 'M18 20V10M12 20V4M6 20v-6',
+  // Three columns of cards: the plan board.
+  'board': 'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z',
+  // An arrow stepping down and in: a sub-task of another task.
+  'subtask': 'M6 4v7a4 4 0 0 0 4 4h9M15 11l4 4-4 4',
   'bell': 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',
   'bell-slash': 'M13.7 21a2 2 0 0 1-3.4 0M18.6 13A17 17 0 0 1 18 8'
     + 'M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14M2 2l20 20',

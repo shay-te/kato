@@ -296,6 +296,31 @@ describe('FileTabStrip — diff/file view toggle', () => {
 // Reveal-on-tree-click + right-click menu
 // --------------------------------------------------------------------------
 
+describe('FileTabStrip — the plan board tab', () => {
+  // The plan board rides the strip as a tab among the files, but it is a view
+  // of the task: its own glyph, and no diff / preview switch.
+  test('a board glyph, its name, and nothing to toggle', () => {
+    const { container } = render(
+      <FileTabStrip
+        tabs={[tab({ key: 'plan-queue:T1', absolutePath: 'plan-queue:T1', relativePath: 'T1 Plan board',
+          repoId: '', view: 'plan_queue' })]}
+        activeKey="plan-queue:T1"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onToggleView={() => {}}
+        onToggleMarkdownView={() => {}}
+      />,
+    );
+    const pill = container.querySelector('.file-tab');
+    expect(pill).toHaveAttribute('title', 'T1 Plan board');
+    expect(pill.querySelector('[data-icon="board"]')).not.toBeNull();
+    expect(within(pill).getByText('T1 Plan board')).toBeInTheDocument();
+    expect(pill.querySelector('.file-tab-view-toggle')).toBeNull();
+    expect(within(pill).getByRole('button', { name: 'Close T1 Plan board' })).toBeInTheDocument();
+  });
+});
+
+
 describe('FileTabStrip — reveal and context menu', () => {
   const tabs = [
     { key: 'a', relativePath: 'src/app.py', view: 'file' },

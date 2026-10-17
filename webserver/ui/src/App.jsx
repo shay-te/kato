@@ -36,6 +36,8 @@ import UiBuildBanner from './components/UiBuildBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import UsageDialog from './components/UsageDialog.jsx';
+import PlanQueueView from './components/planQueue/PlanQueueView.jsx';
+import { planQueueView } from './components/planQueue/planQueueViewStore.js';
 import TabList from './components/TabList.jsx';
 import TaskPalette from './components/TaskPalette.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
@@ -79,8 +81,8 @@ import { agentStatusStore } from './stores/agentStatusStore.js';
 import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
-  NEW_TASK_STRIP_ID, STRIP_TAB_KIND, closeTab, findTab, loopStripId, patchTab, placeOpenedTab,
-  sortPinnedFirst, stripNeighbour, stripOrder, togglePin, upsertTab,
+  NEW_TASK_STRIP_ID, STRIP_TAB_KIND, TAB_VIEW, closeTab, findTab, isViewTab, loopStripId, patchTab,
+  placeOpenedTab, planQueueTab, sortPinnedFirst, stripNeighbour, stripOrder, togglePin, upsertTab,
 } from './utils/fileTabs.js';
 import { markdownViewFor } from './utils/markdownView.js';
 
@@ -910,6 +912,18 @@ export default function App() {
     if (!taskId) { return; }
     openReviewLoopTab(taskId);
   }), [activeTaskId, openReviewLoopTab]);
+  // A task's plan board opens as a tab among its files (the toolbar button,
+  // the plan pane). Only for the task on screen — its file tabs are the ones
+  // showing. ``seq`` tells a new request from the replay every subscribe gets.
+  const lastPlanViewRequestRef = useRef(0);
+  useEffect(() => planQueueView.subscribe((request) => {
+    if (request.seq === lastPlanViewRequestRef.current) { return; }
+    lastPlanViewRequestRef.current = request.seq;
+    // '' = the task on screen (what the chat transcript, which shows only it, asks for).
+    const taskId = request.taskId || activeTaskId;
+    if (!taskId || taskId !== activeTaskId) { return; }
+    handleOpenFile(planQueueTab(taskId, request.label));
+  }), [activeTaskId, handleOpenFile]);
   const { content: planContent, available: planAvailable } = usePlanWatch(
     activeTaskId, handleOpenPlan,
   );
@@ -1016,9 +1030,9 @@ export default function App() {
       />
     );
   } else if (centerOverlay === CENTER_OVERLAY.PLAN) {
-    centerBody = <PlanPane content={planContent} onClose={handleCloseOverlay} />;
+    centerBody = <PlanPane content={planContent} onClose={handleCloseOverlay} taskId={activeTaskId} />;
   } else {
-    const filePane = activeOpenFile?.view === 'diff' ? (
+    let filePane = activeOpenFile?.view === 'diff' ? (
       <DiffPane
         openFile={activeOpenFile}
         workspaceVersion={activeWorkspaceVersion}
@@ -1039,6 +1053,11 @@ export default function App() {
         onOpenFile={handleOpenFile}
       />
     );
+    // The plan board is a tab among the files, but a view of the task, not a
+    // file: its own pane, nothing to load.
+    if (activeOpenFile?.view === TAB_VIEW.PLAN_QUEUE) {
+      filePane = <PlanQueueView taskId={activeOpenFile.taskId} onOpenTask={selectTaskAndReveal} />;
+    }
     // The shared tab strip (file tabs + loop tabs) stacks directly above the
     // pane, so this body opts the card's content wrapper into the tab-strip
     // rules rather than adding another nested flex column. Below it, the loop
@@ -1128,7 +1147,8 @@ export default function App() {
           activeTaskSummary={activeSession?.task_summary || ''}
           workspaceVersion={activeWorkspaceVersion}
           focusFileTarget={fileTreeFocusTarget}
-          openFile={activeOpenFile}
+          // The plan board's tab is no file: nothing to reveal in the tree.
+          openFile={isViewTab(activeOpenFile) ? null : activeOpenFile}
           onOpenFile={handleOpenFile}
           onResizePointerDown={leftResizer.onPointerDown}
         />

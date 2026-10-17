@@ -89,6 +89,7 @@ class GitHubCreateAndFindFlowTests(unittest.TestCase):
             repo_slug='repo',
             source_branch='feature/proj-2',
             title_prefix='',
+            state='open',
         )
 
 

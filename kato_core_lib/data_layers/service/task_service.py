@@ -152,6 +152,10 @@ class TaskService(Service):
         """
         return self._task_data_access.supports_tags
 
+    def subtask_tracker(self):
+        """The tracker, when it can hold a plan's steps as sub-tasks; else None."""
+        return self._task_data_access.subtask_tracker
+
     def add_tag(self, issue_id: str, tag_name: str) -> None:
         self._task_data_access.add_tag(issue_id, tag_name)
 

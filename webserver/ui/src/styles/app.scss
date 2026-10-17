@@ -2537,6 +2537,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * and the comment-jump, on a wide chat pane it is a long way from the text
  * being read, and every addition there needs another hand-tuned offset. */
 .chat-sticky-prompt-jump-start,
+.chat-sticky-prompt-open-plan,
 .chat-sticky-prompt-open-loop {
   display: inline-flex;
   align-items: center;
@@ -2557,6 +2558,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 .chat-sticky-prompt-jump-start:hover,
+.chat-sticky-prompt-open-plan:hover,
 .chat-sticky-prompt-open-loop:hover {
   background: $C-NEUTRAL-100-A10;
   color: $C-NEUTRAL-96;
@@ -2716,8 +2718,17 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   bottom: auto;
 }
 
+/* Expanded, the bar is STILL a sticky header, so it must never grow taller
+ * than part of the chat. A long prompt (a sub-task's workspace-scope rules)
+ * grew past the viewport and stayed pinned over its own turn: the rows
+ * scrolling under it showed through, its text drawn on top of them. The text
+ * scrolls inside the bar instead; the collapse toggle (a sibling, pinned
+ * top-right of the wrap) stays put. */
 .chat-sticky-prompt.is-expanded .chat-sticky-prompt-text {
   padding-top: $SPACE-32;
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 /* Step the collapse toggle left of the top-right jump-to-comment icon
@@ -5289,6 +5300,7 @@ code {
 // column. Same chrome family as the editor pane (shared header/empty
 // look) with a scrollable markdown body.
 #plan-pane,
+#plan-queue-pane,
 #review-loop-pane,
 #new-task-pane {
   display: flex;
@@ -5301,6 +5313,7 @@ code {
 }
 
 .plan-pane-header,
+.plan-queue-pane-header,
 .review-loop-pane-header,
 .new-task-header {
   display: flex;
@@ -5316,6 +5329,7 @@ code {
 }
 
 .plan-pane-title,
+.plan-queue-pane-title,
 .review-loop-pane-title {
   font-size: $TEXT-12;
   font-weight: 600;
@@ -5349,6 +5363,7 @@ code {
 }
 
 .plan-pane-body,
+.plan-queue-pane-body,
 .review-loop-pane-body {
   flex: 1;
   min-height: 0;
@@ -12204,6 +12219,21 @@ button.settings-prompt-editor-head {
   display: none;
 }
 
+/* A plan's sub-task: a fixed mark between the id and the name, in place of
+ * the "Subtask of UNA-3267:" words (the hover card still says them). Out of
+ * the way while renaming, like the id: the box gets the label to itself. */
+.tabs-pane-top .tab .tab-label.is-renaming .tab-label-subtask {
+  display: none;
+}
+
+.tab-label-subtask {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+}
+
 /* Stop clipping while the input is up. The base label hides overflow so a
  * long NAME ellipsises, but a rename box is one fixed-size element with
  * nothing to ellipsise — and the clip was shaving its 1px right border,
@@ -12775,6 +12805,10 @@ button.settings-prompt-editor-head {
 .review-loop-pane-status.is-warn { color: $C-ORANGE-50; }
 .review-loop-pane-status.is-bad { color: $C-RED-60; }
 
+.plan-pane-split,
+.plan-board-control,
+.plan-card-action,
+.plan-action,
 .review-loop-pane-action {
   display: inline-flex;
   align-items: center;
@@ -12789,8 +12823,14 @@ button.settings-prompt-editor-head {
   cursor: pointer;
 }
 
+.plan-pane-split:hover,
+.plan-board-control:hover,
+.plan-card-action:hover,
+.plan-action:hover,
 .review-loop-pane-action:hover { background: $C-NEUTRAL-100-A10; }
 
+.plan-board-control.is-stop,
+.plan-action.is-danger,
 .review-loop-pane-action.is-stop {
   border-color: $C-RED-42-A35;
   color: $C-RED-60;
@@ -13212,8 +13252,10 @@ button.settings-prompt-editor-head {
 }
 
 /* Header button: a dot over its corner, never extra width. */
+.plan-queue-button,
 .review-loop-button { position: relative; }
 
+.plan-queue-dot,
 .review-loop-dot {
   position: absolute;
   top: $SPACE-2;
@@ -13225,7 +13267,9 @@ button.settings-prompt-editor-head {
   pointer-events: none;
 }
 
-/* Tab: a mark over the pill's corner, never extra width. */
+/* Tab: a mark over the pill's corner, never extra width. The split's mark
+ * takes the other corner, so a task with both shows both. */
+.tab-plan-queue-badge,
 .tab-review-loop-badge {
   position: absolute;
   top: -$SPACE-3;
@@ -13242,8 +13286,10 @@ button.settings-prompt-editor-head {
   pointer-events: none;
 }
 
+.plan-queue-dot.is-running,
 .review-loop-dot.is-running { background: $C-CYAN-78; }
 .review-loop-dot.is-good { background: $C-GREEN-52; }
+.plan-queue-dot.is-warn,
 .review-loop-dot.is-warn { background: $C-ORANGE-50; }
 .review-loop-dot.is-bad { background: $C-RED-60; }
 /* Running = indigo, the review-loop accent (same as the chat label and the
@@ -13253,6 +13299,11 @@ button.settings-prompt-editor-head {
 .tab-review-loop-badge.is-good { color: $C-GREEN-52; }
 .tab-review-loop-badge.is-warn { color: $C-ORANGE-50; }
 .tab-review-loop-badge.is-bad { color: $C-RED-60; }
+
+.tab-plan-queue-badge { left: auto; right: -$SPACE-3; }
+/* Amber, the plan split's own accent (its chat prompt is amber too). */
+.tab-plan-queue-badge.is-running { color: $C-AMBER-77; }
+.tab-plan-queue-badge.is-warn { color: $C-ORANGE-50; }
 
 /* A running review loop rings the whole task pill in indigo, so an active loop
  * is visible from any tab — a SEPARATE axis from the status dot. Drawn as an
@@ -13277,6 +13328,42 @@ button.settings-prompt-editor-head {
 
 /* The loop's findings in the chat: kato's message, labelled as such. */
 .chat-sticky-prompt.is-review-loop .chat-sticky-prompt-label { color: $C-INDIGO-76; }
+
+/* The plan queue's split request in the chat: kato's message, in amber — the
+ * whole bar, not only its label, so it reads apart from the operator's own
+ * (cyan) prompts at a glance while the agent works on it. */
+.chat-sticky-prompt.is-plan-split {
+  background: linear-gradient(180deg, $C-ORANGE-50-A35 0%, $C-ORANGE-50-A10 100%);
+  border-top-color: $C-ORANGE-50-A65;
+  border-bottom-color: $C-ORANGE-50-A65;
+}
+
+.chat-sticky-prompt.is-plan-split .chat-sticky-prompt-label { color: $C-AMBER-77; }
+
+/* On a plan sub-task's question: ask the chat the plan was split in, and read
+ * its answer here — amber, the plan queue's accent, apart from the questions. */
+.ask-question-consult {
+  margin-bottom: $SPACE-12;
+  padding: $SPACE-10 $SPACE-12;
+  background: $C-ORANGE-50-A10;
+  border: 1px solid $C-ORANGE-50-A35;
+  border-radius: $RADIUS-6;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-79;
+}
+
+.ask-question-consult-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-12;
+}
+
+.ask-question-consult-row p { margin: 0; }
+.ask-question-consult-row .plan-action { flex-shrink: 0; }
+.ask-question-consult-label { font-weight: 600; color: $C-AMBER-77; }
+.ask-question-consult-text { margin-top: $SPACE-8; color: $C-NEUTRAL-96; }
+.ask-question-consult-error { margin: $SPACE-8 0 0; color: $C-RED-60; }
 
 @media (prefers-reduced-motion: reduce) {
   .review-loop-step.is-current .review-loop-step-mark,
@@ -13764,4 +13851,517 @@ button.settings-prompt-editor-head {
 
 @media (max-width: 700px) {
   .usage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Plan queue — a task's plan as a tab in the centre strip: split it (or take a
+ * split already written as files), approve the split, then watch the board.
+ * The pane's frame is the shared centre-pane one (#plan-pane above), the
+ * buttons are the shared modal ones (.adopt-session-confirm / -cancel) and
+ * the board's Run / Pause / Stop share the review loop pane's pill; only the
+ * layout lives here.
+ *
+ * The board is read-only on purpose: a card has no grab cursor, no hover
+ * lift and no drag affordance — the tracker (or kato) moves it. Its left
+ * edge says where it stands: blue = being worked on, amber = waiting on the
+ * operator (review, merge), green = done, red = stuck. */
+.plan-queue-pane-task { flex-shrink: 0; font-size: $TEXT-12; color: $C-NEUTRAL-64; }
+
+.plan-queue-body {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-12;
+  padding: $SPACE-16 $SPACE-20;
+}
+
+/* An existing split folder: its button, then what using it means. */
+.plan-queue-folder {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-4 $SPACE-10;
+}
+
+/* Before a split exists, while one is proposed, and when proposing failed:
+ * a sentence, then its buttons. ``:where`` keeps the paragraph default at
+ * zero specificity so .plan-queue-error's colour wins without a fight. */
+.plan-queue-start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-8;
+}
+
+:where(.plan-queue-start) p {
+  flex: 1 1 100%;
+  margin: 0;
+  line-height: 1.5;
+  color: $C-NEUTRAL-79;
+}
+
+.plan-queue-error { margin: 0; color: $C-RED-71; font-size: $TEXT-12; }
+.plan-queue-note { margin: 0; color: $C-NEUTRAL-64; font-size: $TEXT-12; }
+.plan-queue-again { display: flex; justify-content: flex-end; }
+
+.plan-pane-split:disabled,
+.plan-board-control:disabled,
+.plan-card-action:disabled,
+.plan-action:disabled { opacity: 0.5; cursor: default; }
+
+/* The plan tab's buttons: the pane pill (above), outlined a step brighter so
+ * they read as buttons on the pane's grey; the one main action filled blue. */
+.plan-action { border-color: $C-NEUTRAL-100-A10; }
+
+.plan-action.is-primary {
+  background: $C-BLUE-33;
+  border-color: $C-BLUE-48;
+}
+
+.plan-action.is-primary:not(:disabled):hover { background: $C-BLUE-48; }
+
+/* ---------- The proposal: one line for the whole split, one row per task ----------
+ * Built to be scanned: the overview line, then a compact row per task (its
+ * round, id, title, what it waits for, where it works) that opens to edit. The
+ * action bar sticks to the bottom of the view while the list scrolls. */
+.plan-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-10;
+}
+
+.plan-proposal-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-8;
+}
+
+.plan-proposal-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: $TEXT-13;
+  font-weight: 600;
+  color: $C-NEUTRAL-96;
+}
+
+.plan-proposal-steer { font-size: $TEXT-12; font-weight: 400; color: $C-NEUTRAL-64; }
+
+/* The agent's notes: a collapsed section by default — a row with a faint
+ * first line; open, the notes in full. */
+.plan-proposal-notes {
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.plan-proposal-notes-head {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  width: 100%;
+  min-width: 0;
+  padding: $SPACE-6 $SPACE-12;
+  background: none;
+  border: 0;
+  border-radius: $RADIUS-6;
+  color: $C-NEUTRAL-64;
+  font: inherit;
+  font-size: $TEXT-12;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-proposal-notes-head:hover { background: $C-NEUTRAL-100-A06; }
+.plan-proposal-notes-title { flex-shrink: 0; font-weight: 600; color: $C-NEUTRAL-79; }
+
+.plan-proposal-notes-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $C-NEUTRAL-45;
+}
+
+.plan-proposal-notes-body {
+  padding: 0 $SPACE-12 $SPACE-10 $SPACE-32;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-79;
+}
+
+.plan-proposal-steps {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-4;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-step {
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.plan-step.is-open { border-color: $C-CYAN-52-A40; }
+
+.plan-step-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: $SPACE-10;
+  width: 100%;
+  padding: $SPACE-8 $SPACE-12;
+  background: none;
+  border: 0;
+  border-radius: $RADIUS-6;
+  color: inherit;
+  font: inherit;
+  font-size: $TEXT-12;
+  text-align: left;
+  cursor: pointer;
+}
+
+.plan-step-head:hover { background: $C-NEUTRAL-100-A06; }
+
+/* The round a task runs in: cyan for the ones that start right away, red for
+ * one caught in a circle of waits. */
+.plan-step-round {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: $RADIUS-CIRCLE;
+  background: $C-NEUTRAL-16;
+  color: $C-NEUTRAL-79;
+  font-size: $TEXT-11;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-step-round.is-first { background: $C-CYAN-52-A18; color: $C-CYAN-78; }
+.plan-step-round.is-stuck { background: $C-RED-31-A46; color: $C-RED-71; }
+
+.plan-step-id { font-size: $TEXT-11; color: $C-NEUTRAL-64; }
+
+.plan-step-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-96;
+}
+
+.plan-step-waits { white-space: nowrap; font-size: $TEXT-11_5; color: $C-NEUTRAL-64; }
+.plan-step-repos { display: inline-flex; gap: $SPACE-4; }
+
+.plan-step-repo {
+  padding: 0 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border-radius: $RADIUS-PILL;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-79;
+  white-space: nowrap;
+}
+
+.plan-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-10;
+  padding: $SPACE-10 $SPACE-12 $SPACE-12;
+  border-top: 1px solid $C-NEUTRAL-16;
+}
+
+.plan-step-title-input,
+.plan-step-brief textarea,
+.plan-proposal-revise textarea {
+  padding: $SPACE-6 $SPACE-8;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-4;
+  color: $C-NEUTRAL-96;
+  font: inherit;
+  font-size: $TEXT-12;
+}
+
+.plan-step-brief {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $SPACE-6;
+}
+
+/* The brief, in full: exactly what the task's agent will be told. */
+.plan-step-brief-text {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 320px;
+  overflow: auto;
+  padding: $SPACE-8 $SPACE-12;
+  background: $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  font-size: $TEXT-12;
+}
+
+.plan-step-brief textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 180px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.plan-step-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-4 $SPACE-6;
+  font-size: $TEXT-11_5;
+  color: $C-NEUTRAL-64;
+}
+
+.plan-step-field-label { min-width: 64px; }
+.plan-step-none { color: $C-NEUTRAL-45; }
+
+.plan-step-add {
+  padding: $SPACE-1 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A10;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plan-step-remove { align-self: flex-start; }
+
+.plan-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-4;
+  padding: $SPACE-1 $SPACE-8;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plan-chip.is-on {
+  background: $C-CYAN-52-A18;
+  border-color: $C-CYAN-52-A40;
+  color: $C-NEUTRAL-96;
+}
+
+/* Some tasks work there, not all: outlined, with how many. */
+.plan-chip.is-partial {
+  border-style: dashed;
+  border-color: $C-CYAN-52-A40;
+  color: $C-NEUTRAL-96;
+}
+
+.plan-chip-count { font-size: $TEXT-11; color: $C-NEUTRAL-64; font-variant-numeric: tabular-nums; }
+
+/* One repository for every task at once — above the list. */
+.plan-proposal-repos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-4 $SPACE-6;
+  font-size: $TEXT-11_5;
+  color: $C-NEUTRAL-64;
+}
+
+.plan-proposal-revise {
+  display: flex;
+  align-items: flex-start;
+  gap: $SPACE-8;
+}
+
+.plan-proposal-revise textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 48px;
+  resize: vertical;
+}
+
+/* Approve on the trailing edge, Discard apart on the leading one — stuck to
+ * the bottom of the view, so 17 tasks never push the decision off-screen. */
+.plan-proposal-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: $SPACE-8;
+  margin: 0 (-$SPACE-20) (-$SPACE-16);
+  padding: $SPACE-10 $SPACE-20;
+  background: $C-NEUTRAL-16;
+  border-top: 1px solid $C-NEUTRAL-100-A10;
+}
+
+.plan-proposal-discard { margin-right: auto; }
+
+/* ---------- The board ---------- */
+.plan-board {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-10;
+}
+
+.plan-board-head {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-12;
+}
+
+.plan-board-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: $C-NEUTRAL-96;
+}
+
+.plan-board-reason,
+.plan-board-driver { color: $C-NEUTRAL-64; }
+
+.plan-board-controls {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: $SPACE-6;
+  margin-left: auto;
+}
+
+/* Five columns side by side, fitting the centre pane at its usual width (a
+ * column title wraps rather than the board scrolling); only a very narrow pane
+ * scrolls the board sideways. */
+.plan-board-columns {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: $SPACE-8;
+  overflow-x: auto;
+}
+
+.plan-board-column {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+  min-width: 0;
+  padding: $SPACE-8;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+}
+
+.plan-board-column-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-6;
+  margin: 0;
+  font-size: $TEXT-12;
+  font-weight: 500;
+  color: $C-NEUTRAL-79;
+}
+
+.plan-board-count {
+  padding: 0 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border-radius: $RADIUS-PILL;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-64;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-4;
+  padding: $SPACE-8 $SPACE-10;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-left: 2px solid $C-NEUTRAL-45;
+  border-radius: $RADIUS-4;
+  cursor: default;
+}
+
+.plan-card.is-starting,
+.plan-card.is-active { border-left-color: $C-CYAN-78; }
+.plan-card.is-in_review,
+.plan-card.is-awaiting_merge { border-left-color: $C-ORANGE-50; }
+.plan-card.is-satisfied { border-left-color: $C-GREEN-52; }
+.plan-card.is-failed { border-left-color: $C-RED-60; }
+.plan-card.is-cancelled { border-left-color: $C-NEUTRAL-32; opacity: 0.7; }
+
+.plan-card-code {
+  align-self: flex-start;
+  font-family: ui-monospace, monospace;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-79;
+}
+
+/* Once the step has a task, its code opens it. */
+button.plan-card-code {
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+button.plan-card-code:hover { color: $C-NEUTRAL-96; text-decoration: underline; }
+
+.plan-card-title {
+  font-size: $TEXT-12;
+  line-height: 1.4;
+  color: $C-NEUTRAL-96;
+  overflow-wrap: anywhere;
+}
+
+.plan-card-note { font-size: $TEXT-11; line-height: 1.4; color: $C-NEUTRAL-64; }
+
+/* Who has the sub-task — a teammate, or the user kato works as. */
+.plan-card-worker { font-size: $TEXT-11; color: $C-CYAN-78; }
+.plan-card.is-failed .plan-card-note { color: $C-RED-71; }
+
+.plan-card-prs,
+.plan-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $SPACE-4;
+}
+
+.plan-pr {
+  padding: 0 $SPACE-6;
+  background: $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-PILL;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-79;
+  text-decoration: none;
+}
+
+.plan-pr.is-open { color: $C-CYAN-78; }
+.plan-pr.is-merged { color: $C-GREEN-52; }
+.plan-pr.is-declined { color: $C-RED-60; }
+a.plan-pr:hover { text-decoration: underline; }
+
+/* The one way out of a stuck card: smaller than the header's pills. */
+.plan-card-action { padding: $SPACE-2 $SPACE-8; }
+
+@media (max-width: 700px) {
+  .plan-board-columns { grid-template-columns: minmax(0, 1fr); }
+  .plan-board-head { flex-wrap: wrap; }
 }

@@ -1,5 +1,7 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
+
+from requests import HTTPError
 
 from jira_core_lib.jira_core_lib.client.jira_client import (
     JiraClient,
@@ -17,11 +19,30 @@ from jira_core_lib.jira_core_lib.data.fields import (
     JiraTransitionFields,
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
+from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
 from provider_client_base.provider_client_base.testing import assert_client_headers_and_timeout, mock_response
 
 
 def _make_client(**kwargs) -> JiraClient:
     return JiraClient('https://jira.example', 'jira-token', **kwargs)
+
+
+def _http_error_response(status_code: int, *, json_data=None, text: str = ''):
+    """A response whose ``raise_for_status`` raises the way ``requests`` does:
+    an ``HTTPError`` carrying the response (and so its status code)."""
+    response = mock_response(status_code=status_code, json_data=json_data, text=text)
+    response.raise_for_status.side_effect = HTTPError(
+        f'{status_code} Client Error', response=response,
+    )
+    return response
+
+
+def _route_get(routes: dict):
+    """A ``_get`` stand-in answering by path; a list answers in turn."""
+    def fake_get(path, **kwargs):
+        answer = routes[path]
+        return answer.pop(0) if isinstance(answer, list) else answer
+    return fake_get
 
 
 def _adf_paragraph(text: str) -> dict:
@@ -288,7 +309,8 @@ class JiraClientGetAssignedTasksTests(unittest.TestCase):
 
 
 class JiraClientAddCommentTests(unittest.TestCase):
-    def test_posts_plain_text_body(self) -> None:
+    def test_posts_the_body_as_an_adf_document(self) -> None:
+        # v3 rejects a plain-string body with a 400; it takes ADF.
         client = _make_client()
         response = mock_response()
 
@@ -297,9 +319,40 @@ class JiraClientAddCommentTests(unittest.TestCase):
 
         mock_post.assert_called_once_with(
             '/rest/api/3/issue/PROJ-1/comment',
-            json={'body': 'Ready for review'},
+            json={'body': {
+                'type': 'doc',
+                'version': 1,
+                'content': [
+                    {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Ready for review'}]},
+                ],
+            }},
         )
         response.raise_for_status.assert_called_once_with()
+
+    def test_each_line_becomes_a_paragraph(self) -> None:
+        client = _make_client()
+
+        with patch.object(client, '_post', return_value=mock_response()) as mock_post:
+            client.add_comment('PROJ-1', 'Opened a pull request.\n\nIt adds a retry.')
+
+        body = mock_post.call_args.kwargs['json']['body']
+        self.assertEqual(
+            [node['content'][0]['text'] for node in body['content']],
+            ['Opened a pull request.', 'It adds a retry.'],
+        )
+        self.assertEqual(
+            JiraClient._adf_to_text(body), 'Opened a pull request.\nIt adds a retry.',
+        )
+
+    def test_a_rejected_comment_surfaces_jiras_error_text(self) -> None:
+        client = _make_client()
+        response = _http_error_response(
+            400, text='{"errorMessages":["Comment body is not valid!"]}',
+        )
+
+        with patch.object(client, '_post', return_value=response):
+            with self.assertRaisesRegex(HTTPError, 'Comment body is not valid!'):
+                client.add_comment('PROJ-1', 'Ready for review')
 
 
 class JiraClientAddTagTests(unittest.TestCase):
@@ -598,6 +651,50 @@ class JiraClientAdfToTextTests(unittest.TestCase):
         }
         result = JiraClient._adf_to_text(node)
         self.assertEqual(result, 'kept')
+
+    # ----- code blocks: text and line breaks exactly as written -----
+
+    _CODE = '    indented first line\n\nsecond: {"a": 1}\n  last line\n'
+
+    def test_code_block_keeps_its_text_and_line_breaks_exactly(self) -> None:
+        node = {'type': 'codeBlock', 'content': [{'type': 'text', 'text': self._CODE}]}
+        self.assertEqual(JiraClient._adf_to_text(node), self._CODE)
+
+    def test_code_block_joins_its_text_nodes_unchanged(self) -> None:
+        node = {'type': 'codeBlock', 'content': [
+            {'type': 'text', 'text': '  a\n'},
+            'not-a-node',
+            {'type': 'text'},
+            {'type': 'text', 'text': '  b'},
+        ]}
+        self.assertEqual(JiraClient._adf_to_text(node), '  a\n  b')
+
+    def test_code_block_without_a_content_list_is_empty(self) -> None:
+        self.assertEqual(JiraClient._adf_to_text({'type': 'codeBlock'}), '')
+        self.assertEqual(
+            JiraClient._adf_to_text({'type': 'codeBlock', 'content': 'oops'}), '',
+        )
+
+    def test_document_blocks_are_one_per_line(self) -> None:
+        node = {'type': 'doc', 'content': [
+            {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'First.'}]},
+            {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Second.'}]},
+        ]}
+        self.assertEqual(JiraClient._adf_to_text(node), 'First.\nSecond.')
+
+    def test_code_block_after_a_paragraph_starts_on_its_own_line(self) -> None:
+        node = {'type': 'doc', 'content': [
+            {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Status:'}]},
+            {'type': 'codeBlock', 'content': [{'type': 'text', 'text': self._CODE}]},
+        ]}
+        self.assertEqual(JiraClient._adf_to_text(node), 'Status:\n' + self._CODE)
+
+    def test_code_block_at_the_edges_is_not_trimmed(self) -> None:
+        code = {'type': 'codeBlock', 'content': [{'type': 'text', 'text': self._CODE}]}
+        self.assertEqual(
+            JiraClient._adf_to_text({'type': 'doc', 'content': [code]}), self._CODE,
+        )
+        self.assertEqual(JiraClient._adf_to_text([code]), self._CODE)
 
 
 class JiraClientAttachmentTests(unittest.TestCase):
@@ -1340,3 +1437,694 @@ class JiraMentionFilterWiringTests(unittest.TestCase):
 class JiraClientTagSupportTests(unittest.TestCase):
     def test_it_has_real_tags_so_a_mirror_applies_to_it(self) -> None:
         self.assertTrue(JiraClient.supports_tags)
+
+
+# ---------------------------------------------------------------------------
+# Sub-tasks: create / find / assign / batch status / comments / current user
+# ---------------------------------------------------------------------------
+
+_SEARCH = '/rest/api/3/search'
+_PARENT = '/rest/api/3/issue/PROJ-1'
+_PROJECT = '/rest/api/3/project/PROJ'
+_NEW = '/rest/api/3/issue/PROJ-9'
+_CODE = '    indented first line\n\n{"done": 3, "left": 1}\n  last line\n'
+
+_COMPANY_MANAGED_TYPES = [
+    {'id': '10001', 'name': 'Story', 'subtask': False},
+    {'id': '10003', 'name': 'Sub-task', 'subtask': True},
+]
+
+
+def _parent_response(*, subtask: bool = False, project: dict | None = None):
+    return mock_response(json_data={'key': 'PROJ-1', 'fields': {
+        'project': {'key': 'PROJ', 'id': '10000'} if project is None else project,
+        'issuetype': {'id': '10001', 'name': 'Story', 'subtask': subtask},
+    }})
+
+
+def _project_response(issue_types):
+    return mock_response(json_data={'key': 'PROJ', 'issueTypes': issue_types})
+
+
+def _assignee_response(account_id: str = '', name: str = ''):
+    assignee = {'accountId': account_id, 'displayName': name} if account_id else None
+    return mock_response(json_data={'key': 'PROJ-9', 'fields': {'assignee': assignee}})
+
+
+def _created_response(key: str = 'PROJ-9'):
+    return mock_response(json_data={'id': '10050', 'key': key, 'self': f'https://jira.example/{key}'})
+
+
+def _search_page(issues: list, *, total: int | None = None, start_at: int = 0):
+    payload = {'startAt': start_at, 'maxResults': 100, 'issues': issues}
+    payload['total'] = len(issues) if total is None else total
+    return mock_response(json_data=payload)
+
+
+def _search_params(jql: str, fields: str, start_at: int = 0) -> dict:
+    return {'jql': jql, 'fields': fields, 'startAt': start_at, 'maxResults': 100}
+
+
+class JiraClientSubtaskSupportTests(unittest.TestCase):
+    def test_it_can_hold_work_as_subtasks(self) -> None:
+        self.assertTrue(JiraClient.supports_subtasks)
+
+
+class JiraClientCreateSubtaskTests(unittest.TestCase):
+    _ARGS = ('PROJ-1', 'Write the importer tests', 'Cover the retry.\nref: abc-123')
+    _READY = {_PARENT: _parent_response, _PROJECT: lambda: _project_response(_COMPANY_MANAGED_TYPES)}
+
+    def _client(self, routes, *, post=None, put=None) -> JiraClient:
+        """A client whose HTTP verbs answer from ``routes`` (path → response)."""
+        client = _make_client()
+        self.get = patch.object(client, '_get', side_effect=_route_get(routes)).start()
+        self.post = patch.object(client, '_post', return_value=post or _created_response()).start()
+        self.put = patch.object(client, '_put', return_value=put or mock_response()).start()
+        self.addCleanup(patch.stopall)
+        return client
+
+    def _ready_routes(self, extra: dict | None = None) -> dict:
+        """The parent + project reads every create starts with, plus ``extra``."""
+        return {path: build() for path, build in self._READY.items()} | (extra or {})
+
+    def _create(self, routes, **kwargs) -> str:
+        return self._client(routes, **kwargs).create_subtask(*self._ARGS)
+
+    def test_creates_an_unassigned_subtask_in_the_parents_project(self) -> None:
+        key = self._create(self._ready_routes({_NEW: _assignee_response()}))
+
+        self.assertEqual(key, 'PROJ-9')
+        self.assertEqual(self.get.call_args_list, [
+            call(_PARENT, params={'fields': 'project,issuetype'}),
+            call(_PROJECT),
+            call(_NEW, params={'fields': 'assignee'}),
+        ])
+        self.post.assert_called_once_with('/rest/api/3/issue', json={'fields': {
+            'project': {'key': 'PROJ'},
+            'parent': {'key': 'PROJ-1'},
+            'summary': 'Write the importer tests',
+            'description': {'type': 'doc', 'version': 1, 'content': [
+                {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Cover the retry.'}]},
+                {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'ref: abc-123'}]},
+            ]},
+            'issuetype': {'id': '10003'},
+            'assignee': None,
+        }})
+        # Already unassigned: nothing to clear, and no sprint call at all —
+        # a Jira sub-task follows its parent's sprint.
+        self.put.assert_not_called()
+
+    def test_a_team_managed_subtask_type_is_found_by_its_flag_not_its_name(self) -> None:
+        self._create({
+            _PARENT: _parent_response(),
+            _PROJECT: _project_response([
+                {'id': '10020', 'name': 'Task', 'subtask': False},
+                'not-a-type',
+                {'id': '', 'name': 'Broken', 'subtask': True},
+                {'id': '10021', 'name': 'Subtask', 'subtask': True, 'hierarchyLevel': -1},
+                {'id': '10022', 'name': 'Sub-task', 'subtask': True},
+            ]),
+            _NEW: _assignee_response(),
+        })
+
+        sent = self.post.call_args.kwargs['json']['fields']
+        self.assertEqual(sent['issuetype'], {'id': '10021'})
+
+    def test_a_subtask_cannot_be_split_again(self) -> None:
+        client = self._client({_PARENT: _parent_response(subtask=True)})
+        with self.assertRaisesRegex(ValueError, 'PROJ-1 is itself a Jira sub-task'):
+            client.create_subtask(*self._ARGS)
+
+        self.get.assert_called_once()
+        self.post.assert_not_called()
+
+    def test_a_parent_without_a_project_is_an_error(self) -> None:
+        client = self._client({_PARENT: _parent_response(project={})})
+        with self.assertRaisesRegex(RuntimeError, 'no project for PROJ-1'):
+            client.create_subtask(*self._ARGS)
+
+        self.post.assert_not_called()
+
+    def test_a_project_without_a_subtask_type_is_an_error(self) -> None:
+        for project in (
+            _project_response([{'id': '10001', 'name': 'Story', 'subtask': False}]),
+            _project_response('not-a-list'),
+            mock_response(json_data=None),
+        ):
+            with self.subTest(payload=project.json.return_value):
+                client = self._client({_PARENT: _parent_response(), _PROJECT: project})
+                with self.assertRaisesRegex(RuntimeError, 'PROJ has no sub-task issue type'):
+                    client.create_subtask(*self._ARGS)
+                self.post.assert_not_called()
+
+    def test_a_create_without_a_key_is_an_error(self) -> None:
+        client = self._client(self._ready_routes(), post=mock_response(json_data={}))
+        with self.assertRaisesRegex(RuntimeError, 'sub-task of PROJ-1 but returned no key'):
+            client.create_subtask(*self._ARGS)
+
+    def test_a_rejected_create_surfaces_jiras_error_text(self) -> None:
+        rejected = _http_error_response(
+            400, text='{"errors":{"assignee":"Field cannot be set."}}',
+        )
+        client = self._client(self._ready_routes(), post=rejected)
+        with self.assertRaisesRegex(HTTPError, 'Field cannot be set.'):
+            client.create_subtask(*self._ARGS)
+
+    def test_a_default_assignee_is_cleared(self) -> None:
+        key = self._create(self._ready_routes({
+            _NEW: [_assignee_response('acc-lead', 'Project Lead'), _assignee_response()],
+        }))
+
+        self.assertEqual(key, 'PROJ-9')
+        self.put.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-9/assignee', json={'accountId': None},
+        )
+
+    def test_still_assigned_after_clearing_raises_naming_the_new_issue(self) -> None:
+        client = self._client(self._ready_routes({_NEW: [
+            _assignee_response('acc-lead', 'Project Lead'),
+            _assignee_response('acc-lead', 'Project Lead'),
+        ]}))
+        with self.assertRaisesRegex(
+            RuntimeError, 'sub-task PROJ-9 but it is still assigned to acc-lead',
+        ):
+            client.create_subtask(*self._ARGS)
+
+        self.put.assert_called_once()
+
+    def test_a_failed_unassign_raises_naming_the_new_issue(self) -> None:
+        refused = _http_error_response(
+            400, text='{"errorMessages":["Issues must be assigned."]}',
+        )
+        client = self._client(
+            self._ready_routes({_NEW: _assignee_response('acc-lead', 'Project Lead')}),
+            put=refused,
+        )
+        with self.assertRaisesRegex(
+            RuntimeError,
+            'sub-task PROJ-9 but could not unassign it from acc-lead: .*Issues must be assigned.',
+        ) as raised:
+            client.create_subtask(*self._ARGS)
+
+        self.assertIsInstance(raised.exception.__cause__, HTTPError)
+
+
+class JiraClientFindSubtaskTests(unittest.TestCase):
+    _JQL = 'parent = "PROJ-1" ORDER BY created ASC'
+
+    @staticmethod
+    def _issue(key: str, description) -> dict:
+        return {'key': key, 'fields': {'description': description}}
+
+    def test_returns_the_first_subtask_whose_description_holds_the_marker(self) -> None:
+        client = _make_client()
+        response = _search_page([
+            self._issue('PROJ-7', _adf_paragraph('other work')),
+            self._issue('PROJ-8', _adf_paragraph('ref: abc-123')),
+            self._issue('PROJ-9', _adf_paragraph('ref: abc-123, a duplicate')),
+        ])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            key = client.find_subtask('PROJ-1', 'ref: abc-123')
+
+        self.assertEqual(key, 'PROJ-8')
+        mock_get.assert_called_once_with(_SEARCH, params=_search_params(self._JQL, 'description'))
+
+    def test_follows_the_pages_until_it_is_found(self) -> None:
+        client = _make_client()
+        pages = [
+            _search_page([
+                self._issue('PROJ-7', _adf_paragraph('other work')),
+                self._issue('PROJ-8', None),
+            ], total=3),
+            _search_page([self._issue('PROJ-9', _adf_paragraph('ref: abc-123'))], total=3, start_at=2),
+        ]
+
+        with patch.object(client, '_get', side_effect=pages) as mock_get:
+            key = client.find_subtask('PROJ-1', 'ref: abc-123')
+
+        self.assertEqual(key, 'PROJ-9')
+        self.assertEqual(
+            mock_get.call_args_list[1],
+            call(_SEARCH, params=_search_params(self._JQL, 'description', start_at=2)),
+        )
+
+    def test_no_match_is_empty(self) -> None:
+        client = _make_client()
+        response = _search_page([
+            'not-an-issue',
+            self._issue('PROJ-7', 'plain-text description'),
+            {'key': 'PROJ-8', 'fields': None},
+        ])
+
+        with patch.object(client, '_get', return_value=response):
+            self.assertEqual(client.find_subtask('PROJ-1', 'ref: abc-123'), '')
+
+    def test_finds_a_marker_inside_a_code_block(self) -> None:
+        client = _make_client()
+        description = {'type': 'doc', 'content': [
+            {'type': 'codeBlock', 'content': [{'type': 'text', 'text': 'x\nref: abc-123\n'}]},
+        ]}
+
+        with patch.object(client, '_get', return_value=_search_page([self._issue('PROJ-9', description)])):
+            self.assertEqual(client.find_subtask('PROJ-1', 'ref: abc-123'), 'PROJ-9')
+
+    def test_an_empty_marker_is_refused_without_a_request(self) -> None:
+        # An empty marker is in every description: it would pass any sub-task
+        # off as the one a retried create is looking for.
+        client = _make_client()
+        with patch.object(client, '_get') as mock_get:
+            for marker in ('', '   '):
+                with self.assertRaisesRegex(ValueError, 'marker must not be empty'):
+                    client.find_subtask('PROJ-1', marker)
+        mock_get.assert_not_called()
+
+
+class JiraClientAssignIssueTests(unittest.TestCase):
+    def test_assigns_by_account_id(self) -> None:
+        client = _make_client()
+        response = mock_response()
+
+        with patch.object(client, '_put', return_value=response) as mock_put:
+            client.assign_issue('PROJ-9', 'acc-1')
+
+        mock_put.assert_called_once_with('/rest/api/3/issue/PROJ-9/assignee', json={'accountId': 'acc-1'})
+        response.raise_for_status.assert_called_once_with()
+
+    def test_an_empty_assignee_unassigns(self) -> None:
+        client = _make_client()
+        for assignee in ('', '  '):
+            with patch.object(client, '_put', return_value=mock_response()) as mock_put:
+                client.assign_issue('PROJ-9', assignee)
+            mock_put.assert_called_once_with('/rest/api/3/issue/PROJ-9/assignee', json={'accountId': None})
+
+    def test_a_refused_assignment_surfaces_jiras_error_text(self) -> None:
+        client = _make_client()
+        refused = _http_error_response(
+            400, text='{"errorMessages":["User cannot be assigned issues."]}',
+        )
+        with patch.object(client, '_put', return_value=refused):
+            with self.assertRaisesRegex(HTTPError, 'User cannot be assigned issues.'):
+                client.assign_issue('PROJ-9', 'acc-1')
+
+
+def _status_issue(
+    key: str,
+    *,
+    status: str = 'In Progress',
+    assignee: dict | None = None,
+    created: str = '2026-10-17T13:00:00.000+0300',
+    parent: str = 'PROJ-1',
+    **extra_fields,
+) -> dict:
+    return {'key': key, 'fields': {
+        'status': {'name': status, 'id': '3', 'statusCategory': {'key': 'indeterminate'}},
+        'assignee': assignee,
+        'created': created,
+        'parent': {'key': parent, 'fields': {'summary': 'Parent'}} if parent else None,
+        **extra_fields,
+    }}
+
+
+class JiraClientGetIssuesStatusTests(unittest.TestCase):
+    _FIELDS = 'status,assignee,created,parent'
+
+    def test_reads_every_issue_in_one_search(self) -> None:
+        client = _make_client()
+        response = _search_page([
+            _status_issue('PROJ-2', assignee={'accountId': 'acc-1', 'displayName': 'Alice'}),
+            _status_issue('PROJ-3', status='To Do', parent='', created='2026-10-17T10:00:00.000+0000'),
+        ])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            statuses = client.get_issues_status(['PROJ-2', 'PROJ-3', 'PROJ-4'], 'status')
+
+        mock_get.assert_called_once_with(_SEARCH, params=_search_params(
+            'key in ("PROJ-2", "PROJ-3", "PROJ-4")', self._FIELDS,
+        ))
+        self.assertEqual(statuses, {
+            'PROJ-2': IssueStatus(
+                issue_id='PROJ-2', state='In Progress', assignee='acc-1', assignee_name='Alice',
+                created_at='2026-10-17T10:00:00+00:00', parent_id='PROJ-1',
+            ),
+            'PROJ-3': IssueStatus(
+                issue_id='PROJ-3', state='To Do', created_at='2026-10-17T10:00:00+00:00',
+            ),
+            # Not returned by the search: the tracker has no such issue.
+            'PROJ-4': IssueStatus(issue_id='PROJ-4', exists=False),
+        })
+
+    def test_no_ids_make_no_request(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get') as mock_get:
+            self.assertEqual(client.get_issues_status([], 'status'), {})
+            self.assertEqual(client.get_issues_status(['', '  '], 'status'), {})
+        mock_get.assert_not_called()
+
+    def test_any_spelling_of_status_reads_the_status_field(self) -> None:
+        client = _make_client()
+        for state_field in ('Status', 'STATUS', ' status ', ''):
+            with patch.object(client, '_get', return_value=_search_page([_status_issue('PROJ-2')])) as mock_get:
+                statuses = client.get_issues_status(['PROJ-2'], state_field)
+            with self.subTest(state_field=state_field):
+                self.assertEqual(mock_get.call_args.kwargs['params']['fields'], self._FIELDS)
+                self.assertEqual(statuses['PROJ-2'].state, 'In Progress')
+
+    def test_a_custom_state_field_reads_its_value(self) -> None:
+        client = _make_client()
+        response = _search_page([
+            _status_issue('PROJ-2', customfield_10010={'value': 'Ready', 'id': '10100'}),
+            _status_issue('PROJ-3', customfield_10010='Blocked'),
+            _status_issue('PROJ-4'),
+        ])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            statuses = client.get_issues_status(['PROJ-2', 'PROJ-3', 'PROJ-4'], 'customfield_10010')
+
+        self.assertEqual(
+            mock_get.call_args.kwargs['params']['fields'], 'customfield_10010,assignee,created,parent',
+        )
+        self.assertEqual(
+            [statuses[key].state for key in ('PROJ-2', 'PROJ-3', 'PROJ-4')], ['Ready', 'Blocked', ''],
+        )
+
+    def test_ids_are_deduplicated_and_matched_case_insensitively(self) -> None:
+        client = _make_client()
+        response = _search_page([_status_issue('PROJ-2'), _status_issue('PROJ-3'), 'not-an-issue'])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            statuses = client.get_issues_status(['proj-2', ' proj-2 ', 'PROJ-3'], 'status')
+
+        self.assertEqual(mock_get.call_args.kwargs['params']['jql'], 'key in ("proj-2", "PROJ-3")')
+        self.assertEqual(list(statuses), ['proj-2', 'PROJ-3'])
+        self.assertTrue(statuses['proj-2'].exists)
+        self.assertEqual(statuses['proj-2'].issue_id, 'proj-2')
+
+    def test_a_moved_issue_reads_as_gone(self) -> None:
+        # Jira answers an old key with the issue under its NEW key.
+        client = _make_client()
+        with patch.object(client, '_get', return_value=_search_page([_status_issue('NEW-5')])):
+            statuses = client.get_issues_status(['OLD-5'], 'status')
+
+        self.assertEqual(statuses, {'OLD-5': IssueStatus(issue_id='OLD-5', exists=False)})
+
+    def test_follows_the_search_pages(self) -> None:
+        client = _make_client()
+        pages = [
+            _search_page([_status_issue('PROJ-2')], total=2),
+            _search_page([_status_issue('PROJ-3')], total=2, start_at=1),
+        ]
+
+        with patch.object(client, '_get', side_effect=pages) as mock_get:
+            statuses = client.get_issues_status(['PROJ-2', 'PROJ-3'], 'status')
+
+        self.assertTrue(statuses['PROJ-2'].exists and statuses['PROJ-3'].exists)
+        self.assertEqual(mock_get.call_args.kwargs['params']['startAt'], 1)
+
+    def test_a_rejected_batch_falls_back_to_one_read_per_issue(self) -> None:
+        # Jira rejects the whole ``key in (...)`` query with a 400 when one
+        # key is unknown — one stale id must not hide every good one.
+        client = _make_client()
+        rejected = _http_error_response(
+            400, json_data={'errorMessages': ["An issue with key 'PROJ-4' does not exist for field 'key'."]},
+        )
+        found = mock_response(json_data=_status_issue('PROJ-2', status='Done'))
+        missing = _http_error_response(404)
+        routes = {_SEARCH: rejected, '/rest/api/3/issue/PROJ-2': found, '/rest/api/3/issue/PROJ-4': missing}
+
+        with patch.object(client, '_get', side_effect=_route_get(routes)) as mock_get:
+            statuses = client.get_issues_status(['PROJ-2', 'PROJ-4'], 'status')
+
+        self.assertEqual(statuses['PROJ-2'].state, 'Done')
+        self.assertEqual(statuses['PROJ-4'], IssueStatus(issue_id='PROJ-4', exists=False))
+        self.assertEqual(mock_get.call_args_list[1:], [
+            call('/rest/api/3/issue/PROJ-2', params={'fields': self._FIELDS}),
+            call('/rest/api/3/issue/PROJ-4', params={'fields': self._FIELDS}),
+        ])
+        missing.raise_for_status.assert_not_called()
+
+    def test_other_search_failures_are_not_swallowed(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=_http_error_response(401)):
+            with self.assertRaises(HTTPError):
+                client.get_issues_status(['PROJ-2'], 'status')
+        with patch.object(client, '_get', side_effect=RuntimeError('boom')):
+            with self.assertRaisesRegex(RuntimeError, 'boom'):
+                client.get_issues_status(['PROJ-2'], 'status')
+
+    def test_a_fallback_read_failing_otherwise_raises(self) -> None:
+        client = _make_client()
+        routes = {_SEARCH: _http_error_response(400), '/rest/api/3/issue/PROJ-2': _http_error_response(403)}
+
+        with patch.object(client, '_get', side_effect=_route_get(routes)):
+            with self.assertRaisesRegex(HTTPError, '403'):
+                client.get_issues_status(['PROJ-2'], 'status')
+
+
+def _jira_comment(comment_id: str, created: str, body, *, account_id: str = 'acc-1', name: str = 'Alice') -> dict:
+    return {
+        'id': comment_id,
+        'author': {'accountId': account_id, 'displayName': name, 'active': True},
+        'body': _adf_paragraph(body) if isinstance(body, str) else body,
+        'created': created,
+        'updated': created,
+    }
+
+
+def _comment_page(comments: list, *, total: int | None = None, start_at: int = 0):
+    return mock_response(json_data={
+        'startAt': start_at,
+        'maxResults': 100,
+        'total': len(comments) if total is None else total,
+        'comments': comments,
+    })
+
+
+class JiraClientListCommentsTests(unittest.TestCase):
+    _PATH = '/rest/api/3/issue/PROJ-9/comment'
+
+    def test_reads_every_comment_newest_first(self) -> None:
+        client = _make_client()
+        # Served oldest first on purpose: the result is newest first anyway.
+        response = _comment_page([
+            _jira_comment('10001', '2026-10-17T09:00:00.000+0000', 'first'),
+            _jira_comment('10002', '2026-10-17T13:30:00.000+0300', 'third', account_id='acc-2', name='Bob'),
+            _jira_comment('10003', '2026-10-17T10:00:00.000+0000', 'second'),
+        ])
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            comments = client.list_comments('PROJ-9')
+
+        mock_get.assert_called_once_with(
+            self._PATH, params={'orderBy': '-created', 'startAt': 0, 'maxResults': 100},
+        )
+        self.assertEqual(comments, [
+            IssueComment('10002', 'acc-2', 'Bob', 'third', '2026-10-17T10:30:00+00:00'),
+            IssueComment('10003', 'acc-1', 'Alice', 'second', '2026-10-17T10:00:00+00:00'),
+            IssueComment('10001', 'acc-1', 'Alice', 'first', '2026-10-17T09:00:00+00:00'),
+        ])
+
+    def test_follows_the_pages(self) -> None:
+        client = _make_client()
+        pages = [
+            _comment_page([
+                _jira_comment('3', '2026-10-17T12:00:00.000+0000', 'c'),
+                _jira_comment('2', '2026-10-17T11:00:00.000+0000', 'b'),
+            ], total=3),
+            _comment_page([_jira_comment('1', '2026-10-17T10:00:00.000+0000', 'a')], total=3, start_at=2),
+        ]
+
+        with patch.object(client, '_get', side_effect=pages) as mock_get:
+            comments = client.list_comments('PROJ-9')
+
+        self.assertEqual([c.comment_id for c in comments], ['3', '2', '1'])
+        self.assertEqual(
+            mock_get.call_args_list[1],
+            call(self._PATH, params={'orderBy': '-created', 'startAt': 2, 'maxResults': 100}),
+        )
+
+    def test_nothing_is_filtered_out(self) -> None:
+        # Unlike the comments folded into a task for an agent: a comment
+        # tagging another human and an operational one are both listed.
+        client = _make_client(bot_login='bot-account', is_operational_comment=lambda body: body.startswith('[bot]'))
+        mention = {'type': 'doc', 'content': [{'type': 'paragraph', 'content': [
+            {'type': 'mention', 'attrs': {'id': 'acc-alice', 'text': '@Alice'}},
+            {'type': 'text', 'text': 'can you take this one?'},
+        ]}]}
+        response = _comment_page([
+            _jira_comment('2', '2026-10-17T11:00:00.000+0000', mention),
+            _jira_comment('1', '2026-10-17T10:00:00.000+0000', '[bot] status update'),
+        ])
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_comments('PROJ-9')
+
+        self.assertEqual([c.body for c in comments], ['can you take this one?', '[bot] status update'])
+
+    def test_a_code_block_reads_back_exactly(self) -> None:
+        client = _make_client()
+        body = {'type': 'doc', 'version': 1, 'content': [
+            {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Progress:'}]},
+            {'type': 'codeBlock', 'content': [{'type': 'text', 'text': _CODE}]},
+        ]}
+
+        with patch.object(client, '_get', return_value=_comment_page([_jira_comment('1', '', body)])):
+            (comment,) = client.list_comments('PROJ-9')
+
+        self.assertEqual(comment.body, 'Progress:\n' + _CODE)
+
+    def test_malformed_entries_are_skipped_or_read_as_blank(self) -> None:
+        client = _make_client()
+        response = _comment_page(['not-a-comment', {'id': 10004, 'body': 'plain', 'created': 'yesterday'}])
+
+        with patch.object(client, '_get', return_value=response):
+            comments = client.list_comments('PROJ-9')
+
+        self.assertEqual(comments, [IssueComment(comment_id='10004', body='plain')])
+
+    def test_a_failed_read_raises(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=_http_error_response(404)):
+            with self.assertRaises(HTTPError):
+                client.list_comments('PROJ-9')
+
+
+_PREFORMATTED_BODY = {
+    'type': 'doc',
+    'version': 1,
+    'content': [
+        {'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Progress:'}]},
+        {'type': 'codeBlock', 'content': [{'type': 'text', 'text': _CODE}]},
+    ],
+}
+
+
+class JiraClientAddPreformattedCommentTests(unittest.TestCase):
+    def test_posts_one_paragraph_then_a_code_block_and_returns_its_id(self) -> None:
+        client = _make_client()
+        response = mock_response(json_data={'id': '10010', 'body': _PREFORMATTED_BODY})
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            comment_id = client.add_preformatted_comment('PROJ-9', 'Progress:', _CODE)
+
+        self.assertEqual(comment_id, '10010')
+        mock_post.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-9/comment', json={'body': _PREFORMATTED_BODY},
+        )
+        response.raise_for_status.assert_called_once_with()
+
+    def test_an_answer_without_an_id_returns_empty(self) -> None:
+        client = _make_client()
+        for payload in ({}, None):
+            with patch.object(client, '_post', return_value=mock_response(json_data=payload)):
+                with self.subTest(payload=payload):
+                    self.assertEqual(client.add_preformatted_comment('PROJ-9', 'Progress:', _CODE), '')
+
+    def test_its_lines_read_back_unchanged_from_list_comments(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_post', return_value=mock_response()) as mock_post:
+            client.add_preformatted_comment('PROJ-9', 'Progress:', _CODE)
+        posted = mock_post.call_args.kwargs['json']['body']
+
+        stored = _jira_comment('10010', '2026-10-17T10:00:00.000+0000', posted)
+        with patch.object(client, '_get', return_value=_comment_page([stored])):
+            (comment,) = client.list_comments('PROJ-9')
+
+        intro, preformatted = comment.body.split('\n', 1)
+        self.assertEqual(intro, 'Progress:')
+        self.assertEqual(preformatted, _CODE)
+
+    def test_a_rejected_comment_surfaces_jiras_error_text(self) -> None:
+        client = _make_client()
+        rejected = _http_error_response(400, text='{"errorMessages":["INVALID_INPUT"]}')
+        with patch.object(client, '_post', return_value=rejected):
+            with self.assertRaisesRegex(HTTPError, 'INVALID_INPUT'):
+                client.add_preformatted_comment('PROJ-9', 'Progress:', _CODE)
+
+
+class JiraClientUpdatePreformattedCommentTests(unittest.TestCase):
+    def test_rewrites_the_comment_in_place_with_the_same_shape(self) -> None:
+        client = _make_client()
+        response = mock_response(json_data={'id': '10010'})
+
+        with patch.object(client, '_put', return_value=response) as mock_put, \
+             patch.object(client, '_post') as mock_post:
+            client.update_preformatted_comment('PROJ-9', '10010', 'Progress:', _CODE)
+
+        mock_put.assert_called_once_with(
+            '/rest/api/3/issue/PROJ-9/comment/10010', json={'body': _PREFORMATTED_BODY},
+        )
+        response.raise_for_status.assert_called_once_with()
+        mock_post.assert_not_called()
+
+    def test_a_refused_update_surfaces_jiras_error_text(self) -> None:
+        # e.g. the comment is someone else's, or was deleted.
+        client = _make_client()
+        refused = _http_error_response(
+            403, text='{"errorMessages":["You do not have permission to edit this comment."]}',
+        )
+        with patch.object(client, '_put', return_value=refused):
+            with self.assertRaisesRegex(HTTPError, 'do not have permission to edit this comment'):
+                client.update_preformatted_comment('PROJ-9', '10010', 'Progress:', _CODE)
+
+
+class JiraClientCurrentUserTests(unittest.TestCase):
+    def test_returns_the_account_id(self) -> None:
+        client = _make_client()
+        response = mock_response(json_data={'accountId': '557058:abc', 'displayName': 'Bot User'})
+
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            self.assertEqual(client.current_user(), '557058:abc')
+
+        mock_get.assert_called_once_with('/rest/api/3/myself')
+
+    def test_a_failed_read_raises_instead_of_guessing(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=_http_error_response(401)):
+            with self.assertRaises(HTTPError):
+                client.current_user()
+        with patch.object(client, '_get', side_effect=RuntimeError('boom')):
+            with self.assertRaisesRegex(RuntimeError, 'boom'):
+                client.current_user()
+
+    def test_an_answer_without_an_account_id_raises(self) -> None:
+        client = _make_client()
+        for payload in ({'displayName': 'Bot User'}, {'accountId': '  '}, None):
+            with patch.object(client, '_get', return_value=mock_response(json_data=payload)):
+                with self.subTest(payload=payload):
+                    with self.assertRaisesRegex(RuntimeError, 'returned no accountId'):
+                        client.current_user()
+
+
+class JiraClientPagingTests(unittest.TestCase):
+    """``_next_page``: the next ``startAt`` page, until ``total`` is read."""
+
+    _PARAMS = {'startAt': 0, 'maxResults': 100}
+
+    def test_asks_for_the_next_page_while_items_remain(self) -> None:
+        response = mock_response(json_data={'total': 5})
+        self.assertEqual(
+            JiraClient._next_page(response, '/p', self._PARAMS, [1, 2]),
+            ('/p', {'startAt': 2, 'maxResults': 100}),
+        )
+
+    def test_stops_at_the_total(self) -> None:
+        response = mock_response(json_data={'total': 2})
+        self.assertIsNone(JiraClient._next_page(response, '/p', self._PARAMS, [1, 2]))
+
+    def test_stops_on_an_empty_page(self) -> None:
+        response = mock_response(json_data={'total': 5})
+        self.assertIsNone(JiraClient._next_page(response, '/p', self._PARAMS, []))
+
+    def test_stops_when_jira_does_not_say_how_many(self) -> None:
+        for payload in ({}, {'total': '5'}, None):
+            with self.subTest(payload=payload):
+                response = mock_response(json_data=payload)
+                self.assertIsNone(JiraClient._next_page(response, '/p', self._PARAMS, [1]))
+
+
+class JiraClientIssueReadTests(unittest.TestCase):
+    def test_a_non_object_answer_reads_as_no_fields(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=mock_response(json_data=None)):
+            self.assertEqual(client._fetch_issue_field('PROJ-1', 'priority'), '')

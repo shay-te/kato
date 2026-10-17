@@ -9,7 +9,7 @@ import {
   markdownViewFor,
 } from '../utils/markdownView.js';
 import { buildReviewLoopTabModels } from './reviewLoop/reviewLoopHelpers.js';
-import { STRIP_TAB_KIND, stripOrder } from '../utils/fileTabs.js';
+import { STRIP_TAB_KIND, isViewTab, stripOrder } from '../utils/fileTabs.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -317,13 +317,17 @@ function FileTab({
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
   const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
-  const title = tab.repoId ? `${tab.repoId}/${tab.relativePath}` : tab.relativePath;
+  // The plan board is a view of the task, not a file: its own glyph, and no
+  // diff / preview switch (there is nothing to switch to).
+  const viewTab = isViewTab(tab);
+  let title = tab.repoId ? `${tab.repoId}/${tab.relativePath}` : tab.relativePath;
+  if (viewTab) { title = tab.relativePath; }
   const isDiff = tab.view === 'diff';
   // A diff tab shows the file's change kind (the green + / red − / edit
   // glyph the tree uses); a plain-file tab just shows a file.
-  const tabIcon = isDiff
-    ? <DiffKindIcon kind={tab.kind} />
-    : <Icon name="file" />;
+  let tabIcon = <Icon name="file" />;
+  if (isDiff) { tabIcon = <DiffKindIcon kind={tab.kind} />; }
+  if (viewTab) { tabIcon = <Icon name="board" />; }
 
   function handleSelect() {
     onSelect(tab.key);
@@ -457,7 +461,7 @@ function FileTab({
           <Icon name={isPreview ? 'code' : 'eye'} />
         </button>
       )}
-      {typeof onToggleView === 'function' && (
+      {typeof onToggleView === 'function' && !viewTab && (
         <button
           type="button"
           className="file-tab-view-toggle tooltip-start"

@@ -2481,6 +2481,7 @@ class FinalEdgeCaseTests(unittest.TestCase):
         prepared = PreparedTaskContext(
             repositories=[], repository_branches={}, branch_name='b',
         )
+        preflight.skip_if_waiting_its_turn.return_value = None  # no plan's sub-task
         preflight.prepare_task_execution_context.return_value = prepared
         preflight.validate_task_branch_publishability.return_value = True
         impl = MagicMock()

@@ -4,7 +4,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from provider_client_base.provider_client_base.pull_request_client_base import PullRequestClientBase
-from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
+from provider_client_base.provider_client_base.data.fields import (
+    PullRequestFields,
+    PullRequestStates,
+    ReviewCommentFields,
+)
 from provider_client_base.provider_client_base.data.review_comment import ReviewComment
 from provider_client_base.provider_client_base.helpers.retry_utils import run_with_retry
 from utils_core_lib.utils_core_lib.text_utils import (
@@ -14,6 +18,14 @@ from utils_core_lib.utils_core_lib.text_utils import (
     text_from_attr,
     text_from_mapping,
 )
+
+# A pull request's ``state`` as GitHub names it. GitHub has no ``merged``
+# state: a merged pull request is ``closed`` WITH a ``merged_at`` (read first,
+# in ``_pull_request_state``), so ``closed`` here is closed without merging.
+_PULL_REQUEST_STATES = {
+    'open': PullRequestStates.OPEN,
+    'closed': PullRequestStates.DECLINED,
+}
 
 
 class GitHubClient(PullRequestClientBase):
@@ -144,8 +156,10 @@ mutation($threadId: ID!) {
         *,
         source_branch: str = '',
         title_prefix: str = '',
+        state: str = PullRequestStates.OPEN,
     ) -> list[dict[str, str]]:
-        params = {'state': 'open', 'per_page': 100}
+        # GitHub's own ``state`` filter takes ``open`` and ``all`` as they are.
+        params = {'state': self._lookup_state(state), 'per_page': 100}
         normalized_source_branch = normalized_text(source_branch)
         if normalized_source_branch:
             params['head'] = f'{repo_owner}:{normalized_source_branch}'
@@ -214,7 +228,16 @@ mutation($threadId: ID!) {
             payload,
             id_key='number',
             url=payload.get('html_url', '') if isinstance(payload, dict) else '',
+            state=cls._pull_request_state(payload),
+            destination_branch=text_from_mapping(dict_from_mapping(payload, 'base'), 'ref'),
+            created_at=text_from_mapping(payload, 'created_at'),
         )
+
+    @classmethod
+    def _pull_request_state(cls, payload: object) -> str:
+        if text_from_mapping(payload, 'merged_at'):
+            return PullRequestStates.MERGED
+        return cls._mapped_state(text_from_mapping(payload, 'state'), _PULL_REQUEST_STATES)
 
     @classmethod
     def _normalize_comments(cls, payload: Any, pull_request_id: str) -> list[ReviewComment]:

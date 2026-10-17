@@ -374,6 +374,9 @@ class F6_PullRequestLifecycle(unittest.TestCase):
             PullRequestFields.ID: 31,
             PullRequestFields.TITLE: 'Add a logout button',
             'links': {'html': {'href': 'https://bitbucket.org/acme/widget/pull-requests/31'}},
+            'state': 'OPEN',
+            'destination': {'branch': {'name': 'main'}},
+            'created_on': '2026-03-01T10:00:00.000000+00:00',
         })
         with patch.object(client, '_post', return_value=create_resp) as mock_post:
             pull_request = client.create_pull_request(
@@ -399,6 +402,9 @@ class F6_PullRequestLifecycle(unittest.TestCase):
             PullRequestFields.ID: '31',
             PullRequestFields.TITLE: 'Add a logout button',
             PullRequestFields.URL: 'https://bitbucket.org/acme/widget/pull-requests/31',
+            PullRequestFields.STATE: 'open',
+            PullRequestFields.DESTINATION_BRANCH: 'main',
+            PullRequestFields.CREATED_AT: '2026-03-01T10:00:00.000000+00:00',
         })
         pull_request_id = pull_request[PullRequestFields.ID]
 
@@ -504,7 +510,52 @@ class F6_PullRequestLifecycle(unittest.TestCase):
             PullRequestFields.ID: '31',
             PullRequestFields.TITLE: 'Add a logout button',
             PullRequestFields.URL: 'https://bitbucket.org/acme/widget/pull-requests/31',
+            PullRequestFields.STATE: '',
+            PullRequestFields.DESTINATION_BRANCH: '',
+            PullRequestFields.CREATED_AT: '',
         }])
+
+        # L) the PR is merged: asking for every state of the branch finds it
+        # MERGED (an earlier, superseded attempt reads as declined).
+        every_state_resp = mock_response(json_data={
+            'values': [
+                {
+                    'id': 31,
+                    PullRequestFields.TITLE: 'Add a logout button',
+                    'links': {'html': {'href': 'https://bitbucket.org/acme/widget/pull-requests/31'}},
+                    'source': {'branch': {'name': 'feature/42'}},
+                    'destination': {'branch': {'name': 'main'}},
+                    'state': 'MERGED',
+                    'created_on': '2026-03-01T10:00:00.000000+00:00',
+                },
+                {
+                    'id': 30,
+                    PullRequestFields.TITLE: 'Add a logout button (draft)',
+                    'links': {'html': {'href': 'https://bitbucket.org/acme/widget/pull-requests/30'}},
+                    'source': {'branch': {'name': 'feature/42'}},
+                    'destination': {'branch': {'name': 'main'}},
+                    'state': 'SUPERSEDED',
+                    'created_on': '2026-02-01T10:00:00.000000+00:00',
+                },
+            ]
+        })
+        with patch.object(client, '_get', return_value=every_state_resp) as mock_get:
+            every_state = client.find_pull_requests(
+                WORKSPACE, REPO_SLUG, source_branch='feature/42', state='all',
+            )
+
+        mock_get.assert_called_once_with(
+            '/repositories/acme/widget/pullrequests',
+            params={
+                'pagelen': BITBUCKET_PAGE_LENGTH,
+                'state': ['OPEN', 'MERGED', 'DECLINED', 'SUPERSEDED'],
+                'q': 'source.branch.name = "feature/42"',
+            },
+        )
+        self.assertEqual(
+            [(pr[PullRequestFields.ID], pr[PullRequestFields.STATE]) for pr in every_state],
+            [('31', 'merged'), ('30', 'declined')],
+        )
 
 
 # ---------------------------------------------------------------------------
