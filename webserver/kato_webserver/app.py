@@ -24,8 +24,10 @@ Endpoints:
     POST /api/tool-decisions/clear                       — clear every remembered decision
     POST /api/sessions/<task_id>/adopt-agent-session    — body keyed by AGENT_SESSION_ID
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
-    POST /api/sessions/<task_id>/add-repository         — body: {"repository_id"} — tag + clone
+    POST /api/sessions/<task_id>/add-repository         — body: {"repository_ids": [...]} or {"repository_id"} — tag + clone
     GET  /api/repositories                              — list inventory repos for the chooser
+    GET  /api/release-notes                             — the release notes + the Google Doc copy state
+    POST /api/release-notes/sync                        — copy the release notes into the Google Doc now
     GET  /api/tasks                                     — every task assigned to kato (all states)
     POST /api/tasks/<task_id>/adopt                     — provision workspace + clones for a picked task
     GET  /api/sessions/<task_id>/comments?repo=<id>     — list local + synced-remote diff comments
@@ -133,6 +135,7 @@ from kato_webserver.git_diff_utils import (
 )
 from kato_webserver.prompt_attachment_store import save_attachment
 from kato_webserver.prompt_draft_store import read_draft, write_draft
+from kato_webserver.usage_routes import keep_deleted_task_usage, snapshot_task_usage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -360,11 +363,12 @@ def _validate_persist_and_respond(updates: dict, app: Flask | None = None):
 
 def _live_settings_keys() -> frozenset[str]:
     """Schema keys :func:`_apply_live_settings` enforces without a restart."""
+    from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
     )
 
-    return frozenset({REVIEW_COMMENTS_ENABLED_KEY})
+    return frozenset({REVIEW_COMMENTS_ENABLED_KEY}) | RELEASE_NOTES_KEYS
 
 
 def _apply_live_settings(app: Flask, updates: dict) -> str:
@@ -373,11 +377,22 @@ def _apply_live_settings(app: Flask, updates: dict) -> str:
     Returns the operator-facing message to send back, or ``''`` when
     nothing live was touched (caller falls back to "restart required").
 
-    Today that is the review-comment switch. Turning it off has to do two
-    things: stop the next poll (the gate in ``review_comment_gate_utils``
-    reads settings.json fresh, so persisting already did that) and stop the
-    run already going — which needs the live service, hence this hook.
+    The release-notes settings are read fresh on every write, so saving
+    them already applied them. The review-comment switch needs this hook.
     """
+    from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
+
+    messages = [_apply_review_comment_switch(app, updates)]
+    if RELEASE_NOTES_KEYS & set(updates):
+        messages.append('Saved. Release notes settings apply to the next finished task.')
+    return ' '.join(message for message in messages if message)
+
+
+def _apply_review_comment_switch(app: Flask, updates: dict) -> str:
+    """Turning the review-comment switch off has to do two things: stop the
+    next poll (the gate in ``review_comment_gate_utils`` reads settings.json
+    fresh, so persisting already did that) and stop the run already going —
+    which needs the live service, hence this hook."""
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
     )
@@ -1478,6 +1493,8 @@ def create_app(
     )
     from kato_webserver.usage_routes import register_usage_routes
     register_usage_routes(app)
+    from kato_webserver.release_notes_routes import register_release_notes_routes
+    register_release_notes_routes(app)
     from kato_webserver.local_task_routes import register_local_task_routes
     register_local_task_routes(
         app,
@@ -3974,22 +3991,33 @@ def _register_http_routes(app: Flask) -> None:
     def add_task_repository(task_id: str):
         """Tag the task with ``kato:repo:<id>`` and clone the repo.
 
-        Body: ``{"repository_id": "<inventory-id>"}``. Combines the
-        platform-side tag write with the workspace-side clone in one
-        call so the operator can attach a new repo without bouncing
-        through YouTrack / Jira and the Sync button.
+        Body: ``{"repository_ids": ["<inventory-id>", ...]}`` (several at
+        once — one sync clones them together) or ``{"repository_id":
+        "<inventory-id>"}`` (one). Combines the platform-side tag write
+        with the workspace-side clone in one call so the operator can
+        attach new repos without bouncing through YouTrack / Jira and
+        the Sync button.
         """
+        payload = request.get_json(silent=True) or {}
+        repository_ids = payload.get('repository_ids')
+        if isinstance(repository_ids, list):
+            method, wanted = 'repositories.add_task_repositories', [
+                str(item or '').strip() for item in repository_ids if str(item or '').strip()
+            ]
+            if not wanted:
+                return jsonify({'error': 'repository_ids is required'}), 400
+        else:
+            method = 'repositories.add_task_repository'
+            wanted = text_from_mapping(payload, 'repository_id')
+            if not wanted:
+                return jsonify({'error': 'repository_id is required'}), 400
         add_repo, err = _resolve_agent_method(
-            app, 'repositories.add_task_repository',
+            app, method,
             not_callable_message='agent service does not support add-repository',
         )
         if err:
             return err
-        payload = request.get_json(silent=True) or {}
-        repository_id = text_from_mapping(payload, 'repository_id')
-        if not repository_id:
-            return jsonify({'error': 'repository_id is required'}), 400
-        result = add_repo(task_id, repository_id) or {}
+        result = add_repo(task_id, wanted) or {}
         if result.get('error') and not result.get('added'):
             err = str(result.get('error', ''))
             status = 404 if 'not in the kato inventory' in err else 500
@@ -4145,6 +4173,10 @@ def _register_http_routes(app: Flask) -> None:
                 loops.forget(task_id)
             except Exception as exc:
                 errors.append(f'review loop: {exc}')
+        # 0b. What the task used — read NOW, from the transcripts step 1 deletes.
+        #     The Usage dialog counts from transcripts, so without this a
+        #     deleted task's tokens would vanish from it.
+        usage_snapshot = snapshot_task_usage(app, task_id)
         # 1. Kill the live subprocess + wipe the session record /
         #    Claude JSONL transcript. Best-effort: a missing session
         #    or terminate failure shouldn't block the workspace
@@ -4157,6 +4189,12 @@ def _register_http_routes(app: Flask) -> None:
                 )
             except Exception as exc:
                 errors.append(f'terminate_session: {exc}')
+            else:
+                # Only once the transcripts are really gone: a failed terminate
+                # leaves them counted under the live task, and keeping the
+                # snapshot too would count the same tokens twice.
+                if usage_snapshot is not None:
+                    keep_deleted_task_usage(app, usage_snapshot)
         # Record the operator's intent FIRST so the platform poll (the
         # review-comment scan, which discovers in-review tasks from YouTrack/
         # Bitbucket — not from local records) doesn't resurrect this task on the

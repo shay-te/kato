@@ -3,6 +3,8 @@ from omegaconf import DictConfig
 from core_lib.data_layers.service.service import Service
 
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
+from kato_core_lib.helpers.late_binding import provider_for
+from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.kato_config_utils import (
     SHARED_STATE_VALUE_DEFAULTS,
     configured_state_value,
@@ -27,9 +29,13 @@ class TaskStateService(Service):
     }
     _STATE_VALUE_DEFAULTS = dict(SHARED_STATE_VALUE_DEFAULTS)
 
-    def __init__(self, config: DictConfig, task_data_access: TaskDataAccess) -> None:
+    def __init__(
+        self, config: DictConfig, task_data_access: TaskDataAccess, *, done_observer=None,
+    ) -> None:
         self._config = config
         self._task_data_access = task_data_access
+        # Told when a ticket has REALLY moved to done (the release notes).
+        self._get_done_observer = provider_for(done_observer)
 
     def move_task_to_in_progress(self, issue_id: str) -> None:
         self._move_task_to_configured_state(issue_id, 'progress')
@@ -41,11 +47,32 @@ class TaskStateService(Service):
         """Move a ticket to the tracker's done/closed column.
 
         Operator-triggered ONLY (the "this task is done" checkbox on the
-        forget dialog). The autonomous flow never closes a ticket —
-        deciding that work is finished is the reviewer's call, same as
-        the never-auto-resolve rule for PR comment threads.
+        forget dialog, and the plan board's "Count as done"). The autonomous
+        flow never closes a ticket — deciding that work is finished is the
+        reviewer's call, same as the never-auto-resolve rule for PR comment
+        threads.
+
+        Every route to done goes through here, so this is the ONE place the
+        done observer hears about it: only after the move succeeded (a move
+        that raises announces nothing), and an observer that fails never
+        turns a done ticket into a failed action. A subclass changes HOW a
+        ticket moves by overriding ``_move_to_done``, never this method.
         """
+        self._move_to_done(issue_id)
+        self._announce_done(issue_id)
+
+    def _move_to_done(self, issue_id: str) -> None:
         self._move_task_to_configured_state(issue_id, 'done')
+
+    def _announce_done(self, issue_id: str) -> None:
+        try:
+            observer = self._get_done_observer()
+            if observer is not None:
+                observer.task_done(issue_id)
+        except Exception:
+            configure_logger(type(self).__name__).exception(
+                'ticket %s moved to done, but telling the done observer failed', issue_id,
+            )
 
     def state_names(self) -> dict[str, str]:
         """The configured workflow: the state field and its In Progress / In

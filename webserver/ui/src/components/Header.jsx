@@ -26,6 +26,7 @@ export default function Header({
   statusActive = false,
   onOpenSettings,
   onOpenUsage,
+  onOpenReleaseNotes,
 }) {
   // Refresh re-scans tickets + reloads workspace state — show the thick
   // spinner on the button while that's in flight (and block a double-tap).
@@ -102,6 +103,16 @@ export default function Header({
         disabled={typeof onOpenUsage !== 'function'}
       >
         <Icon name="chart" />
+      </button>
+      <button
+        type="button"
+        className="header-icon-btn"
+        data-tooltip="Release notes — a dated line for every task that reached Done."
+        aria-label="Open release notes"
+        onClick={onOpenReleaseNotes}
+        disabled={typeof onOpenReleaseNotes !== 'function'}
+      >
+        <Icon name="notes" />
       </button>
       <button
         type="button"

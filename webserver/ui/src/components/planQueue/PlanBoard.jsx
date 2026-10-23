@@ -84,6 +84,7 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
                 <PlanCard
                   key={step.id}
                   step={step}
+                  planStatus={plan.status}
                   busy={busy}
                   readOnly={followed}
                   onOpenTask={onOpenTask}
@@ -101,8 +102,8 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
   );
 }
 
-function PlanCard({ step, busy, readOnly, onOpenTask, onAction }) {
-  const note = stepNote(step);
+function PlanCard({ step, planStatus, busy, readOnly, onOpenTask, onAction }) {
+  const note = stepNote(step, planStatus);
   const worker = stepWorker(step);
   const chips = prChips(step);
   const actions = readOnly ? [] : stuckActions(step);

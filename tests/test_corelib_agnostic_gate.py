@@ -42,6 +42,7 @@ _MAX_KATO_LINES = {
     'git_core_lib': 0,
     'github_core_lib': 0,
     'gitlab_core_lib': 0,
+    'google_docs_core_lib': 0,
     'jira_core_lib': 0,
     'local_task_core_lib': 0,
     'openrouter_core_lib': 0,

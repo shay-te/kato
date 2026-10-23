@@ -105,6 +105,18 @@ export function fetchUsage() {
   return fetchJson('/api/usage', { timeoutMs: 120000 });
 }
 
+// The release notes as Settings point at them: ``{ enabled, path, exists,
+// markdown, google: { wanted, document_id, last_synced_at, error } }``.
+export function fetchReleaseNotes() {
+  return fetchJson('/api/release-notes', { timeoutMs: 30000 });
+}
+
+// "Sync now": copy the release notes into the Google Doc at once. Answers the
+// copy's new state, or an error envelope when the copy is off in Settings.
+export function syncReleaseNotes() {
+  return postEnvelope('/api/release-notes/sync', {});
+}
+
 // Every unanswered permission ask across ALL live sessions (not just the
 // focused tab's SSE stream) — so the modal can pop no matter which task is
 // in view. Returns ``{ pending: [{ task_id, type, request_id, request, … }] }``.
@@ -531,15 +543,16 @@ export async function fetchInventoryRepositories() {
   return result;
 }
 
-// Tag the task with ``kato:repo:<id>`` and clone the repo into the
-// workspace. Atomic from the operator's perspective: one click,
-// one toast, both halves done.
-export function addTaskRepository(taskId, repositoryId) {
+// Tag the task with ``kato:repo:<id>`` for each repository and clone them into
+// the workspace together. Atomic from the operator's perspective: one click,
+// one toast, both halves done. Answers ``{ repositories, rejected, sync }``.
+export function addTaskRepositories(taskId, repositoryIds) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
-  if (!repositoryId) { return { ok: false, error: 'no repository id' }; }
+  const ids = (repositoryIds || []).filter(Boolean);
+  if (!ids.length) { return { ok: false, error: 'no repository id' }; }
   return postEnvelope(
     `/api/sessions/${encodeURIComponent(taskId)}/add-repository`,
-    { repository_id: repositoryId },
+    { repository_ids: ids },
   );
 }
 

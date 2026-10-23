@@ -41,6 +41,8 @@ class TaskCleanupService(object):
         workspace_manager=None,
         implementation_service=None,
         state_registry=None,
+        live_plan_task_codes=None,
+        done_watcher=None,
         review_workspace_ttl_seconds: float = 3600.0,
         logger=None,
     ) -> None:
@@ -49,6 +51,8 @@ class TaskCleanupService(object):
         self._get_workspace_manager = provider_for(workspace_manager)
         self._get_implementation_service = provider_for(implementation_service)
         self._get_state_registry = provider_for(state_registry)
+        self._get_live_plan_task_codes = provider_for(live_plan_task_codes)
+        self._get_done_watcher = provider_for(done_watcher)
         self._get_review_ttl = provider_for(review_workspace_ttl_seconds)
         self._logger_getter = provider_for(
             logger if logger is not None else configure_logger('TaskCleanupService'),
@@ -167,10 +171,26 @@ class TaskCleanupService(object):
             )
             return
 
-        # All three id sources (platform / session records / workspace
-        # folders) get normalized to a common case before comparison —
+        # The task codes a live plan owns are wanted whatever the tracker says
+        # about their assignee: the queue holds a step UNASSIGNED until its turn
+        # and a handed-back one is unassigned too, and the task a plan was split
+        # from is usually not the bot's any more. To a check that reads only
+        # assignees all of them look finished — and one was marked done while
+        # its plan was live, so its tab greyed and its card sat in Waiting.
+        try:
+            plan_norm = self._live_plan_codes()
+        except Exception:
+            self.logger.warning(
+                'failed to read the task codes of the live plans; '
+                'leaving planning sessions in place this cycle'
+            )
+            return
+
+        # All the id sources (platform / session records / workspace
+        # folders / plans) get normalized to a common case before comparison —
         # see ``normalized_lower_text``.
-        live_norm = assigned_norm | current_review_norm
+        live_norm = assigned_norm | current_review_norm | plan_norm
+        self._tell_done_watcher(live_norm)
         # A task the operator DELETED is not "stale work to tidy up" — it
         # is gone. Touching it again, or narrating it every scan, is the
         # system refusing to accept an instruction it was already given.
@@ -190,6 +210,27 @@ class TaskCleanupService(object):
                     'must use the explicit DELETE endpoint)',
                     task_id,
                 )
+
+    def _tell_done_watcher(self, live_norm: set[str]) -> None:
+        """Hand this sweep's live list to whoever watches for tickets closed in
+        the tracker (the release notes). A task that LEFT the list may be done —
+        the watcher asks the tracker; this service only reports what it saw."""
+        watcher = self._get_done_watcher()
+        if watcher is None:
+            return
+        try:
+            workspace_ids = {
+                normalized_lower_text(record.task_id): record.task_id
+                for record in self.list_workspaces()
+            }
+            watcher.observe(live_norm, workspace_ids)
+        except Exception:
+            self.logger.exception('could not hand the sweep to the done watcher')
+
+    def _live_plan_codes(self) -> set[str]:
+        """Task codes of the live plans (none when plans are not wired)."""
+        codes = self._get_live_plan_task_codes()
+        return {normalized_lower_text(code) for code in codes or ()}
 
     def _stale_planning_task_ids(self, live_norm: set[str]) -> set[str]:
         """Task ids known to either manager that aren't live anymore.

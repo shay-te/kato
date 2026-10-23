@@ -3,6 +3,7 @@ import os
 from unittest.mock import ANY, Mock, patch
 
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
+from kato_core_lib.data_layers.service.release_notes_done_watcher import ReleaseNotesDoneWatcher
 
 from kato_core_lib.kato_core_lib import KatoCoreLib
 from kato_core_lib.data_layers.data.fields import (
@@ -272,7 +273,13 @@ class KatoCoreLibTests(unittest.TestCase):
             self.cfg.kato.youtrack,
             mock_task_da_cls.return_value,
             ANY,
+            done_observer=ANY,
         )
+        # Every route to done is announced to the release notes, looked up
+        # when it happens (the service is built after the state service).
+        observer = mock_task_state_service_cls.call_args.kwargs['done_observer']
+        self.assertIs(observer(), app.release_notes_service)
+        self.assertIsNotNone(app.release_notes_service)
         # Both route local tasks to the SAME store, kept under ~/.kato
         # (here the tests' isolated home).
         local_tasks = mock_task_service_cls.call_args.args[2]
@@ -310,6 +317,10 @@ class KatoCoreLibTests(unittest.TestCase):
             triage_service=ANY,
             review_workspace_ttl_seconds=ANY,
             lessons_service=ANY,
+            release_notes_watcher=ANY,
+        )
+        self.assertIsInstance(
+            mock_service_cls.call_args.kwargs['release_notes_watcher'], ReleaseNotesDoneWatcher,
         )
         mock_service_cls.return_value.validate_connections.assert_called_once_with()
         self.assertIs(app.service, mock_service_cls.return_value)

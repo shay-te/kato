@@ -56,9 +56,10 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
     setDirty(true);
   }
 
-  function addRepository(repo) {
-    setAdded((current) => (current.includes(repo.id) ? current : [...current, repo.id]));
-    setSteps((current) => withRepoEverywhere(current, repo.id, true));
+  function addRepositories(repos) {
+    const ids = repos.map((repo) => repo.id);
+    setAdded((current) => [...current, ...ids.filter((id) => !current.includes(id))]);
+    setSteps((current) => ids.reduce((steps, id) => withRepoEverywhere(steps, id, true), current));
     setDirty(true);
     setPicking(false);
   }
@@ -126,14 +127,14 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
         <RepositoryPickerModal
           ariaLabel="Add a repository to every task"
           title={<>Add a repository to every task of {plan.source_task_id}</>}
-          helpText="Pick one of the repositories kato knows under your repository folder. Every task of this
-            split will work in it too — handy for a shared library they all build on. You can still take it out
-            of a single task by opening that task."
+          helpText="Pick one or more of the repositories kato knows under your repository folder. Every task of
+            this split will work in them too — handy for shared libraries they all build on. You can still take
+            one out of a single task by opening that task."
           alreadyAttachedIds={new Set(repositories)}
           allAttachedText="Every repository kato knows is already in this split."
           confirmLabel="Add to every task"
           busyLabel="Adding…"
-          onPick={addRepository}
+          onPick={addRepositories}
           onClose={() => setPicking(false)}
         />
       ) : null}

@@ -87,6 +87,15 @@ from kato_core_lib.validation.startup_dependency_validator import (
 )
 from kato_core_lib.errors import AgentBackendChangedError
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path, kato_session_state_dir
+from kato_core_lib.helpers.late_binding import later
+from kato_core_lib.helpers.release_notes_settings_utils import release_notes_enabled
+from kato_core_lib.data_layers.service.plan_queue.pull_request_probe import KatoPullRequestProbe
+from kato_core_lib.data_layers.service.release_note_links import ReleaseNoteLinks
+from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
+from kato_core_lib.data_layers.service.release_note_writer import ReleaseNoteWriter
+from kato_core_lib.data_layers.service.release_notes_done_watcher import ReleaseNotesDoneWatcher
+from kato_core_lib.data_layers.service.release_notes_google_sync import ReleaseNotesGoogleSync
+from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
@@ -219,6 +228,10 @@ class KatoCoreLib(CoreLib):
         # can receive a real runner instead of None. The runner is
         # always installed — empty config produces a silent no-op.
         self.hooks_config, self.hook_runner = self._load_hooks(self.logger)
+        # Built with the agent service; None in setup mode, where no task can
+        # finish (the webserver's release-notes routes answer "not wired").
+        self.release_notes_service = None
+        self.release_notes_google_sync = None
         # SETUP MODE: kato is not configured (missing issue-platform creds).
         # Bring up ONLY the backend-agnostic managers the planning UI needs —
         # no ticket-driven service, no connection validation — so the webserver
@@ -500,6 +513,8 @@ class KatoCoreLib(CoreLib):
         task_service = LocalAwareTaskService(ticket_cfg, task_data_access, local_tasks)
         task_state_service = LocalAwareTaskStateService(
             ticket_cfg, task_data_access, local_tasks,
+            # Every route to done announces itself here — the release notes.
+            done_observer=later(self, 'release_notes_service'),
         )
         if self.planning_session_runner is not None:
             # A fresh chat's first turn names the ticket's screenshots too.
@@ -516,6 +531,9 @@ class KatoCoreLib(CoreLib):
         # call so a replaced workspace manager is the one consulted.
         repository_service.attach_kato_task_tags(
             lambda task_id: self._kato_tags_for_task(task_id),
+        )
+        self.release_notes_service = self._build_release_notes_service(
+            open_cfg, task_service, repository_service,
         )
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does
@@ -677,6 +695,9 @@ class KatoCoreLib(CoreLib):
                 getattr(open_cfg, 'review_workspace_ttl_seconds', 3600)
             ),
             lessons_service=self.lessons_service,
+            release_notes_watcher=self._build_release_notes_watcher(
+                task_service, task_state_service, local_tasks,
+            ),
         )
 
 
@@ -876,24 +897,7 @@ class KatoCoreLib(CoreLib):
         lessons_path = resolve_and_sync_lessons_path(claude_cfg)
         state_dir = lessons_path.parent
         data_access = LessonsDataAccess(state_dir)
-        binary = ''
-        model = ''
-        if claude_cfg is not None:
-            binary = str(getattr(claude_cfg, 'binary', '') or '').strip() or 'claude'
-            model = str(getattr(claude_cfg, 'model', '') or '').strip()
-        else:
-            binary = 'claude'
-        # Run the lessons one-shot in an isolated scratch dir so its
-        # throwaway ``claude -p`` transcripts don't pollute the cwd kato's
-        # own process runs in (the operator's interactive Claude history).
-        lesson_cwd = lesson_extraction_cwd()
-        try:
-            lesson_cwd.mkdir(parents=True, exist_ok=True)
-            cwd = str(lesson_cwd)
-        except OSError:
-            # Best-effort: an uncreatable scratch dir degrades to kato's own
-            # cwd (the one-shot still runs; its transcript just lands there).
-            cwd = ''
+        binary, model, cwd = self._claude_one_shot_settings(open_cfg)
         # Extraction is one prompt in, one line out: the shared one-shot
         # budget is enough for it.
         llm_one_shot = make_one_shot(binary=binary, model=model, cwd=cwd)
@@ -911,6 +915,66 @@ class KatoCoreLib(CoreLib):
         self._bring_lessons_document_up_to_date(service)
         self._point_lessons_gate_at(lessons_path)
         return service
+
+    @staticmethod
+    def _claude_one_shot_settings(open_cfg: DictConfig) -> tuple[str, str, str]:
+        """``(binary, model, cwd)`` for kato's own short ``claude -p`` calls.
+
+        ``KATO_CLAUDE_BINARY`` / ``KATO_CLAUDE_MODEL`` so they reuse the
+        operator-configured Claude install. They run in an isolated scratch
+        dir so their throwaway transcripts don't pollute the cwd kato's own
+        process runs in (the operator's interactive Claude history); an
+        uncreatable scratch dir degrades to kato's own cwd (the call still
+        runs; its transcript just lands there).
+        """
+        claude_cfg = getattr(open_cfg, 'claude', None)
+        binary = str(getattr(claude_cfg, 'binary', '') or '').strip() or 'claude'
+        model = str(getattr(claude_cfg, 'model', '') or '').strip()
+        scratch = lesson_extraction_cwd()
+        try:
+            scratch.mkdir(parents=True, exist_ok=True)
+            cwd = str(scratch)
+        except OSError:
+            cwd = ''
+        return binary, model, cwd
+
+    def _build_release_notes_service(self, open_cfg: DictConfig, task_service, repository_service):
+        """The release notes: a dated line per task that reaches Done.
+
+        Built from single-purpose parts (see ``ReleaseNotesService``). Its
+        settings are read fresh on every write, so the Settings drawer changes
+        them without a restart. The Google Doc copy follows each write when
+        that destination is chosen.
+        """
+        binary, model, cwd = self._claude_one_shot_settings(open_cfg)
+        google_sync = ReleaseNotesGoogleSync()
+        self.release_notes_google_sync = google_sync
+        return ReleaseNotesService(
+            sources=ReleaseNoteSources(
+                workspace_manager=later(self, 'workspace_manager'), task_service=task_service,
+            ),
+            writer=ReleaseNoteWriter(one_shot=make_one_shot(binary=binary, model=model, cwd=cwd)),
+            links=ReleaseNoteLinks(
+                pull_requests=KatoPullRequestProbe(repository_service=repository_service).pull_requests,
+            ),
+            after_write=google_sync.request,
+        )
+
+    def _build_release_notes_watcher(self, task_service, task_state_service, local_tasks):
+        """Notices tickets closed in the tracker and adds them to the release notes."""
+        from kato_core_lib.helpers.forgotten_tasks_store import is_forgotten
+
+        return ReleaseNotesDoneWatcher(
+            task_service=task_service,
+            task_state_service=task_state_service,
+            on_done=lambda task_id: self.release_notes_service.task_done(task_id),
+            state_path=kato_home_path(
+                'release_notes_watch.json', env_key='KATO_RELEASE_NOTES_WATCH_PATH',
+            ),
+            is_local=local_tasks.owns,
+            is_forgotten=is_forgotten,
+            enabled=release_notes_enabled,
+        )
 
     @staticmethod
     def _bring_lessons_document_up_to_date(service: LessonsService) -> None:

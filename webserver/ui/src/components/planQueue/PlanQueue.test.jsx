@@ -474,6 +474,31 @@ describe('PlanQueueView — the proposal', () => {
     expect(added).toEqual(['core-lib']);
   });
 
+  test('Add repository takes several at once and puts every one in every task', async () => {
+    serve(plan());
+    editPlanQueueSteps.mockReturnValue(ok(plan()));
+    fetchInventoryRepositories.mockResolvedValue({ ok: true, body: { repositories: [
+      { id: 'api', repo_slug: 'api' }, { id: 'core-lib', repo_slug: 'core-lib' }, { id: 'event-lib', repo_slug: 'event-lib' },
+    ] } });
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add repository' }));
+    fireEvent.click(await screen.findByText('core-lib', { selector: '.adopt-session-cwd' }));
+    fireEvent.click(screen.getByText('event-lib', { selector: '.adopt-session-cwd' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to every task (2)' }));
+
+    const every = within(screen.getByRole('group', { name: 'Every task works in' }));
+    expect(every.getByRole('button', { name: 'core-lib' })).toHaveAttribute('aria-pressed', 'true');
+    expect(every.getByRole('button', { name: 'event-lib' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const [, saved, added] = editPlanQueueSteps.mock.calls[0];
+    expect(saved.map((step) => step.repositories)).toEqual([
+      ['api', 'core-lib', 'event-lib'], ['web', 'core-lib', 'event-lib'],
+    ]);
+    expect(added).toEqual(['core-lib', 'event-lib']);
+  });
+
   test('revise sends the feedback, and needs some', async () => {
     serve(plan());
     revisePlanQueue.mockReturnValue(ok(plan({ status: 'proposing', steps: [] })));
@@ -608,6 +633,27 @@ describe('PlanQueueView — the board', () => {
 
     expect(onOpenTask).toHaveBeenCalledWith('T-2');
     expect((await column('Waiting')).getByText('ready').tagName).toBe('CODE');
+  });
+
+  test('a task handed back sits in Waiting and says Run is needed while the plan is paused', async () => {
+    // The restart paused the plan, and the server's note for a handed-back task is
+    // "it will be retried" — which does not happen until Run is pressed.
+    const handedBack = step('back', {
+      status: 'ready', task_id: 'T-9', released_at: 10,
+      reason: 'not handed over yet; it will be retried',
+    });
+    serve(plan({ status: 'paused', reason: 'kato restarted — press Run to carry on', steps: [handedBack] }));
+    const view = render(<PlanQueueView taskId="UNA-1" />);
+
+    const waiting = await column('Waiting');
+    expect(waiting.getByText('paused — press Run to hand it over again')).toBeInTheDocument();
+    expect(waiting.queryByText(/will be retried/)).toBeNull();
+    view.unmount();
+
+    // Running, the server's own words are the true ones.
+    serve(plan({ status: 'running', steps: [handedBack] }));
+    render(<PlanQueueView taskId="UNA-1" />);
+    expect((await column('Waiting')).getByText('not handed over yet; it will be retried')).toBeInTheDocument();
   });
 
   test('a running plan can be paused or stopped — Stop asks first', async () => {

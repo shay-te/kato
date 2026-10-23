@@ -218,8 +218,10 @@ class LocalAwareTaskService(TaskService):
 
 class LocalAwareTaskStateService(TaskStateService):
 
-    def __init__(self, config, task_data_access, local_tasks: LocalTaskStore) -> None:
-        super().__init__(config, task_data_access)
+    def __init__(
+        self, config, task_data_access, local_tasks: LocalTaskStore, *, done_observer=None,
+    ) -> None:
+        super().__init__(config, task_data_access, done_observer=done_observer)
         self._local_tasks = local_tasks
 
     def move_task_to_in_progress(self, issue_id: str) -> None:
@@ -230,9 +232,10 @@ class LocalAwareTaskStateService(TaskStateService):
         if not self._move_local(issue_id, LocalTaskState.REVIEW):
             super().move_task_to_review(issue_id)
 
-    def move_task_to_done(self, issue_id: str) -> None:
+    def _move_to_done(self, issue_id: str) -> None:
+        # Only HOW it moves; ``move_task_to_done`` announces it for both kinds.
         if not self._move_local(issue_id, LocalTaskState.DONE):
-            super().move_task_to_done(issue_id)
+            super()._move_to_done(issue_id)
 
     def move_task_to_open(self, issue_id: str) -> None:
         if not self._move_local(issue_id, LocalTaskState.OPEN):

@@ -153,7 +153,7 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText(/R2-1 still found after 2 fixes/)).toBeInTheDocument();
   });
 
-  test('a finished round shows how long it took; the running one does not', async () => {
+  test('a finished round shows how long it took; the running one its ticking clock', async () => {
     kato.loop = {
       ...summary(),
       rounds: [
@@ -166,7 +166,52 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     const first = container.querySelector('[data-round="1"] .review-loop-round-duration');
     expect(first).toHaveTextContent('6m 21s');
     expect(first).toHaveAttribute('title', 'Round 1 took 6m 21s — review 4m 12s · fix 2m 0s');
-    expect(container.querySelector('[data-round="2"] .review-loop-round-duration')).toBeNull();
+    expect(first).not.toHaveClass('is-live');
+    // The round in progress shows how long it has been running, like the tracker.
+    const live = container.querySelector('[data-round="2"] .review-loop-round-duration');
+    expect(live).toHaveClass('is-live');
+    expect(live.textContent).toMatch(/^1m \d+s$/);
+    expect(live).toHaveAttribute('title', expect.stringMatching(/^Round 2 has been running for 1m \d+s$/));
+  });
+
+  test('a last-round blocking finding says it was not sent, why, and what to do', async () => {
+    const ended = summary({ status: 'max_rounds', phase: 'done' });
+    kato.loop = { ...ended, rounds: [round(1, { outcome: 'max_rounds', sent_at: 0, fixed_at: 0 })] };
+    const { container } = render(<ReviewLoopPane session={session(ended)} onClose={() => {}} />);
+    await screen.findByText('Round 1');
+    // Collapsed, the round already says it.
+    expect(container.querySelector('[data-round="1"] .review-loop-round-outcome'))
+      .toHaveTextContent('last round — not sent');
+    fireEvent.click(screen.getByText('Round 1'));
+    await screen.findByText('bug in round 1');
+    expect(screen.getByText('Blocking — not sent to the chat')).toBeInTheDocument();
+    const status = container.querySelector('.review-loop-decision');
+    expect(status).toHaveClass('is-warn');
+    expect(status).toHaveTextContent('Not sent');
+    expect(status).toHaveTextContent('fix it in the chat yourself, or run the loop again with more rounds');
+  });
+
+  test('a blocking finding sent to the chat of a running loop shows it is in progress', async () => {
+    kato.loop = { ...summary(), rounds: [round(1, { outcome: '', sent_at: NOW - 30, fixed_at: 0 })] };
+    const { container } = render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    await screen.findByText('Round 1');
+    fireEvent.click(screen.getByText('Round 1'));
+    await screen.findByText('bug in round 1');
+    const status = container.querySelector('.review-loop-decision');
+    expect(status).toHaveClass('is-busy');
+    expect(status).toHaveTextContent('In progress');
+    expect(status).toHaveTextContent('sent to the chat — waiting for its fix');
+  });
+
+  test('a round a stopped loop left unfinished shows no clock', async () => {
+    const stopped = summary({ status: 'stopped', phase: 'done' });
+    kato.loop = {
+      ...stopped,
+      rounds: [round(1, { outcome: '', sent_at: 0, reviewed_at: 0, fixed_at: 0, started_at: NOW - 60 })],
+    };
+    const { container } = render(<ReviewLoopPane session={session(stopped)} onClose={() => {}} />);
+    await screen.findByText('Round 1');
+    expect(container.querySelector('[data-round="1"] .review-loop-round-duration')).toBeNull();
   });
 
   test('every round starts collapsed; opened, blocking and reported-only findings are apart', async () => {
@@ -185,6 +230,25 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText('Blocking — sent to the chat to fix')).toBeInTheDocument();
     expect(screen.getByText('Not blocking — reported only')).toBeInTheDocument();
     expect(screen.getByText('api/app.py:7 (run)')).toBeInTheDocument();
+  });
+
+  test('a collapsed round colours each count like the open round colours its badges', async () => {
+    kato.loop = {
+      ...summary(),
+      rounds: [round(1), round(2, { counts: { BLOCKER: 1, MAJOR: 1, MINOR: 7, NIT: 2, SETTLED: 1 } })],
+    };
+    const { container } = render(<ReviewLoopPane session={session(summary())} onClose={() => {}} />);
+    await screen.findByText('Round 2');
+    const [first, second] = container.querySelectorAll('.review-loop-round-counts');
+    // Only MAJOR blocking: MAJOR's colour. A BLOCKER among them: BLOCKER's.
+    expect(first.querySelector('.review-loop-count.is-major')).toHaveTextContent('1 blocking');
+    expect(first.querySelector('.review-loop-count.is-nit')).toHaveTextContent('1 nit');
+    expect(second.querySelector('.review-loop-count.is-blocker')).toHaveTextContent('2 blocking');
+    expect(second.querySelector('.review-loop-count.is-minor')).toHaveTextContent('7 minor');
+    expect(second.textContent).toBe('2 blocking · 7 minor · 2 nit · 1 settled');
+    // Opened, the finding's badge has the same severity class as its count.
+    fireEvent.click(screen.getByText('Round 1'));
+    expect(container.querySelector('.review-loop-severity.is-major')).toBeInTheDocument();
   });
 
   test('each sent finding shows what the chat decided, and settled repeats stand apart', async () => {

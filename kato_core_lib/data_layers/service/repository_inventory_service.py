@@ -165,7 +165,7 @@ class RepositoryInventoryService(Service):
     def resolve_task_repositories(self, task) -> list[object]:
         planned_repositories = self._repositories_from_plan_footer(task)
         if planned_repositories:
-            return planned_repositories
+            return self._with_repositories_added_here(task, planned_repositories)
         tagged_repositories = self._repositories_from_task_tags(task)
         if tagged_repositories:
             return tagged_repositories
@@ -184,6 +184,34 @@ class RepositoryInventoryService(Service):
         if len(repositories) == 1:
             return [repositories[0]]
         raise ValueError(f'no configured repository matched task {task.id}')
+
+    def _with_repositories_added_here(self, task, planned: list[object]) -> list[object]:
+        """The footer's repositories plus the ones the operator added from kato.
+
+        A plan sub-task works where its footer says, and the footer outranks the
+        TRACKER's tags: another kato may not see those or may name them
+        differently. A repository the operator added to this task from THIS kato
+        ("+ Add repository", recorded in the workspace metadata) is a different
+        thing — a deliberate, local choice made after the footer was written.
+        Ignoring it left the add silently doing nothing: the tag was saved, no
+        clone followed, and the toast said "already cloned".
+        """
+        repositories = list(planned)
+        known = {str(getattr(repository, 'id', '') or '') for repository in repositories}
+        for repository_tag in self._kato_repository_tags(task):
+            repository = self._resolve_repository_for_tag(repository_tag)
+            if repository is None:
+                self.logger.warning(
+                    'task %s: the repository %s added from kato matches nothing in the '
+                    'inventory, so it is left out',
+                    getattr(task, 'id', ''), repository_tag,
+                )
+                continue
+            repo_id = str(getattr(repository, 'id', '') or '')
+            if repo_id not in known:
+                known.add(repo_id)
+                repositories.append(repository)
+        return repositories
 
     def _repositories_from_plan_footer(self, task) -> list[object]:
         """A plan's sub-task names where it works in its own description (by

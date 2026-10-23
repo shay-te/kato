@@ -2,13 +2,16 @@ import Icon from '../Icon.jsx';
 
 // One collapsible row of the review loop view — a round, or one of the main
 // chat's self-check turns. The header always shows what it is, what it found,
-// how long it took (once finished) and its outcome; open, it shows ``children``.
+// how long it took (or, while it runs, its running clock) and its outcome;
+// open, it shows ``children``.
 export default function ReviewLoopRow({
   className, name, tag = null, summary, timing = null, outcome, expanded, onToggle, children, ...rest
 }) {
   const chevron = expanded ? 'chevron-down' : 'chevron-right';
   const duration = timing ? (
-    <span className="review-loop-round-duration" title={timing.title}>{timing.text}</span>
+    <span className={`review-loop-round-duration${timing.live ? ' is-live' : ''}`} title={timing.title}>
+      {timing.text}
+    </span>
   ) : null;
   const body = expanded ? <div className="review-loop-round-body">{children}</div> : null;
   return (

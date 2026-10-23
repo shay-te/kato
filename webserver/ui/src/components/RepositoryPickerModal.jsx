@@ -4,11 +4,12 @@ import { apiErrorMessage } from '../utils/apiError.js';
 import { usePickerData } from '../hooks/usePickerData.js';
 import SearchPickerModal from './SearchPickerModal.jsx';
 
-// Pick one repository from kato's inventory — every repo kato knows under the
-// repository root (the dev folder). Searchable by id, owner or slug; the ones
-// already chosen are left out. What picking does is the caller's
-// (``onPick(repo)``): the Files tab adds it to the task, the plan split adds
-// it to every task of the split.
+// Pick one or more repositories from kato's inventory — every repo kato knows
+// under the repository root (the dev folder). Searchable by id, owner or slug;
+// the ones already chosen are left out. The ticks survive the search: filter,
+// tick, filter again, tick more. What picking does is the caller's
+// (``onPick(repos)``, the array in the order ticked): the Files tab adds them to
+// the task, the plan split adds them to every task of the split.
 export default function RepositoryPickerModal({
   ariaLabel,
   title,
@@ -60,6 +61,7 @@ export default function RepositoryPickerModal({
       confirmLabel={confirmLabel}
       busyLabel={busyLabel}
       onConfirm={onPick}
+      multiple
       renderRow={(repo) => (
         <>
           <div className="adopt-session-row-top">

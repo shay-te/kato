@@ -85,7 +85,8 @@ export default function ReviewLoopPane({ session, onClose }) {
     <>
       <ReviewLoopTracker loop={summary} now={now} />
       <ReviewLoopSelfChecks key={`self:${loopKey}`} taskId={session?.task_id || ''} loop={detail} />
-      <ReviewLoopRoundList key={`rounds:${loopKey}`} taskId={session?.task_id || ''} loop={detail} />
+      <ReviewLoopRoundList key={`rounds:${loopKey}`} taskId={session?.task_id || ''} loop={detail}
+        now={running ? now : 0} running={running} />
     </>
   ) : (
     <p className="review-loop-pane-empty">{REVIEW_LOOP_EMPTY_TEXT}</p>

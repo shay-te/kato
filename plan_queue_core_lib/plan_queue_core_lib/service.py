@@ -243,6 +243,29 @@ class PlanQueueService(object):
                 }
         return live
 
+    def live_task_codes(self) -> set[str]:
+        """Every task code a live plan still owns, lower-cased: the task the
+        plan was split from, and the task of each step not yet done or
+        cancelled (a failed step keeps its ticket, so it stays).
+
+        The queue knows its tasks by CODE, whatever a tracker says about a
+        ticket's assignee. A host asking "is this task still wanted?" should
+        ask here too: a step held unassigned (that is how the queue holds one)
+        or handed back reads, to a check that only looks at assignees, exactly
+        like a ticket nobody wants any more."""
+        codes: set[str] = set()
+        for plan in self._registry.all():
+            if plan.status.is_terminal:
+                continue
+            codes.add(plan.source_task_id.strip().lower())
+            codes.update(
+                step.task_id.strip().lower()
+                for step in plan.steps
+                if step.task_id and not step.status.is_terminal
+            )
+        codes.discard('')
+        return codes
+
     # ----- proposing -----
 
     def propose(

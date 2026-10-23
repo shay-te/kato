@@ -36,6 +36,7 @@ import UiBuildBanner from './components/UiBuildBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
 import UsageDialog from './components/UsageDialog.jsx';
+import ReleaseNotesDialog from './components/ReleaseNotesDialog.jsx';
 import PlanQueueView from './components/planQueue/PlanQueueView.jsx';
 import { planQueueView } from './components/planQueue/planQueueViewStore.js';
 import TabList from './components/TabList.jsx';
@@ -631,6 +632,9 @@ export default function App() {
   const [usageOpen, setUsageOpen] = useState(false);
   const openUsage = useCallback(() => setUsageOpen(true), []);
   const closeUsage = useCallback(() => setUsageOpen(false), []);
+  const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
+  const openReleaseNotes = useCallback(() => setReleaseNotesOpen(true), []);
+  const closeReleaseNotes = useCallback(() => setReleaseNotesOpen(false), []);
 
   const pendingPermissions = usePendingPermissions();
   const activeSession = sessions.find((s) => s.task_id === activeTaskId) || null;
@@ -1202,8 +1206,10 @@ export default function App() {
         statusActive={orchestratorOpen}
         onOpenSettings={openSettings}
         onOpenUsage={openUsage}
+        onOpenReleaseNotes={openReleaseNotes}
       />
       {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
+      {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}
       <SettingsDrawer
         open={settingsOpen}
         onClose={closeSettings}

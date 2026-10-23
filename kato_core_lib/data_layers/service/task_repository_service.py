@@ -117,41 +117,65 @@ class TaskRepositoryService(object):
     def add_task_repository(
         self, task_id: str, repository_id: str,
     ) -> dict[str, object]:
-        """Tag the task with ``kato:repo:<id>`` and clone the repo.
+        """Add ONE repository to the task — ``add_task_repositories`` for a list of one.
 
-        Drives the Files-tab "+ Add repository" flow. Steps 1 and 2
-        run in order so a tag failure aborts cloning (the tag is what
-        makes the resolution durable across kato restarts):
+        Returns the single-repository shape (``repository_id``, ``tag_added``,
+        ``tag_name``, ``ticket_tag``, ``sync``), or the failure envelope when
+        nothing could be added.
+        """
+        result = self.add_task_repositories(task_id, [repository_id])
+        if 'repositories' not in result:
+            # The failure envelope, as it always was: ``rejected`` belongs to the batch reply.
+            return {key: value for key, value in result.items() if key != 'rejected'}
+        [entry] = result['repositories']
+        return {
+            'added': result['added'],
+            'task_id': result['task_id'],
+            'repository_id': entry['repository_id'],
+            'tag_added': entry['tag_added'],
+            'tag_name': entry['tag_name'],
+            'ticket_tag': entry['ticket_tag'],
+            'sync': result['sync'],
+        }
+
+    def add_task_repositories(
+        self, task_id: str, repository_ids,
+    ) -> dict[str, object]:
+        """Tag the task with ``kato:repo:<id>`` for each repository and clone them.
+
+        Drives the Files-tab "+ Add repository" flow, for one repository or
+        several. Tagging comes first for every repository, then ONE sync clones
+        what is missing — together, so several repositories clone in parallel
+        instead of one scan and one clone per pick:
 
           1. Record ``kato:repo:<id>`` on the task in KATO'S OWN store (the
              workspace metadata). This is the source of truth and does not
              depend on the issue tracker: the tracker may refuse a tag (YouTrack
              answered 400 to the first per-repo tag it was sent by name), and
              the add must not hinge on that. Repo resolution reads these tags
-             next to the tracker's. Idempotent: re-adding is a no-op.
-          2. ``sync_task_repositories(task_id)`` — provisions the
-             new repo's clone into the per-task workspace via the
-             same code path the operator's Sync icon uses, so a
-             single missing repo is treated identically to a fresh
-             multi-repo task.
-          3. Best effort: put the same tag on the TICKET in the issue tracker,
-             so the ticket shows the repo too. This can fail — the tracker may
+             next to the tracker's. Idempotent: re-adding is a no-op. A tag
+             failure aborts cloning for that repository (the tag is what makes
+             the resolution durable across kato restarts).
+          2. ``sync_task_repositories(task_id)`` — provisions the new clones
+             into the per-task workspace via the same code path the operator's
+             Sync icon uses.
+          3. Best effort: put the same tags on the TICKET in the issue tracker,
+             so the ticket shows the repos too. This can fail — the tracker may
              refuse the tag, be unreachable, or have no tags at all — and none
-             of that fails the add: the tag is already recorded in kato and the
-             repo cloned. What happened is reported as ``ticket_tag``.
+             of that fails the add: each outcome is reported as ``ticket_tag``.
 
-        Returns the sync result enriched with ``tag_added`` so the
-        UI toast can distinguish "already tagged, just cloned" from
-        "tagged AND cloned".
+        A repository that cannot be added (unknown to the inventory, tag not
+        recordable) is listed in ``rejected`` and does not stop the others. When
+        none can be added the failure envelope is returned instead.
         """
         normalized_task_id = str(task_id or '').strip()
-        normalized_repo_id = str(repository_id or '').strip()
         if not normalized_task_id:
             return failure(
                 'empty task id',
                 flag='added',
             )
-        if not normalized_repo_id:
+        wanted = self._unique_repository_ids(repository_ids)
+        if not wanted:
             return failure(
                 'empty repository id',
                 flag='added',
@@ -168,62 +192,155 @@ class TaskRepositoryService(object):
             }
         except Exception:
             inventory_ids = set()
-        if normalized_repo_id.lower() not in inventory_ids:
-            self.logger.error(
-                'add repository %s to task %s failed: not in the kato '
-                'inventory (known: %s)',
-                normalized_repo_id, normalized_task_id,
-                ', '.join(sorted(inventory_ids)) or '<none>',
-            )
-            return failure(
-                f'repository {normalized_repo_id!r} is not in the kato '
-                    f'inventory; add it to the kato config under '
-                    f'``repositories`` first',
-                flag='added',
-                task_id=normalized_task_id,
-                repository_id=normalized_repo_id,
-            )
-        self.logger.info(
-            'adding repository %s to task %s', normalized_repo_id, normalized_task_id,
-        )
         from kato_core_lib.helpers.kato_tag_utils import build_repository_tag
-        tag_name = build_repository_tag(normalized_repo_id)
-        try:
-            tag_added = self._record_task_tag(normalized_task_id, tag_name)
-        except Exception as exc:
-            self.logger.exception(
-                'failed to add tag %s to task %s', tag_name, normalized_task_id,
+        accepted: list[dict[str, object]] = []
+        rejected: list[dict[str, str]] = []
+        for repository_id in wanted:
+            if repository_id.lower() not in inventory_ids:
+                self.logger.error(
+                    'add repository %s to task %s failed: not in the kato '
+                    'inventory (known: %s)',
+                    repository_id, normalized_task_id,
+                    ', '.join(sorted(inventory_ids)) or '<none>',
+                )
+                rejected.append({
+                    'repository_id': repository_id,
+                    'error': (
+                        f'repository {repository_id!r} is not in the kato '
+                        f'inventory; add it to the kato config under '
+                        f'``repositories`` first'
+                    ),
+                })
+                continue
+            self.logger.info(
+                'adding repository %s to task %s', repository_id, normalized_task_id,
             )
+            tag_name = build_repository_tag(repository_id)
+            try:
+                tag_added = self._record_task_tag(normalized_task_id, tag_name)
+            except Exception as exc:
+                self.logger.exception(
+                    'failed to add tag %s to task %s', tag_name, normalized_task_id,
+                )
+                rejected.append({
+                    'repository_id': repository_id,
+                    'error': f'failed to tag task: {exc}',
+                })
+                continue
+            accepted.append({
+                'repository_id': repository_id,
+                'tag_name': tag_name,
+                'tag_added': tag_added,
+            })
+        if not accepted:
+            first = rejected[0]
             return failure(
-                f'failed to tag task: {exc}',
+                first['error'],
                 flag='added',
                 task_id=normalized_task_id,
-                repository_id=normalized_repo_id,
+                repository_id=first['repository_id'],
+                rejected=rejected,
             )
-        sync_result = self.sync_task_repositories(normalized_task_id)
+        accepted_ids = [str(entry['repository_id']) for entry in accepted]
+        sync_result = self._require_repositories_on_task(
+            self.sync_task_repositories(normalized_task_id), accepted_ids,
+        )
         if not sync_result.get('synced'):
             self.logger.error(
                 'add repository %s to task %s did not complete: %s',
-                normalized_repo_id, normalized_task_id,
+                ', '.join(accepted_ids), normalized_task_id,
                 sync_result.get('error')
                 or self._describe_repository_failures(sync_result)
                 or 'no repositories were added',
             )
         else:
             self.logger.info(
-                'added repository %s to task %s', normalized_repo_id,
+                'added repository %s to task %s', ', '.join(accepted_ids),
                 normalized_task_id,
             )
         # Compose the response so the UI can show one toast for the
-        # whole flow (tag + clone), not two.
+        # whole flow (tags + clones), not one per repository.
+        ticket_tags = self._mirror_tags_to_ticket(
+            normalized_task_id, [str(entry['tag_name']) for entry in accepted],
+        )
         return {
-            'added': bool(sync_result.get('synced')) or tag_added,
+            'added': bool(sync_result.get('synced')) or any(
+                entry['tag_added'] for entry in accepted
+            ),
             'task_id': normalized_task_id,
-            'repository_id': normalized_repo_id,
-            'tag_added': tag_added,
-            'tag_name': tag_name,
-            'ticket_tag': self._mirror_tag_to_ticket(normalized_task_id, tag_name),
+            'repositories': [
+                {**entry, 'ticket_tag': ticket_tags[index]}
+                for index, entry in enumerate(accepted)
+            ],
+            'rejected': rejected,
             'sync': sync_result,
+        }
+
+    @staticmethod
+    def _unique_repository_ids(repository_ids) -> list[str]:
+        """The ids as given, trimmed, blanks dropped, case-insensitive duplicates once."""
+        if isinstance(repository_ids, str):
+            repository_ids = [repository_ids]
+        seen: set[str] = set()
+        unique: list[str] = []
+        for raw in repository_ids or []:
+            repository_id = str(raw or '').strip()
+            if repository_id and repository_id.lower() not in seen:
+                seen.add(repository_id.lower())
+                unique.append(repository_id)
+        return unique
+
+    def _mirror_tags_to_ticket(self, task_id: str, tag_names: list[str]) -> list[dict[str, str]]:
+        """``_mirror_tag_to_ticket`` for each tag, concurrently when there are several.
+
+        Each one may wait up to the tracker deadline, so several in a row would
+        make the operator wait for the sum; the outcomes keep the tags' order.
+        """
+        if len(tag_names) <= 1:
+            return [self._mirror_tag_to_ticket(task_id, tag) for tag in tag_names]
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(4, len(tag_names))) as pool:
+            return list(pool.map(lambda tag: self._mirror_tag_to_ticket(task_id, tag), tag_names))
+
+    @staticmethod
+    def _require_repositories_on_task(sync_result: dict, repository_ids: list[str]) -> dict:
+        """A sync that does not name a repository is not an add of it.
+
+        The sync reports which repositories the task has (``added_repositories``
+        and ``already_present``). When it reports them and one just added is in
+        neither, nothing was cloned and nothing is there — the tag was saved but
+        resolution left the repository out. Saying "added" (or, as the toast
+        did, "already cloned") would be false, so each such repository is
+        reported as a failure the operator can read. A sync that reports no
+        lists says nothing either way.
+        """
+        if not sync_result.get('synced'):
+            return sync_result
+        added = sync_result.get('added_repositories')
+        present = sync_result.get('already_present')
+        if added is None and present is None:
+            return sync_result
+        on_task = {str(name).lower() for name in [*(added or []), *(present or [])]}
+        missing = [name for name in repository_ids if name.lower() not in on_task]
+        if not missing:
+            return sync_result
+        return {
+            **sync_result,
+            'synced': False,
+            'failed_repositories': [
+                *(sync_result.get('failed_repositories') or []),
+                *(
+                    {
+                        'repository_id': name,
+                        'error': (
+                            'the tag is saved, but this task\'s repository list still does not '
+                            'include it, so nothing was cloned'
+                        ),
+                    }
+                    for name in missing
+                ),
+            ],
         }
 
     def _mirror_tag_to_ticket(self, task_id: str, tag_name: str) -> dict[str, str]:

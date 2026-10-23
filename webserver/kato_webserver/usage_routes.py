@@ -13,6 +13,12 @@ A task's figure is the sum over ALL the Claude chats it has had — the current
 one plus each earlier one kept in ``previous_session_ids`` — because "what did
 this task cost" is not "what did its open tab cost".
 
+A task the operator deletes takes its transcripts with it, so before the delete
+its totals are kept (``snapshot_task_usage`` -> ``usage_history_store``,
+numbers only) and reported apart as ``deleted_tasks``. ``totals`` stays what
+exists now; ``totals_with_deleted`` adds the kept ones. Each task also carries
+``created_at``; its last use is ``usage.last_at``.
+
 Only Claude transcripts are read. A task that also has chats with another
 agent says so (``uncounted_backends``) rather than quietly reporting a total
 that leaves them out.
@@ -38,12 +44,16 @@ from claude_core_lib.claude_core_lib.helpers.transcript_usage import (
 )
 from claude_core_lib.claude_core_lib.session.history import find_session_file
 from kato_core_lib.helpers.model_label_utils import model_display_label
+from kato_core_lib.helpers.usage_history_store import deleted_task_usage, record_deleted_task_usage
 
 _CLAUDE = AgentBackend.CLAUDE.value
 
 
 def register_usage_routes(app: Flask, *, reader: TranscriptUsageReader | None = None) -> None:
     transcripts = reader or TranscriptUsageReader()
+    # The delete route reads a task's usage through the SAME reader, so the
+    # snapshot it keeps costs one cached read, not a second walk of the file.
+    app.config['USAGE_READER'] = transcripts
 
     @app.get('/api/usage')
     def get_usage():
@@ -52,12 +62,20 @@ def register_usage_routes(app: Flask, *, reader: TranscriptUsageReader | None = 
             app.config.get('WORKSPACE_MANAGER'),
             transcripts,
             logger=app.logger,
+            deleted=deleted_task_usage(),
         ))
 
 
 def collect_usage(session_manager, workspace_manager, reader: TranscriptUsageReader, *,
-                  logger=None) -> dict:
-    """Per-task token totals, biggest first, plus the grand total."""
+                  logger=None, deleted: list[dict] | None = None) -> dict:
+    """Per-task token totals, biggest first, plus the grand total.
+
+    ``deleted`` is what kato kept of tasks the operator has since deleted
+    (``usage_history_store``): their transcripts are gone, so these figures are
+    the only trace. They are reported APART from ``tasks`` — ``totals`` is
+    what exists now, ``totals_with_deleted`` adds them — so the page can offer
+    the history as a switch without ever mixing it into the live numbers.
+    """
     workspaces = _workspaces_by_task(workspace_manager, logger)
     sessions = _records_by_task(session_manager, logger)
 
@@ -66,45 +84,131 @@ def collect_usage(session_manager, workspace_manager, reader: TranscriptUsageRea
     uncounted: set[str] = set()
     claimed: set[str] = set()
     for key in sorted({*workspaces, *sessions}):
-        workspace = workspaces.get(key)
-        record = sessions.get(key)
-        # A transcript belongs to ONE task. The same file reachable from two
-        # (an adopted chat, ids that differ only in case) would be counted in
-        # both and inflate the grand total.
-        paths = [path for path in _claude_transcripts(record, workspace) if path not in claimed]
-        if not paths:
+        entry = _task_entry(workspaces.get(key), sessions.get(key), reader, claimed)
+        if entry is None:
             continue
-        claimed.update(paths)
-        usage = empty_usage()
-        for path in paths:
-            add_usage(usage, reader.read(path))
-        other_agents = _other_backends(record)
-        uncounted.update(other_agents)
-        add_usage(totals, usage)
-        _label_models(usage)
-        tasks.append({
-            'task_id': _first_text(
-                getattr(workspace, 'task_id', ''), getattr(record, 'task_id', ''),
-            ),
-            'summary': _first_text(
-                getattr(workspace, 'task_summary', ''), getattr(record, 'task_summary', ''),
-            ),
-            'status': _first_text(getattr(workspace, 'status', '')),
-            'chats': len(paths),
-            'uncounted_backends': other_agents,
-            'usage': usage,
-        })
+        uncounted.update(entry['uncounted_backends'])
+        add_usage(totals, entry['usage'])
+        tasks.append(entry)
     tasks.sort(key=lambda task: (-task['usage']['total'], task['task_id']))
+    deleted_tasks = [_kept_entry(entry) for entry in deleted or []]
+    deleted_tasks.sort(key=lambda task: (-task['usage']['total'], task['task_id']))
+    with_deleted = add_usage(empty_usage(), totals)
+    for entry in deleted_tasks:
+        add_usage(with_deleted, entry['usage'])
     _label_models(totals)
+    _label_models(with_deleted)
     return {
         'tasks': tasks,
+        'deleted_tasks': deleted_tasks,
         'totals': totals,
+        'totals_with_deleted': with_deleted,
         'uncounted_backends': sorted(uncounted),
         # The date of the rates behind every ``cost`` figure, so the page can
         # say how old the estimate's prices are.
         'pricing_as_of': PRICES_AS_OF,
-        'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'generated_at': _iso(time.time()),
     }
+
+
+def snapshot_task_usage(app: Flask, task_id: str) -> dict | None:
+    """What ``task_id`` has used so far, shaped to be kept after it is deleted.
+
+    Call BEFORE the delete: it reads the transcripts the delete removes.
+    ``None`` when the task used no tokens (nothing worth keeping) or the read
+    fails — keeping a figure is never worth failing the delete over.
+    """
+    try:
+        key = _key(task_id)
+        reader = app.config.get('USAGE_READER') or TranscriptUsageReader()
+        entry = _task_entry(
+            _workspaces_by_task(app.config.get('WORKSPACE_MANAGER'), app.logger).get(key),
+            _records_by_task(app.config.get('SESSION_MANAGER'), app.logger).get(key),
+            reader, set(),
+        )
+    except Exception:
+        app.logger.exception('usage: could not snapshot task %s before deleting it', task_id)
+        return None
+    if entry is None or entry['usage']['total'] <= 0:
+        return None
+    return {**entry, 'deleted_at': _iso(time.time())}
+
+
+def keep_deleted_task_usage(app: Flask, entry: dict) -> None:
+    """Persist a ``snapshot_task_usage`` result. Best effort, never raises."""
+    try:
+        record_deleted_task_usage(entry)
+    except Exception:
+        app.logger.exception('usage: could not keep the usage of deleted task %s', entry.get('task_id'))
+
+
+def _task_entry(workspace, record, reader: TranscriptUsageReader, claimed: set[str]) -> dict | None:
+    """One task's row — ``None`` when it owns no transcript not already counted."""
+    # A transcript belongs to ONE task. The same file reachable from two
+    # (an adopted chat, ids that differ only in case) would be counted in
+    # both and inflate the grand total.
+    paths = [path for path in _claude_transcripts(record, workspace) if path not in claimed]
+    if not paths:
+        return None
+    claimed.update(paths)
+    usage = empty_usage()
+    for path in paths:
+        add_usage(usage, reader.read(path))
+    _label_models(usage)
+    return {
+        'task_id': _first_text(getattr(workspace, 'task_id', ''), getattr(record, 'task_id', '')),
+        'summary': _first_text(
+            getattr(workspace, 'task_summary', ''), getattr(record, 'task_summary', ''),
+        ),
+        'status': _first_text(getattr(workspace, 'status', '')),
+        'created_at': _created_at(workspace, record, usage),
+        'chats': len(paths),
+        'uncounted_backends': _other_backends(record),
+        'usage': usage,
+    }
+
+
+def _kept_entry(entry: dict) -> dict:
+    """A kept snapshot read back from disk, made safe for the page.
+
+    The totals are rebuilt through ``add_usage`` so a hand-edited or older
+    file still yields every field the page reads; the models are named again
+    so a renamed label shows its current name, as for a live task.
+    """
+    usage = add_usage(empty_usage(), entry.get('usage') or {})
+    _label_models(usage)
+    return {
+        'task_id': str(entry.get('task_id') or '').strip(),
+        'summary': str(entry.get('summary') or '').strip(),
+        'status': str(entry.get('status') or '').strip(),
+        'created_at': str(entry.get('created_at') or '').strip(),
+        'deleted_at': str(entry.get('deleted_at') or '').strip(),
+        'chats': int(entry.get('chats') or 0),
+        'uncounted_backends': [str(name) for name in entry.get('uncounted_backends') or []],
+        'usage': usage,
+    }
+
+
+def _created_at(workspace, record, usage: dict) -> str:
+    """When the task was created: the earliest stamp kato kept, else its first turn."""
+    stamps = [
+        epoch for epoch in (
+            _epoch(getattr(workspace, 'created_at_epoch', 0)),
+            _epoch(getattr(record, 'created_at_epoch', 0)),
+        ) if epoch > 0
+    ]
+    return _iso(min(stamps)) if stamps else str(usage.get('first_at') or '')
+
+
+def _epoch(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _iso(epoch: float) -> str:
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(epoch))
 
 
 def _label_models(usage: dict) -> None:

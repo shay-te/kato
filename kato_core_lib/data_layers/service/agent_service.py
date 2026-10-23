@@ -138,6 +138,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         triage_service=None,
         review_workspace_ttl_seconds: float = 3600.0,
         lessons_service=None,
+        release_notes_watcher=None,
         logger: logging.Logger | None = None,
     ) -> None:
         self.logger = logger or configure_logger(self.__class__.__name__)
@@ -167,6 +168,8 @@ class AgentService(MissionStepLoggerMixin, Service):
             0.0, float(review_workspace_ttl_seconds or 0.0),
         )
         self._lessons_service = lessons_service
+        # Notices tickets closed in the tracker, once per cleanup sweep.
+        self._release_notes_watcher = release_notes_watcher
         # `kato:wait-before-git-push` plumbing. The dict stashes the
         # (task, prepared_task, execution) tuple after testing so the
         # operator-triggered ``approve_push`` can resume publish without
@@ -284,6 +287,8 @@ class AgentService(MissionStepLoggerMixin, Service):
             workspace_manager=later(self, '_workspace_manager'),
             implementation_service=later(self, '_implementation_service'),
             state_registry=later(self, '_state_registry'),
+            live_plan_task_codes=later(self, '_live_plan_task_codes'),
+            done_watcher=later(self, '_release_notes_watcher'),
             review_workspace_ttl_seconds=later(self, '_review_workspace_ttl_seconds'),
             logger=later(self, 'logger'),
         )
@@ -449,6 +454,12 @@ class AgentService(MissionStepLoggerMixin, Service):
     def review_loop_default_model(self) -> str:
         """The model a review runs on when the operator picks none."""
         return str(getattr(self._implementation_service, 'investigation_model', '') or '')
+
+    @property
+    def _live_plan_task_codes(self) -> set[str]:
+        """The task codes the plan queue still owns — see ``live_task_codes``."""
+        queue = getattr(self, '_plan_queue_service', None)
+        return queue.live_task_codes() if queue is not None else set()
 
     @property
     def plan_queue(self):

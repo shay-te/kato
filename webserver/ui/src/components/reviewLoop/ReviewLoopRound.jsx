@@ -1,9 +1,12 @@
+import { Fragment } from 'react';
 import { cx } from '../../utils/cx.js';
 import ReviewLoopArtifact from './ReviewLoopArtifact.jsx';
 import ReviewLoopRow from './ReviewLoopRow.jsx';
 import {
+  blockingSectionTitle,
+  countsParts,
   countsText,
-  findingDecision,
+  findingStatus,
   findingLocation,
   findingRepeatNote,
   isBlockingFinding,
@@ -16,12 +19,12 @@ import {
 // One round of the loop: what the review found, what the chat decided about
 // each finding it was sent (fixed + test, or rejected / out of scope + the
 // evidence), and the round's saved texts.
-export default function ReviewLoopRound({ taskId, loopId, round, expanded, onToggle }) {
+export default function ReviewLoopRound({ taskId, loopId, round, expanded, onToggle, now = 0, running = false }) {
   const blocking = round.findings.filter(isBlockingFinding);
   const settled = round.findings.filter((finding) => finding.settled_by);
   const others = round.findings.filter((finding) => !isBlockingFinding(finding) && !finding.settled_by);
-  const blockingTitle = round.sent_at ? 'Blocking — sent to the chat to fix' : 'Blocking';
-  const summary = round.reviewed_at ? countsText(round.counts) : 'not reviewed yet';
+  const blockingTitle = blockingSectionTitle(round, { running });
+  const summary = round.reviewed_at ? <RoundCounts counts={round.counts} /> : 'not reviewed yet';
   // A clean-room sweep: a reviewer told nothing of the fixes, confirming the
   // clean round before it.
   const sweepTag = round.sweep ? <span className="review-loop-round-tag">Clean-room</span> : null;
@@ -33,18 +36,31 @@ export default function ReviewLoopRound({ taskId, loopId, round, expanded, onTog
       name={`Round ${round.number}`}
       tag={sweepTag}
       summary={summary}
-      timing={roundTiming(round)}
+      timing={roundTiming(round, now)}
       outcome={roundOutcomeLabel(round)}
       expanded={expanded}
       onToggle={() => onToggle(round.number)}
     >
       <RoundTests runs={runs} />
-      <FindingList title={blockingTitle} findings={blocking} round={round} />
-      <FindingList title="Settled earlier — not sent again" findings={settled} round={round} />
-      <FindingList title="Not blocking — reported only" findings={others} round={round} />
+      <FindingList title={blockingTitle} findings={blocking} round={round} running={running} />
+      <FindingList title="Settled earlier — not sent again" findings={settled} round={round} running={running} />
+      <FindingList title="Not blocking — reported only" findings={others} round={round} running={running} />
       <RoundArtifacts taskId={taskId} loopId={loopId} round={round} />
     </ReviewLoopRow>
   );
+}
+
+// "2 blocking · 7 minor · 2 nit", each count in its severity's colour — the
+// same colours the open round gives its findings' badges.
+function RoundCounts({ counts }) {
+  const parts = countsParts(counts);
+  if (!parts.length) { return countsText(counts); }
+  return parts.map((part, index) => (
+    <Fragment key={part.key}>
+      {index ? ' · ' : null}
+      <span className={cx('review-loop-count', part.severity && `is-${part.severity}`)}>{part.text}</span>
+    </Fragment>
+  ));
 }
 
 // What the main chat reported each time it ran the tests on this round's
@@ -68,10 +84,11 @@ function RoundTestRun({ run, name }) {
   );
 }
 
-function FindingList({ title, findings, round }) {
+function FindingList({ title, findings, round, running }) {
   if (findings.length === 0) { return null; }
   const items = findings.map((finding, index) => (
-    <FindingItem key={finding.id || `${finding.file}:${finding.line}:${index}`} finding={finding} round={round} />
+    <FindingItem key={finding.id || `${finding.file}:${finding.line}:${index}`}
+      finding={finding} round={round} running={running} />
   ));
   return (
     <section className="review-loop-findings">
@@ -81,7 +98,7 @@ function FindingList({ title, findings, round }) {
   );
 }
 
-function FindingItem({ finding, round }) {
+function FindingItem({ finding, round, running }) {
   const id = finding.id ? <span className="review-loop-finding-id">{finding.id}</span> : null;
   const detail = finding.detail ? <p className="review-loop-finding-note">{finding.detail}</p> : null;
   const invariant = finding.invariant ? (
@@ -95,7 +112,7 @@ function FindingItem({ finding, round }) {
   ) : null;
   const repeatText = findingRepeatNote(finding);
   const repeat = repeatText ? <p className="review-loop-finding-note is-repeat">{repeatText}</p> : null;
-  const decision = findingDecision(round, finding);
+  const decision = findingStatus(round, finding, { running });
   const decisionLine = decision ? (
     <p className={cx('review-loop-decision', `is-${decision.tone}`)}>
       <b>{decision.label}</b>

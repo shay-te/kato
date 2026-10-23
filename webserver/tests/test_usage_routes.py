@@ -311,6 +311,249 @@ class UsageRoutesTests(unittest.TestCase):
         payload = self._collect(self._manager(), self._workspaces())
         self.assertEqual(payload['pricing_as_of'], PRICES_AS_OF)
 
+    # ----- when a task was created, and last used -----
+
+    def test_a_task_says_when_it_was_created_and_when_it_last_ran(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111',
+                         _turn('a', out=1, at='2026-10-02T10:00:00Z'),
+                         _turn('b', out=1, at='2026-10-05T10:00:00Z'))
+        # 2026-10-01T00:00:00Z
+        created = 1_790_812_800
+        payload = self._collect(
+            self._manager(AgentSessionRecord(
+                task_id='T1', agent_session_id='aaaa1111', created_at_epoch=created,
+            )),
+            self._workspaces(),
+        )
+        task = payload['tasks'][0]
+        self.assertEqual(task['created_at'], '2026-10-01T00:00:00Z')
+        self.assertEqual(task['usage']['last_at'], '2026-10-05T10:00:00Z')
+
+    def test_the_earliest_stamp_kato_kept_is_the_creation_date(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111', _turn('a', out=1))
+        payload = self._collect(
+            self._manager(AgentSessionRecord(
+                task_id='T1', agent_session_id='aaaa1111', created_at_epoch=1_790_900_000,
+            )),
+            self._workspaces({
+                'task_id': 'T1', 'task_summary': '', 'status': 'active',
+                'agent_session_id': 'aaaa1111', 'created_at_epoch': 1_790_812_800,
+            }),
+        )
+        self.assertEqual(payload['tasks'][0]['created_at'], '2026-10-01T00:00:00Z')
+
+    def test_with_no_creation_stamp_the_first_turn_stands_in(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111', _turn('a', out=1, at='2026-10-02T10:00:00Z'))
+        payload = self._collect(
+            self._manager(),
+            self._workspaces({
+                'task_id': 'T1', 'task_summary': '', 'status': 'active',
+                'agent_session_id': 'aaaa1111', 'created_at_epoch': 'garbage',
+            }),
+        )
+        self.assertEqual(payload['tasks'][0]['created_at'], '2026-10-02T10:00:00Z')
+
+    # ----- deleted tasks: kept as numbers, reported apart -----
+
+    @staticmethod
+    def _kept(task_id, *, out, read=0, summary='gone', deleted_at='2026-10-10T00:00:00Z'):
+        total = out + read
+        return {
+            'task_id': task_id, 'summary': summary, 'status': 'done', 'chats': 2,
+            'uncounted_backends': [], 'created_at': '2026-09-01T00:00:00Z',
+            'deleted_at': deleted_at,
+            'usage': {
+                'input': 0, 'output': out, 'cache_read': read, 'cache_write': 0,
+                'total': total, 'turns': 3, 'first_at': '2026-09-01T01:00:00Z',
+                'last_at': '2026-09-09T01:00:00Z',
+                'cost': {'output': 1.0, 'fresh': 0.0, 'cache_read': 0.5, 'total': 1.5},
+                'unpriced_models': [],
+                'models': {'claude-opus-5-5': {
+                    'input': 0, 'output': out, 'cache_read': read, 'cache_write': 0,
+                    'total': total, 'turns': 3, 'first_at': '2026-09-01T01:00:00Z',
+                    'last_at': '2026-09-09T01:00:00Z', 'priced': True,
+                    'cost': {'output': 1.0, 'fresh': 0.0, 'cache_read': 0.5, 'total': 1.5},
+                }},
+            },
+        }
+
+    def test_deleted_tasks_are_listed_apart_and_never_in_the_live_totals(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111', _turn('a', out=10, read=90))
+        payload = collect_usage(
+            self._manager(AgentSessionRecord(task_id='T1', agent_session_id='aaaa1111')),
+            self._workspaces(), TranscriptUsageReader(),
+            deleted=[self._kept('OLD-1', out=5, read=495), self._kept('OLD-2', out=700)],
+        )
+        self.assertEqual([t['task_id'] for t in payload['tasks']], ['T1'])
+        self.assertEqual(payload['totals']['total'], 100)
+        # Biggest first, like the live list.
+        self.assertEqual([t['task_id'] for t in payload['deleted_tasks']], ['OLD-2', 'OLD-1'])
+        self.assertEqual(payload['deleted_tasks'][0]['deleted_at'], '2026-10-10T00:00:00Z')
+        self.assertEqual(payload['totals_with_deleted']['total'], 100 + 500 + 700)
+        self.assertEqual(payload['totals_with_deleted']['turns'], 1 + 3 + 3)
+        # Their kept cost is part of the total with them, and only of that one.
+        live_cost = payload['totals']['cost']['total']
+        self.assertAlmostEqual(payload['totals_with_deleted']['cost']['total'], live_cost + 3.0)
+        self.assertLess(live_cost, 0.01)
+
+    def test_with_nothing_deleted_both_totals_agree(self) -> None:
+        self._transcript('-work-T1', 'aaaa1111', _turn('a', out=10))
+        payload = self._collect(
+            self._manager(AgentSessionRecord(task_id='T1', agent_session_id='aaaa1111')),
+            self._workspaces(),
+        )
+        self.assertEqual(payload['deleted_tasks'], [])
+        self.assertEqual(payload['totals_with_deleted'], payload['totals'])
+
+    def test_a_kept_task_is_named_again_when_it_is_read_back(self) -> None:
+        payload = collect_usage(
+            None, None, TranscriptUsageReader(), deleted=[self._kept('OLD-1', out=5)],
+        )
+        slot = payload['deleted_tasks'][0]['usage']['models']['claude-opus-5-5']
+        self.assertEqual(slot['label'], 'Opus 5.5')
+        self.assertEqual(payload['totals_with_deleted']['models']['claude-opus-5-5']['label'], 'Opus 5.5')
+
+    def test_a_damaged_kept_task_still_has_every_field_the_page_reads(self) -> None:
+        payload = collect_usage(
+            None, None, TranscriptUsageReader(),
+            deleted=[{'task_id': 'OLD-9', 'usage': {'output': 4, 'total': 4}}],
+        )
+        task = payload['deleted_tasks'][0]
+        self.assertEqual(task['usage']['output'], 4)
+        for field in ('input', 'cache_read', 'cache_write', 'turns'):
+            self.assertEqual(task['usage'][field], 0)
+        self.assertEqual(task['usage']['models'], {})
+        self.assertEqual((task['summary'], task['created_at'], task['deleted_at']), ('', '', ''))
+        self.assertEqual(task['chats'], 0)
+
+    def test_the_route_serves_what_was_kept(self) -> None:
+        history = Path(self._tmp.name) / 'usage_history.json'
+        history.write_text(json.dumps([self._kept('OLD-1', out=5)]), encoding='utf-8')
+        app = Flask(__name__)
+        register_usage_routes(app)
+        with patch.dict(os.environ, {'KATO_USAGE_HISTORY_PATH': str(history)}):
+            body = app.test_client().get('/api/usage').get_json()
+        self.assertEqual([t['task_id'] for t in body['deleted_tasks']], ['OLD-1'])
+        self.assertEqual(body['totals_with_deleted']['output'], 5)
+        self.assertEqual(body['totals']['output'], 0)
+
+
+class _Manager:
+    """A session manager whose delete removes the transcript, as the real one does."""
+
+    def __init__(self, record, transcript: Path, *, fail: bool = False) -> None:
+        self._records = [record]
+        self._transcript = transcript
+        self._fail = fail
+
+    def list_records(self):
+        return list(self._records)
+
+    def terminate_session(self, task_id, *, remove_record=False):
+        if self._fail:
+            raise RuntimeError('subprocess gone')
+        self._transcript.unlink()
+        self._records = []
+
+
+class DeletingATaskKeepsWhatItUsedTests(unittest.TestCase):
+    """The delete route, with real transcripts: the figures outlive the transcripts."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix='kato-usage-del-')
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.projects = root / 'projects'
+        (self.projects / '-work-T1').mkdir(parents=True)
+        self.transcript = self.projects / '-work-T1' / 'aaaa1111.jsonl'
+        self.transcript.write_text(
+            _turn('a', out=40, read=60, at='2026-10-02T10:00:00Z'), encoding='utf-8',
+        )
+        self.history = root / 'usage_history.json'
+        env = patch.dict(os.environ, {
+            'CLAUDE_SESSIONS_ROOT': str(self.projects),
+            'KATO_USAGE_HISTORY_PATH': str(self.history),
+            'KATO_FORGOTTEN_TASKS_PATH': str(root / 'forgotten.json'),
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        self.workspaces = MagicMock()
+        self.workspaces.list_workspaces.return_value = []
+        self.workspaces.workspace_path.return_value = root / 'no-such-workspace'
+
+    def _app(self, manager):
+        from kato_webserver.app import create_app
+        return create_app(session_manager=manager, workspace_manager=self.workspaces)
+
+    def _manager(self, **kwargs):
+        return _Manager(
+            AgentSessionRecord(
+                task_id='T1', task_summary='the task', agent_session_id='aaaa1111',
+                created_at_epoch=1_790_812_800,
+            ),
+            self.transcript, **kwargs,
+        )
+
+    def test_the_task_leaves_the_list_but_not_the_history(self) -> None:
+        client = self._app(self._manager()).test_client()
+
+        self.assertEqual(client.get('/api/usage').get_json()['tasks'][0]['task_id'], 'T1')
+        self.assertEqual(client.delete('/api/sessions/T1/workspace').status_code, 200)
+        body = client.get('/api/usage').get_json()
+
+        self.assertFalse(self.transcript.exists())
+        self.assertEqual(body['tasks'], [])
+        self.assertEqual(body['totals']['total'], 0)
+        [kept] = body['deleted_tasks']
+        self.assertEqual(kept['task_id'], 'T1')
+        self.assertEqual(kept['summary'], 'the task')
+        self.assertEqual(kept['created_at'], '2026-10-01T00:00:00Z')
+        self.assertTrue(kept['deleted_at'])
+        self.assertEqual(kept['usage']['total'], 100)
+        self.assertEqual(kept['usage']['last_at'], '2026-10-02T10:00:00Z')
+        self.assertEqual(body['totals_with_deleted']['total'], 100)
+
+    def test_only_numbers_are_kept_never_the_conversation(self) -> None:
+        self.transcript.write_text(
+            '{"type":"user","message":{"content":"my secret prompt"}}\n'
+            + _turn('a', out=1), encoding='utf-8',
+        )
+        self._app(self._manager()).test_client().delete('/api/sessions/T1/workspace')
+        self.assertNotIn('secret', self.history.read_text(encoding='utf-8'))
+
+    def test_a_delete_that_failed_to_remove_the_transcripts_keeps_nothing(self) -> None:
+        # The transcripts are still there, still counted under the live task;
+        # a kept copy as well would count the same tokens twice.
+        client = self._app(self._manager(fail=True)).test_client()
+
+        self.assertEqual(client.delete('/api/sessions/T1/workspace').status_code, 500)
+
+        self.assertFalse(self.history.exists())
+        body = client.get('/api/usage').get_json()
+        self.assertEqual(body['deleted_tasks'], [])
+        self.assertEqual(body['tasks'][0]['usage']['total'], 100)
+
+    def test_deleting_a_task_that_used_nothing_keeps_nothing(self) -> None:
+        self.transcript.write_text('', encoding='utf-8')
+        response = self._app(self._manager()).test_client().delete('/api/sessions/T1/workspace')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.history.exists())
+
+    def test_a_snapshot_that_cannot_be_read_never_stops_the_delete(self) -> None:
+        manager = self._manager()
+        manager.list_records = MagicMock(side_effect=RuntimeError('index locked'))
+        app = self._app(manager)
+        with self.assertLogs(app.logger, level='ERROR'):
+            response = app.test_client().delete('/api/sessions/T1/workspace')
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.history.exists())
+
+    def test_a_history_that_cannot_be_written_never_stops_the_delete(self) -> None:
+        with patch('kato_webserver.usage_routes.record_deleted_task_usage',
+                   side_effect=OSError('disk full')):
+            response = self._app(self._manager()).test_client().delete('/api/sessions/T1/workspace')
+        self.assertEqual(response.status_code, 200)
+
 
 if __name__ == '__main__':
     unittest.main()

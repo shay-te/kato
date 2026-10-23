@@ -4,10 +4,11 @@ import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
 import { useUsage } from '../hooks/useUsage.js';
 import { formatTokens } from '../utils/chatCost.js';
 import {
-  USAGE_SORTS, costLabel, formatCost, formatCount, formatSpan, formatWhen, hasCost,
-  hasModelSpans, modelChips, sortUsageTasks, unpricedLabels, usageBarPercent, usageCostParts,
-  usageModels, usageParts, usageShare,
+  USAGE_SORTS, costLabel, formatCost, formatCount, formatDay, formatSpan, formatWhen, hasCost,
+  hasModelSpans, modelChips, sortUsageTasks, taskCreatedDay, unpricedLabels, usageBarPercent,
+  usageCostParts, usageModels, usageParts, usageRowKey, usageShare, visibleUsage,
 } from '../utils/usage.js';
+import { useUsageShowDeleted, writeUsageShowDeleted } from '../utils/usageDeletedPref.js';
 import { backendLabel } from './AgentBackendChip.jsx';
 import ModalShell from './ModalShell.jsx';
 import { toggledSet } from '../utils/toggledSet.js';
@@ -25,6 +26,10 @@ import { toggledSet } from '../utils/toggledSet.js';
 // biggest task). What it is worth in dollars — priced on the server, per
 // message, per model — is in the details, where a model switch and the three
 // groups can be itemised.
+//
+// Deleting a task deletes its transcripts, so a deleted task is only the
+// totals kept at the moment it went. They are listed apart and shown only when
+// asked ("Include deleted tasks"), so the default is what exists now.
 export default function UsageDialog({ onClose }) {
   const { status, data, error, reload } = useUsage();
   const [sortId, setSortId] = useState(USAGE_SORTS[0].id);
@@ -33,7 +38,12 @@ export default function UsageDialog({ onClose }) {
   // A fast read never paints a loader: this only turns on if it is slow.
   const showLoader = useDelayedFlag(status === 'loading', 250);
 
-  const tasks = useMemo(() => sortUsageTasks(data?.tasks, sortId), [data, sortId]);
+  const showDeleted = useUsageShowDeleted();
+  const deletedCount = data?.deleted_tasks?.length || 0;
+  // With nothing deleted on record the switch has nothing to do, so it is off.
+  const includeDeleted = showDeleted && deletedCount > 0;
+  const shown = useMemo(() => visibleUsage(data, includeDeleted), [data, includeDeleted]);
+  const tasks = useMemo(() => sortUsageTasks(shown.tasks, sortId), [shown, sortId]);
   const maxTotal = useMemo(
     () => tasks.reduce((most, task) => Math.max(most, task.usage.total), 0),
     [tasks],
@@ -48,7 +58,13 @@ export default function UsageDialog({ onClose }) {
   return (
     <ModalShell ariaLabel="Token usage" title="Usage" extraClass="usage-dialog" onClose={onClose}>
       <div className="usage-body">
-        {data ? <UsageTotals totals={data.totals} taskCount={tasks.length} /> : null}
+        {data ? (
+          <UsageTotals
+            totals={shown.totals}
+            taskCount={tasks.length}
+            deletedCount={includeDeleted ? deletedCount : 0}
+          />
+        ) : null}
         {data && tasks.length > 0 ? (
           <p className="usage-caption">
             Each bar compares a task&apos;s tokens with the biggest task&apos;s — the longest bar.
@@ -57,14 +73,32 @@ export default function UsageDialog({ onClose }) {
         ) : null}
 
         <div className="usage-toolbar">
-          <label className="usage-sort">
-            <span>Sort by</span>
-            <select value={sortId} onChange={(event) => setSortId(event.target.value)}>
-              {USAGE_SORTS.map((sort) => (
-                <option key={sort.id} value={sort.id}>{sort.label}</option>
-              ))}
-            </select>
-          </label>
+          <div className="usage-toolbar-options">
+            <label className="usage-sort">
+              <span>Sort by</span>
+              <select value={sortId} onChange={(event) => setSortId(event.target.value)}>
+                {USAGE_SORTS.map((sort) => (
+                  <option key={sort.id} value={sort.id}>{sort.label}</option>
+                ))}
+              </select>
+            </label>
+            {data ? (
+              <label
+                className="usage-deleted-filter"
+                title={deletedCount > 0
+                  ? 'Tasks you deleted. Their conversations are gone; only their totals were kept.'
+                  : 'No deleted task is on record yet. From now on, deleting a task keeps its totals here.'}
+              >
+                <input
+                  type="checkbox"
+                  checked={includeDeleted}
+                  disabled={deletedCount === 0}
+                  onChange={(event) => writeUsageShowDeleted(event.target.checked)}
+                />
+                <span>Include deleted tasks ({deletedCount})</span>
+              </label>
+            ) : null}
+          </div>
           <button type="button" className="usage-refresh" onClick={reload} disabled={refreshing}>
             {refreshing ? 'Reading…' : 'Refresh'}
           </button>
@@ -79,18 +113,22 @@ export default function UsageDialog({ onClose }) {
           <p className="usage-note" role="status">Reading the agent transcripts…</p>
         ) : null}
         {data && tasks.length === 0 ? (
-          <p className="usage-note">No task has used any tokens yet.</p>
+          <p className="usage-note">
+            {deletedCount > 0
+              ? `No current task has used any tokens. Tick "Include deleted tasks" to see ${deletedCount} deleted.`
+              : 'No task has used any tokens yet.'}
+          </p>
         ) : null}
 
         <ul className="usage-list">
           {tasks.map((task) => (
             <UsageRow
-              key={task.task_id}
+              key={usageRowKey(task)}
               task={task}
               maxTotal={maxTotal}
-              grandTotal={data?.totals?.total || 0}
-              open={openIds.has(task.task_id)}
-              onToggle={() => toggle(task.task_id)}
+              grandTotal={shown.totals?.total || 0}
+              open={openIds.has(usageRowKey(task))}
+              onToggle={() => toggle(usageRowKey(task))}
             />
           ))}
         </ul>
@@ -104,6 +142,7 @@ export default function UsageDialog({ onClose }) {
             : ''}
           {data?.uncounted_backends?.length
             ? ` ${agentNames(data.uncounted_backends)} chats are not counted.` : ''}
+          {' Deleting a task erases its transcripts, so kato keeps only that task\'s totals — numbers, never the conversation — from the moment this was added; tasks deleted before then left nothing to count.'}
         </p>
       </div>
     </ModalShell>
@@ -115,9 +154,10 @@ function agentNames(backends) {
   return backends.map((backend) => backendLabel(backend) || backend).join(', ');
 }
 
-function UsageTotals({ totals, taskCount }) {
+function UsageTotals({ totals, taskCount, deletedCount }) {
   const parts = usageParts(totals);
-  const tasks = `${taskCount} task${taskCount === 1 ? '' : 's'}`;
+  const tasks = `${taskCount} task${taskCount === 1 ? '' : 's'}`
+    + (deletedCount > 0 ? ` (${deletedCount} deleted)` : '');
   return (
     <div className="usage-totals">
       <Tile
@@ -183,15 +223,18 @@ function UsageRow({ task, maxTotal, grandTotal, open, onToggle }) {
   const tokens = usageParts(usage);
   const percent = usageBarPercent(usage, maxTotal);
   const when = formatWhen(usage.last_at);
+  const created = taskCreatedDay(task);
+  const deleted = task.deleted_at ? formatDay(task.deleted_at) : '';
+  const rowKey = usageRowKey(task);
   const chips = modelChips(usage);
   const models = usageModels(usage);
   const unpriced = unpricedLabels(usage);
   const priced = hasCost(usage);
   const timed = hasModelSpans(models);
-  const bodyId = `usage-row-${task.task_id}`;
+  const bodyId = `usage-row-${rowKey}`;
 
   return (
-    <li className="usage-row">
+    <li className={`usage-row${deleted ? ' usage-row--deleted' : ''}`}>
       <button
         type="button"
         className="usage-row-head"
@@ -225,8 +268,14 @@ function UsageRow({ task, maxTotal, grandTotal, open, onToggle }) {
           <span>{formatTokens(tokens.fresh)} new input</span>
           <span>{formatTokens(tokens.cacheRead)} cache read</span>
           <span>{formatCount(usage.turns)} turns</span>
-          {task.status ? <span>{task.status}</span> : null}
-          {when ? <span>{when}</span> : null}
+          {deleted ? (
+            <span className="usage-row-deleted" title={`Deleted ${task.deleted_at}`}>
+              deleted {deleted}
+            </span>
+          ) : null}
+          {!deleted && task.status ? <span>{task.status}</span> : null}
+          {created ? <span title={task.created_at || usage.first_at}>created {created}</span> : null}
+          {when ? <span title={usage.last_at}>last used {when}</span> : null}
         </span>
       </button>
       {open ? (
@@ -275,6 +324,7 @@ function UsageRow({ task, maxTotal, grandTotal, open, onToggle }) {
           {task.chats ? (
             <p className="usage-note">
               {task.chats} chat{task.chats === 1 ? '' : 's'} counted
+              {deleted ? ` when the task was deleted (${deleted})` : ''}
               {task.uncounted_backends?.length
                 ? `; ${agentNames(task.uncounted_backends)} not counted` : ''}.
             </p>

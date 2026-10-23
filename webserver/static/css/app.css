@@ -9581,6 +9581,105 @@ body.kato-resizing {
   border-color: #f59e0b;
 }
 
+/* Checklist mode (the repository picker): a tick box leads each row, and the
+   picks stay listed above the list however the search narrows it. */
+.adopt-session-row[role=checkbox] {
+  position: relative;
+  padding-left: 32px;
+}
+
+.adopt-session-check {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #a3a3a3;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: #0a0a0a;
+}
+
+.adopt-session-row.is-selected .adopt-session-check {
+  background: #f59e0b;
+  border-color: #f59e0b;
+}
+
+.adopt-session-picked {
+  margin: 0 16px 8px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.adopt-session-bulk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.adopt-session-picked-count {
+  margin-right: auto;
+}
+
+.adopt-session-bulk-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #a3a3a3;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.adopt-session-bulk-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+.adopt-session-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.adopt-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: #2a2a2a;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 999px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #f5f5f7;
+}
+
+.adopt-session-chip-remove {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  color: #a3a3a3;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.adopt-session-chip-remove:hover {
+  color: #f5f5f7;
+}
+
 .adopt-session-row-top {
   display: flex;
   justify-content: space-between;
@@ -12816,6 +12915,11 @@ button.settings-prompt-editor-head {
   color: rgba(245, 245, 247, 0.42);
 }
 
+/* The running round's clock, ticking like the step tracker's above it. */
+.review-loop-round-duration.is-live {
+  color: #c8c8cd;
+}
+
 .review-loop-round-outcome {
   font-size: 11px;
   letter-spacing: 0.06em;
@@ -12978,22 +13082,34 @@ button.settings-prompt-editor-head {
   letter-spacing: 0.06em;
 }
 
-.review-loop-severity.is-blocker {
+/* A severity's colour, shared by a finding's badge and a collapsed round's
+   count ("2 blocking") so the two always read the same. */
+.review-loop-severity.is-blocker,
+.review-loop-count.is-blocker {
   color: #ef4444;
+}
+
+.review-loop-severity.is-major,
+.review-loop-count.is-major {
+  color: #f59e0b;
+}
+
+.review-loop-severity.is-minor,
+.review-loop-count.is-minor {
+  color: #93c5fd;
+}
+
+.review-loop-severity.is-nit,
+.review-loop-count.is-nit {
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.review-loop-severity.is-blocker {
   background: rgba(239, 68, 68, 0.12);
 }
 
 .review-loop-severity.is-major {
-  color: #f59e0b;
   background: rgba(245, 158, 11, 0.1);
-}
-
-.review-loop-severity.is-minor {
-  color: #93c5fd;
-}
-
-.review-loop-severity.is-nit {
-  color: rgba(245, 245, 247, 0.42);
 }
 
 .review-loop-finding-location {
@@ -13056,6 +13172,15 @@ button.settings-prompt-editor-head {
 
 .review-loop-decision.is-bad b {
   color: #ef4444;
+}
+
+/* Sent and being worked on, or about to be sent: the loop is still on it. */
+.review-loop-decision.is-busy {
+  border-left-color: #93c5fd;
+}
+
+.review-loop-decision.is-busy b {
+  color: #93c5fd;
 }
 
 .review-loop-artifacts {
@@ -13659,11 +13784,13 @@ button.settings-prompt-editor-head {
  * of the total, and the cheapest, so it is the quiet one). A row's bar is ONE
  * length in one colour — tokens against the biggest task — so it carries no
  * colour meaning of its own. */
-.adopt-session-modal.usage-dialog {
+.adopt-session-modal.usage-dialog,
+.adopt-session-modal.release-notes-dialog {
   width: min(920px, 94vw);
 }
 
-.usage-body {
+.usage-body,
+.release-notes-body {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -13732,7 +13859,15 @@ button.settings-prompt-editor-head {
   gap: 8px;
 }
 
-.usage-sort {
+.usage-toolbar-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.usage-sort,
+.usage-deleted-filter {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -13740,8 +13875,18 @@ button.settings-prompt-editor-head {
   color: #a3a3a3;
 }
 
+.usage-deleted-filter {
+  cursor: pointer;
+}
+
+.usage-deleted-filter:has(input:disabled) {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .usage-sort select,
-.usage-refresh {
+.usage-refresh,
+.release-notes-command {
   padding: 4px 8px;
   background: #0a0a0a;
   border: 1px solid #2a2a2a;
@@ -13751,13 +13896,63 @@ button.settings-prompt-editor-head {
   font-size: 12px;
 }
 
-.usage-refresh {
+.usage-refresh,
+.release-notes-command {
   cursor: pointer;
 }
 
-.usage-refresh:disabled {
+.usage-refresh:disabled,
+.release-notes-command:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* Release notes: where the file is, how the Google Doc copy stands, the notes. */
+.release-notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.release-notes-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.release-notes-google {
+  margin: 0;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.release-notes-google.is-error {
+  color: #f87171;
+}
+
+.release-notes-note {
+  margin: 0;
+  color: #a3a3a3;
+  font-size: 12px;
+}
+
+.release-notes-content {
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 4px 16px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.release-notes-foot {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #737373;
 }
 
 .usage-error {
@@ -13827,6 +14022,16 @@ button.settings-prompt-editor-head {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #f5f5f7;
+}
+
+/* A deleted task is only its kept totals: quieter than one that still exists. */
+.usage-row--deleted .usage-row-summary {
+  color: #a3a3a3;
+}
+
+.usage-row-deleted {
+  color: #c8c8cd;
+  font-style: italic;
 }
 
 .usage-row-total {

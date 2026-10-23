@@ -81,6 +81,8 @@ const LINE_ICONS = {
     + 'l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09'
     + 'a1.65 1.65 0 0 0-1.51 1z',
   'chart': 'M18 20V10M12 20V4M6 20v-6',
+  // A page with lines: the release notes.
+  'notes': 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h6',
   // Three columns of cards: the plan board.
   'board': 'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z',
   // An arrow stepping down and in: a sub-task of another task.

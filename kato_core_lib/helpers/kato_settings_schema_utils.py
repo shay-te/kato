@@ -277,6 +277,39 @@ SETTINGS_SCHEMA: list[dict] = [
         ],
     },
     {
+        'id': 'release_notes',
+        'label': 'Release notes',
+        'title': 'Release notes',
+        'description': 'Every task that reaches Done gets a dated line in a release-notes '
+                       'document. Changes apply to the next finished task — no restart.',
+        'fields': [
+            ('KATO_RELEASE_NOTES_ENABLED', 'bool', 'Keep release notes',
+             'Add a dated line for each task that reaches Done — "Finish & forget" '
+             'with done ticked, the plan board\'s "Count as done", or a ticket closed '
+             'in YouTrack / Jira. On unless switched off.', {}),
+            ('KATO_RELEASE_NOTES_PATH', 'text', 'Release notes file',
+             'The markdown file the notes are kept in. Empty = '
+             '~/.kato/release-notes.md. It must be outside the workspaces folder '
+             '(a file there would be committed with a task).',
+             {'placeholder': '~/.kato/release-notes.md'}),
+            ('KATO_RELEASE_NOTES_DESTINATION', 'select', 'Where the notes go',
+             'file = the markdown file only. file_and_google_doc = the file, and a '
+             'copy into a Google Doc after each new entry. With the copy, task titles '
+             'and summaries leave this machine, and the Doc is a read-only copy: '
+             'edit the file, not the Doc.',
+             {'options': ['file', 'file_and_google_doc']}),
+            ('KATO_RELEASE_NOTES_GOOGLE_DOC_URL', 'text', 'Google Doc link',
+             'The Doc the notes are copied into (used with file_and_google_doc). '
+             'Share it with the service account\'s email as an Editor.',
+             {'placeholder': 'https://docs.google.com/document/d/…/edit'}),
+            ('KATO_RELEASE_NOTES_GOOGLE_CREDENTIALS_PATH', 'text',
+             'Google service-account key file',
+             'JSON key of a Google service account: Google Cloud → IAM → Service '
+             'accounts → Keys → Add key → JSON. Enable the Google Drive API in that '
+             'project.', {'placeholder': '~/.kato/google-service-account.json'}),
+        ],
+    },
+    {
         'id': 'claude_agent',
         'label': 'Claude agent',
         'title': 'Claude agent',
@@ -791,6 +824,8 @@ def validate_settings_values(updates: dict[str, str]) -> list[str]:
         ):
             if check:
                 errors.append(check)
+    from kato_core_lib.helpers.release_notes_settings_utils import settings_errors
+    errors.extend(settings_errors(updates))
     return errors
 
 

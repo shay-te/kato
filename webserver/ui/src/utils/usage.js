@@ -30,9 +30,27 @@ export const USAGE_SORTS = [
   { id: 'total', label: 'Most tokens', pick: (task) => task.usage.total },
   { id: 'cost', label: 'Highest cost', pick: (task) => usageCostParts(task.usage).total },
   { id: 'output', label: 'Most output', pick: (task) => task.usage.output },
-  { id: 'recent', label: 'Most recent', pick: (task) => Date.parse(task.usage.last_at) || 0 },
+  { id: 'recent', label: 'Last used', pick: (task) => Date.parse(task.usage.last_at) || 0 },
+  { id: 'created', label: 'Newest task', pick: (task) => taskCreatedMs(task) },
   { id: 'turns', label: 'Most turns', pick: (task) => task.usage.turns },
 ];
+
+// When the task was created. A server that does not send it still has the
+// task's first turn, which is the nearest honest answer.
+function taskCreatedMs(task) {
+  return Date.parse(task.created_at) || Date.parse(task.usage?.first_at) || 0;
+}
+
+// "2026-09-28" — an absolute day, because "when was this task made" is not
+// answered by "40d ago". '' when there is no usable timestamp.
+export function formatDay(iso) {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '';
+}
+
+export function taskCreatedDay(task) {
+  return formatDay(task.created_at) || formatDay(task.usage?.first_at);
+}
 
 const DEFAULT_SORT = USAGE_SORTS[0];
 
@@ -45,6 +63,23 @@ export function sortUsageTasks(tasks, sortId) {
     if (delta !== 0) { return delta; }
     return String(left.task_id).localeCompare(String(right.task_id));
   });
+}
+
+// A deleted task is kept as numbers only (its transcripts went with it), so the
+// server lists it APART from the live tasks and the same id can appear twice —
+// deleted, then re-adopted. A row's identity is its id plus when it was deleted.
+export function usageRowKey(task) {
+  return task.deleted_at ? `${task.task_id}@${task.deleted_at}` : String(task.task_id);
+}
+
+// What the dialog lists and totals, with deleted tasks in or out. The totals
+// come from the server too (``totals_with_deleted``): summing models and costs
+// here would be a second place that knows how a total is made.
+export function visibleUsage(data, includeDeleted) {
+  const live = data?.tasks || [];
+  const deleted = data?.deleted_tasks || [];
+  if (!includeDeleted) { return { tasks: live, totals: data?.totals }; }
+  return { tasks: [...live, ...deleted], totals: data?.totals_with_deleted || data?.totals };
 }
 
 // The three groups a reader cares about, from one usage record.

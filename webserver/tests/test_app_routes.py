@@ -1149,6 +1149,63 @@ class RepositoriesEndpointTests(unittest.TestCase):
         self.assertTrue(response.get_json()['added'])
         self.assertEqual(captured['args'], ('T-1', 'client'))
 
+    # ----- several repositories in one call -----
+
+    def test_add_several_repositories_in_one_call(self):
+        captured = {}
+        def add_many(task_id, repository_ids):
+            captured['args'] = (task_id, repository_ids)
+            return {'added': True, 'repositories': [{'repository_id': r} for r in repository_ids]}
+        agent = _agent(add_task_repositories=add_many)
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/add-repository',
+            json={'repository_ids': ['client', ' backend ', '', 'ui']},
+        )
+        self.assertEqual(response.status_code, 200)
+        # Trimmed, blanks dropped, handed over as ONE call so one sync clones them together.
+        self.assertEqual(captured['args'], ('T-1', ['client', 'backend', 'ui']))
+        self.assertEqual(len(response.get_json()['repositories']), 3)
+
+    def test_add_several_400_when_the_list_is_empty_or_blank(self):
+        agent = _agent(add_task_repositories=lambda *a, **k: {'added': True})
+        client = self._client(agent=agent)
+        for body in ({'repository_ids': []}, {'repository_ids': ['', '  ']}):
+            response = client.post('/api/sessions/T-1/add-repository', json=body)
+            self.assertEqual(response.status_code, 400, body)
+
+    def test_add_several_501_when_the_agent_cannot(self):
+        agent = _agent(add_task_repository=lambda *a, **k: {'added': True})  # only the single form
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/add-repository', json={'repository_ids': ['client']},
+        )
+        self.assertEqual(response.status_code, 501)
+
+    def test_add_several_404_when_none_is_in_the_inventory_and_500_for_other_failures(self):
+        unknown = _agent(add_task_repositories=lambda task_id, ids: {
+            'added': False, 'error': f'{ids[0]!r} is not in the kato inventory',
+        })
+        response = self._client(agent=unknown).post(
+            '/api/sessions/T-1/add-repository', json={'repository_ids': ['nope']},
+        )
+        self.assertEqual(response.status_code, 404)
+        failed = _agent(add_task_repositories=lambda task_id, ids: {'added': False, 'error': 'boom'})
+        response = self._client(agent=failed).post(
+            '/api/sessions/T-1/add-repository', json={'repository_ids': ['client']},
+        )
+        self.assertEqual(response.status_code, 500)
+
+    def test_a_partial_add_is_a_success_that_lists_what_was_rejected(self):
+        agent = _agent(add_task_repositories=lambda task_id, ids: {
+            'added': True,
+            'repositories': [{'repository_id': 'client'}],
+            'rejected': [{'repository_id': 'nope', 'error': 'not in the kato inventory'}],
+        })
+        response = self._client(agent=agent).post(
+            '/api/sessions/T-1/add-repository', json={'repository_ids': ['client', 'nope']},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['rejected'][0]['repository_id'], 'nope')
+
 
 # ---------------------------------------------------------------------------
 # /api/sessions/<task_id>/finish  +  /workspace (DELETE)

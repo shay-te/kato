@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 
 import {
   blockingCount,
+  blockingSectionTitle,
+  countsParts,
+  findingStatus,
   countsText,
   findingDecision,
   findingLocation,
@@ -60,6 +63,13 @@ test('counts: blocking first, zeros left out, an empty review says so', () => {
   assert.equal(countsText({ BLOCKER: 1, MAJOR: 2, MINOR: 1, NIT: 3 }), '3 blocking · 1 minor · 3 nit');
   assert.equal(countsText({ BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 }), 'no issues');
   assert.equal(countsText(null), '');
+  assert.deepEqual(countsParts({ BLOCKER: 1, MAJOR: 2, MINOR: 1, NIT: 0, SETTLED: 1 }), [
+    { key: 'blocking', text: '3 blocking', severity: 'blocker' },
+    { key: 'minor', text: '1 minor', severity: 'minor' },
+    { key: 'settled', text: '1 settled', severity: '' },
+  ]);
+  assert.equal(countsParts({ MAJOR: 2 })[0].severity, 'major');
+  assert.deepEqual(countsParts(null), []);
   assert.equal(blockingCount(null), 0);
 });
 
@@ -455,4 +465,63 @@ test('Resume says what it will pick up — and is offered only for a loop that c
   for (const loop of [null, { status: 'clean', resume: '' }, { status: 'running', resume: 'stale' }]) {
     assert.equal(reviewLoopResumeTooltip(loop), '');
   }
+});
+
+test('only the running round of a running loop gets a live clock', () => {
+  const running = { number: 2, started_at: 1000, outcome: '' };
+  assert.deepEqual(roundTiming(running, 1095), {
+    text: '1m 35s', title: 'Round 2 has been running for 1m 35s', live: true,
+  });
+  assert.equal(roundTiming(running), null);          // the loop is not running: no clock
+  assert.equal(roundTiming({ ...running, outcome: 'stopped' }, 1095), null);  // cut off, not running
+  assert.equal(roundTiming({ number: 2, started_at: 0, outcome: '' }, 1095), null);
+  // A finished round keeps its fixed duration, whatever ``now`` says.
+  const done = roundTiming({ number: 1, started_at: 1000, finished_at: 1060, outcome: 'clean' }, 9999);
+  assert.equal(done.text, '1m 0s');
+  assert.equal(done.live, undefined);
+});
+
+// ----- where a blocking finding stands -----
+
+const MAJOR = { id: 'R4-1', severity: 'MAJOR', title: 'listing 500s' };
+
+test('a blocking finding always says where it stands', () => {
+  const status = (round, running = false) => findingStatus(round, MAJOR, { running });
+  // The chat answered: its decision.
+  assert.equal(status({ sent_at: 5, fixed_at: 9, outcome: 'sent',
+    responses: [{ finding_id: 'R4-1', decision: 'fixed', test: 't' }] }).label, 'Fixed');
+  // Sent, the chat still on it.
+  assert.deepEqual(status({ sent_at: 5, fixed_at: 0, outcome: '' }, true),
+    { label: 'In progress', tone: 'busy', note: 'sent to the chat — waiting for its fix' });
+  // Reviewed, about to be sent.
+  assert.equal(status({ sent_at: 0, outcome: '' }, true).note, 'about to be sent to the chat');
+  // The fix turn ended without a word on this one.
+  assert.equal(status({ sent_at: 5, fixed_at: 9, outcome: 'sent' }).label, 'Not answered');
+  // Sent, but the loop stopped before the fix finished.
+  assert.equal(status({ sent_at: 5, fixed_at: 0, outcome: 'stopped' }).label, 'Not fixed');
+});
+
+test('a blocking finding never sent says why, and what to do', () => {
+  const status = (outcome, running = false) => findingStatus({ sent_at: 0, outcome }, MAJOR, { running });
+  assert.equal(status('max_rounds').label, 'Not sent');
+  assert.match(status('max_rounds').note, /last round.*fix it in the chat yourself.*more rounds/);
+  assert.match(status('stuck').note, /Resume sends it once more/);
+  assert.match(status('changed').note, /reviewed again/);
+  assert.match(status('stopped').note, /Resume sends it/);
+  // Cut off by a restart while still in progress: not running, so not "in progress".
+  assert.equal(status('', false).label, 'Not sent');
+});
+
+test('reported-only and settled findings get no status line', () => {
+  const round = { sent_at: 0, outcome: 'max_rounds' };
+  assert.equal(findingStatus(round, { severity: 'MINOR' }), null);
+  assert.equal(findingStatus(round, { severity: 'MAJOR', settled_by: 'R1-2' }), null);
+});
+
+test('the blocking section and the collapsed round say when nothing was sent', () => {
+  assert.equal(blockingSectionTitle({ sent_at: 5 }), 'Blocking — sent to the chat to fix');
+  assert.equal(blockingSectionTitle({ sent_at: 0, outcome: '' }, { running: true }), 'Blocking');
+  assert.equal(blockingSectionTitle({ sent_at: 0, outcome: 'max_rounds' }), 'Blocking — not sent to the chat');
+  assert.equal(roundOutcomeLabel({ outcome: 'max_rounds', sent_at: 0, counts: { MAJOR: 1 } }), 'last round — not sent');
+  assert.equal(roundOutcomeLabel({ outcome: 'max_rounds', sent_at: 0, counts: { MINOR: 2 } }), 'last round');
 });

@@ -264,6 +264,36 @@ to preserve every rule) until it outgrew its own timeout and silently stopped.
 `KATO_ARCHITECTURE_DOC_PATH` is read exactly once, at boot, to adopt an old file as the lessons
 document (`LessonsService.adopt_legacy_document`); its earlier lessons are queued for the editor.
 
+### Release notes — a dated line per task that reaches Done
+```
+"Finish & forget" + done ─┐
+plan board "Count as done" ┴─▶ TaskStateService.move_task_to_done ─▶ _announce_done ─▶ ReleaseNotesService.task_done
+ticket closed in YouTrack/Jira ─▶ cleanup sweep ─▶ ReleaseNotesDoneWatcher (asks the tracker: really Done?) ─┘
+task_done: 1. NOW (the forget flow deletes the workspace next): read the task (ReleaseNoteSources), write
+              "- <date> — <title> (<ID>) <!-- kato:task ID -->" under ## Unreleased → ### <repo>  [locked, atomic]
+           2. background: ReleaseNoteWriter (one-shot model line) + ReleaseNoteLinks (PRs by branch) replace
+              that line — only if it is still unchanged (an operator edit wins)
+           → ReleaseNotesGoogleSync (destination file_and_google_doc only): replace a Google Doc with the file
+```
+- **ONE place announces done:** `move_task_to_done` = `_move_to_done` (subclasses override HOW, e.g. LOCAL tasks)
+  + `_announce_done`. A failed move raises and announces nothing; a failing observer never fails the done. Do not
+  add a second announcement elsewhere — the Done/Push button is NOT done (it moves to In Review).
+- **Tickets closed outside kato** are noticed as "left the live list" (NOT the workspace flip to `done` — in-review
+  workspaces are always protected, so merged-then-closed never flips) and CONFIRMED with `get_issues_status`
+  (YouTrack/Jira only; other trackers: only kato-marked done adds entries). First sweep only records; ≤5 per
+  sweep; "could not ask" retried 3 sweeps. State: `~/.kato/release_notes_watch.json`.
+- **The marker `<!-- kato:task ID -->` is the idempotency key** — anywhere in the file, including an entry the
+  operator moved into a version section. Entry text is untrusted (`clean_line`): it can never forge a heading,
+  marker or second line; the date is kato's, never the model's.
+- **Settings → Release notes** (all read fresh from settings.json — no restart; `_live_settings_keys`):
+  enabled (default on), path (default `~/.kato/release-notes.md`, refused inside `KATO_WORKSPACES_ROOT` — it would
+  be committed with a task), destination (`file` | `file_and_google_doc`), Google Doc link, service-account key.
+- **Google Doc copy** = `google_docs_core_lib` (kato-free; `GoogleDocsClient`/`ServiceAccountTokenClient` extend
+  core-lib's `ClientBase`; service-account JWT signed with `cryptography`, no google-auth dependency): Drive
+  `files.update` media upload of HTML into the existing Doc. The local file is the master; the Doc is overwritten.
+  Opt-in (titles leave the machine). Failures are kept in `~/.kato/release_notes_sync.json` and shown in the
+  header's Release notes dialog with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
+
 ### Review loop (operator-started, from the review loop view)
 ```
 start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → ReviewLoopService
@@ -398,6 +428,18 @@ is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_s
 its own); a sub-task's tab shows `Subtask of UNA-1:` as a fixed mark, not as its name, and a rename
 edits only the name (`subtaskLabel.js`, pinned to `step_footer.subtask_summary` by a test).
 
+**A live plan's tasks are known by CODE, never by assignee.** The queue holds a step UNASSIGNED until its
+turn and hands a task back by unassigning it, and the task a plan was split from is usually not the bot's
+any more — so to a check that only reads the tracker's assigned/review lists they all look finished.
+`TaskCleanupService`'s done-sweep did exactly that: it flipped such a workspace to `done` (grey tab, and its
+card left in Waiting while its tab sat in the working tasks). It now also treats
+`PlanQueueService.live_task_codes()` — the parent and every step not yet satisfied/cancelled, lower-cased —
+as live (wired through `AgentService._live_plan_task_codes`); if the plans cannot be read the sweep skips
+the cycle rather than guess "unowned". Anything else asking "is this task still wanted?" asks the queue by
+code too. A restart still pauses every running plan (press Run), so a handed-back card says
+"paused — press Run to hand it over again" while paused — `stepNote(step, planStatus)`; the server's
+"it will be retried" is only true while the plan is running.
+
 **Asking the plan's chat.** A sub-task's AskUserQuestion form offers "Ask UNA-1's chat"
 (`ParentQuestionPanel` → `plan_question_routes.py` → `plan_queue/parent_question.py`): the questions
 go to the chat the plan was split in (header `Kato plan queue · question from <id>`, labelled as
@@ -512,6 +554,23 @@ overwrite one set by hand), and so does an install with no tracker. `supports_ta
 `IssueClientBase` and reaches kato via `TaskDataAccess` → `TaskService.supports_tags(issue_id)`.
 `WorkspaceService.create` preserves `tags` (it is called on every provisioning pass).
 
+**A plan sub-task's footer outranks the TRACKER's tags, never the operator's own add.** A sub-task works
+where its footer says (another kato may not see, or may name differently, the tracker's tags), but a repo
+added from THIS kato is recorded in the workspace metadata and is joined to the footer's set
+(`RepositoryInventoryService._with_repositories_added_here`). Before that, "+ Add repository" on a plan
+sub-task saved the tag, cloned nothing, and the toast said "repository was already cloned" (UNA-3272 +
+event-core-lib). The add flow now also refuses to call itself done: when the sync names the repo in neither
+`added_repositories` nor `already_present`, the add is reported as a failure (`_require_repositories_on_task`).
+
+**"+ Add repository" takes several at once** (`POST …/add-repository {repository_ids: [...]}` →
+`TaskRepositoryService.add_task_repositories`; the single `repository_id` form is a one-item wrapper with its
+old reply shape). Every tag is recorded in kato FIRST, then ONE sync clones them together (parallel), then each
+tag is mirrored onto the ticket (YouTrack tag by id / Jira label; concurrent, bounded per tag). A repo that
+cannot be added goes in `rejected` without stopping the rest; each repo's own `ticket_tag` outcome is reported
+(a refusal never fails the add, and the toast lists it first and never expires). The picker
+(`SearchPickerModal multiple`) keeps its ticks independent of the filtered list — filter, tick, filter again —
+and lists the picks above the list, so a pick the search hides is still visible and removable.
+
 `kato:model:<family>[:<version>]` on a ticket picks the task's STARTING Claude model: `kato:model:sonnet`
 = the alias (the CLI runs the latest), `kato:model:sonnet:5.5` = pinned `claude-sonnet-5-5`
 (`kato_tag_utils.model_from_tag`; families `fable|opus|sonnet|haiku`; a malformed tag is ignored and
@@ -529,6 +588,19 @@ for 3,026 messages measured), so summing lines overstates ~2.4x. Cache reads are
 shown apart from output and fresh input, never folded into "input". `TranscriptUsageReader` parses only the
 bytes appended since the last read (a 185 MB transcript: 0.4s cold, ~5ms warm). Codex chats are named as
 uncounted, not silently dropped. Not polled: read when the dialog opens and on Refresh.
+
+**Deleted tasks are kept as numbers, because their transcripts are not.** Deleting a task
+(`DELETE /api/sessions/<id>/workspace`) erases its Claude transcripts on purpose, and the dialog counts
+FROM transcripts — so a deleted task would vanish and the grand total shrink. Before the delete, the route
+snapshots the task's usage (`usage_routes.snapshot_task_usage`, read through the same cached reader) and,
+only once `terminate_session` really removed the transcripts, keeps it in `~/.kato/usage_history.json`
+(`helpers/usage_history_store.py`, `KATO_USAGE_HISTORY_PATH`). **Numbers only** — never a prompt, reply or
+path — and a snapshot that fails never blocks the delete. `/api/usage` lists them APART (`deleted_tasks`,
+`totals_with_deleted`; `totals` stays what exists now) and the dialog shows them behind "Include deleted
+tasks" (default off, remembered in `kato.usageShowDeleted.v1`). A failed terminate keeps NOTHING: its
+transcripts are still counted under the live task, and a second copy would count the same tokens twice.
+Tasks deleted before this existed left nothing and cannot be recovered. Rows carry `created_at` (earliest
+`created_at_epoch` of the workspace/session record, else the first turn) beside `usage.last_at`.
 
 **A row leads with TOKENS and one plain bar; dollars are in the details.** The bar's length is the
 task's tokens against the biggest task's (`usageBarPercent`) — one colour, no segments. It is NOT progress

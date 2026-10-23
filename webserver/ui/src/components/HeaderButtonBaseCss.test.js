@@ -73,8 +73,8 @@ test('the header icon style is an opt-in class the header actually uses', () => 
   assert.ok(CSS.includes('\n.header-icon-btn {'), '.header-icon-btn is gone');
   const uses = HEADER_JSX.match(/className="header-icon-btn"/g) || [];
   assert.equal(
-    uses.length, 3,
-    'the usage, settings and refresh buttons are the only reason this class '
+    uses.length, 4,
+    'the usage, release notes, settings and refresh buttons are the only reason this class '
     + 'exists; if the header changed, keep them opted in or delete the class',
   );
 });

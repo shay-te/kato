@@ -15,6 +15,13 @@ import ModalFooterActions from './ModalFooterActions.jsx';
 // client-side filter, and passes the already-computed ``items`` to render.
 // ``onConfirm(selectedItem)`` does the caller's API call + toast + close;
 // busy/disabled handling is managed here.
+//
+// ``multiple`` turns it into a checklist: any number of rows can be ticked and
+// ``onConfirm`` receives the array, in the order they were ticked. The ticks
+// belong to the picker, NOT to the filtered ``items``: narrowing the search
+// never drops a pick, and a pick the current filter hides is still listed above
+// the list (and can be taken back from there) — so a person can search one
+// thing, tick it, search another, tick that too, and confirm them all.
 export default function SearchPickerModal({
   ariaLabel,
   title,
@@ -35,16 +42,40 @@ export default function SearchPickerModal({
   onConfirm,
   confirmLabel,
   busyLabel,
+  multiple = false,
 }) {
   const [selectedId, setSelectedId] = useState('');
+  // id -> item, in the order ticked. Keeps the ITEM too, because once a filter
+  // hides the row the item is no longer in ``items`` to look up.
+  const [picked, setPicked] = useState(() => new Map());
   const [busy, setBusy] = useState(false);
   const selectedItem = items.find((item) => getItemId(item) === selectedId);
+  const pickedItems = [...picked.values()];
+  const hasSelection = multiple ? picked.size > 0 : !!selectedItem;
+  const allShownPicked = items.length > 0 && items.every((item) => picked.has(getItemId(item)));
+
+  function togglePicked(item) {
+    const id = getItemId(item);
+    setPicked((current) => {
+      const next = new Map(current);
+      if (next.has(id)) { next.delete(id); } else { next.set(id, item); }
+      return next;
+    });
+  }
+
+  function pickAllShown() {
+    setPicked((current) => {
+      const next = new Map(current);
+      items.forEach((item) => next.set(getItemId(item), item));
+      return next;
+    });
+  }
 
   async function confirm() {
-    if (!selectedItem || busy) { return; }
+    if (!hasSelection || busy) { return; }
     setBusy(true);
     try {
-      await onConfirm(selectedItem);
+      await onConfirm(multiple ? pickedItems : selectedItem);
     } finally {
       setBusy(false);
     }
@@ -66,6 +97,52 @@ export default function SearchPickerModal({
         onChange={(e) => onQueryChange(e.target.value)}
         autoFocus
       />
+      {multiple && (
+        <div className="adopt-session-picked">
+          <div className="adopt-session-bulk">
+            <span className="adopt-session-picked-count">
+              {picked.size === 0 ? 'Nothing selected' : `${picked.size} selected`}
+            </span>
+            <button
+              type="button"
+              className="adopt-session-bulk-button"
+              disabled={busy || items.length === 0 || allShownPicked}
+              onClick={pickAllShown}
+            >
+              Select all shown
+            </button>
+            <button
+              type="button"
+              className="adopt-session-bulk-button"
+              disabled={busy || picked.size === 0}
+              onClick={() => setPicked(new Map())}
+            >
+              Deselect all
+            </button>
+          </div>
+          {picked.size > 0 && (
+            <ul className="adopt-session-chips" aria-label="Selected">
+              {pickedItems.map((item) => {
+                const id = getItemId(item);
+                return (
+                  <li key={id} className="adopt-session-chip">
+                    <span>{id}</span>
+                    <button
+                      type="button"
+                      className="adopt-session-chip-remove"
+                      aria-label={`Remove ${id}`}
+                      disabled={busy}
+                      onClick={() => togglePicked(item)}
+                    >
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
       <div className="adopt-session-list">
         {loading && (
           <div className="adopt-session-empty">{loadingText}</div>
@@ -78,17 +155,22 @@ export default function SearchPickerModal({
         )}
         {!loading && !error && items.map((item) => {
           const id = getItemId(item);
+          const checked = multiple ? picked.has(id) : id === selectedId;
           return (
             <button
               type="button"
               key={id}
               className={cx(
                 'adopt-session-row',
-                id === selectedId && 'is-selected',
+                checked && 'is-selected',
                 rowClassName && rowClassName(item),
               )}
-              onClick={() => setSelectedId(id)}
+              {...(multiple ? { role: 'checkbox', 'aria-checked': checked } : {})}
+              onClick={() => (multiple ? togglePicked(item) : setSelectedId(id))}
             >
+              {multiple && (
+                <span className="adopt-session-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+              )}
               {renderRow(item)}
             </button>
           );
@@ -98,8 +180,8 @@ export default function SearchPickerModal({
         onCancel={onClose}
         onConfirm={confirm}
         busy={busy}
-        canConfirm={!!selectedItem}
-        confirmLabel={confirmLabel}
+        canConfirm={hasSelection}
+        confirmLabel={multiple && picked.size > 1 ? `${confirmLabel} (${picked.size})` : confirmLabel}
         busyLabel={busyLabel}
       />
     </ModalShell>

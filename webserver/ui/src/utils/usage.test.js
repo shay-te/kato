@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  costLabel, formatCost, formatCount, formatSpan, formatWhen, hasCost, hasModelSpans, modelChips,
-  sortUsageTasks, unpricedLabels, usageBarPercent, usageCostParts, usageModels, usageParts,
-  usageShare,
+  costLabel, formatCost, formatCount, formatDay, formatSpan, formatWhen, hasCost, hasModelSpans,
+  modelChips, sortUsageTasks, taskCreatedDay, unpricedLabels, usageBarPercent, usageCostParts,
+  usageModels, usageParts, usageRowKey, usageShare, visibleUsage,
 } from './usage.js';
 import { formatTokens } from './chatCost.js';
 
@@ -278,4 +278,66 @@ test('token totals in the billions are shown as B, not a four-digit M', function
   assert.equal(formatTokens(1_000_000), '1.0M');
   assert.equal(formatTokens(200_000), '200k');
   assert.equal(formatTokens(950), '950');
+});
+
+// ----- when a task was made, and the tasks that were deleted -----
+
+test('sorts by when the task was created, newest first', function () {
+  const tasks = [
+    { ...task('old', { first_at: '2026-10-09T00:00:00Z' }), created_at: '2026-08-01T00:00:00Z' },
+    { ...task('new', {}), created_at: '2026-10-01T00:00:00Z' },
+    task('unknown', {}),
+  ];
+  assert.deepEqual(sortUsageTasks(tasks, 'created').map((t) => t.task_id), ['new', 'old', 'unknown']);
+});
+
+test('a task the server gave no creation date falls back to its first turn', function () {
+  const old = task('A', { first_at: '2026-09-01T00:00:00Z' });
+  const newer = task('B', { first_at: '2026-09-20T00:00:00Z' });
+  assert.deepEqual(sortUsageTasks([old, newer], 'created').map((t) => t.task_id), ['B', 'A']);
+  assert.equal(taskCreatedDay(old), '2026-09-01');
+});
+
+test('a day is written absolutely, and is blank when there is no usable stamp', function () {
+  assert.equal(formatDay('2026-09-28T23:59:59Z'), '2026-09-28');
+  assert.equal(formatDay(''), '');
+  assert.equal(formatDay('not a date'), '');
+  assert.equal(taskCreatedDay(task('A', {})), '');
+  assert.equal(
+    taskCreatedDay({ ...task('A', { first_at: '2026-01-01T00:00:00Z' }), created_at: '2026-09-28T01:00:00Z' }),
+    '2026-09-28',
+  );
+});
+
+test('a deleted task and a live one with the same id are different rows', function () {
+  const live = task('UNA-1', {});
+  const gone = { ...task('UNA-1', {}), deleted_at: '2026-10-10T00:00:00Z' };
+  assert.equal(usageRowKey(live), 'UNA-1');
+  assert.notEqual(usageRowKey(gone), usageRowKey(live));
+  assert.notEqual(
+    usageRowKey(gone),
+    usageRowKey({ ...gone, deleted_at: '2026-10-11T00:00:00Z' }),
+  );
+});
+
+test('deleted tasks are in the list and the totals only when asked for', function () {
+  const data = {
+    tasks: [task('LIVE', { total: 10 })],
+    deleted_tasks: [{ ...task('GONE', { total: 90 }), deleted_at: '2026-10-10T00:00:00Z' }],
+    totals: { total: 10 },
+    totals_with_deleted: { total: 100 },
+  };
+  const without = visibleUsage(data, false);
+  assert.deepEqual(without.tasks.map((t) => t.task_id), ['LIVE']);
+  assert.equal(without.totals.total, 10);
+  const withDeleted = visibleUsage(data, true);
+  assert.deepEqual(withDeleted.tasks.map((t) => t.task_id), ['LIVE', 'GONE']);
+  assert.equal(withDeleted.totals.total, 100);
+});
+
+test('an older server that sends no history is still read', function () {
+  const data = { tasks: [task('LIVE', { total: 10 })], totals: { total: 10 } };
+  assert.deepEqual(visibleUsage(data, true).tasks.map((t) => t.task_id), ['LIVE']);
+  assert.equal(visibleUsage(data, true).totals.total, 10);
+  assert.deepEqual(visibleUsage(null, true), { tasks: [], totals: undefined });
 });

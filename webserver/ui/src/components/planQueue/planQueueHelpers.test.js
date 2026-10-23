@@ -73,6 +73,21 @@ test('only a stuck card offers anything', function () {
   assert.equal(isStuck(step('awaiting_merge', { reason: 'waiting for the merge' })), false);
 });
 
+test('a step waiting to be handed over in a paused plan says it needs Run, not "will be retried"', function () {
+  const handedBack = step('ready', {
+    reason: 'not handed over yet; it will be retried', released_at: 1790000000,
+  });
+  // Running: nothing is in the way, so the server's own words are true.
+  assert.equal(stepNote(handedBack, 'running'), 'not handed over yet; it will be retried');
+  assert.equal(stepNote(handedBack), 'not handed over yet; it will be retried');
+  // Paused (a restart pauses every running plan): nothing is retried until Run.
+  assert.equal(stepNote(handedBack, 'paused'), 'paused — press Run to hand it over again');
+  assert.equal(stepNote(step('ready'), 'paused'), 'paused — press Run to start it');
+  // Only the cards a pause holds back change; the rest keep their own note.
+  assert.equal(stepNote(step('blocked', { reason: 'waits for UNA-1' }), 'paused'), 'waits for UNA-1');
+  assert.equal(stepNote(step('active'), 'paused'), '');
+});
+
 test('notes and pull request chips', function () {
   assert.equal(stepNote(step('cancelled', { reason: 'x' })), 'cancelled');
   assert.equal(stepNote(step('blocked', { reason: 'waits for UNA-1' })), 'waits for UNA-1');

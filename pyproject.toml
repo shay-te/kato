@@ -65,6 +65,7 @@ include = [
   "review_loop_core_lib*",
   "plan_queue_core_lib*",
   "local_task_core_lib*",
+  "google_docs_core_lib*",
   "workspace_core_lib*",
   "utils_core_lib*",
 ]

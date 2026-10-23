@@ -17,6 +17,7 @@ vi.mock('../api.js', () => ({
 import { fetchUsage } from '../api.js';
 import UsageDialog from './UsageDialog.jsx';
 import { formatSpan } from '../utils/usage.js';
+import { _resetUsageShowDeleted } from '../utils/usageDeletedPref.js';
 
 function usage(overrides = {}) {
   return {
@@ -92,6 +93,8 @@ function rowOrder() {
 
 beforeEach(() => {
   fetchUsage.mockReset();
+  try { localStorage.clear(); } catch (_) { /* jsdom */ }
+  _resetUsageShowDeleted();
 });
 
 describe('UsageDialog', () => {
@@ -470,5 +473,163 @@ describe('UsageDialog', () => {
     render(<UsageDialog onClose={() => {}} />);
     expect(await screen.findByText('No summary')).toBeInTheDocument();
     expect(screen.getByText('UNA-9')).toBeInTheDocument();
+  });
+
+  // ----- created / last used -----
+
+  test('a row says when the task was created and when it was last used', async () => {
+    const dated = task('UNA-20', 'Dated', {
+      total: 100, output: 10, turns: 2, first_at: '2026-09-02T00:00:00Z', last_at: '2020-01-05T00:00:00Z',
+    }, { created_at: '2026-09-01T08:30:00Z' });
+    await open([dated]);
+    const row = screen.getByRole('listitem');
+    // The creation day is absolute; the last use is how long ago, with the exact stamp on hover.
+    expect(within(row).getByText('created 2026-09-01')).toHaveAttribute('title', '2026-09-01T08:30:00Z');
+    expect(within(row).getByText('last used 2020-01-05')).toHaveAttribute('title', '2020-01-05T00:00:00Z');
+  });
+
+  test('a task from a server that sends no creation date shows its first turn instead', async () => {
+    const old = task('UNA-21', 'Older server', { total: 5, first_at: '2026-09-02T00:00:00Z' });
+    await open([old]);
+    expect(screen.getByText('created 2026-09-02')).toBeInTheDocument();
+  });
+
+  test('a task with no dates at all shows neither, rather than inventing them', async () => {
+    await open([SMALL]);
+    expect(screen.getByRole('listitem').textContent).not.toMatch(/created|last used/);
+  });
+
+  test('can be ordered by when the task was created', async () => {
+    const early = task('UNA-30', 'Early', { total: 900 }, { created_at: '2026-08-01T00:00:00Z' });
+    const late = task('UNA-31', 'Late', { total: 100 }, { created_at: '2026-10-01T00:00:00Z' });
+    await open([early, late]);
+    expect(rowOrder()).toEqual(['UNA-30', 'UNA-31']);
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'created' } });
+    expect(rowOrder()).toEqual(['UNA-31', 'UNA-30']);
+  });
+
+  // ----- deleted tasks -----
+
+  const GONE = task('UNA-40', 'Deleted long ago', {
+    input: 0, output: 2_000, cache_read: 98_000, total: 100_000, turns: 12,
+    first_at: '2026-09-01T00:00:00Z', last_at: '2026-09-09T00:00:00Z',
+  }, { status: 'done', created_at: '2026-09-01T00:00:00Z', deleted_at: '2026-10-10T12:00:00Z', chats: 3 });
+
+  function withHistory(live, deleted) {
+    return {
+      ...report(live),
+      deleted_tasks: deleted,
+      totals_with_deleted: report([...live, ...deleted]).totals,
+    };
+  }
+
+  async function openWithHistory(live, deleted) {
+    fetchUsage.mockResolvedValue(withHistory(live, deleted));
+    const view = render(<UsageDialog onClose={() => {}} />);
+    await screen.findByText(live[0].summary);
+    return view;
+  }
+
+  const toggle = () => screen.getByRole('checkbox', { name: /Include deleted tasks/ });
+
+  test('deleted tasks stay out until asked for, and the switch says how many there are', async () => {
+    await openWithHistory([BIG], [GONE]);
+    expect(rowOrder()).toEqual(['UNA-1']);
+    expect(toggle()).not.toBeChecked();
+    expect(toggle()).toBeEnabled();
+    expect(screen.getByText('Include deleted tasks (1)')).toBeInTheDocument();
+    // The totals are the live ones: 1 task, not 2.
+    expect(document.querySelector('.usage-tile-hint')).toHaveTextContent('1 task ·');
+  });
+
+  test('turning it on lists them, marked deleted, and counts them in the totals', async () => {
+    const { container } = await openWithHistory([BIG], [GONE]);
+
+    fireEvent.click(toggle());
+
+    expect(rowOrder()).toEqual(['UNA-1', 'UNA-40']);
+    const gone = screen.getAllByRole('listitem')[1];
+    expect(gone).toHaveTextContent('Deleted long ago');
+    expect(within(gone).getByText('deleted 2026-10-10')).toHaveAttribute('title', 'Deleted 2026-10-10T12:00:00Z');
+    expect(gone).toHaveTextContent('created 2026-09-01');
+    expect(gone).toHaveTextContent('last used 2026-09-09');
+    // A deleted task's status is no longer a live one — it says "deleted" instead.
+    expect(gone.textContent).not.toContain('done');
+    const tiles = container.querySelectorAll('.usage-tile');
+    expect(tiles[0].textContent).toContain('2 tasks (1 deleted)');
+    // 1,477,040,000 + 100,000 — the server's total with them, not one summed here.
+    expect(tiles[0].querySelector('.usage-tile-value')).toHaveAttribute('title', '1,477,140,000');
+    expect(document.querySelector('.usage-tile-hint')).toHaveTextContent('2 tasks (1 deleted)');
+  });
+
+  test('a deleted task opens to its kept figures and says they were counted when it was deleted', async () => {
+    await openWithHistory([BIG], [GONE]);
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole('button', { name: /UNA-40/ }));
+    expect(screen.getByText('3 chats counted when the task was deleted (2026-10-10).')).toBeInTheDocument();
+  });
+
+  test('a deleted task and a live one with the same id open independently', async () => {
+    const again = { ...GONE, task_id: 'UNA-1', summary: 'Same id, deleted earlier' };
+    await openWithHistory([BIG], [again]);
+    fireEvent.click(toggle());
+    const [live, deleted] = screen.getAllByRole('button', { name: /UNA-1/ });
+    fireEvent.click(deleted);
+    expect(deleted).toHaveAttribute('aria-expanded', 'true');
+    expect(live).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('the choice is remembered for the next time the dialog opens', async () => {
+    const first = await openWithHistory([BIG], [GONE]);
+    fireEvent.click(toggle());
+    first.unmount();
+
+    await openWithHistory([BIG], [GONE]);
+    expect(toggle()).toBeChecked();
+    expect(rowOrder()).toEqual(['UNA-1', 'UNA-40']);
+
+    fireEvent.click(toggle());
+    expect(rowOrder()).toEqual(['UNA-1']);
+  });
+
+  test('with nothing deleted on record the switch is there but cannot be turned on, and says why', async () => {
+    await openWithHistory([BIG], []);
+    expect(toggle()).toBeDisabled();
+    expect(toggle()).not.toBeChecked();
+    expect(screen.getByText('Include deleted tasks (0)').closest('label')).toHaveAttribute(
+      'title', expect.stringContaining('No deleted task is on record yet'),
+    );
+  });
+
+  test('a remembered "on" with nothing to show does not claim to be on', async () => {
+    const first = await openWithHistory([BIG], [GONE]);
+    fireEvent.click(toggle());
+    first.unmount();
+    await openWithHistory([BIG], []);
+    expect(toggle()).not.toBeChecked();
+    expect(document.querySelector('.usage-tile-hint')).not.toHaveTextContent('deleted)');
+  });
+
+  test('when only deleted tasks have usage, the list says to look at them', async () => {
+    fetchUsage.mockResolvedValue(withHistory([], [GONE]));
+    render(<UsageDialog onClose={() => {}} />);
+    expect(await screen.findByText(/No current task has used any tokens/)).toHaveTextContent(
+      'Tick "Include deleted tasks" to see 1 deleted.',
+    );
+    fireEvent.click(toggle());
+    expect(await screen.findByText('Deleted long ago')).toBeInTheDocument();
+  });
+
+  test('an older server that sends no history still shows its tasks, with the switch off', async () => {
+    await open([BIG]);
+    expect(toggle()).toBeDisabled();
+    expect(rowOrder()).toEqual(['UNA-1']);
+  });
+
+  test('the footnote says what is kept of a deleted task, and what is not', async () => {
+    await open([BIG]);
+    expect(document.querySelector('.usage-foot')).toHaveTextContent(
+      "kato keeps only that task's totals — numbers, never the conversation",
+    );
   });
 });

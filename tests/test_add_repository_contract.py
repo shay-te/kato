@@ -89,6 +89,30 @@ class AddRepositoryContractTests(unittest.TestCase):
         self.assertEqual(payload.get('repository_id'), 'never-configured')
         self.assertIn('not in the kato inventory', payload.get('error', ''))
 
+    # ----- several repositories in one call -----
+
+    def test_an_empty_list_returns_400_with_error(self) -> None:
+        for body in ({'repository_ids': []}, {'repository_ids': ['', '  ']}):
+            status, payload = self._post(body)
+            self.assertEqual(status, 400, body)
+            self.assertIn('repository_ids', payload['error'])
+
+    def test_no_known_repository_in_the_list_returns_404_naming_each_one(self) -> None:
+        status, payload = self._post({'repository_ids': ['never-configured', 'also-unknown']})
+        self.assertEqual(status, 404)
+        self.assertFalse(payload.get('added'))
+        self.assertEqual(payload.get('task_id'), self.task_id)
+        self.assertIn('not in the kato inventory', payload.get('error', ''))
+        self.assertEqual(
+            [entry['repository_id'] for entry in payload['rejected']],
+            ['never-configured', 'also-unknown'],
+        )
+
+    def test_the_single_form_does_not_grow_a_rejected_key(self) -> None:
+        # The committed fixture below is what existing clients were written against.
+        _, payload = self._post({'repository_id': 'never-configured'})
+        self.assertNotIn('rejected', payload)
+
     # ----- contract fixture (read-only by default) -----
 
     def _build_stable_fixture(self) -> dict:

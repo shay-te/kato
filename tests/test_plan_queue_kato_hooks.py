@@ -118,6 +118,41 @@ class FooterRepositoryTests(unittest.TestCase):
             self.service.resolve_task_repositories(task)
         self.assertIn('task PROJ-12 works in mobile-app, which this kato has no repository for', str(caught.exception))
 
+    def test_a_repository_added_from_kato_joins_the_footers(self) -> None:
+        # "+ Add repository" on a plan sub-task: the tag was saved and nothing was
+        # cloned, because the footer won outright — UNA-3272 + event-core-lib.
+        self.service.attach_kato_task_tags(lambda task_id: ['kato:repo:frontend'])
+        task = build_task(description=footer(('demo-shop-be',)))
+        self.assertEqual(
+            [repo.id for repo in self.service.resolve_task_repositories(task)],
+            ['backend', 'frontend'],
+        )
+
+    def test_the_footer_keeps_its_place_and_nothing_is_listed_twice(self) -> None:
+        self.service.attach_kato_task_tags(
+            lambda task_id: ['kato:repo:backend', 'kato:repo:frontend', 'kato:repo:FRONTEND'],
+        )
+        task = build_task(description=footer(('demo-shop-be',)))
+        self.assertEqual(
+            [repo.id for repo in self.service.resolve_task_repositories(task)],
+            ['backend', 'frontend'],
+        )
+
+    def test_a_repository_added_from_kato_that_matches_nothing_is_left_out_not_fatal(self) -> None:
+        self.service.attach_kato_task_tags(lambda task_id: ['kato:repo:no-such-repo'])
+        task = build_task(description=footer(('demo-shop-be',)))
+        with self.assertLogs(self.service.logger, 'WARNING') as logs:
+            repos = self.service.resolve_task_repositories(task)
+        self.assertEqual([repo.id for repo in repos], ['backend'])
+        self.assertIn('no-such-repo', logs.output[0])
+
+    def test_tags_on_the_ticket_still_rank_below_the_footer_with_kato_tags_present(self) -> None:
+        # The footer outranks what the TRACKER says (another kato may not see it or
+        # may name it differently); only this kato's own recorded tags add.
+        self.service.attach_kato_task_tags(lambda task_id: [])
+        task = build_task(description=footer(('demo-shop-be',)), tags=['kato:repo:frontend'])
+        self.assertEqual([repo.id for repo in self.service.resolve_task_repositories(task)], ['backend'])
+
     def test_a_footer_for_every_repository_falls_back_to_the_usual_rules(self) -> None:
         task = build_task(description=footer(()), tags=['kato:repo:frontend'])
         self.assertEqual([repo.id for repo in self.service.resolve_task_repositories(task)], ['frontend'])

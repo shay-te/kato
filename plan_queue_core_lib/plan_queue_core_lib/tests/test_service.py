@@ -355,6 +355,47 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual((live['plan_id'], live['status'], live['step_count'], live['counts']['ready']),
                          (second.plan_id, 'approved', 3, 2))
 
+    def test_live_task_codes_names_the_source_and_every_step_task_still_wanted(self) -> None:
+        self.assertEqual(self.service.live_task_codes(), set())
+        plan = self._approved()
+        self.service._registry.mutate(plan.plan_id, lambda live: (
+            setattr(live, 'source_task_id', 'SRC-9'),
+            setattr(live.step('api'), 'task_id', 'UNA-3274'),
+            setattr(live.step('docs'), 'task_id', 'Una-3275'),
+        ))
+        codes = self.service.live_task_codes()
+        # By code, lower-cased, whatever the tracker says about an assignee.
+        self.assertIn('src-9', codes)
+        self.assertLessEqual({'una-3274', 'una-3275'}, codes)
+
+    def test_a_step_that_is_done_or_cancelled_is_no_longer_wanted_but_a_failed_one_is(self) -> None:
+        plan = self._approved()
+        steps = [step.id for step in plan.steps]
+        self.service._registry.mutate(plan.plan_id, lambda live: [
+            setattr(live.step(step_id), 'task_id', f'T-{index}') for index, step_id in enumerate(steps)
+        ])
+        self.service._registry.mutate(plan.plan_id, lambda live: (
+            setattr(live.step(steps[0]), 'status', StepStatus.SATISFIED),
+            setattr(live.step(steps[1]), 'status', StepStatus.CANCELLED),
+            setattr(live.step(steps[2]), 'status', StepStatus.FAILED),
+        ))
+        codes = self.service.live_task_codes()
+        self.assertNotIn('t-0', codes)
+        self.assertNotIn('t-1', codes)
+        self.assertIn('t-2', codes)
+
+    def test_a_finished_or_stopped_plan_owns_no_task_codes(self) -> None:
+        plan = self._approved()
+        self.service._registry.mutate(plan.plan_id, lambda live: (
+            setattr(live.step('api'), 'task_id', 'UNA-1'),
+            setattr(live, 'status', PlanStatus.CANCELLED),
+        ))
+        self.assertEqual(self.service.live_task_codes(), set())
+
+    def test_a_step_with_no_task_yet_is_not_a_code(self) -> None:
+        self._approved()
+        self.assertNotIn('', self.service.live_task_codes())
+
     def test_mark_interrupted_after_a_restart(self) -> None:
         running = self._approved(run=True)
         self.service._registry.mutate(running.plan_id, lambda live: (

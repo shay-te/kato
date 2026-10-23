@@ -9760,6 +9760,101 @@ $FILES-PANE-INSET: $SPACE-6;
   border-color: $C-ORANGE-50;
 }
 
+/* Checklist mode (the repository picker): a tick box leads each row, and the
+   picks stay listed above the list however the search narrows it. */
+.adopt-session-row[role='checkbox'] {
+  position: relative;
+  padding-left: $SPACE-32;
+}
+
+.adopt-session-check {
+  position: absolute;
+  left: $SPACE-10;
+  top: $SPACE-10;
+  width: $SPACE-14;
+  height: $SPACE-14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid $C-NEUTRAL-64;
+  border-radius: $RADIUS-3;
+  font-size: $TEXT-11;
+  line-height: 1;
+  color: $C-NEUTRAL-04;
+}
+
+.adopt-session-row.is-selected .adopt-session-check {
+  background: $C-ORANGE-50;
+  border-color: $C-ORANGE-50;
+}
+
+.adopt-session-picked {
+  margin: 0 $SPACE-16 $SPACE-8 $SPACE-16;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-6;
+}
+
+.adopt-session-bulk {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-12;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.adopt-session-picked-count { margin-right: auto; }
+
+.adopt-session-bulk-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: $C-NEUTRAL-64;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.adopt-session-bulk-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+.adopt-session-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: $SPACE-4;
+}
+
+.adopt-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-4;
+  padding: $SPACE-2 $SPACE-4 $SPACE-2 $SPACE-8;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-ORANGE-50-A35;
+  border-radius: $RADIUS-PILL;
+  font-family: monospace;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-96;
+}
+
+.adopt-session-chip-remove {
+  background: none;
+  border: none;
+  padding: 0 $SPACE-2;
+  color: $C-NEUTRAL-64;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.adopt-session-chip-remove:hover { color: $C-NEUTRAL-96; }
+
 .adopt-session-row-top {
   display: flex;
   justify-content: space-between;
@@ -12983,6 +13078,9 @@ button.settings-prompt-editor-head {
   color: $C-NEUTRAL-96-A42;
 }
 
+/* The running round's clock, ticking like the step tracker's above it. */
+.review-loop-round-duration.is-live { color: $C-NEUTRAL-79; }
+
 .review-loop-round-outcome {
   font-size: $TEXT-11;
   letter-spacing: 0.06em;
@@ -13130,10 +13228,18 @@ button.settings-prompt-editor-head {
   letter-spacing: 0.06em;
 }
 
-.review-loop-severity.is-blocker { color: $C-RED-60; background: $C-RED-60-A12; }
-.review-loop-severity.is-major { color: $C-ORANGE-50; background: $C-ORANGE-50-A10; }
-.review-loop-severity.is-minor { color: $C-CYAN-78; }
-.review-loop-severity.is-nit { color: $C-NEUTRAL-96-A42; }
+/* A severity's colour, shared by a finding's badge and a collapsed round's
+   count ("2 blocking") so the two always read the same. */
+.review-loop-severity.is-blocker,
+.review-loop-count.is-blocker { color: $C-RED-60; }
+.review-loop-severity.is-major,
+.review-loop-count.is-major { color: $C-ORANGE-50; }
+.review-loop-severity.is-minor,
+.review-loop-count.is-minor { color: $C-CYAN-78; }
+.review-loop-severity.is-nit,
+.review-loop-count.is-nit { color: $C-NEUTRAL-96-A42; }
+.review-loop-severity.is-blocker { background: $C-RED-60-A12; }
+.review-loop-severity.is-major { background: $C-ORANGE-50-A10; }
 
 .review-loop-finding-location {
   font-family: ui-monospace, monospace;
@@ -13177,6 +13283,9 @@ button.settings-prompt-editor-head {
 .review-loop-decision.is-warn b { color: $C-ORANGE-50; }
 .review-loop-decision.is-bad { border-left-color: $C-RED-60; }
 .review-loop-decision.is-bad b { color: $C-RED-60; }
+/* Sent and being worked on, or about to be sent: the loop is still on it. */
+.review-loop-decision.is-busy { border-left-color: $C-CYAN-78; }
+.review-loop-decision.is-busy b { color: $C-CYAN-78; }
 
 .review-loop-artifacts {
   display: flex;
@@ -13633,9 +13742,11 @@ button.settings-prompt-editor-head {
  * of the total, and the cheapest, so it is the quiet one). A row's bar is ONE
  * length in one colour — tokens against the biggest task — so it carries no
  * colour meaning of its own. */
-.adopt-session-modal.usage-dialog { width: min(920px, 94vw); }
+.adopt-session-modal.usage-dialog,
+.adopt-session-modal.release-notes-dialog { width: min(920px, 94vw); }
 
-.usage-body {
+.usage-body,
+.release-notes-body {
   display: flex;
   flex-direction: column;
   gap: $SPACE-12;
@@ -13686,7 +13797,15 @@ button.settings-prompt-editor-head {
   gap: $SPACE-8;
 }
 
-.usage-sort {
+.usage-toolbar-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: $SPACE-8 $SPACE-14;
+}
+
+.usage-sort,
+.usage-deleted-filter {
   display: inline-flex;
   align-items: center;
   gap: $SPACE-6;
@@ -13694,8 +13813,12 @@ button.settings-prompt-editor-head {
   color: $C-NEUTRAL-64;
 }
 
+.usage-deleted-filter { cursor: pointer; }
+.usage-deleted-filter:has(input:disabled) { cursor: default; opacity: 0.6; }
+
 .usage-sort select,
-.usage-refresh {
+.usage-refresh,
+.release-notes-command {
   padding: $SPACE-4 $SPACE-8;
   background: $C-NEUTRAL-04;
   border: 1px solid $C-NEUTRAL-16;
@@ -13705,8 +13828,41 @@ button.settings-prompt-editor-head {
   font-size: $TEXT-12;
 }
 
-.usage-refresh { cursor: pointer; }
-.usage-refresh:disabled { opacity: 0.6; cursor: default; }
+.usage-refresh,
+.release-notes-command { cursor: pointer; }
+.usage-refresh:disabled,
+.release-notes-command:disabled { opacity: 0.6; cursor: default; }
+
+/* Release notes: where the file is, how the Google Doc copy stands, the notes. */
+.release-notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+}
+
+.release-notes-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-64;
+}
+
+.release-notes-google { margin: 0; font-size: $TEXT-12; color: $C-NEUTRAL-64; }
+.release-notes-google.is-error { color: $C-RED-71; }
+.release-notes-note { margin: 0; color: $C-NEUTRAL-64; font-size: $TEXT-12; }
+
+.release-notes-content {
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  padding: $SPACE-4 $SPACE-16;
+  font-size: $TEXT-12;
+  line-height: 1.6;
+}
+
+.release-notes-foot { margin: 0; font-size: $TEXT-11; line-height: 1.5; color: $C-NEUTRAL-45; }
 
 .usage-error { margin: 0; color: $C-RED-71; font-size: $TEXT-12; }
 .usage-note { margin: 0; color: $C-NEUTRAL-64; font-size: $TEXT-12; }
@@ -13764,6 +13920,10 @@ button.settings-prompt-editor-head {
   white-space: nowrap;
   color: $C-NEUTRAL-96;
 }
+
+/* A deleted task is only its kept totals: quieter than one that still exists. */
+.usage-row--deleted .usage-row-summary { color: $C-NEUTRAL-64; }
+.usage-row-deleted { color: $C-NEUTRAL-79; font-style: italic; }
 
 .usage-row-total {
   grid-area: total;

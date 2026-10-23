@@ -168,16 +168,31 @@ export function blockingCount(counts) {
   return Number(counts.BLOCKER || 0) + Number(counts.MAJOR || 0);
 }
 
+// The counts one part at a time, each with the severity it stands for — so a
+// collapsed round colours "2 blocking" the way its open findings colour their
+// badges. "blocking" is BLOCKER + MAJOR: it takes BLOCKER's colour when there is
+// one, else MAJOR's. Settled findings carry no severity colour.
+export function countsParts(counts) {
+  if (!counts) { return []; }
+  const parts = [];
+  const blocking = blockingCount(counts);
+  if (blocking) {
+    parts.push({
+      key: 'blocking', text: `${blocking} blocking`,
+      severity: Number(counts.BLOCKER || 0) ? 'blocker' : 'major',
+    });
+  }
+  if (counts.MINOR) { parts.push({ key: 'minor', text: `${counts.MINOR} minor`, severity: 'minor' }); }
+  if (counts.NIT) { parts.push({ key: 'nit', text: `${counts.NIT} nit`, severity: 'nit' }); }
+  if (counts.SETTLED) { parts.push({ key: 'settled', text: `${counts.SETTLED} settled`, severity: '' }); }
+  return parts;
+}
+
 // "2 blocking · 1 minor · 3 nit · 1 settled"; "no issues" when there is nothing.
 export function countsText(counts) {
   if (!counts) { return ''; }
-  const parts = [];
-  const blocking = blockingCount(counts);
-  if (blocking) { parts.push(`${blocking} blocking`); }
-  if (counts.MINOR) { parts.push(`${counts.MINOR} minor`); }
-  if (counts.NIT) { parts.push(`${counts.NIT} nit`); }
-  if (counts.SETTLED) { parts.push(`${counts.SETTLED} settled`); }
-  return parts.length ? parts.join(' · ') : 'no issues';
+  const parts = countsParts(counts);
+  return parts.length ? parts.map((part) => part.text).join(' · ') : 'no issues';
 }
 
 // A finding that keeps the loop going: BLOCKER / MAJOR, not already settled by
@@ -208,6 +223,58 @@ export function findingDecision(round, finding) {
   const disputed = response.decision === 'rejected' || response.decision === 'out_of_scope';
   if (disputed && !response.evidence) { notes.push('no evidence given, so not settled'); }
   return { label: decision.label, tone: decision.tone, note: notes.join(' · ') };
+}
+
+// Where a BLOCKING finding stands, for the line under it — so "is this fixed,
+// in progress, or nothing?" never needs guessing. The chat's own decision when
+// it gave one (``findingDecision``); otherwise what the loop did with it: sent
+// and waiting for the fix, held back, or never sent — and why, with what the
+// operator can do. Reported-only and settled findings need no line (their
+// section says what happens to them). ``running``: the loop is still going.
+export function findingStatus(round, finding, { running = false } = {}) {
+  const decision = findingDecision(round, finding);
+  if (decision) { return decision; }
+  if (!isBlockingFinding(finding)) { return null; }
+  const outcome = round?.outcome || '';
+  if (round?.sent_at) {
+    if (!outcome && !round.fixed_at && running) {
+      return { label: 'In progress', tone: 'busy', note: 'sent to the chat — waiting for its fix' };
+    }
+    if (round.fixed_at || outcome === 'sent') {
+      return {
+        label: DECISIONS.unanswered.label, tone: DECISIONS.unanswered.tone,
+        note: 'the chat\u2019s reply did not say what it did about this — the next review checks it again',
+      };
+    }
+    return { label: 'Not fixed', tone: 'bad', note: 'the loop stopped before the chat finished — Resume continues the fix' };
+  }
+  if (!outcome && running) {
+    return { label: 'In progress', tone: 'busy', note: 'about to be sent to the chat' };
+  }
+  return { label: 'Not sent', ...(UNSENT[outcome] || UNSENT.stopped) };
+}
+
+// Why a blocking finding was never sent, and what the operator can do about it.
+const UNSENT = {
+  max_rounds: {
+    tone: 'warn',
+    note: 'this was the last round, and nothing is sent after it — fix it in the chat yourself, '
+      + 'or run the loop again with more rounds',
+  },
+  stuck: {
+    tone: 'warn',
+    note: 'the loop stopped as stuck — this survived earlier fixes. Resume sends it once more, '
+      + 'or fix it in the chat yourself',
+  },
+  changed: { tone: 'neutral', note: 'the code changed after this review, so it is reviewed again instead' },
+  stopped: { tone: 'bad', note: 'the loop stopped before sending it — Resume sends it' },
+};
+
+// The blocking section's title: whether its findings went to the chat.
+export function blockingSectionTitle(round, { running = false } = {}) {
+  if (round?.sent_at) { return 'Blocking — sent to the chat to fix'; }
+  if (!round?.outcome && running) { return 'Blocking'; }
+  return 'Blocking — not sent to the chat';
 }
 
 // 45s · 4m 12s · 1h 3m
@@ -490,10 +557,13 @@ function span(from, to) {
 }
 
 // How long a finished round took — ``{ text: '6m 12s', title }`` where the
-// title breaks it down (review · tests · fix) — or null while it runs.
-export function roundTiming(round) {
+// title breaks it down (review · tests · fix). The round still in progress of
+// a RUNNING loop gets its clock instead (``now``, ticking, ``live: true``), as
+// the step tracker's does; ``now`` is 0 when the loop is not running, so a
+// round a restart cut off never shows a clock that is not really running.
+export function roundTiming(round, now = 0) {
   const total = span(round?.started_at, round ? roundEnd(round) : 0);
-  if (!total) { return null; }
+  if (!total) { return liveRoundTiming(round, now); }
   const steps = [
     ['review', span(round.started_at, round.reviewed_at)],
     ['tests', span(round.reviewed_at, latestTestRun(round)?.reported_at)],
@@ -503,7 +573,20 @@ export function roundTiming(round) {
   return { text: total, title: `Round ${round.number} took ${total}${breakdown}` };
 }
 
+function liveRoundTiming(round, now) {
+  if (!(now > 0) || !round?.started_at || round.outcome) { return null; }
+  const running = span(round.started_at, now);
+  return running
+    ? { text: running, title: `Round ${round.number} has been running for ${running}`, live: true }
+    : null;
+}
+
 export function roundOutcomeLabel(round) {
+  // The last round's blocking findings are never sent: say so where the round
+  // is collapsed, not only inside it.
+  if (round?.outcome === 'max_rounds' && !round.sent_at && blockingCount(round.counts)) {
+    return 'last round — not sent';
+  }
   return ROUND_OUTCOMES[round?.outcome] || 'in progress';
 }
 

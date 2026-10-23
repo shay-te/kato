@@ -1,20 +1,20 @@
 // Component-level tests for AddRepositoryModal — the "+ Add repository"
 // picker on the Files tab. Pulls the kato inventory, filters out repos
-// already on the task, lets the operator pick one, then POSTs the
-// add-repository endpoint. The interesting wiring lives in:
+// already on the task, lets the operator pick one or several, then POSTs the
+// add-repository endpoint once for all of them. The interesting wiring lives in:
 //
 //   - Initial load → loading state → rendered list.
 //   - Search box narrows the list (id / owner / slug).
 //   - alreadyAttachedIds filter strips repos UI-side.
 //   - Confirm button stays disabled until a row is picked.
-//   - Confirm calls addTaskRepository(taskId, selectedId), then onAdded + onClose.
+//   - Confirm calls addTaskRepositories(taskId, [selected ids]), then onAdded + onClose.
 //   - Error path: api error → toast fires, modal stays open, onClose NOT called.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
-  addTaskRepository: vi.fn(),
+  addTaskRepositories: vi.fn(),
   fetchInventoryRepositories: vi.fn(),
 }));
 
@@ -40,7 +40,7 @@ vi.mock('../stores/toastStore.js', () => {
 });
 
 import AddRepositoryModal from './AddRepositoryModal.jsx';
-import { addTaskRepository, fetchInventoryRepositories } from '../api.js';
+import { addTaskRepositories, fetchInventoryRepositories } from '../api.js';
 import { toast } from '../stores/toastStore.js';
 
 
@@ -50,6 +50,19 @@ function _repo(id, extra = {}) {
     owner: extra.owner || `owner-${id}`,
     repo_slug: extra.repo_slug || `slug-${id}`,
     local_path: extra.local_path || `/tmp/${id}`,
+  };
+}
+
+
+// What the batch endpoint answers for ONE repository, from the fields the toast
+// tests below were written around.
+function batch(body, repositoryId = 'alpha') {
+  const { tag_added: tagAdded, tag_name: tagName, ticket_tag: ticketTag, sync, ...rest } = body;
+  return {
+    repositories: [{ repository_id: repositoryId, tag_added: tagAdded, tag_name: tagName, ticket_tag: ticketTag }],
+    rejected: [],
+    sync,
+    ...rest,
   };
 }
 
@@ -77,7 +90,7 @@ function renderModal({
 
 beforeEach(() => {
   fetchInventoryRepositories.mockReset();
-  addTaskRepository.mockReset();
+  addTaskRepositories.mockReset();
   toast.show.mockReset();
 });
 
@@ -212,18 +225,18 @@ describe('AddRepositoryModal — selection + submit', () => {
     expect(screen.getByRole('button', { name: /Add to task/i })).not.toBeDisabled();
   });
 
-  test('submit calls addTaskRepository(taskId, repoId) and fires onAdded + onClose on success', async () => {
+  test('submit calls addTaskRepositories(taskId, repoId) and fires onAdded + onClose on success', async () => {
     fetchInventoryRepositories.mockResolvedValue({
       ok: true,
       body: { repositories: [_repo('alpha')] },
     });
-    addTaskRepository.mockResolvedValue({
+    addTaskRepositories.mockResolvedValue({
       ok: true,
-      body: {
+      body: batch({
         tag_added: true,
         tag_name: 'kato:repo:alpha',
         sync: { added_repositories: ['alpha'] },
-      },
+      }),
     });
 
     const { onAdded, onClose } = renderModal({ taskId: 'TASK-1' });
@@ -233,7 +246,7 @@ describe('AddRepositoryModal — selection + submit', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add to task/i }));
 
     await waitFor(() => {
-      expect(addTaskRepository).toHaveBeenCalledWith('TASK-1', 'alpha');
+      expect(addTaskRepositories).toHaveBeenCalledWith('TASK-1', ['alpha']);
     });
     await waitFor(() => {
       expect(onClose).toHaveBeenCalled();
@@ -252,7 +265,7 @@ describe('AddRepositoryModal — selection + submit', () => {
     fetchInventoryRepositories.mockResolvedValue({
       ok: true, body: { repositories: [_repo('alpha')] },
     });
-    addTaskRepository.mockResolvedValue({ ok: true, body });
+    addTaskRepositories.mockResolvedValue({ ok: true, body: batch(body) });
     renderModal({ taskId: 'TASK-1' });
     await waitFor(() => expect(screen.getByText('alpha')).toBeInTheDocument());
     fireEvent.click(screen.getByText('alpha'));
@@ -357,7 +370,7 @@ describe('AddRepositoryModal — selection + submit', () => {
       ok: true,
       body: { repositories: [_repo('alpha')] },
     });
-    addTaskRepository.mockResolvedValue({
+    addTaskRepositories.mockResolvedValue({
       ok: false,
       body: { error: 'permission denied' },
     });
@@ -369,7 +382,7 @@ describe('AddRepositoryModal — selection + submit', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add to task/i }));
 
     await waitFor(() => {
-      expect(addTaskRepository).toHaveBeenCalled();
+      expect(addTaskRepositories).toHaveBeenCalled();
     });
 
     expect(toast.show).toHaveBeenCalledWith(expect.objectContaining({
@@ -377,6 +390,152 @@ describe('AddRepositoryModal — selection + submit', () => {
       message: 'permission denied',
     }));
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('AddRepositoryModal — several repositories at once', () => {
+  const REPOS = [_repo('alpha', { owner: 'acme' }), _repo('beta', { owner: 'wayne' }), _repo('gamma', { owner: 'acme' })];
+
+  async function open() {
+    fetchInventoryRepositories.mockResolvedValue({ ok: true, body: { repositories: REPOS } });
+    const view = renderModal({ taskId: 'TASK-1' });
+    await waitFor(() => expect(screen.getByText('alpha')).toBeInTheDocument());
+    return view;
+  }
+
+  const row = (id) => screen.getByText(id, { selector: '.adopt-session-cwd' }).closest('[role="checkbox"]');
+  const search = (text) => fireEvent.change(screen.getByPlaceholderText(/Search by id/i), { target: { value: text } });
+  const chips = () => within(screen.getByLabelText('Selected')).getAllByRole('listitem').map((li) => li.textContent);
+
+  test('every row is a checkbox, and ticking one does not untick another', async () => {
+    await open();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+    fireEvent.click(row('alpha'));
+    fireEvent.click(row('gamma'));
+    expect(row('alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(row('beta')).toHaveAttribute('aria-checked', 'false');
+    expect(row('gamma')).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(row('alpha'));
+    expect(row('alpha')).toHaveAttribute('aria-checked', 'false');
+    expect(row('gamma')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('confirm sends every ticked repository, in the order ticked, in ONE call', async () => {
+    addTaskRepositories.mockResolvedValue({ ok: true, body: { repositories: [], rejected: [], sync: {} } });
+    const { onAdded, onClose } = await open();
+    expect(screen.getByRole('button', { name: /Add to task/i })).toBeDisabled();
+
+    fireEvent.click(row('gamma'));
+    fireEvent.click(row('alpha'));
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add to task (2)' }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(addTaskRepositories).toHaveBeenCalledTimes(1);
+    expect(addTaskRepositories).toHaveBeenCalledWith('TASK-1', ['gamma', 'alpha']);
+    expect(onAdded).toHaveBeenCalled();
+  });
+
+  test('what is ticked is remembered while the search changes', async () => {
+    addTaskRepositories.mockResolvedValue({ ok: true, body: { repositories: [], rejected: [], sync: {} } });
+    await open();
+
+    fireEvent.click(row('alpha'));
+    search('wayne');                       // only beta matches: alpha is hidden…
+    expect(screen.queryByText('alpha', { selector: '.adopt-session-cwd' })).toBeNull();
+    expect(chips()).toEqual(['alpha×']);   // …but still ticked, and listed
+    fireEvent.click(row('beta'));
+    search('');                            // the full list again
+    expect(row('alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(row('beta')).toHaveAttribute('aria-checked', 'true');
+    expect(row('gamma')).toHaveAttribute('aria-checked', 'false');
+
+    search('no-such-repo');                // nothing matches at all…
+    expect(chips()).toEqual(['alpha×', 'beta×']);  // …yet both stay selected
+    fireEvent.click(screen.getByRole('button', { name: /Add to task \(2\)/ }));
+    await waitFor(() => expect(addTaskRepositories).toHaveBeenCalledWith('TASK-1', ['alpha', 'beta']));
+  });
+
+  test('a pick the search hides can be taken back from the list of picks', async () => {
+    await open();
+    fireEvent.click(row('alpha'));
+    fireEvent.click(row('gamma'));
+    search('wayne');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove alpha' }));
+    expect(chips()).toEqual(['gamma×']);
+    search('');
+    expect(row('alpha')).toHaveAttribute('aria-checked', 'false');
+    expect(row('gamma')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  test('"Select all shown" ticks what the search shows, and "Deselect all" empties the picks', async () => {
+    await open();
+    search('acme');                        // alpha and gamma
+    fireEvent.click(screen.getByRole('button', { name: 'Select all shown' }));
+    expect(screen.getByRole('button', { name: 'Select all shown' })).toBeDisabled();  // nothing left to add
+    search('');
+    expect(row('alpha')).toHaveAttribute('aria-checked', 'true');
+    expect(row('gamma')).toHaveAttribute('aria-checked', 'true');
+    expect(row('beta')).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deselect all' }));
+    expect(screen.getByText('Nothing selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add to task/i })).toBeDisabled();
+  });
+
+  test('the summary names each repository: what was cloned, refused, and tagged on the ticket', async () => {
+    addTaskRepositories.mockResolvedValue({
+      ok: true,
+      body: {
+        repositories: [
+          { repository_id: 'alpha', tag_added: true, tag_name: 'kato:repo:alpha', ticket_tag: { status: 'added', error: '' } },
+          { repository_id: 'beta', tag_added: true, tag_name: 'kato:repo:beta', ticket_tag: { status: 'failed', error: '400 Bad Request' } },
+        ],
+        rejected: [{ repository_id: 'ghost', error: "repository 'ghost' is not in the kato inventory" }],
+        sync: { added_repositories: ['alpha', 'beta'] },
+      },
+    });
+    await open();
+    fireEvent.click(row('alpha'));
+    fireEvent.click(row('beta'));
+    fireEvent.click(screen.getByRole('button', { name: /Add to task/i }));
+    await waitFor(() => expect(toast.show).toHaveBeenCalled());
+
+    const shown = toast.show.mock.calls[0][0];
+    const lines = shown.message.split('\n');
+    // Problems first — the refused repository, then the ticket the tracker would not tag.
+    expect(lines[0]).toBe("✗ not added — ghost: repository 'ghost' is not in the kato inventory");
+    expect(lines[1]).toBe('✗ ticket NOT tagged (beta): 400 Bad Request');
+    expect(shown.message).toContain('✓ tagged task with kato:repo:alpha, kato:repo:beta');
+    expect(shown.message).toContain('✓ cloned 2 repo(s): alpha, beta');
+    expect(shown.message).toContain('✓ tagged the ticket with alpha');
+    expect(shown.kind).toBe('warning');
+    expect(shown.durationMs).toBe(0);
+  });
+
+  test('when every repository is tagged on the ticket the summary says so once', async () => {
+    addTaskRepositories.mockResolvedValue({
+      ok: true,
+      body: {
+        repositories: ['alpha', 'beta'].map((id) => ({
+          repository_id: id, tag_added: true, tag_name: `kato:repo:${id}`, ticket_tag: { status: 'added', error: '' },
+        })),
+        rejected: [],
+        sync: { added_repositories: ['alpha', 'beta'] },
+      },
+    });
+    await open();
+    fireEvent.click(row('alpha'));
+    fireEvent.click(row('beta'));
+    fireEvent.click(screen.getByRole('button', { name: /Add to task/i }));
+    await waitFor(() => expect(toast.show).toHaveBeenCalled());
+
+    const shown = toast.show.mock.calls[0][0];
+    expect(shown.message.match(/tagged the ticket/g)).toHaveLength(1);
+    expect(shown.message).toContain('✓ tagged the ticket too');
+    expect(shown.kind).toBe('success');
+    expect(shown.durationMs).toBe(8000);
   });
 });
 

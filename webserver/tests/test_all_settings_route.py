@@ -223,3 +223,59 @@ class AllSettingsPostTests(_Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReleaseNotesSettingsRouteTests(_Base):
+    """Release notes live in Settings, apply without a restart, and refuse a bad path."""
+
+    def _section(self):
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().get('/api/all-settings')
+        return next(s for s in resp.get_json()['sections'] if s['id'] == 'release_notes')
+
+    def test_the_release_notes_group_offers_every_setting(self) -> None:
+        fields = {f['key']: f for f in self._section()['fields']}
+        self.assertEqual(set(fields), {
+            'KATO_RELEASE_NOTES_ENABLED', 'KATO_RELEASE_NOTES_PATH',
+            'KATO_RELEASE_NOTES_DESTINATION', 'KATO_RELEASE_NOTES_GOOGLE_DOC_URL',
+            'KATO_RELEASE_NOTES_GOOGLE_CREDENTIALS_PATH',
+        })
+        self.assertEqual(fields['KATO_RELEASE_NOTES_DESTINATION']['options'], ['file', 'file_and_google_doc'])
+        self.assertEqual(fields['KATO_RELEASE_NOTES_ENABLED']['type'], 'bool')
+
+    def test_saving_them_applies_without_a_restart(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post('/api/all-settings', json={'updates': {
+                'KATO_RELEASE_NOTES_PATH': str(self.tmp / 'notes' / 'release-notes.md'),
+                'KATO_RELEASE_NOTES_DESTINATION': 'file',
+            }})
+        self.assertEqual(resp.status_code, 200)
+        body = resp.get_json()
+        self.assertFalse(body['restart_required'])
+        self.assertIn('Release notes', body['message'])
+        self.assertEqual(self._saved()['KATO_RELEASE_NOTES_DESTINATION'], 'file')
+
+    def test_a_path_inside_the_workspaces_folder_is_refused(self) -> None:
+        workspaces = self.tmp / 'workspaces'
+        with patch.dict(os.environ, self._env({'KATO_WORKSPACES_ROOT': str(workspaces)})):
+            resp = self._client().post('/api/all-settings', json={'updates': {
+                'KATO_RELEASE_NOTES_PATH': str(workspaces / 'UNA-1' / 'notes.md'),
+            }})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('inside the workspaces folder', json.dumps(resp.get_json()))
+        self.assertNotIn('KATO_RELEASE_NOTES_PATH', self._saved())
+
+    def test_an_unknown_destination_is_refused(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post('/api/all-settings', json={'updates': {
+                'KATO_RELEASE_NOTES_DESTINATION': 'carrier-pigeon',
+            }})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_mixed_with_a_restart_setting_still_asks_for_a_restart(self) -> None:
+        with patch.dict(os.environ, self._env()):
+            resp = self._client().post('/api/all-settings', json={'updates': {
+                'KATO_RELEASE_NOTES_ENABLED': 'false',
+                'KATO_LOG_LEVEL': 'debug',
+            }})
+        self.assertTrue(resp.get_json()['restart_required'])

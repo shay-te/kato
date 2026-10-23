@@ -71,8 +71,18 @@ export function stuckActions(step) {
   return [];
 }
 
-export function stepNote(step) {
+// What a card says under its title. A step that is ready to be handed over says
+// what it waits for: while the plan is PAUSED nothing is handed over — a restart
+// pauses every running plan — so the server's "it will be retried" would promise
+// what does not happen until Run is pressed (a card sat in Waiting that way
+// while its tab was open in the working tasks).
+export function stepNote(step, planStatus = '') {
   if (step.status === 'cancelled') { return 'cancelled'; }
+  if (step.status === 'ready' && planStatus === 'paused') {
+    return step.released_at
+      ? 'paused — press Run to hand it over again'
+      : 'paused — press Run to start it';
+  }
   return String(step.reason || '');
 }
 
