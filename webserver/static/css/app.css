@@ -10564,6 +10564,15 @@ button.settings-prompt-editor-head {
   padding-top: 14px;
 }
 
+/* The divider separates a lifted group from the tab content ABOVE it; a
+ * group that opens the tab (Prompts → Standing instructions) sits right
+ * under the panel title, where a rule would only cut the title off. */
+.settings-drawer-panel-head + .settings-drawer-field-group {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
 /* ONE look for every subsection heading in Settings.
  *
  * These three arrived separately and drifted: the field-group title was

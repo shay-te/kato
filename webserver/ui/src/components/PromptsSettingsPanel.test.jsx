@@ -2,12 +2,51 @@
 // through the shared promptStore.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 vi.mock('../stores/toastStore.js', () => ({ toast: { show: vi.fn() } }));
 
+// The Standing instructions field is a schema field of General, lifted into
+// this tab (``panel: 'prompts'``). No ``source`` on it here: its badge would
+// come first in the DOM and the fast-prompt tests read the first badge.
+const STANDING_KEY = 'KATO_STANDING_INSTRUCTIONS';
+const fetchAllSettings = vi.fn();
+const updateAllSettings = vi.fn();
+vi.mock('../api.js', () => ({
+  fetchAllSettings: (...args) => fetchAllSettings(...args),
+  updateAllSettings: (...args) => updateAllSettings(...args),
+}));
+
 import { promptStore } from '../stores/promptStore.js';
+import { _resetAllSettingsStore } from '../stores/allSettingsStore.js';
 import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
+
+function settingsBody(standingValue) {
+  return {
+    ok: true,
+    body: {
+      settings_file_path: '/home/me/.kato/settings.json',
+      sections: [{
+        id: 'general', label: 'General', title: 'General', description: '',
+        fields: [
+          {
+            key: STANDING_KEY, type: 'textarea', label: 'Standing instructions',
+            help: 'Your own instructions.', panel: 'prompts', max_length: 4000,
+            value: standingValue,
+          },
+          { key: 'KATO_LOG_LEVEL', type: 'select', label: 'Log level', options: ['info'], value: 'info' },
+        ],
+      }],
+    },
+  };
+}
+
+beforeEach(() => {
+  _resetAllSettingsStore();
+  fetchAllSettings.mockReset();
+  fetchAllSettings.mockResolvedValue(settingsBody(''));
+  updateAllSettings.mockReset();
+});
 
 
 beforeEach(() => {
@@ -186,5 +225,38 @@ describe('PromptsSettingsPanel — adding prompts', () => {
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
     expect(promptStore.list().map((p) => p.id)).toEqual(['codeReview']);
     expect(screen.queryByRole('button', { name: /^go/i })).toBeNull();
+  });
+});
+
+
+describe('PromptsSettingsPanel — standing instructions', () => {
+
+  test('the saved text is shown in a multi-line box; General-only fields are not', async () => {
+    fetchAllSettings.mockResolvedValue(settingsBody('Answer in English.\nTest every endpoint.'));
+    const { container } = render(<PromptsSettingsPanel />);
+    const box = await screen.findByDisplayValue(/Answer in English\./);
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box.value).toBe('Answer in English.\nTest every endpoint.');
+    expect(screen.getByText('Standing instructions')).toBeInTheDocument();
+    expect(container.querySelector('select')).toBeNull();
+    // Both groups live on the tab: the instructions, then the fast prompts.
+    expect(screen.getByRole('heading', { name: 'Fast prompts' })).toBeInTheDocument();
+  });
+
+  test('editing shows a Save that posts only that setting', async () => {
+    updateAllSettings.mockResolvedValue({
+      ok: true, body: { ok: true, restart_required: false, message: 'Saved.' },
+    });
+    const { container } = render(<PromptsSettingsPanel />);
+    await waitFor(() => expect(container.querySelector('textarea')).not.toBeNull());
+    const box = container.querySelector('textarea');
+    // Nothing to save yet: no second save bar on the tab.
+    expect(screen.queryByRole('button', { name: /^save/i })).toBeNull();
+
+    fireEvent.change(box, { target: { value: 'Never edit vendor/.' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save 1 change$/i }));
+
+    await waitFor(() => expect(updateAllSettings).toHaveBeenCalledTimes(1));
+    expect(updateAllSettings).toHaveBeenCalledWith({ [STANDING_KEY]: 'Never edit vendor/.' });
   });
 });

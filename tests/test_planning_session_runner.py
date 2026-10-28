@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +21,9 @@ from kato_core_lib.data_layers.service.planning_session_runner import (
     StreamingSessionDefaults,
 )
 from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
+from kato_core_lib.helpers.standing_instructions_utils import (
+    STANDING_INSTRUCTIONS_KEY,
+)
 from tests.utils import build_task
 
 
@@ -842,6 +849,68 @@ class PlanProgressGuidanceReachesEverySpawnTests(unittest.TestCase):
         self.assertEqual(
             manager.start_kwargs['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE,
         )
+
+
+class StandingInstructionsReachEverySpawnTests(unittest.TestCase):
+    """The operator's standing instructions (Settings → Prompts) ride after
+    kato's guidance on every spawn through the runner's funnel — read at the
+    spawn, so a save reaches the next chat without a restart."""
+
+    _RULE = 'Answer in English. Every endpoint gets a test.'
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        settings_path = Path(tmp.name) / 'settings.json'
+        patcher = patch.dict(os.environ, {'KATO_SETTINGS_FILE': str(settings_path)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop(STANDING_INSTRUCTIONS_KEY, None)
+        self._save = lambda text: settings_path.write_text(
+            json.dumps({STANDING_INSTRUCTIONS_KEY: text}), encoding='utf-8',
+        )
+
+    def _runner(self, manager):
+        return PlanningSessionRunner(
+            session_manager=manager,
+            defaults=StreamingSessionDefaults(
+                binary='claude', permission_mode='acceptEdits',
+            ),
+        )
+
+    def _assert_carries_both(self, manager) -> None:
+        prompt = manager.start_kwargs['extra_system_prompt']
+        self.assertTrue(prompt.startswith(PLAN_PROGRESS_GUIDANCE.rstrip()))
+        self.assertTrue(prompt.endswith(self._RULE), prompt[-80:])
+
+    def test_the_chat_spawn_carries_them(self) -> None:
+        self._save(self._RULE)
+        manager = _FakeManager(_terminal(result='ok'))
+        self._runner(manager).resume_session_for_chat(
+            task_id='PROJ-1', message='do it', cwd='/tmp/client',
+            task_summary='summary',
+        )
+        self._assert_carries_both(manager)
+
+    def test_the_autonomous_spawn_carries_them(self) -> None:
+        self._save(self._RULE)
+        manager = _FakeManager(_terminal(result='ok'))
+        self._runner(manager).implement_task(
+            build_task(), prepared_task=_FakePrepared([_FakeRepo('client', '/tmp/client')]),
+        )
+        self._assert_carries_both(manager)
+
+    def test_a_save_reaches_the_next_spawn_of_the_same_runner(self) -> None:
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = self._runner(manager)
+        spawn = lambda: runner.start_session(  # noqa: E731
+            task_id='PROJ-1', task_summary='s', initial_prompt='go', cwd='/tmp/client',
+        )
+        spawn()
+        self.assertEqual(manager.start_kwargs['extra_system_prompt'], PLAN_PROGRESS_GUIDANCE)
+        self._save(self._RULE)
+        spawn()
+        self._assert_carries_both(manager)
 
 
 if __name__ == '__main__':

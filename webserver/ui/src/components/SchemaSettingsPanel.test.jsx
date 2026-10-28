@@ -3,7 +3,7 @@
 // model picker) instead of hardcoding slugs.
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 const fetchOpenRouterModels = vi.fn();
 
@@ -95,5 +95,35 @@ describe('SchemaField — select labels', () => {
     expect(selectOptionLabel({ options: ['', 'low'] }, '')).toBe('(default)');
     expect(selectOptionLabel({ options: ['', 'low'] }, 'low')).toBe('low');
     expect(selectOptionLabel(null, 'x')).toBe('x');
+  });
+});
+
+describe('SchemaField — textarea', () => {
+  const TEXT_FIELD = {
+    key: 'KATO_STANDING_INSTRUCTIONS', type: 'textarea', label: 'Standing instructions',
+    max_length: 4000, placeholder: 'e.g. Answer in English.',
+  };
+
+  test('a textarea field is a multi-line box, capped, with a live count', () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <SchemaField field={TEXT_FIELD} value={'one\ntwo'} onChange={onChange} />,
+    );
+    expect(container.querySelector('input')).toBeNull();
+    const box = container.querySelector('textarea');
+    expect(box.value).toBe('one\ntwo');
+    expect(box.getAttribute('maxlength')).toBe('4000');
+    expect(box.getAttribute('placeholder')).toBe('e.g. Answer in English.');
+    expect(screen.getByText('7 / 4,000 characters')).toBeInTheDocument();
+    fireEvent.change(box, { target: { value: 'one\ntwo\nthree' } });
+    expect(onChange).toHaveBeenCalledWith('one\ntwo\nthree');
+  });
+
+  test('without a cap there is no count', () => {
+    const { container } = render(
+      <SchemaField field={{ ...TEXT_FIELD, max_length: undefined }} value="x" onChange={() => {}} />,
+    );
+    expect(container.querySelector('textarea').hasAttribute('maxlength')).toBe(false);
+    expect(screen.queryByText(/characters$/)).toBeNull();
   });
 });

@@ -22,6 +22,9 @@ from kato_core_lib.helpers.shell_status_utils import (
     sleep_with_countdown_spinner,
     supports_inline_status,
 )
+from kato_core_lib.helpers.standing_instructions_utils import (
+    with_standing_instructions,
+)
 from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
     install_status_broadcast_handler,
@@ -1053,6 +1056,11 @@ def _planning_spawn_defaults(runner) -> dict[str, object]:
         field: (getattr(defaults, field, '') or '') for field in fields
     }
     result['max_turns'] = getattr(defaults, 'max_turns', None)
+    # The operator's standing instructions ride with kato's guidance, as on
+    # every other spawn (``PlanningSessionRunner.start_session``).
+    result['extra_system_prompt'] = with_standing_instructions(
+        result['extra_system_prompt'],
+    )
     return result
 
 

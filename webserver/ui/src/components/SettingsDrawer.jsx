@@ -74,8 +74,8 @@ const BESPOKE_TABS = [
   {
     id: TAB_PROMPTS,
     label: 'Prompts',
-    description: 'The prompt text kato sends the agent — task framing, '
-      + 'review-comment handling, and the learned-lessons file.',
+    description: 'Your standing instructions, added to the agent\'s prompt '
+      + 'on every task, and the fast prompts on the session toolbar.',
   },
   {
     id: TAB_TASK_PROVIDER,
@@ -191,7 +191,7 @@ export default function SettingsDrawer({
   } else if (tab === TAB_ACTION_GUARD) {
     panel = <ActionGuardSettingsPanel />;
   } else if (tab === TAB_PROMPTS) {
-    panel = <PromptsSettingsPanel />;
+    panel = <PromptsSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_TASK_PROVIDER) {
     panel = <TaskProviderSettingsPanel />;
   } else if (tab === TAB_GIT_PROVIDER) {

@@ -264,6 +264,16 @@ to preserve every rule) until it outgrew its own timeout and silently stopped.
 `KATO_ARCHITECTURE_DOC_PATH` is read exactly once, at boot, to adopt an old file as the lessons
 document (`LessonsService.adopt_legacy_document`); its earlier lessons are queued for the editor.
 
+### Standing instructions — the operator's own text in every task's prompt
+Settings → Prompts → Standing instructions (`KATO_STANDING_INSTRUCTIONS`, a `textarea` schema field
+of General lifted with `panel: 'prompts'`, ≤ `STANDING_INSTRUCTIONS_MAX_CHARS` — the system prompt is
+argv, and Windows caps a command line at 32,767). `helpers/standing_instructions_utils.py`
+`with_standing_instructions(guidance)` appends it after kato's own `extra_system_prompt`, so it lands
+in `--append-system-prompt` AFTER the boundary + lessons directive. Read fresh (`live_setting`) at BOTH
+Claude spawn sites — `PlanningSessionRunner.start_session` and boot resume's hand-copied
+`main._planning_spawn_defaults` — so a save needs no restart (a running chat keeps its prompt). Not on
+Codex chats or one-shot runs (neither carries `extra_system_prompt`).
+
 ### Release notes — a dated line per task that reaches Done
 ```
 "Finish & forget" + done ─┐

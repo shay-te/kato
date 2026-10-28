@@ -14,6 +14,7 @@ Field ``type``:
   * ``number``  — integer / float (stored as a string in .env land)
   * ``bool``    — ``"true"`` / ``"false"``
   * ``select``  — one of ``options``
+  * ``textarea`` — multi-line string (``max_length`` caps it)
 
 Provider + repo-root keys are deliberately NOT here — they have
 dedicated tabs (Task provider / Git provider / Repositories) with
@@ -30,6 +31,10 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
     CommandPolicy,
 )
 from kato_core_lib.helpers.plan_mode_store import DEFAULT_MODE_CHOICES
+from kato_core_lib.helpers.standing_instructions_utils import (
+    STANDING_INSTRUCTIONS_KEY,
+    STANDING_INSTRUCTIONS_MAX_CHARS,
+)
 
 LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 
@@ -170,6 +175,7 @@ _EMAIL_KEYS: frozenset[str] = frozenset({
 #                          operator to tick a confirm box before the
 #                          value can flip on (frontend-enforced)
 #   placeholder="..."     input placeholder
+#   max_length=N          refuse a longer value on save (any type)
 SETTINGS_SCHEMA: list[dict] = [
     {
         'id': 'general',
@@ -270,6 +276,20 @@ SETTINGS_SCHEMA: list[dict] = [
              'system prompt on every spawn. Empty = '
              'KATO_WORKSPACES_ROOT/lessons.md.',
              {}),
+            # Lifted into the Prompts tab: it is prompt text, and that tab is
+            # where an operator looks for "what kato tells the agent".
+            (STANDING_INSTRUCTIONS_KEY, 'textarea',
+             'Standing instructions',
+             'Your own instructions, added to the agent\'s prompt on every '
+             'task — after the lessons-file directive, in the system prompt, '
+             'so they hold for the whole task, resumed chats included. Use it '
+             'for rules you would otherwise repeat on every task. Applies to '
+             'the next chat kato starts — no restart; a chat already running '
+             'keeps the instructions it started with. Claude chats only. '
+             f'Up to {STANDING_INSTRUCTIONS_MAX_CHARS:,} characters.',
+             {'panel': 'prompts', 'max_length': STANDING_INSTRUCTIONS_MAX_CHARS,
+              'placeholder': 'e.g. Write commit-ready code with tests. '
+                             'Answer in English. Never touch the vendor/ folder.'}),
             ('KATO_APPROVED_REPOSITORIES_PATH', 'text',
              'Approvals sidecar path',
              'Override the approvals JSON location. Empty = '
@@ -767,6 +787,9 @@ def _schema_type_lookup() -> dict[str, dict]:
 
 def _check_type(key: str, val: str, meta: dict) -> str | None:
     ftype = meta.get('type', 'text')
+    max_length = meta.get('max_length')
+    if max_length and len(val) > max_length:
+        return f'{key}: at most {max_length:,} characters; got {len(val):,}'
     if ftype == 'select':
         options: list[str] = meta.get('options', [])
         if options and val not in options:
@@ -805,6 +828,7 @@ def validate_settings_values(updates: dict[str, str]) -> list[str]:
     - ``select`` fields: value must be one of the declared options
     - ``number`` fields: value must parse as a finite non-negative number
     - ``bool`` fields: value must be ``"true"`` or ``"false"``
+    - ``max_length``: value must be no longer than that
     - URL keys: value must start with ``http://`` or ``https://``
     - Email keys: value must contain ``@`` with a dotted domain
 

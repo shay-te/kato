@@ -48,6 +48,9 @@ from kato_core_lib.helpers.planning_hold_store import held_permission_mode
 from kato_core_lib.helpers.remote_control_store import (
     schedule_remote_control_for_spawn,
 )
+from kato_core_lib.helpers.standing_instructions_utils import (
+    with_standing_instructions,
+)
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
 from kato_core_lib.helpers.task_model_tag_store import task_model_tag
 from kato_core_lib.helpers.workspace_refusal_guidance import (
@@ -851,7 +854,11 @@ class PlanningSessionRunner(object):
             expected_branch=branch_name,
             lessons_path=defaults.lessons_path,
             docker_mode_on=defaults.docker_mode_on,
-            extra_system_prompt=defaults.extra_system_prompt,
+            # Kato's guidance + the operator's standing instructions (Settings
+            # → Prompts), read fresh so a save reaches the next spawn.
+            extra_system_prompt=with_standing_instructions(
+                defaults.extra_system_prompt,
+            ),
             # The docker sandbox mounts THIS, not cwd: cwd is one repo
             # clone, so mounting it hides every sibling repo in the same
             # task. Empty ⇒ previous cwd-only mount.

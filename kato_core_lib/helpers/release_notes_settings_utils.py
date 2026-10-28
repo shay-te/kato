@@ -12,12 +12,11 @@ publish step stages everything in a clone — kato would end up pushing it.
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
 from kato_core_lib.helpers.kato_paths_utils import configured_path
-from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
+from kato_core_lib.helpers.kato_settings_store_utils import live_setting
 
 RELEASE_NOTES_ENABLED_KEY = 'KATO_RELEASE_NOTES_ENABLED'
 RELEASE_NOTES_PATH_KEY = 'KATO_RELEASE_NOTES_PATH'
@@ -45,15 +44,7 @@ _BARE_ID = re.compile(r'^[A-Za-z0-9_-]{20,}$')
 
 def _setting(key: str, env: dict | None) -> str:
     """settings.json (live) → shell env → '' (unset)."""
-    try:
-        settings = read_kato_settings()
-    except Exception:  # noqa: BLE001 - a corrupt settings file must not decide it
-        settings = {}
-    for source in (settings, os.environ if env is None else env):
-        value = source.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ''
+    return live_setting(key, env)
 
 
 def release_notes_enabled(env: dict | None = None) -> bool:

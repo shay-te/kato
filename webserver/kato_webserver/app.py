@@ -367,8 +367,14 @@ def _live_settings_keys() -> frozenset[str]:
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
     )
+    from kato_core_lib.helpers.standing_instructions_utils import (
+        STANDING_INSTRUCTIONS_KEY,
+    )
 
-    return frozenset({REVIEW_COMMENTS_ENABLED_KEY}) | RELEASE_NOTES_KEYS
+    return (
+        frozenset({REVIEW_COMMENTS_ENABLED_KEY, STANDING_INSTRUCTIONS_KEY})
+        | RELEASE_NOTES_KEYS
+    )
 
 
 def _apply_live_settings(app: Flask, updates: dict) -> str:
@@ -377,14 +383,23 @@ def _apply_live_settings(app: Flask, updates: dict) -> str:
     Returns the operator-facing message to send back, or ``''`` when
     nothing live was touched (caller falls back to "restart required").
 
-    The release-notes settings are read fresh on every write, so saving
-    them already applied them. The review-comment switch needs this hook.
+    The release-notes settings and the standing instructions are read fresh
+    on every use, so saving them already applied them. The review-comment
+    switch needs this hook.
     """
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
+    from kato_core_lib.helpers.standing_instructions_utils import (
+        STANDING_INSTRUCTIONS_KEY,
+    )
 
     messages = [_apply_review_comment_switch(app, updates)]
     if RELEASE_NOTES_KEYS & set(updates):
         messages.append('Saved. Release notes settings apply to the next finished task.')
+    if STANDING_INSTRUCTIONS_KEY in updates:
+        messages.append(
+            'Saved. Standing instructions apply to the next chat kato starts; '
+            'a chat already running keeps the ones it started with.'
+        )
     return ' '.join(message for message in messages if message)
 
 

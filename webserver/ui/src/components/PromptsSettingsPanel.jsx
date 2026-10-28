@@ -4,18 +4,26 @@ import {
 } from '../stores/promptStore.js';
 import { toast } from '../stores/toastStore.js';
 import Icon from './Icon.jsx';
+import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
+import SettingsSectionHead from './settings/SettingsSectionHead.jsx';
 
-// "Prompts" tab — the fast prompts on the session toolbar, one button each.
-// Code review ships with kato; any prompt's name, icon and text can be
-// changed, and the operator can add their own. Each prompt is collapsed to a
-// single row until opened, so the list stays scannable as it grows. Saved in
-// this browser through promptStore; the toolbar picks every change up at once.
+// "Prompts" tab — what kato adds to the agent's prompt, then the fast prompts.
+//
+// Standing instructions (top) are the operator's own text in every task's
+// system prompt: a schema field lifted out of General (``panel: 'prompts'``),
+// saved to settings.json and read by kato at every spawn.
+//
+// Fast prompts are the session-toolbar buttons, one each. Code review ships
+// with kato; any prompt's name, icon and text can be changed, and the
+// operator can add their own. Each prompt is collapsed to a single row until
+// opened, so the list stays scannable as it grows. Saved in this browser
+// through promptStore; the toolbar picks every change up at once.
 
 const NEW_PROMPT = Object.freeze({ label: '', icon: 'send', text: '' });
 
-export default function PromptsSettingsPanel() {
+export default function PromptsSettingsPanel({ highlightKey = '' }) {
   const prompts = useFastPrompts();
   const [openIds, setOpenIds] = useState(() => new Set());
   const [adding, setAdding] = useState(false);
@@ -32,14 +40,30 @@ export default function PromptsSettingsPanel() {
     <div className="settings-drawer-panel">
       <SettingsPanelHead title="Prompts">
         <p>
-          Fast prompts sit on the session toolbar — one click sends the prompt
-          to the agent. Change a prompt&apos;s name, icon or text, or add your
-          own. Saved in this browser; <strong>Reset to default</strong> restores
-          a prompt kato ships.
+          What kato adds to the agent&apos;s prompt on every task, and the
+          fast prompts on the session toolbar.
         </p>
       </SettingsPanelHead>
       <SettingsPanelBody>
         <>
+          <SchemaFieldGroup
+            sectionId="general"
+            panel="prompts"
+            highlightKey={highlightKey}
+            description={
+              'Added to the agent\'s system prompt on every task, after the '
+              + 'lessons-file directive. Applies to the next chat kato starts '
+              + '— no restart needed.'
+            }
+          />
+          <SettingsSectionHead title="Fast prompts">
+            <p className="settings-drawer-field-group-help">
+              Fast prompts sit on the session toolbar — one click sends the
+              prompt to the agent. Change a prompt&apos;s name, icon or text, or
+              add your own. Saved in this browser; <strong>Reset to
+              default</strong> restores a prompt kato ships.
+            </p>
+          </SettingsSectionHead>
           {prompts.map((prompt) => (
             <PromptEditor
               key={prompt.id}

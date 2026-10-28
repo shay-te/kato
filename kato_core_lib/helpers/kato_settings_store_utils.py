@@ -77,6 +77,25 @@ def read_kato_settings() -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items() if k}
 
 
+def live_setting(key: str, env: dict | None = None) -> str:
+    """One setting read FRESH: settings.json → shell env (``env``) → ``''``.
+
+    For the settings the Settings drawer applies without a restart: the file
+    is what a save writes, so reading it on every use is what makes the save
+    take effect. A corrupt file must not decide the value — it falls through
+    to the environment. Returned stripped; blank means unset.
+    """
+    try:
+        settings = read_kato_settings()
+    except Exception:  # noqa: BLE001 - a corrupt settings file must not decide it
+        settings = {}
+    for source in (settings, os.environ if env is None else env):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ''
+
+
 def write_kato_settings(updates: dict[str, str]) -> dict[str, str]:
     """Merge ``updates`` into the settings file. Returns the new full dict.
 

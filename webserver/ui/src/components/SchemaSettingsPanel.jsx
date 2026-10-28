@@ -128,6 +128,7 @@ export function SchemaField({ field, value, onChange }) {
   const isSelect = field.type === 'select';
   const isSecret = field.type === 'secret';
   const isNumber = field.type === 'number';
+  const isTextarea = field.type === 'textarea';
   const boolChecked = String(value).toLowerCase() === 'true';
 
   // Live autocomplete source (e.g. OpenRouter's catalogue) for free-text fields
@@ -197,6 +198,17 @@ export function SchemaField({ field, value, onChange }) {
             </option>
           ))}
         </select>
+      ) : isTextarea ? (
+        // Multi-line prose (the standing instructions): spell-checked, unlike
+        // the identifier-shaped single-line fields below.
+        <textarea
+          className="settings-drawer-input settings-prompt-textarea"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder || fieldPlaceholder(field.key)}
+          maxLength={field.max_length || undefined}
+          rows={10}
+        />
       ) : (
         <input
           type={isSecret ? 'password' : (isNumber ? 'number' : 'text')}
@@ -219,6 +231,11 @@ export function SchemaField({ field, value, onChange }) {
         </datalist>
       )}
 
+      {isTextarea && field.max_length > 0 && (
+        <span className="settings-drawer-field-hint">
+          {String(value).length.toLocaleString()} / {field.max_length.toLocaleString()} characters
+        </span>
+      )}
       {field.warning && (
         <span className="settings-drawer-field-warning">⚠ {field.warning}</span>
       )}
