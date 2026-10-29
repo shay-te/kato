@@ -9,6 +9,14 @@ This helper is that minimal client. It calls ``claude -p`` as a
 subprocess with the prompt on stdin, captures stdout, and returns the
 text. Failures raise; the caller decides whether to log-and-continue
 or surface.
+
+"No tools" is enforced by the CLI, not assumed. A bare ``claude -p`` has the
+DEFAULT tool set, and the operator's own allow rules in their user settings
+approve its shell commands — so a lesson extraction fed a ticket description
+went exploring the operator's home (``ls``, ``find /``, other tasks'
+transcripts, the host app's logs and settings), up to 25 tool calls per run, outside
+any sandbox, until it outran the timeout. ``_NO_TOOLS_FLAGS`` leaves it nothing
+but its own reply.
 """
 
 from __future__ import annotations
@@ -21,6 +29,12 @@ from agent_core_lib.agent_core_lib.helpers.one_shot import (
     run_one_shot,
 )
 
+
+
+#: ``--tools ""`` removes every built-in tool; MCP tools are not built-ins, so
+#: ``--strict-mcp-config`` with no config removes those too. No saved session:
+#: a one-shot is never resumed, and its transcript is only a copy of the prompt.
+_NO_TOOLS_FLAGS = ('--tools', '', '--strict-mcp-config', '--no-session-persistence')
 
 
 class OneShotError(AgentOneShotError):
@@ -37,13 +51,13 @@ def one_shot(
 ) -> str:
     """Send ``prompt`` to ``claude -p`` and return stdout.
 
-    No allowed-tools list, no system prompt, no session id — pure text
+    No tools, no MCP servers, no system prompt, no saved session — pure text
     completion. ``model`` is optional; empty leaves Claude on its configured
-    default. See :func:`run_one_shot` for ``cwd`` and why it matters here:
-    even a tool-less ``claude -p`` writes a throwaway transcript under
-    ``~/.claude/projects/<encoded-cwd>``.
+    default. ``cwd`` still points the run at a scratch dir (see
+    :func:`run_one_shot`), so nothing the CLI keeps per directory lands in
+    the caller's.
     """
-    command: list[str] = [binary, '-p']
+    command: list[str] = [binary, '-p', *_NO_TOOLS_FLAGS]
     if model:
         command.extend(['--model', model])
     return run_one_shot(

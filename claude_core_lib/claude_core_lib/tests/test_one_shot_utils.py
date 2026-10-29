@@ -66,6 +66,23 @@ class ClaudeOneShotTests(unittest.TestCase):
         )
         self.assertIn('-p', cmd)
 
+    def test_no_tool_exists_for_the_run(self) -> None:
+        # A bare ``claude -p`` has the default tool set, and the operator's
+        # allow rules approve its shell commands: lesson extraction ran up to
+        # 25 Bash/Read calls over the operator's home per run, outside any
+        # sandbox, and timed out. ``--tools ""`` must reach the CLI as an
+        # EMPTY argument — dropping the '' would make the next flag its value.
+        with patch(
+            'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
+            return_value=_CompletedProcess(0, ''),
+        ) as mock_run:
+            one_shot('x', model='opus')
+        cmd = mock_run.call_args.args[0]
+        self.assertEqual(cmd[cmd.index('--tools') + 1], '')
+        self.assertIn('--strict-mcp-config', cmd)
+        self.assertIn('--no-session-persistence', cmd)
+        self.assertNotIn('--allowedTools', cmd)
+
     def test_model_flag_added_when_set(self) -> None:
         with patch(
             'agent_core_lib.agent_core_lib.helpers.one_shot.subprocess.run',
