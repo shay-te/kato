@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react';
 import { fetchSessionList } from '../api.js';
+import { reuseUnchanged } from '../utils/reuseUnchanged.js';
 import { usePolling } from './usePolling.js';
 
 const REFRESH_INTERVAL_MS = 5000;
+const taskIdOf = (session) => session?.task_id;
 
 // ``loaded`` / ``reachable`` exist so the tab strip can tell an EMPTY kato
 // from one it has not heard from yet.
@@ -27,7 +29,7 @@ export function useSessions() {
     try {
       const data = await fetchSessionList();
       if (Array.isArray(data)) {
-        setSessions(data);
+        setSessions((previous) => reuseUnchanged(previous, data, taskIdOf));
         setLoaded(true);
       }
       setReachable(true);

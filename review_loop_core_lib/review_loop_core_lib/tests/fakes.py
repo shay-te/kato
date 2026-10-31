@@ -47,6 +47,18 @@ WORDING = LoopWording(
 )
 
 
+def tick_after(moment: float) -> float:
+    """The clock's next reading past ``moment``.
+
+    A real turn ends after it began and never in the future. Stamping one a
+    millisecond ahead made it read as the end of the NEXT message whenever the
+    loop got there within that millisecond: an idle machine, not a busy one.
+    """
+    while (now := time.time()) <= moment:
+        pass
+    return now
+
+
 def finding(severity: str, *, file: str = 'app.py', symbol: str = 'run',
             category: str = 'correctness', title: str = 'a bug', repo: str = 'api') -> dict:
     return {
@@ -117,13 +129,14 @@ class FakeChat(object):
         return self.awaiting_approval
 
     def deliver(self, task_id: str, prompt: str, *, force_respawn: bool) -> bool:
+        began = time.time()
         self.delivered.append((prompt, force_respawn))
         if self.answer_turns:
             if self.fixer is not None:
                 self.fixer(prompt)
             text = self.reply(prompt) if callable(self.reply) else self.reply
             self.turns.append(ChatTurnEnd(
-                received_at=time.time() + 0.001, is_error=self.turn_error, text=text,
+                received_at=tick_after(began), is_error=self.turn_error, text=text,
             ))
         return True
 

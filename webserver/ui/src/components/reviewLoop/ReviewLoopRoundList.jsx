@@ -8,7 +8,7 @@ import { loopExpansion, rememberLoopExpansion } from '../../utils/reviewLoopExpa
 // undone by a new round arriving and remembered across reloads and tab
 // switches (reviewLoopExpandMemory). Mounted per loop (keyed by its id), so one
 // loop's choices can never be written under another's.
-export default function ReviewLoopRoundList({ taskId, loop, now = 0, running = false }) {
+export default function ReviewLoopRoundList({ taskId, loop, now = 0, running = false, endReason = '' }) {
   const rounds = loop?.rounds || [];
   const loopId = loop?.loop_id || '';
   const [expanded, setExpanded] = useState(() => loopExpansion(taskId, loopId).rounds);
@@ -21,7 +21,7 @@ export default function ReviewLoopRoundList({ taskId, loop, now = 0, running = f
   function toggle(number) {
     applyExpanded({ ...expanded, [number]: !expanded[number] });
   }
-  const items = rounds.map((round) => (
+  const items = rounds.map((round, index) => (
     <ReviewLoopRound
       key={round.number}
       taskId={taskId}
@@ -31,6 +31,7 @@ export default function ReviewLoopRoundList({ taskId, loop, now = 0, running = f
       onToggle={toggle}
       now={now}
       running={running}
+      endReason={index === rounds.length - 1 ? endReason : ''}
     />
   ));
   return <ol className="review-loop-rounds">{items}</ol>;

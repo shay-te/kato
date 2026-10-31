@@ -29,10 +29,13 @@ FIXER_RULES = f'''How to handle them — decide each finding on its merits:
   invariant, check every place in the change that must keep it.
 - Every fix gets a regression test that fails without the fix. Run the tests
   that cover it.
-- Reject it only when it is wrong, or mark it out_of_scope when it is real but
-  not this task's — and only with evidence you can point to: file:line, a test
-  you ran, the docs, the library's own source. Never reject to avoid work.
-- Keep each change minimal and in scope.
+- Reject it only when it is wrong, with evidence you can point to: file:line, a
+  test you ran, the docs, the library's own source. Never reject to avoid work.
+- Mark it out_of_scope when it is true but this task does not need it: the code
+  already did that before this change, or the task never asked for it. Your
+  evidence is what the task asks for, and why this is not part of it.
+- Change only what the finding needs: no new features, options, retries or
+  abstractions. Whatever you add is reviewed next round.
 - Do not commit, push or run git — publishing is the operator's call.
 - MINOR and NIT findings were left out on purpose; do not go looking for them.
 - End your reply with exactly one response block, one entry per finding id

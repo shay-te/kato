@@ -233,6 +233,16 @@ SETTINGS_SCHEMA: list[dict] = [
              'opens a pull request on its own. Turn ON to let the scan '
              'loop publish without asking. The UI Push / Done buttons '
              'are operator actions and are never affected.', {}),
+            ('KATO_LID_AWAKE_ENABLED', 'bool',
+             'Keep running with the lid closed',
+             'Off by default. Kato keeps this computer awake with the lid closed: '
+             'all the time on the charger, and only while an agent is working on '
+             'battery, down to 20% (Windows: charger only). Mac and Windows need '
+             '`kato lid-awake setup` once in a terminal; until then the computer '
+             'only stops idling to sleep while an agent works. Applies within '
+             'seconds, no restart.',
+             {'warning': 'Leave the laptop on a hard surface, never in a bag: '
+                         'it keeps running and getting warm with the lid shut.'}),
             ('KATO_TASK_COMMENTS_ENABLED', 'bool',
              'Read ticket comments',
              'Off by default. When on, comments on the ticket '
@@ -373,8 +383,16 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_CLAUDE_DISALLOWED_TOOLS', 'text', 'Disallowed tools',
              'Comma-separated --disallowedTools.', {}),
             ('KATO_CLAUDE_TIMEOUT_SECONDS', 'number',
-             'Per-task timeout (s)',
-             'Subprocess timeout for the Claude CLI per task.', {}),
+             'Idle limit (s)',
+             'How long a task kato started may go without any output from '
+             'Claude before kato gives up on it. Default 1800. A task still '
+             'producing output is never stopped by this, and waiting for your '
+             'approval does not count.', {}),
+            ('KATO_CLAUDE_MAX_RUN_SECONDS', 'number',
+             'Longest run (s)',
+             'The most a task kato started may run in total, for one that '
+             'keeps going but never finishes. Default 28800 (8 hours). '
+             'Waiting for your approval does not count.', {}),
             ('KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED', 'bool',
              'Model smoke test',
              'Boot-time model-access check. Off by default (spend).',

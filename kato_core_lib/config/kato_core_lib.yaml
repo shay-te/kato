@@ -221,6 +221,7 @@ kato:
     disallowed_tools: ${oc.env:KATO_CLAUDE_DISALLOWED_TOOLS,""}
     bypass_permissions: ${oc.decode:${oc.env:KATO_CLAUDE_BYPASS_PERMISSIONS,"false"}}
     timeout_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_TIMEOUT_SECONDS,"1800"}}
+    max_run_seconds: ${oc.decode:${oc.env:KATO_CLAUDE_MAX_RUN_SECONDS,"28800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED,"false"}}
     # Path to the global compacted lessons file. Re-read on every
     # Claude spawn so newly-extracted lessons (after a "done" click or

@@ -1,4 +1,5 @@
 import Icon, { BusyIcon } from './Icon.jsx';
+import LidAwakeChip from './LidAwakeChip.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { cx } from '../utils/cx.js';
 
@@ -27,6 +28,7 @@ export default function Header({
   onOpenSettings,
   onOpenUsage,
   onOpenReleaseNotes,
+  lidAwake = null,
 }) {
   // Refresh re-scans tickets + reloads workspace state — show the thick
   // spinner on the button while that's in flight (and block a double-tap).
@@ -87,6 +89,7 @@ export default function Header({
           <span className="header-status-text">{statusText}</span>
         </span>
       )}
+      <LidAwakeChip status={lidAwake} />
       {/* ``header-icon-btn`` is an OPT-IN, and these two are the entire reason
           the style exists. It used to be a descendant rule — ``header
           button:not(.header-status)`` — which reached every button inside

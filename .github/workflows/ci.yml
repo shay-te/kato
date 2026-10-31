@@ -44,6 +44,22 @@ jobs:
           coverage combine
           coverage report --show-missing
 
+  lid-awake-windows:
+    # The one lib with Windows-only code paths (powercfg, the Windows API, a
+    # PowerShell watchdog). Everything else in CI is Linux, so without this
+    # job those paths only ever run on an operator's laptop.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run the lid-closed lib's tests on Windows
+        run: python -m unittest discover -s lid_awake_core_lib/lid_awake_core_lib/tests -t .
+
   shellcheck:
     runs-on: ubuntu-latest
 

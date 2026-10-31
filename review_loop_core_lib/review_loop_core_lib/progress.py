@@ -32,7 +32,7 @@ class LoopMemory(object):
     missed: dict[str, int] = field(default_factory=dict)
     # Per issue: the id it was first sent to the chat under.
     first_ids: dict[str, str] = field(default_factory=dict)
-    # The next review is a clean-room sweep: told none of the decisions.
+    # The next review is a clean-room sweep: told nothing of how the fixes went.
     confirm_next: bool = False
     # The change the tests last passed on; a clean review of any other runs them.
     tests_digest: str = ''

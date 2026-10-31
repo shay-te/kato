@@ -1126,6 +1126,13 @@ function RepoTree({
     () => countVisibleTreeRows(treeData, isFiltering ? searchTerm : '', searchPrefs),
     [treeData, isFiltering, searchTerm, searchPrefs],
   );
+  // A repo with no file matching the search stays out of the way while it runs:
+  // a row per repo above "Content matches" pushed the very line the operator
+  // searched for off screen, and the search read as finding nothing. The section
+  // stays mounted, so its folders and sizing are as they were once the box clears.
+  const hiddenBySearch = isFiltering
+    && visibleRowCount === 0
+    && !searchMatch({ data: { name: repoId } }, searchTerm);
   // Rows the tree is drawing RIGHT NOW, read back from react-arborist (see
   // ``syncDrawnRowCount``). ``visibleRowCount`` is only the starting value: it
   // comes from the data, and folders open and close inside the tree, which
@@ -1423,7 +1430,7 @@ function RepoTree({
   // match" and the box reads as broken. Empty query → respect the toggle
   // (changed view by default).
   const showAllForSearch = showAllFiles || isFiltering;
-  if (collapsed) {
+  if (collapsed || hiddenBySearch) {
     body = null;
   } else if (!showAllForSearch && changedTreeContent) {
     body = changedTreeContent;
@@ -1466,7 +1473,7 @@ function RepoTree({
       // the bottom too; expanded, those corners stay square because the tree
       // scrolls past them. The CSS cannot see the chevron, so the state has
       // to reach it as a class.
-      className={`files-tab-repo${collapsed ? ' is-collapsed' : ''}`}
+      className={`files-tab-repo${collapsed ? ' is-collapsed' : ''}${hiddenBySearch ? ' is-hidden-by-search' : ''}`}
       ref={repoRef}
     >
       <StickyHeader

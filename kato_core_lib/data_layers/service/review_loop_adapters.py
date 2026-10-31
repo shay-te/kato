@@ -8,7 +8,7 @@ lib's ports with kato's own machinery and builds the service:
   ``MainChatDelivery`` the comment runs use, so the two can never both send on
   one idle moment, and the operator's queued diff comments go first;
 * the reviewer is a fresh, read-only run of the configured agent backend over
-  every repository of the task (``ImplementationService.investigate``);
+  the task's repositories (``ImplementationService.investigate``);
 * a chat in Plan or Explain mode cannot apply fixes, so it refuses the loop;
 * every step is a ``Mission <task>:`` log line, which the status feed turns
   into notifications.
@@ -243,6 +243,9 @@ def _event_message(state: ReviewLoopState, event: str) -> str:
     if event == 'nudged':
         return f'review loop round {number}: nudged the chat to continue its fixes'
     if event == 'reviewing':
+        moved = state.current_round.rechecked_files
+        if moved:
+            return f'review loop round {number}: re-checking the {moved} file(s) that changed'
         return f'review loop round {number}: reviewing the whole change'
     if event == 'reviewed':
         counts = state.current_round.counts

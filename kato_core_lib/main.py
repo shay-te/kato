@@ -298,6 +298,7 @@ def main(cfg: DictConfig) -> int:
         _start_planning_webserver_if_enabled(app)  # no-op, already serving
         _mark_webserver_configured(app)
         _start_post_boot_workers(app)
+        _start_lid_awake(app)
         _register_shutdown_hook(app)
         scan_interval_seconds = _task_scan_settings(cfg)
         _run_task_scan_loop(
@@ -373,6 +374,7 @@ def _start_post_boot_workers(app) -> None:
     _start_comment_run_watcher(app)
     _start_plan_queue(app)
     _start_workspace_trash_reaper(app)
+    _start_permission_auto_resolver(app)
     _warm_up_repository_inventory(app)
 
 
@@ -403,6 +405,7 @@ def _finalize_configured_boot(
     ``max_attempts`` is a test escape hatch; production passes ``None`` (retry
     until the providers come back or the operator fixes Settings).
     """
+    _start_lid_awake(app)
     attempt = 0
     while max_attempts is None or attempt < max_attempts:
         attempt += 1
@@ -1556,7 +1559,12 @@ def _register_shutdown_hook(app) -> None:
     shutting_down = threading.Event()
 
     def _cleanup():
-        for attr in ('resume_prompt_watcher', 'comment_run_watcher'):
+        for attr in (
+            'resume_prompt_watcher',
+            'comment_run_watcher',
+            'lid_awake_service',
+            'permission_auto_resolver',
+        ):
             watcher = getattr(app, attr, None)
             if watcher is None:
                 continue
@@ -1990,6 +1998,48 @@ def _start_comment_run_watcher(app) -> None:
             'failed to start comment-run watcher; queued comments will '
             'still drain via the scan loop / live SSE, just less promptly',
         )
+
+
+def _start_permission_auto_resolver(app) -> None:
+    """Answer remembered permissions with no browser open.
+
+    The UI stops polling while its page is hidden, and there is no page at all
+    with the lid closed, so this cannot wait to be asked. Best-effort: a failure
+    only means a remembered answer waits for the UI, as it used to.
+    """
+    flask_app = getattr(app, 'planning_flask_app', None)
+    if flask_app is None:
+        return
+    try:
+        from kato_webserver.permission_auto_resolver import (
+            build_and_start_permission_auto_resolver,
+        )
+        app.permission_auto_resolver = build_and_start_permission_auto_resolver(flask_app)
+    except Exception:
+        app.logger.exception('failed to start the permission auto-resolver')
+
+
+def _start_lid_awake(app) -> None:
+    """Keep the Mac awake with the lid closed, if the operator asked for it.
+
+    Runs even with the setting off, to clean up after a kato that crashed
+    while holding sleep off, and before connections are validated: opening the
+    laptop offline must not switch this off. Best-effort: a failure to start
+    only means the lid sleeps the computer as usual, and the watchdog still
+    covers a crash.
+    """
+    try:
+        from kato_core_lib.data_layers.service.lid_awake.wiring import (
+            build_and_start_lid_awake_service,
+        )
+        app.lid_awake_service = build_and_start_lid_awake_service(
+            session_manager=getattr(app, 'session_manager', None),
+        )
+        flask_app = getattr(app, 'planning_flask_app', None)
+        if flask_app is not None:
+            flask_app.config['LID_AWAKE_SERVICE'] = app.lid_awake_service
+    except Exception:
+        app.logger.exception('failed to start the lid-closed service')
 
 
 def _task_scan_settings(cfg: DictConfig) -> float:

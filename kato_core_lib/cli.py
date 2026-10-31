@@ -9,6 +9,7 @@ Every former ``make <target>`` is now ``kato <subcommand>``::
     kato build-agent-server      # build the agent-server image
     kato sandbox build|login|verify
     kato compose-docker          # the containerized OpenHands compose flow
+    kato lid-awake setup|remove|status  # keep running with the lid closed
 
 Subcommands delegate to the same cross-platform Python implementations
 the Makefile used (``scripts/*.py`` + ``kato_core_lib`` modules), so
@@ -145,6 +146,37 @@ def cmd_compose_docker(_args: argparse.Namespace) -> int:
                            cwd=str(REPO_ROOT), env=env)
 
 
+def cmd_lid_awake(args: argparse.Namespace) -> int:
+    # Runs in this process, not from the repo root like the other subcommands,
+    # so a lib newer than the last ``pip install -e .`` has to be reachable too.
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from kato_core_lib.data_layers.service.lid_awake.identity import lid_awake_support
+
+    support = lid_awake_support()
+    if not support.supported:
+        print('Keeping kato running with the lid closed does not work on this computer yet.')
+        return 1
+    if args.action == 'status':
+        ready = support.guard_ready()
+        print('Lid-closed setup: ' + ('installed.' if ready else 'not installed.'))
+        return 0 if ready else 1
+    if args.action == 'remove':
+        code = support.remove_guard()
+        if code == 0:
+            print('Removed. Normal sleep is back on.')
+        return code
+    code = support.install_guard()
+    if code != 0:
+        print('Setup failed, so nothing changed for kato.')
+        return code
+    if not support.guard_ready():
+        print('Setup ran, but the crash guard is not active.')
+        return 1
+    print('Done. Now turn on Settings → "Keep running with the lid closed".')
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='kato',
@@ -171,6 +203,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser('compose-docker',
                    help='containerized OpenHands docker-compose flow').set_defaults(func=cmd_compose_docker)
+
+    lid_awake = sub.add_parser('lid-awake', help='keep running with the lid closed')
+    lid_awake.add_argument('action', choices=['setup', 'remove', 'status'])
+    lid_awake.set_defaults(func=cmd_lid_awake)
     return parser
 
 

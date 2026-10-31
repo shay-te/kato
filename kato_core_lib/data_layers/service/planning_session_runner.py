@@ -59,6 +59,15 @@ from kato_core_lib.helpers.workspace_refusal_guidance import (
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
+def _is_waiting_for_operator(session) -> bool:
+    """True while the agent is paused on a permission ask or a question."""
+    probe = getattr(session, 'pending_control_request_tool', None)
+    if not callable(probe):
+        return False
+    tool_name = probe()
+    return isinstance(tool_name, str) and bool(tool_name.strip())
+
+
 def _positive_int_or_none(value) -> int | None:
     """Parse a positive int from omegaconf-style values; None on anything else.
 
@@ -148,6 +157,7 @@ class PlanningSessionRunner(object):
     """
 
     DEFAULT_MAX_WAIT_SECONDS = 60 * 60 * 4   # generous: humans plan slowly
+    DEFAULT_MAX_RUN_SECONDS = 60 * 60 * 8    # a whole night with the lid closed
     DEFAULT_DRAIN_TIMEOUT_SECONDS = 0.25
 
     @classmethod
@@ -202,6 +212,9 @@ class PlanningSessionRunner(object):
             max_wait_seconds=_positive_int_or_none(
                 getattr(claude_cfg, 'timeout_seconds', None),
             ),
+            max_run_seconds=_positive_int_or_none(
+                getattr(claude_cfg, 'max_run_seconds', None),
+            ),
             hook_runner=hook_runner,
         )
 
@@ -230,6 +243,7 @@ class PlanningSessionRunner(object):
         defaults: StreamingSessionDefaults,
         *,
         max_wait_seconds: float | None = None,
+        max_run_seconds: float | None = None,
         clock: Callable[[], float] = time.monotonic,
         hook_runner=None,
         defaults_by_backend: dict | None = None,
@@ -250,6 +264,11 @@ class PlanningSessionRunner(object):
             max_wait_seconds
             if max_wait_seconds is not None
             else self.DEFAULT_MAX_WAIT_SECONDS
+        )
+        self._max_run_seconds = (
+            max_run_seconds
+            if max_run_seconds is not None
+            else self.DEFAULT_MAX_RUN_SECONDS
         )
         self._clock = clock
         # Operator-extensibility hooks. ``None`` (no config file at
@@ -893,11 +912,30 @@ class PlanningSessionRunner(object):
         return result_text
 
     def _wait_for_terminal_event(self, session, *, task_id: str):
-        deadline = self._clock() + max(0.0, float(self._max_wait_seconds))
+        # Two limits. ``_max_wait_seconds`` is how long the agent may go
+        # without a single event: a run still producing output is never given
+        # up on, however long it takes. ``_max_run_seconds`` is the cap on a
+        # run that keeps talking but never finishes. A fixed limit from the
+        # start of the run failed long tasks that were working fine.
+        #
+        # Time spent waiting for the operator counts towards neither: with the
+        # lid closed overnight, an unanswered permission ask is the operator
+        # being away, not the agent being stuck.
+        idle_limit = max(0.0, float(self._max_wait_seconds))
+        run_limit = max(idle_limit, float(self._max_run_seconds))
+        now = previous = self._clock()
+        idle_deadline = now + idle_limit
+        run_deadline = now + run_limit
         terminal = None
         while True:
             event = session.poll_event(timeout=self.DEFAULT_DRAIN_TIMEOUT_SECONDS)
+            now = self._clock()
+            if _is_waiting_for_operator(session):
+                idle_deadline += now - previous
+                run_deadline += now - previous
+            previous = now
             if event is not None:
+                idle_deadline = now + idle_limit
                 if event.is_terminal:
                     terminal = event
                     # A turn that parked on a background task (a Workflow /
@@ -905,18 +943,23 @@ class PlanningSessionRunner(object):
                     # later ``result`` when the background work notifies back.
                     # Keep waiting for that real terminal instead of
                     # finalizing (and tearing the session down) now.
-                    if getattr(session, 'is_working', False):
-                        continue
-                    break
-                continue
-            if not session.is_alive:
+                    if not getattr(session, 'is_working', False):
+                        break
+            elif not session.is_alive:
                 terminal = session.terminal_event
                 break
-            if self._clock() >= deadline:
+            if now >= idle_deadline:
                 self.logger.warning(
-                    'planning session for task %s exceeded max wait of %.0fs',
+                    'planning session for task %s produced nothing for %.0fs',
                     task_id,
-                    self._max_wait_seconds,
+                    idle_limit,
+                )
+                break
+            if now >= run_deadline:
+                self.logger.warning(
+                    'planning session for task %s ran past its %.0fs limit',
+                    task_id,
+                    run_limit,
                 )
                 break
         return terminal

@@ -12,6 +12,7 @@ import ReviewLoopStagesPicker from './ReviewLoopStagesPicker.jsx';
 import ReviewLoopTracker from './ReviewLoopTracker.jsx';
 import {
   REVIEW_LOOP_EMPTY_TEXT,
+  reviewLoopEndNotice,
   reviewLoopOutcome,
   reviewLoopResumeTooltip,
   reviewLoopSentence,
@@ -35,6 +36,7 @@ export default function ReviewLoopPane({ session, onClose }) {
   }, [loopId, running]);
   const outcome = reviewLoopOutcome(summary);
   const status = paneStatus(summary, outcome, now);
+  const endNotice = reviewLoopEndNotice(summary);
   // Resume continues THIS loop on its own settings; the pickers beside it are
   // for Run again, which starts a new one from round 1.
   const resumeTooltip = reviewLoopResumeTooltip(summary);
@@ -83,10 +85,15 @@ export default function ReviewLoopPane({ session, onClose }) {
   const loopKey = `${session?.task_id || ''}:${detail?.loop_id || ''}`;
   const body = summary ? (
     <>
+      {endNotice && (
+        <p className={cx('review-loop-end-notice', `is-${endNotice.tone}`)} role="alert">
+          {endNotice.text}
+        </p>
+      )}
       <ReviewLoopTracker loop={summary} now={now} />
       <ReviewLoopSelfChecks key={`self:${loopKey}`} taskId={session?.task_id || ''} loop={detail} />
       <ReviewLoopRoundList key={`rounds:${loopKey}`} taskId={session?.task_id || ''} loop={detail}
-        now={running ? now : 0} running={running} />
+        now={running ? now : 0} running={running} endReason={running ? '' : summary.reason} />
     </>
   ) : (
     <p className="review-loop-pane-empty">{REVIEW_LOOP_EMPTY_TEXT}</p>
@@ -116,5 +123,7 @@ export default function ReviewLoopPane({ session, onClose }) {
 function paneStatus(summary, outcome, now) {
   if (!summary) { return { text: 'not run yet', tone: 'neutral' }; }
   if (!outcome) { return { text: reviewLoopSentence(summary, now), tone: 'running' }; }
-  return { text: reviewLoopSentence(summary, now), tone: outcome.tone };
+  // The reason has its own line under the header; here it would only repeat.
+  const text = reviewLoopEndNotice(summary) ? outcome.label : reviewLoopSentence(summary, now);
+  return { text, tone: outcome.tone };
 }

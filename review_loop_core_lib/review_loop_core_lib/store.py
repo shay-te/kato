@@ -34,7 +34,9 @@ _LOOP_ID = re.compile(r'^[0-9a-f]{32}$')
 
 
 class ArtifactKind(str, Enum):
-    DIFF = 'diff'        # what the reviewer was shown
+    DIFF = 'diff'        # the whole change at this round: what a full review was shown
+    CHANGES = 'changes'  # what a re-check was shown instead: how that change moved
+    FILES = 'files'      # each changed file's digest, for the next re-check to compare
     REVIEW = 'review'    # the reviewer's full reply
     PROMPT = 'prompt'    # the message posted into the chat
     RESPONSE = 'response'  # the fix turn's final reply (its decisions)

@@ -10,6 +10,8 @@ import {
   findingLocation,
   findingRepeatNote,
   isBlockingFinding,
+  isOffTaskFinding,
+  recheckText,
   roundOutcomeLabel,
   roundTiming,
   testsReportText,
@@ -18,32 +20,44 @@ import {
 
 // One round of the loop: what the review found, what the chat decided about
 // each finding it was sent (fixed + test, or rejected / out of scope + the
-// evidence), and the round's saved texts.
-export default function ReviewLoopRound({ taskId, loopId, round, expanded, onToggle, now = 0, running = false }) {
+// evidence), and the round's saved texts. ``endReason`` is why the loop ended,
+// on the round it ended in. It shows here only for a round with no review: that
+// round has nothing else to show, and the pane's own notice covers the rest.
+export default function ReviewLoopRound({ taskId, loopId, round, expanded, onToggle, now = 0, running = false, endReason = '' }) {
   const blocking = round.findings.filter(isBlockingFinding);
   const settled = round.findings.filter((finding) => finding.settled_by);
-  const others = round.findings.filter((finding) => !isBlockingFinding(finding) && !finding.settled_by);
+  const offTask = round.findings.filter((finding) => isOffTaskFinding(finding) && !finding.settled_by);
+  const others = round.findings.filter((finding) => (
+    !isBlockingFinding(finding) && !finding.settled_by && !isOffTaskFinding(finding)
+  ));
   const blockingTitle = blockingSectionTitle(round, { running });
-  const summary = round.reviewed_at ? <RoundCounts counts={round.counts} /> : 'not reviewed yet';
+  const unreviewedReason = round.reviewed_at ? '' : endReason;
+  const summary = round.reviewed_at
+    ? <RoundCounts counts={round.counts} />
+    : (unreviewedReason || 'not reviewed yet');
   // A clean-room sweep: a reviewer told nothing of the fixes, confirming the
-  // clean round before it.
-  const sweepTag = round.sweep ? <span className="review-loop-round-tag">Clean-room</span> : null;
+  // clean round before it. A re-check: it read only what moved since the last
+  // review, so its "clean" covers no more than that.
+  const tagText = round.sweep ? 'Clean-room' : (round.rechecked_files ? recheckText(round.rechecked_files) : '');
+  const tag = tagText ? <span className="review-loop-round-tag">{tagText}</span> : null;
   const runs = round.test_runs || [];
   return (
     <ReviewLoopRow
       className={cx('review-loop-round', `is-${round.outcome || 'active'}`)}
       data-round={round.number}
       name={`Round ${round.number}`}
-      tag={sweepTag}
+      tag={tag}
       summary={summary}
       timing={roundTiming(round, now)}
       outcome={roundOutcomeLabel(round)}
       expanded={expanded}
       onToggle={() => onToggle(round.number)}
     >
+      {unreviewedReason ? <p className="review-loop-round-reason">{unreviewedReason}</p> : null}
       <RoundTests runs={runs} />
       <FindingList title={blockingTitle} findings={blocking} round={round} running={running} />
       <FindingList title="Settled earlier — not sent again" findings={settled} round={round} running={running} />
+      <FindingList title="Not part of this task — not sent" findings={offTask} round={round} running={running} />
       <FindingList title="Not blocking — reported only" findings={others} round={round} running={running} />
       <RoundArtifacts taskId={taskId} loopId={loopId} round={round} />
     </ReviewLoopRow>
@@ -138,7 +152,8 @@ function FindingItem({ finding, round, running }) {
 }
 
 function RoundArtifacts({ taskId, loopId, round }) {
-  const diffLabel = `Diff the reviewer saw (${round.diff_files} file(s) in ${round.diff_repos} repo(s))`;
+  const diffName = round.rechecked_files ? 'The whole change' : 'Diff the reviewer saw';
+  const diffLabel = `${diffName} (${round.diff_files} file(s) in ${round.diff_repos} repo(s))`;
   // Failing tests sent back carry no per-finding answers, so no reply file.
   const answeredFindings = round.fixed_at && !round.tests_fixes;
   const runs = (round.test_runs || []).length;
@@ -147,6 +162,7 @@ function RoundArtifacts({ taskId, loopId, round }) {
     { kind: 'prompt', label: 'Message sent to the chat', when: round.sent_at },
     { kind: 'response', label: 'The chat’s reply to the findings', when: answeredFindings },
     { kind: 'tests', label: runs > 1 ? 'The chat’s latest test report' : 'The chat’s test report', when: runs },
+    { kind: 'changes', label: `What the reviewer re-checked (${round.rechecked_files} file(s))`, when: round.rechecked_files },
     { kind: 'diff', label: diffLabel, when: round.diff_files },
   ].filter((artifact) => artifact.when);
   const artifacts = shown.map(({ kind, label }) => (

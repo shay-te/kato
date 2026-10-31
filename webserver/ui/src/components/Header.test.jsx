@@ -85,4 +85,9 @@ describe('Header', () => {
     render(<Header onRefresh={() => {}} />);
     expect(screen.getByText('Kato')).toBeInTheDocument();
   });
+
+  test('says whether closing the lid will stop kato', () => {
+    render(<Header onRefresh={() => {}} lidAwake={{ label: 'Lid can close', level: 'on', detail: 'd' }} />);
+    expect(screen.getByText('Lid can close')).toBeInTheDocument();
+  });
 });

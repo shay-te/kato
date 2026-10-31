@@ -78,13 +78,13 @@ export default function TabList({
   // setState can never leave a stale highlight behind after a drop.
   const [drag, setDrag] = useState({ id: '', over: '' });
 
-  function handleRename(taskId, label) {
+  const handleRename = useCallback((taskId, label) => {
     setTabNames((prev) => {
       const next = setTabName(prev, taskId, label);
       writeTabNames(next);
       return next;
     });
-  }
+  }, []);
   // The strip's scrollLeft at the moment of an UNPIN, restored once the
   // re-sorted strip commits (layout effect below). ``null`` = nothing pending.
   const keepScrollLeftRef = useRef(null);
@@ -197,6 +197,27 @@ export default function TabList({
     setTabOrder(nextOrder);
     writeTabOrder(nextOrder);
   }, [sessions, pinnedIds, pinnedSet, tabOrder]);
+
+  // Every handler a tab receives keeps its identity, or ``memo(Tab)`` is
+  // defeated: a new function each render is a changed prop on every tab. What
+  // they need that does change is read through refs at the moment of use.
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+  const reorderRef = useRef(handleReorder);
+  reorderRef.current = handleReorder;
+  const handleDragStart = useCallback((id) => setDrag({ id, over: '' }), []);
+  const handleDragEnd = useCallback(() => setDrag({ id: '', over: '' }), []);
+  const handleDragOver = useCallback((id) => {
+    setDrag((prev) => (prev.over === id ? prev : { ...prev, over: id }));
+  }, []);
+  const handleDragLeave = useCallback(() => {
+    setDrag((prev) => (prev.over ? { ...prev, over: '' } : prev));
+  }, []);
+  const handleDrop = useCallback((id) => {
+    const from = dragRef.current.id;
+    if (from && from !== id) { reorderRef.current(from, id); }
+    setDrag({ id: '', over: '' });
+  }, []);
 
   // Recompute "can I scroll?" any time the scroller's size or
   // content changes — that drives whether the chevron nav buttons
@@ -359,18 +380,11 @@ export default function TabList({
           draggedSession, session,
           (s) => pinnedSet.has(s.task_id),
         )}
-        onDragStart={(id) => setDrag({ id, over: '' })}
-        onDragEnd={() => setDrag({ id: '', over: '' })}
-        onDragOver={(id) => setDrag((prev) => (
-          prev.over === id ? prev : { ...prev, over: id }
-        ))}
-        onDragLeave={() => setDrag((prev) => (
-          prev.over ? { ...prev, over: '' } : prev
-        ))}
-        onDrop={(id) => {
-          if (drag.id && drag.id !== id) { handleReorder(drag.id, id); }
-          setDrag({ id: '', over: '' });
-        }}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       />
     );
   });

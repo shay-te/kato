@@ -38,6 +38,7 @@ Bug 3 (draft input vanishes on tab switch):
 
 from __future__ import annotations
 
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -77,6 +78,7 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
             _start_planning_webserver_if_enabled=MagicMock(),
             _register_shutdown_hook=MagicMock(),
             _warm_up_repository_inventory=MagicMock(),
+            _start_lid_awake=MagicMock(),
             _run_task_scan_loop=MagicMock(),
             _task_scan_settings=MagicMock(return_value=(0.0, 0.0)),
         )
@@ -94,6 +96,13 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
         real_bypass.is_docker_mode_enabled = lambda: False
         try:
             main_module.main.__wrapped__(cfg)
+            # ``main`` runs these steps on a thread and, with the scan loop
+            # mocked, returns at once. Wait for it before the patches go: a
+            # step reached after that calls the real function, and the mock
+            # reads "called 0 times" whenever the thread is slow.
+            for thread in threading.enumerate():
+                if thread.name == 'kato-boot-finalize':
+                    thread.join(timeout=30)
         finally:
             real_bypass.is_docker_mode_enabled = original
             for p in ctx:

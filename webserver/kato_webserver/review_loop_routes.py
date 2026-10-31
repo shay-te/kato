@@ -19,6 +19,7 @@ from typing import Callable
 from flask import Flask, jsonify, request
 
 from kato_core_lib.helpers.model_label_utils import model_display_label
+from kato_core_lib.helpers.plan_writer import read_task_plan
 from kato_webserver.model_request_utils import requested_model
 
 
@@ -162,7 +163,10 @@ def _requested_stages(body: object) -> dict[str, bool]:
 
 
 def _task_text(app: Flask, task_id: str) -> tuple[str, str]:
-    """The ticket's summary and description, from the task's workspace record."""
+    """What the reviewer holds the change to: the ticket's summary and
+    description, from the task's workspace record, then the task's plan. The
+    plan is often the only real statement of the task (UNA-3343's whole ticket
+    was a title), and it says what was decided NOT to do."""
     workspace_manager = app.config.get('WORKSPACE_MANAGER')
     if workspace_manager is None:
         return '', ''
@@ -170,7 +174,9 @@ def _task_text(app: Flask, task_id: str) -> tuple[str, str]:
         record = workspace_manager.get(task_id)
     except Exception:
         return '', ''
+    description = str(getattr(record, 'task_description', '') or '')
+    plan = read_task_plan(workspace_manager, task_id)
     return (
         str(getattr(record, 'task_summary', '') or ''),
-        str(getattr(record, 'task_description', '') or ''),
+        f'{description}\n\n## The plan\n{plan}'.strip() if plan else description,
     )

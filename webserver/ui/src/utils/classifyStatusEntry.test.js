@@ -329,6 +329,14 @@ test('classifyStatusEntry: a failed loop is an error; a stopped one a status cha
   }
 });
 
+test('classifyStatusEntry: nothing to review is neither a failure nor a pass', function () {
+  const r = classifyStatusEntry(_entry(
+    'Mission UNA-1: review loop finished (nothing_to_review) after 0 round(s): this task has no code changes',
+  ));
+  assert.equal(r.kind, NOTIFICATION_KIND.STATUS_CHANGE);
+  assert.equal(r.title, 'Review loop: nothing to review');
+});
+
 test('classifyStatusEntry: a loop\'s progress lines do NOT notify', function () {
   for (const line of [
     'Mission UNA-1: review loop started (up to 5 reviews)',

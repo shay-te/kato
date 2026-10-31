@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { memo, useLayoutEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
 import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
@@ -78,7 +78,7 @@ function measureWidth(node) {
 // ellipsise once the box is a single fixed-size input.
 const RENAME_BOX_INSET_PX = 2;
 
-export default function Tab({
+function Tab({
   session, active, needsAttention, liveStatus = null, pinned = false,
   onSelect, onForget, onTogglePin, displayName = '', onRename,
   // Drag-to-reorder, driven entirely by TabList (which owns the order and
@@ -623,3 +623,8 @@ function agentTooltipBadge(agent) {
   if (!kind) { return null; }
   return { kind, label: `Claude: ${agent.label}` };
 }
+
+// Each tab redraws only when its own props change. Without this, anything that
+// touched ``App`` redrew every tab; ``reuseUnchanged`` and the stable handlers
+// in ``TabList`` are what give this something to compare.
+export default memo(Tab);

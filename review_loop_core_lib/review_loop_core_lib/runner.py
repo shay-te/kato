@@ -6,9 +6,11 @@
                      them (unless they passed on exactly this code) ─▶ failing:
                      sent back ─▶ fixed ─▶ run again, until they pass. Still
                      failing after ``tests_fix_attempts`` fixes ─▶ done: STUCK
-      ─▶ wait for the chat to settle ─▶ review the whole diff
-                     (told the decisions so far; settled repeats don't block;
-                      a clean-room confirmation is told nothing)
+      ─▶ wait for the chat to settle ─▶ review: the whole diff the first
+                     time, then only what moved since the last review (told the
+                     decisions so far; settled repeats and findings the task has
+                     nothing to do with don't block; a clean-room confirmation
+                     reads the whole diff, told only what was ruled out)
       no blocking finding:
         [verify_tests] the code moved on since its tests passed ─▶ the same,
                        after the review; a fix ─▶ round n+1 reviews it
@@ -33,6 +35,7 @@ one step behind.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -58,7 +61,10 @@ from review_loop_core_lib.review_loop_core_lib.data.state import (
 )
 from review_loop_core_lib.review_loop_core_lib.diff import (
     DEFAULT_BUDGET_CHARS,
+    RenderedDiff,
     candidate_digest,
+    file_digests,
+    render_changes_since,
     render_review_diff,
 )
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
@@ -71,6 +77,7 @@ from review_loop_core_lib.review_loop_core_lib.ports import (
     LoopObserver,
     LoopWording,
     Readiness,
+    RepoDiff,
     Reviewer,
     TaskDiffSource,
 )
@@ -103,6 +110,9 @@ DEFAULT_MAX_ROUNDS = 5
 MAX_ROUNDS_LIMIT = 30
 
 
+NO_CHANGES_REASON = 'this task has no code changes'
+
+
 @dataclass(frozen=True)
 class RunnerOptions(object):
     """Timing knobs. The defaults are for real use; tests shrink them."""
@@ -130,6 +140,30 @@ class _Finish(Exception):
         super().__init__(reason)
         self.status = status
         self.reason = reason
+
+
+def _nothing_to_review(diffs: list[RepoDiff]) -> _Finish:
+    """How an empty diff ends the loop.
+
+    Only a diff that was really read counts as empty: a repository that could
+    not be read has zero files too, and calling that "no changes" would hide it.
+    """
+    for repo in diffs:
+        if repo.error:
+            return _Finish(
+                ReviewLoopStatus.FAILED,
+                f'could not read the changes in {repo.repo_id}: {repo.error}',
+            )
+    return _Finish(ReviewLoopStatus.NOTHING_TO_REVIEW, NO_CHANGES_REASON)
+
+
+def _round_outcome(status: ReviewLoopStatus) -> str:
+    """What a round still open when the loop ended is recorded as."""
+    if status in (ReviewLoopStatus.STOPPED, ReviewLoopStatus.INTERRUPTED):
+        return 'stopped'
+    if status is ReviewLoopStatus.NOTHING_TO_REVIEW:
+        return 'nothing_to_review'
+    return 'failed'
 
 
 class ReviewLoopRunner(object):
@@ -233,6 +267,7 @@ class ReviewLoopRunner(object):
         if self._resume is not None:
             review_round = self._resume_step(self._resume)
         else:
+            self._stop_if_nothing_to_review()
             if self._state.self_check:
                 self._self_check_phase()
             review_round = None
@@ -243,8 +278,8 @@ class ReviewLoopRunner(object):
             review_round = None
 
     def _run_round(self, review_round: ReviewRound) -> None:
-        """Review the whole change, then act on the verdict. Returns when the
-        loop goes on to another round; raises ``_Finish`` when it ends."""
+        """Review the change, then act on the verdict. Returns when the loop
+        goes on to another round; raises ``_Finish`` when it ends."""
         # What the rounds before this one taught the loop. Derived from them
         # each time, never carried along, so a resumed loop judges this review
         # exactly as an uninterrupted one would (``progress.py``).
@@ -255,7 +290,7 @@ class ReviewLoopRunner(object):
             self._settle_tests(review_round, memory, review_follows=True)
         self._wait_for_chat(ReviewLoopPhase.WAITING_TO_REVIEW)
         # This round is the clean-room sweep asked for by the last one.
-        verdict = self._review(review_round, withhold_ledger=memory.confirm_next)
+        verdict = self._review(review_round, clean_room=memory.confirm_next)
         if verdict.is_clean:
             self._after_clean_review(review_round, verdict, memory)
         else:
@@ -408,9 +443,15 @@ class ReviewLoopRunner(object):
     ) -> str:
         """Why the loop ended clean, with what backs it up."""
         reason = f'round {review_round.number} found no blocking issues'
-        settled = len(verdict.settled)
-        if settled:
-            reason += f' ({settled} raised again were settled earlier)'
+        if review_round.rechecked_files:
+            reason += ' in what changed since the last review'
+        asides = []
+        if verdict.settled:
+            asides.append(f'{len(verdict.settled)} raised again were settled earlier')
+        if verdict.off_task:
+            asides.append(f'{len(verdict.off_task)} not part of this task')
+        if asides:
+            reason += f' ({"; ".join(asides)})'
         notes = []
         if confirmed:
             notes.append('confirmed by a clean-room review')
@@ -444,31 +485,53 @@ class ReviewLoopRunner(object):
         self._save()
         return review_round
 
-    def _review(self, review_round: ReviewRound, *, withhold_ledger: bool = False) -> ReviewVerdict:
-        """One independent review of the whole change.
+    def _render(self, diffs: list[RepoDiff]) -> RenderedDiff:
+        return render_review_diff(diffs, budget_chars=self._options.diff_budget_chars)
 
-        ``withhold_ledger``: a clean-room check — the reviewer is told nothing
-        of the decisions so far. Settled findings stay settled either way: that
-        is the loop's call on the evidence, not something the reviewer decides.
+    def _stop_if_nothing_to_review(self) -> None:
+        """Say so at once, before a self-check or a test run spends a turn on it."""
+        diffs = self._diff_source(self._task_id)
+        if self._render(diffs).is_empty:
+            raise _nothing_to_review(diffs)
+
+    def _review(self, review_round: ReviewRound, *, clean_room: bool = False) -> ReviewVerdict:
+        """One independent review: of the whole change, or a re-check of what
+        moved since the last review (``_changes_since_last_review``).
+
+        ``clean_room``: a sweep of the whole change by a reviewer told nothing
+        of how the fixes went, so it cannot lean on them. It IS told what was
+        ruled out with evidence: those rulings are about the task, not the
+        fixes, and a reader who never saw them reopens them in new words that
+        the fingerprints below cannot match. Settled findings stay settled
+        either way: that is the loop's call on the evidence, not something the
+        reviewer decides.
         """
         self._set_phase(ReviewLoopPhase.REVIEWING)
-        self._notify('reviewing')
         diffs = self._diff_source(self._task_id)
-        rendered = render_review_diff(diffs, budget_chars=self._options.diff_budget_chars)
+        rendered = self._render(diffs)
         with self._lock:
             review_round.diff_repos = rendered.repos
             review_round.diff_files = rendered.files
             review_round.diff_omitted = len(rendered.omitted_files)
             review_round.diff_digest = candidate_digest(diffs)
         if rendered.is_empty:
-            raise _Finish(ReviewLoopStatus.FAILED, 'there are no changes to review')
+            raise _nothing_to_review(diffs)
+        recheck = None if clean_room else self._changes_since_last_review(review_round, diffs)
         state = self.snapshot()
         self._store.write_artifact(state, review_round.number, ArtifactKind.DIFF, rendered.text)
+        self._store.write_artifact(
+            state, review_round.number, ArtifactKind.FILES, json.dumps(file_digests(diffs)),
+        )
+        if recheck is not None:
+            self._store.write_artifact(
+                state, review_round.number, ArtifactKind.CHANGES, recheck.text,
+            )
         ledger = state.ledger()
-        told = () if withhold_ledger else ledger
         with self._lock:
-            review_round.blind = not told
-            review_round.sweep = withhold_ledger
+            review_round.blind = clean_room or not ledger
+            review_round.sweep = clean_room
+            review_round.rechecked_files = recheck.files if recheck is not None else 0
+        self._notify('reviewing')
         prompt = build_reviewer_prompt(
             task_id=self._task_id,
             task_summary=self._task_summary,
@@ -476,7 +539,8 @@ class ReviewLoopRunner(object):
             diffs=diffs,
             rendered=rendered,
             wording=self._wording,
-            ledger=told,
+            ledger=[entry for entry in ledger if entry.response.settles] if clean_room else ledger,
+            recheck=recheck,
         )
         try:
             reply = self._reviewer.review(
@@ -501,6 +565,30 @@ class ReviewLoopRunner(object):
         self._save()
         self._notify('reviewed')
         return verdict
+
+    def _changes_since_last_review(
+        self, review_round: ReviewRound, diffs: list[RepoDiff],
+    ) -> RenderedDiff | None:
+        """How the change moved since the last finished review; None when this
+        round must read all of it: no review came before (or one saved before
+        re-checks existed), nothing moved, or a repository cannot be read."""
+        state = self.snapshot()
+        reviewed = [
+            earlier.number for earlier in state.rounds
+            if earlier.number < review_round.number and earlier.reviewed_at
+        ]
+        if not reviewed or any(repo.error for repo in diffs):
+            return None
+        digests, seen = (
+            self._store.read_artifact(self._task_id, state.loop_id, reviewed[-1], kind)
+            for kind in (ArtifactKind.FILES, ArtifactKind.DIFF)
+        )
+        if digests is None or seen is None:
+            return None
+        changes = render_changes_since(
+            diffs, json.loads(digests), seen, budget_chars=self._options.diff_budget_chars,
+        )
+        return None if changes.is_empty else changes
 
     def _send_findings(
         self, review_round: ReviewRound, verdict: ReviewVerdict,
@@ -803,9 +891,7 @@ class ReviewLoopRunner(object):
                 return
             current = self._state.current_round
             if current is not None and not current.outcome:
-                current.outcome = 'stopped' if status in (
-                    ReviewLoopStatus.STOPPED, ReviewLoopStatus.INTERRUPTED,
-                ) else 'failed'
+                current.outcome = _round_outcome(status)
             if current is not None and not current.finished_at:
                 current.finished_at = now
             self._state.status = status

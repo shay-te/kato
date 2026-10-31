@@ -404,6 +404,17 @@ class RefusalTests(_ModeIsolation):
 
 class LogLineTests(unittest.TestCase):
 
+    def test_a_re_check_is_not_logged_as_reading_the_whole_change(self):
+        logger = logging.getLogger('test-review-loop-recheck')
+        state = ReviewLoopState.new('T-1', max_rounds=5, now=1.0)
+        state.rounds.append(ReviewRound(number=2, started_at=1.0, rechecked_files=3))
+        with self.assertLogs(logger, level='INFO') as logs:
+            log_review_loop_event(logger, state, 'reviewing')
+        self.assertEqual(
+            logs.records[0].getMessage(),
+            'Mission T-1: review loop round 2: re-checking the 3 file(s) that changed',
+        )
+
     def test_one_mission_line_per_step(self) -> None:
         logger = logging.getLogger('test.review_loop.lines')
         state = ReviewLoopState.new('T-1', max_rounds=5, now=1.0)

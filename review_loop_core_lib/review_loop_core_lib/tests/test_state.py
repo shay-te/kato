@@ -63,7 +63,7 @@ class RoundTests(unittest.TestCase):
             _finding(severity=FindingSeverity.BLOCKER, symbol='y'),
         ])
         self.assertEqual(review_round.counts,
-                         {'BLOCKER': 1, 'MAJOR': 1, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0})
+                         {'BLOCKER': 1, 'MAJOR': 1, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0, 'OFF_TASK': 0})
         self.assertEqual(len(review_round.blocking), 2)
         self.assertEqual(len(review_round.blocking_fingerprints), 2)
 

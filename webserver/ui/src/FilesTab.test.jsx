@@ -15,6 +15,7 @@ vi.mock('./api.js', () => ({
   fetchRepoCommits: vi.fn().mockResolvedValue({ ok: true, body: { commits: [] } }),
   fetchTaskComments: vi.fn().mockResolvedValue({ ok: true, body: { comments: [] } }),
   syncTaskRepositories: vi.fn(),
+  searchTaskWorkspaceContent: vi.fn().mockResolvedValue({ matches: [], truncated: false }),
 }));
 vi.mock('./stores/toastStore.js', () => ({
   toast: { show: vi.fn() },
@@ -1721,6 +1722,66 @@ describe('FilesTab — search control order', () => {
 // overflow-x: hidden``). A scrollport clips every descendant box, so the
 // menu was drawn where nobody could see it. An empty repo and a broken
 // button looked exactly the same.
+
+describe('FilesTab — a search shows what it found', () => {
+  // A symbol lives in a file's CONTENT, so no file NAME matches it. Every repo
+  // still drew its row, seven of them pushed "Content matches" to the bottom
+  // edge of the pane, and the search read as having found nothing.
+  const TREES = {
+    trees: [
+      { repo_id: 'client', cwd: '/tmp/client', tree: [{ name: 'a.js' }] },
+      { repo_id: 'server', cwd: '/tmp/server', tree: [{ name: 'handlers.py' }] },
+    ],
+  };
+  const shown = () => Array.from(document.querySelectorAll('.files-tab-repo'))
+    .filter((section) => !section.classList.contains('is-hidden-by-search'))
+    .map((section) => section.textContent);
+
+  async function search(value) {
+    const input = await screen.findByRole('searchbox', { name: /search files/i });
+    fireEvent.change(input, { target: { value } });
+  }
+
+  test('a repo with no matching file steps aside', async () => {
+    mockFileTree(TREES);
+    render(<FilesTab taskId="T-search-one" />);
+    await search('handlers');
+    await waitFor(() => expect(shown()).toHaveLength(1));
+    expect(shown()[0]).toMatch(/server/);
+  });
+
+  test('nothing named like it leaves only the content matches', async () => {
+    mockFileTree(TREES);
+    render(<FilesTab taskId="T-search-none" />);
+    await search('assert_field_answerable_by_admin');
+    await waitFor(() => expect(shown()).toHaveLength(0));
+    expect(await screen.findByText('Content matches')).toBeInTheDocument();
+  });
+
+  test('searching a repo name keeps that repo', async () => {
+    mockFileTree(TREES);
+    render(<FilesTab taskId="T-search-repo" />);
+    await search('client');
+    await waitFor(() => expect(shown()).toHaveLength(1));
+    expect(shown()[0]).toMatch(/client/);
+  });
+
+  test('clearing the search brings every repo back', async () => {
+    mockFileTree(TREES);
+    render(<FilesTab taskId="T-search-clear" />);
+    await search('assert_field');
+    await waitFor(() => expect(shown()).toHaveLength(0));
+    await search('');
+    await waitFor(() => expect(shown()).toHaveLength(2));
+  });
+
+  test('with no search every repo shows', async () => {
+    mockFileTree(TREES);
+    render(<FilesTab taskId="T-search-idle" />);
+    await screen.findByRole('searchbox', { name: /search files/i });
+    await waitFor(() => expect(shown()).toHaveLength(2));
+  });
+});
 
 describe('commit history dropdown', () => {
   const TREE = {

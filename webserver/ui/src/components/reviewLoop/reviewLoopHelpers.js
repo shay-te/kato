@@ -14,6 +14,7 @@
 export const REVIEW_LOOP_STATUS = Object.freeze({
   RUNNING: 'running',
   CLEAN: 'clean',
+  NOTHING_TO_REVIEW: 'nothing_to_review',
   MAX_ROUNDS: 'max_rounds',
   STUCK: 'stuck',
   STOPPED: 'stopped',
@@ -71,6 +72,9 @@ function phaseWords(loop, words, testsWords) {
 // tone: good | warn | bad | neutral — the outcome's colour family.
 const OUTCOMES = {
   [REVIEW_LOOP_STATUS.CLEAN]: { label: 'clean', sentence: 'finished clean', tone: 'good' },
+  [REVIEW_LOOP_STATUS.NOTHING_TO_REVIEW]: {
+    label: 'nothing to review', sentence: 'found nothing to review', tone: 'neutral',
+  },
   [REVIEW_LOOP_STATUS.MAX_ROUNDS]: { label: 'round limit', sentence: 'hit its round limit', tone: 'warn' },
   [REVIEW_LOOP_STATUS.STUCK]: { label: 'stuck', sentence: 'got stuck', tone: 'warn' },
   [REVIEW_LOOP_STATUS.STOPPED]: { label: 'stopped', sentence: 'was stopped', tone: 'neutral' },
@@ -87,6 +91,7 @@ const ROUND_OUTCOMES = {
   // Clean, but the code changed after the reviewer read it: not accepted.
   changed: 'code changed since — not accepted',
   clean: 'clean',
+  nothing_to_review: 'nothing to review',
   // The same blocking issues survived two fixes — the loop's reason names them.
   stuck: 'stuck — fixes didn\u2019t land',
   max_rounds: 'last round',
@@ -185,6 +190,7 @@ export function countsParts(counts) {
   if (counts.MINOR) { parts.push({ key: 'minor', text: `${counts.MINOR} minor`, severity: 'minor' }); }
   if (counts.NIT) { parts.push({ key: 'nit', text: `${counts.NIT} nit`, severity: 'nit' }); }
   if (counts.SETTLED) { parts.push({ key: 'settled', text: `${counts.SETTLED} settled`, severity: '' }); }
+  if (counts.OFF_TASK) { parts.push({ key: 'off_task', text: `${counts.OFF_TASK} off-task`, severity: '' }); }
   return parts;
 }
 
@@ -195,11 +201,22 @@ export function countsText(counts) {
   return parts.length ? parts.map((part) => part.text).join(' · ') : 'no issues';
 }
 
+// True, but the reviewer says this task neither caused it nor needs it: shown
+// here, never sent to the chat, and never keeps the loop going.
+export function isOffTaskFinding(finding) {
+  return finding?.relevance === 'unrelated';
+}
+
 // A finding that keeps the loop going: BLOCKER / MAJOR, not already settled by
-// an earlier round's decision.
+// an earlier round's decision, and this task's to fix.
 export function isBlockingFinding(finding) {
   const blockingSeverity = finding?.severity === 'BLOCKER' || finding?.severity === 'MAJOR';
-  return blockingSeverity && !finding.settled_by;
+  return blockingSeverity && !finding.settled_by && !isOffTaskFinding(finding);
+}
+
+// A round read only what moved since the last review, not the whole change.
+export function recheckText(fileCount) {
+  return `Re-check of ${fileCount} changed ${fileCount === 1 ? 'file' : 'files'}`;
 }
 
 // What the chat did with a finding it was sent — the round's decision ledger.
@@ -326,6 +343,16 @@ export function reviewLoopSentence(loop, nowSeconds) {
   return `The review loop ${outcome.sentence}${after}${reason}`;
 }
 
+// Why a finished loop ended, and how to colour it. It needs a line of its own:
+// beside the pickers and buttons a stopped loop shows, the header has no room
+// left and its status text shrinks to nothing.
+export function reviewLoopEndNotice(loop) {
+  if (!loop?.reason || isReviewLoopRunning(loop)) { return null; }
+  const outcome = reviewLoopOutcome(loop);
+  if (!outcome) { return null; }
+  return { text: reviewLoopSentence(loop, 0), tone: outcome.tone };
+}
+
 const STEP_ORDER = ['review', 'send', 'fix', 'next'];
 const CURRENT_STEP = {
   [REVIEW_LOOP_PHASE.WAITING_TO_REVIEW]: 'review',
@@ -402,7 +429,8 @@ function testsFixSteps(loop, nowSeconds) {
 
 function reviewingLabel(loop) {
   if (loop.phase !== REVIEW_LOOP_PHASE.REVIEWING) { return 'Waiting to review'; }
-  return loop.sweep ? 'Clean-room check' : 'Reviewing the whole change';
+  if (loop.sweep) { return 'Clean-room check'; }
+  return loop.rechecked_files ? recheckText(loop.rechecked_files) : 'Reviewing the whole change';
 }
 
 function selfCheckSteps(loop, nowSeconds) {

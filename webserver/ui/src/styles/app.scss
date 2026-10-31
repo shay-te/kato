@@ -325,13 +325,26 @@ header .header-status {
   margin-right: $SPACE-4;
 }
 
-header .header-status.is-error {
+header .header-lid-awake {
+  flex: none;
+  padding: $SPACE-4 $SPACE-12;
+  border-radius: var(--radius-pill);
+  background: $C-NEUTRAL-100-A06;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-96;
+  font: 12px/1 ui-monospace, monospace;
+  white-space: nowrap;
+}
+
+header .header-status.is-error,
+header .header-lid-awake.is-error {
   background: $C-RED-60-A12;
   border-color: $C-RED-60-A35;
   color: $C-RED-89;
 }
 
-header .header-status.is-warn {
+header .header-status.is-warn,
+header .header-lid-awake.is-warn {
   background: $C-ORANGE-50-A10;
   border-color: $C-ORANGE-50-A35;
   color: $C-AMBER-77;
@@ -6346,6 +6359,8 @@ $FILES-PANE-INSET: $SPACE-6;
 
 /* iOS-style accordion cards (files-repo, diff-repo, diff-file).
  * Soft rounded glass instead of dark squares with hard borders. */
+.files-tab-repo.is-hidden-by-search { display: none; }
+
 .files-tab-repo {
   /* The readable measure the header row and the file rows are both capped to
    * — see .files-tab-repo-header-inner below for why. Declared here so one
@@ -12902,6 +12917,26 @@ button.settings-prompt-editor-head {
   white-space: nowrap;
   font-size: $TEXT-12;
   color: $C-NEUTRAL-96-A65;
+}
+
+.review-loop-end-notice {
+  margin: 0 0 $SPACE-8;
+  padding-left: $SPACE-8;
+  border-left: 2px solid $C-NEUTRAL-100-A10;
+  font-size: $TEXT-12_5;
+  color: $C-NEUTRAL-96;
+  overflow-wrap: anywhere;
+}
+
+.review-loop-end-notice.is-good { border-left-color: $C-GREEN-52; }
+.review-loop-end-notice.is-warn { border-left-color: $C-ORANGE-50; }
+.review-loop-end-notice.is-bad { border-left-color: $C-RED-60; }
+
+.review-loop-round-reason {
+  margin: $SPACE-8 0 $SPACE-4;
+  font-size: $TEXT-12_5;
+  color: $C-NEUTRAL-96;
+  overflow-wrap: anywhere;
 }
 
 .review-loop-pane-status.is-running { color: $C-CYAN-78; }

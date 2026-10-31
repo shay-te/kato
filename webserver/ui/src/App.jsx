@@ -53,6 +53,7 @@ import { useNotificationRouting } from './hooks/useNotificationRouting.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useConfigStatus } from './hooks/useConfigStatus.js';
+import { useLidAwake } from './hooks/useLidAwake.js';
 import { refreshAgentVersion } from './hooks/useAgentVersion.js';
 import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
 import { useSessions } from './hooks/useSessions.js';
@@ -283,10 +284,15 @@ export default function App() {
   // off-screen, with no visual confirmation of where they are. Bumped
   // ONLY on an explicit pick, so a status poll can never move the strip.
   const [taskTabReveal, setTaskTabReveal] = useState(0);
+  // Through a ref, like ``requestForgetTask``: ``setActiveTaskId`` is rebuilt on
+  // most renders, and this goes to every tab, where a new function is a changed
+  // prop that defeats ``memo(Tab)``.
+  const setActiveTaskIdRef = useRef(setActiveTaskId);
+  setActiveTaskIdRef.current = setActiveTaskId;
   const selectTaskAndReveal = useCallback((taskId) => {
-    setActiveTaskId(taskId);
+    setActiveTaskIdRef.current(taskId);
     setTaskTabReveal((value) => value + 1);
-  }, [setActiveTaskId]);
+  }, []);
   const closeTaskPalette = useCallback(() => setPaletteOpen(false), []);
   useTaskPaletteShortcut(openTaskPalette);
   // The palette searches the operator's tab RENAMES too — that is the
@@ -303,12 +309,16 @@ export default function App() {
   // is irreversible, so the operator must approve it in
   // ForgetTaskModal before anything is deleted.
   const [forgetCandidate, setForgetCandidate] = useState(null);
+  // Read through a ref: this goes to every tab, and depending on ``sessions``
+  // gave them all a new function, so one session changing redrew the strip.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const requestForgetTask = useCallback((taskId) => {
     if (!taskId) { return; }
-    const session = sessions.find((s) => s.task_id === taskId)
+    const session = sessionsRef.current.find((s) => s.task_id === taskId)
       || { task_id: taskId };
     setForgetCandidate(session);
-  }, [sessions]);
+  }, []);
   const cancelForgetTask = useCallback(() => {
     setForgetCandidate(null);
   }, []);
@@ -579,6 +589,7 @@ export default function App() {
   // whole app with the setup wizard. ``refreshConfigStatus`` lets the wizard
   // re-check the moment it saves a setting.
   const { status: configStatus, refresh: refreshConfigStatus } = useConfigStatus();
+  const lidAwake = useLidAwake();
 
   // Track viewport width so the chat's max can leave the centre pane its
   // minimum at any window size — a static cap squeezed the centre on
@@ -1207,6 +1218,7 @@ export default function App() {
         onOpenSettings={openSettings}
         onOpenUsage={openUsage}
         onOpenReleaseNotes={openReleaseNotes}
+        lidAwake={lidAwake}
       />
       {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
       {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}

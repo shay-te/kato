@@ -5,11 +5,16 @@ history with the agent that did — that is the point of having it. It may read
 anything in the task's repositories but change nothing, and it ends its reply
 with a machine-readable verdict the loop decides on (see ``verdict.py``).
 
-From the second round on it is also told the decisions so far — what the
-fixer says it fixed (and the test that proves it), and what it rejected or
-ruled out of scope (and why). It still reviews the whole change on its own;
-the ledger only stops a settled argument from being restarted without new
-evidence.
+Fresh eyes have one weakness: left to themselves they find something on every
+read, and each round's fix is more code for the next round to find something
+in. So a review is held to the task, not to everything that could be better.
+Every finding says how it belongs to the task (``relevance``), and one that
+does not belong is reported without blocking.
+
+After the first review, a round re-checks only what moved since the last one
+and is told the decisions so far — what the fixer says it fixed (and the test
+that proves it), and what it rejected or ruled out of scope (and why). The
+ledger stops a settled argument from being restarted without new evidence.
 """
 
 from __future__ import annotations
@@ -34,8 +39,8 @@ CHECKLIST = '''1. Correctness — wrong logic or conditions, off-by-one, unhandl
 3. Error handling — swallowed errors, failures reported as success, missing
    cleanup, partial writes.
 4. Concurrency — races, missing locks, shared mutable state, ordering bugs.
-5. Tests — new or changed behaviour without a test; tests that cannot fail;
-   mocks that hide the bug.
+5. Tests — what the task delivers has no test; tests that cannot fail; mocks
+   that hide the bug.
 6. Contracts — changed signatures, payloads or schemas whose callers or stored
    data were not updated.
 7. Performance — work on hot paths, N+1 queries, unbounded loops or memory.
@@ -44,24 +49,46 @@ CHECKLIST = '''1. Correctness — wrong logic or conditions, off-by-one, unhandl
 9. Observability — failures that leave no log line, or a misleading one.
 10. Scope — changes the task did not ask for.'''
 
+# The bar for BLOCKER / MAJOR, shared the same way.
+NEVER_BLOCKS = '''None of these can block, however true they are:
+- what the code already did before this change, including code the change only
+  moved or copied;
+- a case the task does not mention and its users would not hit in normal use;
+- hardening, options, retries, validation or abstractions the task does not
+  need;
+- a missing test for one branch or error path, when what the task delivers is
+  tested;
+- proof nobody can give from here ("never ran on the real stack").'''
+
 REVIEWER_INSTRUCTIONS = f'''You are an independent code reviewer. You did not write this change and you
 have no history with it. Review the task's changes below and REPORT what you
 find. Do not fix anything: this run cannot edit files or run commands, and must
 not try.
+
+## What this review is for
+One question: does this change do what the task asks, without breaking anything
+that worked? The task is the yardstick and the limit. Everything a finding asks
+for is more code to write, test and keep, so what the task does not need, this
+review does not ask for.
 
 ## What to check
 {CHECKLIST}
 
 The diff shows only what changed: read the files around it for context. Rules
 files in the repositories (AGENTS.md, CLAUDE.md, CONTRIBUTING, README) are
-binding — breaking one is a finding.
+binding — a line this change adds that breaks one is a finding.
 
 ## Severity
-- BLOCKER — breaks production, loses data, or opens a security hole.
-- MAJOR — a real bug, or new behaviour with no test. Must be fixed before merge.
-- MINOR — worth improving; does not block.
+- BLOCKER — the change breaks production, loses data, or opens a security hole.
+- MAJOR — the change does not do what the task asks, or has a real bug that
+  someone using what the task built will hit. Must be fixed before merge.
+- MINOR — worth improving; the task can ship without it.
 - NIT — style or naming.
 Report only what you can point to in the code. No speculation, no praise.
+
+{NEVER_BLOCKS}
+Report such a thing only if the operator should know about it, with `relevance`
+"unrelated".
 
 ## Your reply
 First a short readable report, one line per finding:
@@ -69,7 +96,7 @@ First a short readable report, one line per finding:
 Then end the reply with exactly one verdict block and nothing after it:
 
 {VERDICT_OPEN}
-{{"findings": [{{"severity": "MAJOR", "repository": "repository id", "file": "path/in/the/repository", "line": 42, "symbol": "enclosing_function_or_class", "category": "correctness", "title": "short title", "detail": "what is wrong, and the fix in one line", "invariant": "the rule the code must keep", "new_evidence": ""}}]}}
+{{"findings": [{{"severity": "MAJOR", "repository": "repository id", "file": "path/in/the/repository", "line": 42, "symbol": "enclosing_function_or_class", "category": "correctness", "title": "short title", "detail": "what is wrong, and the fix in one line", "invariant": "the rule the code must keep", "relevance": "task", "new_evidence": ""}}]}}
 {VERDICT_CLOSE}
 
 - `severity` is BLOCKER, MAJOR, MINOR or NIT.
@@ -78,15 +105,32 @@ Then end the reply with exactly one verdict block and nothing after it:
 - `invariant` states the rule that is broken, as something that must hold
   ("divide raises ValueError when b is 0") — so the fix covers every place
   that must keep it, not just the line you name.
+- `relevance` says how the finding belongs to this task: "task" (the change
+  does not do what the task asks), "regression" (the change broke something
+  that worked, or brought a bug of its own) or "unrelated" (anything else). An
+  unrelated finding is shown to the operator and never sent to be fixed.
 - `new_evidence` is only for raising again an issue an earlier round settled
   (see "Decisions so far", when present); leave it "" otherwise.
 - An empty `findings` list means you found nothing worth reporting.
 '''
 
+RECHECK_RULES = '''## This round is a re-check
+An earlier review already read the whole change, and its findings went to the
+agent that writes the code. Read only what changed since, below, and answer two
+questions: did each fix work, and did these changes break anything, in these
+files or in the code that uses them? The rest was reviewed already: a finding
+these changes did not cause is "unrelated".
+
+Each file shows how its diff moved since the last review: a first-column `+` is
+new since then, `-` is gone since then, a space is unchanged, and `…` is a gap.
+The rest of each line reads as in the diff against the base. Line numbers are
+not shown: read the file for them. A file the last review was not shown comes as
+a plain diff.
+'''
+
 LEDGER_RULES = '''## Decisions so far
 Earlier rounds of this loop sent findings to the agent that writes the code,
-and it answered each one as below. Still review the WHOLE change on its own
-merits, and:
+and it answered each one as below:
 - "fixed": check the fix and its test. Report it again only if it is not
   actually fixed — say what is still wrong.
 - "rejected" / "out_of_scope": the agent gave its evidence. Do not report the
@@ -113,8 +157,12 @@ def build_reviewer_prompt(
     rendered: RenderedDiff,
     wording: LoopWording,
     ledger: list[LedgerEntry] | tuple[LedgerEntry, ...] = (),
+    recheck: RenderedDiff | None = None,
 ) -> str:
     """The full prompt for one review round.
+
+    ``recheck``: how the change moved since the last review. Given, the round
+    reads that instead of the whole change in ``rendered``.
 
     Ticket text, the diff and the fixer's decisions are untrusted inputs: all
     are framed with ``wording.wrap_untrusted`` so instructions hidden in them
@@ -133,12 +181,19 @@ def build_reviewer_prompt(
     for repo in diffs:
         location = f' at {repo.cwd}' if repo.cwd else ''
         parts.append(f'- `{repo.repo_id}`{location}\n')
-    parts.append(
-        f'\n## The changes ({rendered.files} file(s) in {rendered.repos} '
-        'repository(ies), against each repository\'s base branch, including '
-        'uncommitted and new files)\n',
-    )
-    parts.append(wording.wrap_untrusted(rendered.text, f'task {task_id} diff'))
+    if recheck is None:
+        parts.append(
+            f'\n## The changes ({rendered.files} file(s) in {rendered.repos} '
+            'repository(ies), against each repository\'s base branch, including '
+            'uncommitted and new files)\n',
+        )
+        parts.append(wording.wrap_untrusted(rendered.text, f'task {task_id} diff'))
+    else:
+        parts.append(f'\n{RECHECK_RULES}')
+        parts.append(f'\n## What changed since the last review ({recheck.files} file(s))\n')
+        parts.append(wording.wrap_untrusted(
+            recheck.text, f'task {task_id} changes since the last review',
+        ))
     if ledger:
         parts.append(f'\n\n{LEDGER_RULES}')
         parts.append(wording.wrap_untrusted(

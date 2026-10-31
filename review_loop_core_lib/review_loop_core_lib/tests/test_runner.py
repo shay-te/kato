@@ -302,16 +302,71 @@ class OneSenderAtATimeTests(_Runs):
         self.assertEqual(chat.delivered, [])
 
 
+class NothingToReviewTests(_Runs):
+    """An empty change: no review ran, so neither clean nor failed."""
+
+    @staticmethod
+    def _empty(task_id):
+        return [RepoDiff(repo_id='api', diff=''), RepoDiff(repo_id='web', diff='')]
+
+    def test_it_is_its_own_outcome(self) -> None:
+        service = self.service(FakeChat(), FakeReviewer(reply()))
+        self.start(service, self._empty)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.NOTHING_TO_REVIEW)
+        self.assertEqual(state.reason, 'this task has no code changes')
+
+    def test_no_review_runs_and_nothing_reaches_the_chat(self) -> None:
+        chat, reviewer = FakeChat(), FakeReviewer(reply())
+        service = self.service(chat, reviewer)
+        self.start(service, self._empty)
+        state = self.finished(service)
+        self.assertEqual(reviewer.prompts, [])
+        self.assertEqual(chat.delivered, [])
+        self.assertEqual(state.rounds, [])
+
+    def test_it_stops_before_the_self_check_and_the_tests_spend_a_turn(self) -> None:
+        chat = FakeChat()
+        service = self.service(chat, FakeReviewer(reply()))
+        service.start('T-1', diff_source=self._empty, self_check=True, verify_tests=True)
+        self.finished(service)
+        self.assertEqual(chat.delivered, [])
+
+    def test_there_is_nothing_to_resume(self) -> None:
+        service = self.service(FakeChat(), FakeReviewer(reply()))
+        self.start(service, self._empty)
+        self.assertEqual(self.finished(service).summary()['resume'], '')
+
+    def test_a_change_undone_during_the_loop_ends_the_same_way(self) -> None:
+        reads = []
+
+        def source(task_id):
+            reads.append(task_id)
+            # The first check and round 1's review see the change; then it is gone.
+            return self.tree.diff_source(task_id) if len(reads) <= 2 else self._empty(task_id)
+
+        service = self.service(FakeChat(), FakeReviewer(reply(finding('BLOCKER'))))
+        self.start(service, source)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.NOTHING_TO_REVIEW)
+        self.assertEqual(state.current_round.outcome, 'nothing_to_review')
+
+
 class TheReviewGoesWrongTests(_Runs):
 
-    def test_no_changes_is_a_failure_with_a_reason(self) -> None:
-        empty = lambda task_id: [RepoDiff(repo_id='api', diff='')]  # noqa: E731
+    def test_a_repository_that_could_not_be_read_is_a_failure_not_no_changes(self) -> None:
+        unreadable = lambda task_id: [  # noqa: E731
+            RepoDiff(repo_id='clean', diff=''),
+            RepoDiff(repo_id='api', diff='', error='not a git repository'),
+        ]
         reviewer = FakeReviewer(reply())
         service = self.service(FakeChat(), reviewer)
-        self.start(service, empty)
+        self.start(service, unreadable)
         state = self.finished(service)
         self.assertEqual(state.status, ReviewLoopStatus.FAILED)
-        self.assertEqual(state.reason, 'there are no changes to review')
+        self.assertEqual(
+            state.reason, 'could not read the changes in api: not a git repository',
+        )
         self.assertEqual(reviewer.prompts, [])
 
     def test_a_reply_without_a_verdict_fails_instead_of_guessing(self) -> None:

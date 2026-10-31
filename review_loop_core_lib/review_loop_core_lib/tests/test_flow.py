@@ -77,7 +77,7 @@ class CleanAfterAFixTests(_Flow):
         self.assertEqual(state.phase, ReviewLoopPhase.DONE)
         self.assertEqual([r.outcome for r in state.rounds], ['sent', 'clean'])
         first, second = state.rounds
-        self.assertEqual(first.counts, {'BLOCKER': 0, 'MAJOR': 1, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0})
+        self.assertEqual(first.counts, {'BLOCKER': 0, 'MAJOR': 1, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0, 'OFF_TASK': 0})
         self.assertTrue(first.reviewed_at and first.sent_at and first.fixed_at)
         self.assertEqual(second.findings, [])
 

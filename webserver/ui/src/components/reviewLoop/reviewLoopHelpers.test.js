@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  reviewLoopEndNotice,
   blockingCount,
   blockingSectionTitle,
   countsParts,
@@ -13,9 +14,11 @@ import {
   findingLocation,
   formatElapsed,
   isBlockingFinding,
+  isOffTaskFinding,
   isReviewLoopRunning,
   latestTestRun,
   reviewLoopChip,
+  recheckText,
   reviewLoopResumeTooltip,
   reviewLoopRoundsText,
   reviewLoopTabEntries,
@@ -524,4 +527,54 @@ test('the blocking section and the collapsed round say when nothing was sent', (
   assert.equal(blockingSectionTitle({ sent_at: 0, outcome: 'max_rounds' }), 'Blocking — not sent to the chat');
   assert.equal(roundOutcomeLabel({ outcome: 'max_rounds', sent_at: 0, counts: { MAJOR: 1 } }), 'last round — not sent');
   assert.equal(roundOutcomeLabel({ outcome: 'max_rounds', sent_at: 0, counts: { MINOR: 2 } }), 'last round');
+});
+
+test('a failed loop says why, on a line of its own', () => {
+  assert.deepEqual(
+    reviewLoopEndNotice({ status: 'failed', round: 1, reason: 'there are no changes to review' }),
+    { text: 'The review loop failed after 1 round — there are no changes to review', tone: 'bad' },
+  );
+});
+
+test('a stuck loop says why too, in its own tone', () => {
+  const notice = reviewLoopEndNotice({ status: 'stuck', round: 2, reason: 'the tests still fail' });
+  assert.equal(notice.tone, 'warn');
+  assert.match(notice.text, /the tests still fail$/);
+});
+
+test('nothing to review reads as neither failed nor clean', () => {
+  assert.deepEqual(
+    reviewLoopEndNotice({ status: 'nothing_to_review', round: 0, reason: 'this task has no code changes' }),
+    { text: 'The review loop found nothing to review — this task has no code changes', tone: 'neutral' },
+  );
+});
+
+test('nothing to say: no reason, still running, or no loop', () => {
+  assert.equal(reviewLoopEndNotice({ status: 'clean', round: 3, reason: '' }), null);
+  assert.equal(reviewLoopEndNotice({ status: 'running', round: 1, reason: 'old' }), null);
+  assert.equal(reviewLoopEndNotice(null), null);
+});
+
+test('a finding the task has nothing to do with never blocks, and is counted apart', () => {
+  const unrelated = { severity: 'BLOCKER', relevance: 'unrelated' };
+  assert.equal(isOffTaskFinding(unrelated), true);
+  assert.equal(isBlockingFinding(unrelated), false);
+  assert.equal(isOffTaskFinding({ severity: 'MAJOR', relevance: 'task' }), false);
+  assert.equal(isBlockingFinding({ severity: 'MAJOR', relevance: 'regression' }), true);
+  assert.equal(isOffTaskFinding(null), false);
+  assert.equal(
+    countsText({ BLOCKER: 0, MAJOR: 1, MINOR: 0, NIT: 0, SETTLED: 1, OFF_TASK: 2 }),
+    '1 blocking · 1 settled · 2 off-task',
+  );
+  assert.deepEqual(countsParts({ OFF_TASK: 1 }), [{ key: 'off_task', text: '1 off-task', severity: '' }]);
+});
+
+test('a re-check is never described as reading the whole change', () => {
+  assert.equal(recheckText(1), 'Re-check of 1 changed file');
+  assert.equal(recheckText(4), 'Re-check of 4 changed files');
+  const steps = reviewLoopSteps(
+    { status: 'running', phase: 'reviewing', round: 2, max_rounds: 5, rechecked_files: 3 }, 100,
+  );
+  assert.ok(steps.some((step) => step.label === 'Re-check of 3 changed files'));
+  assert.ok(!steps.some((step) => step.label === 'Reviewing the whole change'));
 });

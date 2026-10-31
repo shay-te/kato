@@ -216,7 +216,8 @@ class TestsGateTests(_Stages):
                 self.assertLess(review_round.tests.reported_at, review_round.reviewed_at)
         self.assertEqual([r.tests_fixes for r in state.rounds], [0, 1, 1])
         self.assertEqual([r.outcome for r in state.rounds], ['sent', 'sent', 'clean'])
-        self.assertEqual(state.reason, 'round 3 found no blocking issues; tests passed (green)')
+        self.assertEqual(state.reason, 'round 3 found no blocking issues in what changed since '
+                                       'the last review; tests passed (green)')
 
     def edit_on(self, chat, *kinds) -> None:
         """The chat's turns of these kinds change the code, as a real fix does."""
@@ -491,7 +492,8 @@ class CandidateIdentityTests(_Stages):
         self.assertNotEqual(first.diff_digest, second.diff_digest)
         self.assertIn('print(101)', reviewer.prompts[1])   # round 2 saw the new code
         self.assertIn('changed', self.events)
-        self.assertEqual(state.reason, 'round 2 found no blocking issues')
+        self.assertEqual(state.reason,
+                         'round 2 found no blocking issues in what changed since the last review')
 
     def test_a_change_after_the_last_round_is_the_round_limit_not_clean(self) -> None:
         state = self.run_loop(FakeChat(), EditingReviewer(self.tree, reply()), max_rounds=1)
@@ -529,8 +531,9 @@ class CandidateIdentityTests(_Stages):
         state = self.run_loop(FakeChat(), FakeReviewer(reply()))
         self.assertEqual([r.outcome for r in state.rounds], ['clean'])
         self.assertTrue(state.rounds[0].diff_digest)
-        # Read once for the review, once to confirm it is still that code.
-        self.assertEqual(self.tree.calls, 2)
+        # Read once to see there is a change at all, once for the review, and
+        # once to confirm it is still that code.
+        self.assertEqual(self.tree.calls, 3)
 
 
 class RoundTimingTests(_Stages):

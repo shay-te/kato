@@ -77,3 +77,26 @@ locking API.
 - Some tests emit a benign `approval sidecar at ... is unreadable or
   corrupt; treating as empty` log line — that's the corruption-tolerance
   path being exercised, not a failure.
+
+# Windows lid-closed verification
+
+Not yet run on a real Windows laptop. CI's `lid-awake-windows` job runs the lib on Windows, but no CI machine has a lid.
+
+From a normal (not elevated) terminal, on the charger:
+
+```
+kato lid-awake setup
+powercfg /query SCHEME_CURRENT SUB_BUTTONS LIDACTION
+```
+
+Note the two index values. Turn on Settings → "Keep running with the lid closed". Within 15 seconds the header should say **Lid can close** and both values should read `0x00000000`.
+
+| Check | Expected |
+|---|---|
+| A permission or Group Policy problem | The header says **Lid closed: failed**, with powercfg's reason |
+| Close the lid for 5 minutes during a run | The run keeps going, and no console window ever flashes |
+| Stop kato with Ctrl+C | Both values return within seconds |
+| End the kato process in Task Manager | Both values return within about 3 minutes |
+| Kill kato, reboot, log in | Both values return shortly after login |
+| `kato lid-awake remove` | Both values are back, and the `KatoLidAwakeWatchdog` Run value is gone |
+

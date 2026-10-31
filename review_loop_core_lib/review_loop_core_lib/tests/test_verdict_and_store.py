@@ -8,6 +8,7 @@ from pathlib import Path
 
 from review_loop_core_lib.review_loop_core_lib.data.state import (
     FindingSeverity,
+    ReviewFinding,
     ReviewLoopState,
     ReviewLoopStatus,
 )
@@ -34,12 +35,54 @@ def _block(body: str) -> str:
     return f'{VERDICT_OPEN}\n{body}\n{VERDICT_CLOSE}'
 
 
+class RelevanceTests(unittest.TestCase):
+
+    def parsed(self, relevance):
+        return parse_review_verdict(reply({**finding('MAJOR'), 'relevance': relevance})).findings[0]
+
+    def test_reads_the_three_words_in_any_case(self) -> None:
+        for word in ('task', 'regression', 'unrelated', ' Unrelated '):
+            with self.subTest(word=word):
+                self.assertEqual(self.parsed(word).relevance, word.strip().lower())
+
+    def test_anything_else_is_left_unsaid(self) -> None:
+        for word in ('maybe', '', None, 3):
+            with self.subTest(word=word):
+                self.assertEqual(self.parsed(word).relevance, '')
+
+    def test_a_reviewer_that_does_not_say_leaves_it_empty(self) -> None:
+        self.assertEqual(parse_review_verdict(reply(finding('MAJOR'))).findings[0].relevance, '')
+
+    def test_unrelated_never_blocks_and_is_counted_apart(self) -> None:
+        verdict = parse_review_verdict(reply(
+            {**finding('BLOCKER'), 'relevance': 'unrelated'},
+            {**finding('NIT', symbol='y'), 'relevance': 'unrelated'},
+        ))
+        self.assertTrue(verdict.is_clean)
+        self.assertEqual(len(verdict.off_task), 2)
+        self.assertEqual(
+            verdict.counts,
+            {'BLOCKER': 0, 'MAJOR': 0, 'MINOR': 0, 'NIT': 0, 'SETTLED': 0, 'OFF_TASK': 2},
+        )
+
+    def test_it_survives_a_save(self) -> None:
+        saved = self.parsed('unrelated')
+        self.assertEqual(ReviewFinding.from_dict(saved.to_dict()).relevance, 'unrelated')
+
+    def test_a_finding_saved_before_it_existed_reads_back_as_it_was(self) -> None:
+        saved = self.parsed('task').to_dict()
+        del saved['relevance']
+        loaded = ReviewFinding.from_dict(saved)
+        self.assertEqual(loaded.relevance, '')
+        self.assertTrue(loaded.is_blocking)
+
+
 class ParseVerdictTests(unittest.TestCase):
 
     def test_reads_findings_and_counts(self) -> None:
         verdict = parse_review_verdict(reply(finding('blocker'), finding('NIT', symbol='y')))
         self.assertEqual(verdict.findings[0].severity, FindingSeverity.BLOCKER)
-        self.assertEqual(verdict.counts, {'BLOCKER': 1, 'MAJOR': 0, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0})
+        self.assertEqual(verdict.counts, {'BLOCKER': 1, 'MAJOR': 0, 'MINOR': 0, 'NIT': 1, 'SETTLED': 0, 'OFF_TASK': 0})
         self.assertFalse(verdict.is_clean)
         self.assertEqual(len(verdict.blocking), 1)
 

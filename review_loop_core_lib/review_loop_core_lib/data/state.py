@@ -19,6 +19,9 @@ class ReviewLoopStatus(str, Enum):
 
     RUNNING = 'running'
     CLEAN = 'clean'              # a review found no blocking issue
+    # The change is empty, so no review ran: not CLEAN, which is a verdict on
+    # code someone read, and not FAILED, because nothing broke.
+    NOTHING_TO_REVIEW = 'nothing_to_review'
     MAX_ROUNDS = 'max_rounds'    # still blocking issues after the last review
     STUCK = 'stuck'              # a fix round changed none of the blocking issues
     STOPPED = 'stopped'          # the operator (or the chat's mode) ended it
@@ -122,14 +125,30 @@ FINDING_CATEGORIES = (
 )
 
 
+# How a finding belongs to the task under review. Fixed, like the categories;
+# anything else the reviewer writes is left '' and the finding's severity
+# decides, as it did before this field: an odd word proves nothing about a bug.
+RELEVANCE_TASK = 'task'              # the change does not do what the task asks
+RELEVANCE_REGRESSION = 'regression'  # it broke what worked, or brought its own bug
+RELEVANCE_UNRELATED = 'unrelated'    # true, but this task neither caused nor needs it
+FINDING_RELEVANCE = (RELEVANCE_TASK, RELEVANCE_REGRESSION, RELEVANCE_UNRELATED)
+
+
 def severity_counts(findings) -> dict[str, int]:
-    """Findings per severity, plus ``SETTLED``: re-raised findings an earlier
-    round's decision already settled. Those are counted apart, never under
-    their severity, so a "blocking" count only ever counts what still blocks."""
+    """Findings per severity, plus two kinds counted apart, never under their
+    severity, so a "blocking" count only ever counts what still blocks:
+    ``SETTLED`` (re-raised, and an earlier round's decision settled it) and
+    ``OFF_TASK`` (the reviewer says this task neither caused it nor needs it)."""
     counts = {severity.value: 0 for severity in FindingSeverity}
     counts['SETTLED'] = 0
+    counts['OFF_TASK'] = 0
     for finding in findings:
-        counts['SETTLED' if finding.settled_by else finding.severity.value] += 1
+        if finding.settled_by:
+            counts['SETTLED'] += 1
+        elif finding.off_task:
+            counts['OFF_TASK'] += 1
+        else:
+            counts[finding.severity.value] += 1
     return counts
 
 
@@ -167,6 +186,9 @@ class ReviewFinding(object):
     # Set by a reviewer re-raising a finding an earlier round settled: what it
     # found that the decision did not account for.
     new_evidence: str = ''
+    # How it belongs to the task (``FINDING_RELEVANCE``); '' if the reviewer did
+    # not say. An ``unrelated`` finding is shown, never sent, and never blocks.
+    relevance: str = ''
     # The id of the earlier finding whose decision settles this one ('' if none).
     settled_by: str = ''
     # Set by the loop when a fix said it fixed this issue (or did not answer)
@@ -176,9 +198,17 @@ class ReviewFinding(object):
     missed_fixes: int = 0
 
     @property
+    def off_task(self) -> bool:
+        return self.relevance == RELEVANCE_UNRELATED
+
+    @property
     def is_blocking(self) -> bool:
-        """BLOCKER / MAJOR, and not already settled by an earlier decision."""
-        return self.severity in BLOCKING_SEVERITIES and not self.settled_by
+        """BLOCKER / MAJOR, not settled by an earlier decision, and this task's."""
+        return (
+            self.severity in BLOCKING_SEVERITIES
+            and not self.settled_by
+            and not self.off_task
+        )
 
     def with_changes(self, **changes) -> 'ReviewFinding':
         return replace(self, **changes)
@@ -211,6 +241,7 @@ class ReviewFinding(object):
             'id': self.id,
             'invariant': self.invariant,
             'new_evidence': self.new_evidence,
+            'relevance': self.relevance,
             'settled_by': self.settled_by,
             'repeat_of': self.repeat_of,
             'missed_fixes': self.missed_fixes,
@@ -230,6 +261,7 @@ class ReviewFinding(object):
             id=str(data.get('id', '')),
             invariant=str(data.get('invariant', '')),
             new_evidence=str(data.get('new_evidence', '')),
+            relevance=str(data.get('relevance') or ''),
             settled_by=str(data.get('settled_by', '')),
             repeat_of=str(data.get('repeat_of') or ''),
             missed_fixes=int(data.get('missed_fixes') or 0),
@@ -368,14 +400,18 @@ class ReviewRound(object):
     findings: list[ReviewFinding] = field(default_factory=list)
     # The fix turn's answer to each finding it was sent (empty until it ends).
     responses: list[FindingResponse] = field(default_factory=list)
-    # A "clean-room" review: the reviewer was NOT told the decision ledger, so
+    # A "clean-room" review: the reviewer was NOT told how the fixes went, so
     # it is a pair of eyes that never took part in the fix ping-pong. Round 1
-    # is blind by nature; a confirmation round withholds the ledger on purpose.
+    # is blind by nature; a confirmation round is told only what was ruled out
+    # (see ``_review``).
     blind: bool = False
     # Asked for as a clean-room SWEEP — a confirmation of the clean round
     # before it (``confirm_clean`` / ``extra_sweep``). Always blind; a round
     # after a test fix can be blind without being one.
     sweep: bool = False
+    # A re-check: how many files moved since the last review, which is all this
+    # review read. 0 = it read the whole change.
+    rechecked_files: int = 0
     # Every test run the main chat reported in this round, oldest first —
     # before its review (and after a clean one whose code had moved on): one
     # when they passed, more when failing tests were fixed and run again.
@@ -450,6 +486,7 @@ class ReviewRound(object):
             'responses': [response.to_dict() for response in self.responses],
             'blind': self.blind,
             'sweep': self.sweep,
+            'rechecked_files': self.rechecked_files,
             'test_runs': [run.to_dict() for run in self.test_runs],
             'tests_fixes': self.tests_fixes,
             'counts': self.counts,
@@ -481,6 +518,7 @@ class ReviewRound(object):
             responses=[FindingResponse.from_dict(item) for item in data.get('responses', [])],
             blind=bool(data.get('blind', False)),
             sweep=bool(data.get('sweep', False)),
+            rechecked_files=int(data.get('rechecked_files') or 0),
             test_runs=[TestReport.from_dict(item) for item in runs],
             tests_fixes=int(fixes or 0),
             diff_repos=int(data.get('diff_repos', 0)),
@@ -656,6 +694,7 @@ class ReviewLoopState(object):
             'model': self.model,
             'self_check_turn': len(self.self_checks),
             'sweep': bool(self.rounds and self.rounds[-1].sweep),
+            'rechecked_files': current.rechecked_files if current is not None else 0,
             # The current round's review has run — before it, the round is
             # still on its tests (or waiting to review).
             'round_reviewed': bool(current and current.reviewed_at),

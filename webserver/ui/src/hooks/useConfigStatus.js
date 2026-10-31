@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { fetchConfigStatus } from '../api.js';
+import { useChangedState } from './useChangedState.js';
 import { usePolling } from './usePolling.js';
 
 // Poll interval while the first-run gate may be showing. Kept short so the
@@ -12,7 +13,7 @@ const REFRESH_INTERVAL_MS = 5_000;
 // saves, so the "what's missing" list and the completion state update
 // immediately instead of waiting for the next poll tick.
 export function useConfigStatus() {
-  const [status, setStatus] = useState(null);
+  const [status, setStatus] = useChangedState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -21,7 +22,7 @@ export function useConfigStatus() {
       // Defensive surface — retry on the next tick rather than tearing the
       // whole app down if a single poll fails.
     }
-  }, []);
+  }, [setStatus]);
 
   usePolling(refresh, REFRESH_INTERVAL_MS);
 

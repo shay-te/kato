@@ -8,17 +8,34 @@ A **review loop** runs on one task:
 1. An **independent reviewer** reads the task's whole diff (every repository,
    against its base, uncommitted and new files included). It is a fresh,
    read-only agent run with no history with the change, and it ends its reply
-   with a machine-readable verdict.
-2. If the verdict has no BLOCKER or MAJOR finding, the loop ends **clean**.
-   MINOR / NIT findings are recorded but never keep the loop going.
+   with a machine-readable verdict. It is held to the task (below), not to
+   everything that could be better.
+2. If the verdict has no BLOCKER or MAJOR finding of this task's, the loop ends
+   **clean**. MINOR / NIT findings are recorded but never keep the loop going.
 3. Otherwise the blocking findings are posted into the task's **main chat**,
    each with an id (`R1-1`) and the invariant it breaks. The agent there
    decides each one: **fixed** (with the regression test that covers it), or
    **rejected** / **out_of_scope** with evidence (file:line, a test, the docs,
    a library's source). It ends its reply with a `<review-response>` block.
 4. When that fix turn ends, its answers go into the **decision ledger**
-   (`ReviewRound.responses`) and the next round reviews the whole diff again —
-   told the decisions so far.
+   (`ReviewRound.responses`) and the next round **re-checks** what moved since
+   the last review, told the decisions so far.
+
+**Held to the task.** A fresh reader always finds something, and each fix is
+more code for the next one to find it in, so nothing here depends on the reader
+stopping by itself:
+
+- Every finding says how it belongs (`relevance`): `task` (the change does not
+  do what the task asks), `regression` (it broke what worked, or brought a bug
+  of its own) or `unrelated`. An unrelated finding is counted apart (`OFF_TASK`),
+  shown, never sent and never blocks. Left blank, severity decides.
+- What never blocks is written down (`NEVER_BLOCKS`): what the code already did,
+  cases nobody hits, hardening the task does not need, a missing test for one
+  branch, proof nobody can give from there.
+- A re-check reads a diff of the two diffs (`render_changes_since`), so a
+  one-line fix in a new 2,000-line file is one line to read. It falls back to the
+  whole change when nothing moved, when a repository cannot be read, or for a
+  round saved before re-checks. A clean re-check says it covered only what moved.
 
 **Optional stages** (all off unless the host passes them to `start`):
 
@@ -31,7 +48,8 @@ A **review loop** runs on one task:
   run again inside the round until they pass. After `tests_fix_attempts`
   fixes that don't land the loop stops STUCK.
 - `confirm_clean` — a clean verdict from a reviewer told the ledger needs a
-  clean-room **sweep** (a fresh reviewer told nothing) to agree.
+  clean-room **sweep** to agree: a fresh reviewer of the whole change, told
+  nothing of how the fixes went, only what was ruled out with evidence.
 - `extra_sweep` — every clean verdict needs that sweep: two clean reviews in
   a row, the second blind.
 

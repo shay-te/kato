@@ -363,6 +363,9 @@ def _validate_persist_and_respond(updates: dict, app: Flask | None = None):
 
 def _live_settings_keys() -> frozenset[str]:
     """Schema keys :func:`_apply_live_settings` enforces without a restart."""
+    from kato_core_lib.data_layers.service.lid_awake.settings import (
+        LID_AWAKE_ENABLED_KEY,
+    )
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
@@ -372,7 +375,11 @@ def _live_settings_keys() -> frozenset[str]:
     )
 
     return (
-        frozenset({REVIEW_COMMENTS_ENABLED_KEY, STANDING_INSTRUCTIONS_KEY})
+        frozenset({
+            REVIEW_COMMENTS_ENABLED_KEY,
+            STANDING_INSTRUCTIONS_KEY,
+            LID_AWAKE_ENABLED_KEY,
+        })
         | RELEASE_NOTES_KEYS
     )
 
@@ -387,12 +394,17 @@ def _apply_live_settings(app: Flask, updates: dict) -> str:
     on every use, so saving them already applied them. The review-comment
     switch needs this hook.
     """
+    from kato_core_lib.data_layers.service.lid_awake.settings import (
+        LID_AWAKE_ENABLED_KEY,
+    )
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.standing_instructions_utils import (
         STANDING_INSTRUCTIONS_KEY,
     )
 
     messages = [_apply_review_comment_switch(app, updates)]
+    if LID_AWAKE_ENABLED_KEY in updates:
+        messages.append('Saved. The header shows the lid status within seconds.')
     if RELEASE_NOTES_KEYS & set(updates):
         messages.append('Saved. Release notes settings apply to the next finished task.')
     if STANDING_INSTRUCTIONS_KEY in updates:
@@ -1508,6 +1520,8 @@ def create_app(
     )
     from kato_webserver.usage_routes import register_usage_routes
     register_usage_routes(app)
+    from kato_webserver.lid_awake_routes import register_lid_awake_routes
+    register_lid_awake_routes(app)
     from kato_webserver.release_notes_routes import register_release_notes_routes
     register_release_notes_routes(app)
     from kato_webserver.local_task_routes import register_local_task_routes

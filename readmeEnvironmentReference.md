@@ -155,7 +155,10 @@ The `openhands` container reuses the same `OPENHANDS_LLM_*` and `AWS_*` values f
 | `KATO_CLAUDE_ALLOWED_TOOLS` | Comma-separated allowlist passed via `--allowedTools`. |
 | `KATO_CLAUDE_DISALLOWED_TOOLS` | Comma-separated denylist passed via `--disallowedTools`. |
 | `KATO_CLAUDE_BYPASS_PERMISSIONS` | When `true`, kato runs Claude with `--permission-mode bypassPermissions` (no per-tool prompts) inside the hardened Docker sandbox. When `false` (the default), kato runs in `acceptEdits` mode and routes any permission asks back over the planning UI. Refused under root, refused under CI/Docker/cron (no TTY for confirmation), and double-prompted on the terminal at every interactive startup. See [BYPASS_PROTECTIONS.md](BYPASS_PROTECTIONS.md). |
-| `KATO_CLAUDE_TIMEOUT_SECONDS` | Per-task subprocess timeout. Defaults to 1800. Minimum 60. |
+| `KATO_CLAUDE_TIMEOUT_SECONDS` | Idle limit: how long a task kato started may go with no output before kato gives up on it. Defaults to 1800. Minimum 60. Waiting for your approval does not count. |
+| `KATO_CLAUDE_MAX_RUN_SECONDS` | The most a task kato started may run in total. Defaults to 28800 (8 hours). Waiting for your approval does not count. |
+| `KATO_LID_AWAKE_ENABLED` | Keep running with the lid closed. Defaults to off. Mac and Windows need `kato lid-awake setup` once. Read fresh, no restart. |
+| `KATO_LID_AWAKE_HEARTBEAT_PATH` | Where the heartbeat file lives. Defaults to `~/.kato/lid-awake.heartbeat`. Set it before running `kato lid-awake setup`: the watchdog stores this path. |
 | `KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED` | Runs a small `claude -p` prompt during startup validation. Off by default. |
 | `KATO_LESSONS_PATH` | Path to the lessons file — the one document the agent reads and maintains. Kato points the agent at it in the system prompt on every spawn (autonomous, planning, chat-respawn); it is re-checked on each spawn, so edits land without a kato restart. Empty falls back to `KATO_WORKSPACES_ROOT/lessons.md`. |
 | `KATO_RELEASE_NOTES_ENABLED` | Keep release notes: a dated line per task that reaches Done ("Finish & forget" with done ticked, the plan board's "Count as done", or a ticket closed in YouTrack / Jira). Default on. Read fresh on every write — no restart. |

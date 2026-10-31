@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from review_loop_core_lib.review_loop_core_lib.data.state import (
     BLOCKING_SEVERITIES,
     FINDING_CATEGORIES,
+    FINDING_RELEVANCE,
     FindingSeverity,
     LedgerEntry,
     ReviewFinding,
@@ -45,8 +46,14 @@ class ReviewVerdict(object):
         return tuple(finding for finding in self.findings if finding.settled_by)
 
     @property
+    def off_task(self) -> tuple[ReviewFinding, ...]:
+        """Findings the reviewer says this task neither caused nor needs."""
+        return tuple(finding for finding in self.findings if finding.off_task)
+
+    @property
     def is_clean(self) -> bool:
-        """No BLOCKER and no MAJOR — MINOR / NIT never keep a loop going."""
+        """No BLOCKER and no MAJOR of this task's — MINOR / NIT never keep a
+        loop going, and neither does what the task has nothing to do with."""
         return not self.blocking
 
     @property
@@ -165,6 +172,7 @@ def _finding(item) -> ReviewFinding:
     except ValueError as exc:
         raise ReviewVerdictError(f'unknown severity {raw_severity!r}') from exc
     category = str(item.get('category', '')).strip().lower()
+    relevance = str(item.get('relevance', '') or '').strip().lower()
     try:
         line = int(item.get('line', 0) or 0)
     except (TypeError, ValueError):
@@ -180,4 +188,5 @@ def _finding(item) -> ReviewFinding:
         detail=str(item.get('detail', '')).strip(),
         invariant=str(item.get('invariant', '') or '').strip(),
         new_evidence=str(item.get('new_evidence', '') or '').strip(),
+        relevance=relevance if relevance in FINDING_RELEVANCE else '',
     )

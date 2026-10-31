@@ -107,6 +107,10 @@ export function fetchUsage() {
 
 // The release notes as Settings point at them: ``{ enabled, path, exists,
 // markdown, google: { wanted, document_id, last_synced_at, error } }``.
+export function fetchLidAwake() {
+  return fetchJson('/api/lid-awake');
+}
+
 export function fetchReleaseNotes() {
   return fetchJson('/api/release-notes', { timeoutMs: 30000 });
 }

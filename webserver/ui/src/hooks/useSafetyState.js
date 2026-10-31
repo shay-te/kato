@@ -1,11 +1,11 @@
-import { useState } from 'react';
 import { fetchSafetyState } from '../api.js';
+import { useChangedState } from './useChangedState.js';
 import { usePolling } from './usePolling.js';
 
 const REFRESH_INTERVAL_MS = 30_000;
 
 export function useSafetyState() {
-  const [state, setState] = useState(null);
+  const [state, setState] = useChangedState(null);
 
   usePolling(async () => {
     try {

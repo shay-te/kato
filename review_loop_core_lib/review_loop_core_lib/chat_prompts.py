@@ -24,7 +24,10 @@ from __future__ import annotations
 
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import RESPONSE_OPEN
 from review_loop_core_lib.review_loop_core_lib.ports import LoopWording
-from review_loop_core_lib.review_loop_core_lib.reviewer_prompt import CHECKLIST
+from review_loop_core_lib.review_loop_core_lib.reviewer_prompt import (
+    CHECKLIST,
+    NEVER_BLOCKS,
+)
 
 SELF_CHECK_OPEN = '<self-check>'
 SELF_CHECK_CLOSE = '</self-check>'
@@ -46,8 +49,12 @@ its base branch, including new and uncommitted files) with this checklist:
 
 {CHECKLIST}
 
+The task is the yardstick: a BLOCKER or MAJOR is the change not doing what the
+task asks, or a real bug it brought. {NEVER_BLOCKS}
+
 - Fix every real BLOCKER / MAJOR problem you find, at its root cause, with a
   regression test for each fix, and run the tests that cover it.
+- Add nothing the task does not need.
 - Do not commit, push or run git — publishing is the operator's call.
 - Do not chase style nits.
 

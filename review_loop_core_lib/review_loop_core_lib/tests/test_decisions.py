@@ -318,7 +318,7 @@ class PromptTests(unittest.TestCase):
             task_id='T-1', task_summary='', task_description='', diffs=diffs,
             rendered=render_review_diff(diffs, budget_chars=1000), wording=WORDING,
         )
-        self.assertIn('"invariant": "the rule the code must keep", "new_evidence": ""', prompt)
+        self.assertIn('"invariant": "the rule the code must keep", "relevance": "task", "new_evidence": ""', prompt)
         self.assertIn('`new_evidence` is only for raising again an issue', prompt)
 
 

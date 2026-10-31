@@ -50,7 +50,13 @@ export function usePlanWatch(taskId, onFreshPlan) {
     heldRef.current[taskId] = mtime;
     const content = String(res?.content || '');
     const exists = !!res?.exists;
-    setPlan({ taskId, content, exists });
+    // Same text, new timestamp: keep the object, or a plan file rewritten to
+    // the same words re-renders the whole screen on every tick.
+    setPlan((held) => (
+      held.taskId === taskId && held.content === content && held.exists === exists
+        ? held
+        : { taskId, content, exists }
+    ));
     const captured = Number(res?.captured_mtime || mtime);
     const prev = seenRef.current[taskId];
     if (prev === undefined) {

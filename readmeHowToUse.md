@@ -280,3 +280,28 @@ We use a `.env` file to manage configuration instead of hardcoding values in `do
 # - LLM settings (including AWS credentials for Bedrock models if needed)
 # - Sandbox volumes mapping
 ```
+
+## Keep kato running with the lid closed
+
+A computer that really sleeps runs nothing, so this keeps it awake instead.
+
+1. Run `kato lid-awake setup` once in a terminal. On a Mac it asks for your password, and installs a sudo rule for exactly two `pmset` commands plus a small watchdog. On Windows it needs no admin rights. On Linux there's nothing to install.
+2. Turn on **Settings → Keep running with the lid closed**. No restart needed.
+3. Check the header: **Lid can close** means you're ready.
+
+| Situation | Mac | Windows | Linux |
+|---|---|---|---|
+| On the charger | Keeps running | Keeps running | Keeps running |
+| On battery, an agent working | Keeps running, down to 20% | Sleeps | Keeps running, down to 20% |
+| On battery, nothing working or waiting for your approval | Sleeps | Sleeps | Sleeps |
+| Running hot | Sleeps | Can't tell, see below | Sleeps |
+
+Windows has no heat reading a normal user can rely on, which is why it only works on the charger.
+
+Linux needs systemd. Some desktops handle the lid themselves, KDE especially, so try it once before relying on it. WSL isn't supported, because Windows owns the lid there.
+
+If kato crashes or hangs, a watchdog puts your normal sleep setting back within about 3 minutes.
+
+Keep the laptop on a hard surface, never in a bag. Don't plug or unplug the charger while the lid is closed. Agents still stop and wait for your approvals, and kato still stops if you log out, shut down or restart.
+
+To undo it: `kato lid-awake remove`.

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from kato_core_lib.helpers.atomic_text_utils import atomic_write_text
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
 
 PLAN_FILENAME = 'plan.md'
 
@@ -96,6 +97,17 @@ def write_plan(
         return False
     _mark_captured(workspace, target, logger)
     return True
+
+
+def read_task_plan(workspace_manager, task_id: str) -> str:
+    """The task's captured ``plan.md``, or '' when there is none."""
+    root = task_workspace_root(workspace_manager, task_id)
+    if not root:
+        return ''
+    try:
+        return (Path(root) / PLAN_FILENAME).read_text(encoding='utf-8').strip()
+    except (OSError, UnicodeDecodeError):
+        return ''
 
 
 def plan_captured_mtime(workspace_path: Path | str) -> int:

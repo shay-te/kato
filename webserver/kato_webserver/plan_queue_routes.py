@@ -25,7 +25,6 @@ can't do it yet.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Callable
 
 from flask import Flask, jsonify, request
@@ -37,7 +36,7 @@ from kato_core_lib.data_layers.service.plan_queue.split_folders import (
     find_split_folders,
     read_split_folder,
 )
-from kato_core_lib.helpers.plan_writer import PLAN_FILENAME
+from kato_core_lib.helpers.plan_writer import read_task_plan
 from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
 from kato_webserver.model_request_utils import requested_model
 from plan_queue_core_lib.plan_queue_core_lib.errors import ErrorKind, PlanQueueError
@@ -143,7 +142,7 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             except SplitFolderError as exc:
                 return jsonify({'error': str(exc)}), 400
         else:
-            plan_text = _read_plan(workspace_manager, task_id)
+            plan_text = read_task_plan(workspace_manager, task_id)
             if not plan_text:
                 return jsonify({'error': f'{task_id} has no plan to split yet'}), 400
         return answer(lambda svc: svc.propose(
@@ -227,17 +226,6 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             'check': 'check_now',
         }
         return answer(lambda service: getattr(service, methods[action])(plan_id, step_id))
-
-
-def _read_plan(workspace_manager, task_id: str) -> str:
-    """The task's captured ``plan.md``, or '' when there is none."""
-    root = task_workspace_root(workspace_manager, task_id)
-    if not root:
-        return ''
-    try:
-        return (Path(root) / PLAN_FILENAME).read_text(encoding='utf-8').strip()
-    except (OSError, UnicodeDecodeError):
-        return ''
 
 
 def _drafts(value) -> tuple[list[StepDraft], str]:

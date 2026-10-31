@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from review_loop_core_lib.review_loop_core_lib.service import ReviewLoopService
 from review_loop_core_lib.review_loop_core_lib.store import ReviewLoopStore
 from review_loop_core_lib.review_loop_core_lib.tests.fakes import (
+    FakeTree,
     FAST,
     WORDING,
     FakeChat,
@@ -106,6 +107,38 @@ class ReviewLoopRouteTests(_RoutesBase):
     def test_no_loop_yet(self) -> None:
         body = self.client(FakeReviewer(reply())).get('/api/sessions/T-1/review-loop').get_json()
         self.assertEqual(body, {'loop': None})
+
+    def test_the_reviewer_is_held_to_the_tasks_plan_too(self) -> None:
+        # UNA-3343's whole ticket was a title; what it was FOR was in plan.md.
+        (self.root / 'T-1' / 'plan.md').write_text('Lanes are not needed.\n', encoding='utf-8')
+        reviewer = FakeReviewer(reply())
+        self.client(reviewer).post('/api/sessions/T-1/review-loop', json={})
+        self.wait_finished()
+        self.assertIn('Email + password.\n\n## The plan\nLanes are not needed.', reviewer.prompts[0])
+
+    def test_a_task_with_no_plan_is_judged_by_its_ticket(self) -> None:
+        reviewer = FakeReviewer(reply())
+        self.client(reviewer).post('/api/sessions/T-1/review-loop', json={})
+        self.wait_finished()
+        self.assertIn('Email + password.', reviewer.prompts[0])
+        self.assertNotIn('## The plan', reviewer.prompts[0])
+
+    def test_a_re_check_can_be_read_back_from_the_round(self) -> None:
+        def fix(_prompt: str) -> None:
+            (self.repo / 'app.py').write_text('def run():\n    return 3  # FIXED\n')
+
+        self.chat.fixer = fix
+        client = self.client(FakeReviewer(reply(finding('MAJOR')), reply()))
+        client.post('/api/sessions/T-1/review-loop', json=dict.fromkeys(
+            ('self_check', 'verify_tests', 'confirm_clean', 'extra_sweep'), False,
+        ))
+        self.wait_finished()
+        loop = client.get('/api/sessions/T-1/review-loop').get_json()['loop']
+        self.assertEqual(loop['rounds'][1]['rechecked_files'], 1)
+        changes = client.get(
+            f"/api/sessions/T-1/review-loop/{loop['loop_id']}/rounds/2/changes",
+        ).get_json()
+        self.assertIn('return 3  # FIXED', changes['text'])
 
     def test_start_runs_a_loop_over_the_real_diff(self) -> None:
         reviewer = FakeReviewer(reply(finding('MAJOR')), reply())
@@ -341,7 +374,7 @@ class HooksIntoTheRestTests(unittest.TestCase):
             agent_service=SimpleNamespace(review_loops=self.loops),
         )
         self.client = app.test_client()
-        self.diffs = lambda task_id: []
+        self.diffs = FakeTree().diff_source
 
     def _finished(self, task_id: str):
         deadline = time.monotonic() + 5

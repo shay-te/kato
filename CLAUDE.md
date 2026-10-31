@@ -10,7 +10,7 @@ kato up              # start kato locally (settings.json + run main)
 kato test            # run the unittest suite
 ```
 
-`kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
+`kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker | lid-awake <setup|remove|status>`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
 
 **Zero failures AND zero errors expected — everywhere.** `openhands_core_lib` used to carry 94 pre-existing errors that this file told you to ignore; that suite now runs 257 tests clean, so an error there is a real regression, not background noise. Do not reinstate a blanket "ignore" for any lib.
 
@@ -86,6 +86,11 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 ├── local_task_core_lib        ← tasks created in kato's own UI (no tracker): one JSON store of
 │                                 LOCAL-<n> tasks — summary, description, tags, state, comments.
 │                                 Kato-free; imports only stdlib + utils_core_lib
+├── lid_awake_core_lib         ← keep a computer running with the lid closed and never leave it stuck:
+│                                 Mac pmset + root watchdog, Windows powercfg + PowerShell watchdog,
+│                                 Linux systemd-inhibit; heartbeat; idle holds. Kato-free; imports only
+│                                 stdlib + utils_core_lib; kato's settings key, words and names are in
+│                                 kato_core_lib/data_layers/service/lid_awake/
 ├── git_core_lib               ← GitClientMixin, git subprocess engine, repo discovery utils
 ├── repository_core_lib        ← provider utils (URL parsing, token messages); imports
 │                                 git_core_lib's pure URL-parsing helpers directly (module
@@ -233,6 +238,62 @@ Pending approvals are in-memory: a kato restart drops them, and `approve_push`
 then 404s ("no pending publish for this task"). The branch and commits survive
 in the workspace, so the UI's Push button is the recovery path.
 
+### Lid-closed running (Settings → "Keep running with the lid closed")
+```
+tick every 15s (LidAwakeService, lid_awake_core_lib; always started, even with the setting off)
+  → inputs: setting, charger, battery %, heat level (NSProcessInfo.thermalState, no root), agents working
+  → held awake, or blocks_idle_sleep? the idle hold (below): no root, ends with kato, no help for a closed lid
+  → decide():
+      off / unsupported / no guard / unknown power / heat ≥ serious / battery ≤ 20% /
+      battery + no heat sensor / battery + idle → sleep
+      on charger → awake the WHOLE time (a scan has to run for a new ticket to be picked up)
+      battery + an agent working (a session waiting for the operator is not working) → awake
+  → awake: write the heartbeat FIRST, then the platform's lid switch, read back
+  → sleep: only if a heartbeat exists: switch off, read back, delete the heartbeat
+```
+**A computer that really sleeps runs nothing.** The only way kato "runs during sleep" is that it does not sleep.
+
+| | Lid switch | Idle hold | Crash guard | Heat | Setup |
+|---|---|---|---|---|---|
+| **Mac** | `sudo -n pmset -a disablesleep 1` | `caffeinate -i -w <pid>` | root LaunchDaemon, every 30s | `NSProcessInfo.thermalState` | sudo, once |
+| **Windows** | `powercfg` LIDACTION → 0, AC + DC, old values kept in a file | `SetThreadExecutionState`, own thread | hidden PowerShell started with the hold + a Run value at logon | none: **charger only** | none elevated, once |
+| **Linux** | `systemd-inhibit --what=handle-lid-switch:sleep:idle` | same, `sleep:idle` | built in: the inhibited command is the watch loop | `/sys/class/thermal` | none |
+
+Unsupported: WSL (Windows owns the lid; logind in the VM never hears of it), Linux with no logind, anything else.
+The header says so and kato changes nothing.
+
+**So the feature is built around a crash.** `pmset disablesleep` is global and root-only: left on, the Mac never
+sleeps again, even in a bag. Windows' lid action is the operator's own setting and must come back. A watchdog
+restores either when the heartbeat is 2 minutes stale. The file exists only while kato holds the lid, so no file
+= hands off (an operator's own `pmset` is never undone); a timestamp, not a pid, because a hung kato still has a
+pid. **No guard, no keep-awake:** `decide` refuses unless `guard_ready` confirms it. Mac: daemon loaded AND sudo
+allows BOTH directions (setup installs the sudo rule LAST); a LaunchDaemon, not an Agent, because an Agent dies at
+logout; the sudoers rule is literal and must match `disable_sleep_command`. Windows: a scheduled task was rejected
+because it flashes a console every run. Linux: reading the inhibitor back proves logind has it, NOT that the
+desktop obeys it (KDE's PowerDevil handles the lid itself), so a Linux laptop must be tried by hand.
+
+Every platform reports heat on the Mac's 0-3 scale; `HEAT_LEVEL_NO_SENSOR` is not a failed read (`None`): no sensor
+is allowed on a charger, never on a battery. The lid hold does not always stop the idle timer (it does not on
+Windows), so the service holds both whenever it keeps the computer awake.
+
+Starts before connection validation (`_finalize_configured_boot`, first line): opening the laptop offline must not
+switch this off. Off by default. The header chip's words are `lid_awake/status_text.py`; the page decides nothing.
+Do not put a kato name in the lib: pass it in `HostIdentity`. Everything platform-specific is chosen in
+`platforms.py`; the service only knows `PlatformSupport`. Windows paths run for real only in CI's
+`lid-awake-windows` job (plus `RealWatchdogTests` under any PowerShell).
+
+**A closed lid means no browser, so nothing an agent needs may depend on one.** Remembered permissions used
+to be applied only when a browser asked (pending poll, session list, chat stream), and the UI stops polling
+while its page is hidden: an agent hit an ask already granted and waited until the page came back ("the review
+loop only runs when I focus the tab"). `kato_webserver/permission_auto_resolver.py` runs the same check every 2s;
+every carve-out lives in `_maybe_auto_resolve_pending`, so do not add one here. Still browser-only: messages
+queued in a chat's composer (`useBackgroundQueueDrain`) wait for the UI.
+
+**The run limits changed with this** (`PlanningSessionRunner._wait_for_terminal_event`, runs kato starts itself,
+not chats): `KATO_CLAUDE_TIMEOUT_SECONDS` is now an IDLE limit (no event for that long), plus a hard cap
+`KATO_CLAUDE_MAX_RUN_SECONDS` (8h). Time waiting for the operator counts towards neither. The fixed limit used to fail
+a healthy run at 30 minutes. Both are checked on every poll: the old check ran only when a poll came back empty.
+
 ### Lessons — how the agent gets better between tasks
 ```
 ONE document: lessons.md (KATO_LESSONS_PATH, default <KATO_WORKSPACES_ROOT>/lessons.md)
@@ -308,7 +369,8 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
 ```
 start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → ReviewLoopService
   (review_loop_core_lib) thread per task
-  round n: wait for the chat to be free → fresh READ-ONLY reviewer over the WHOLE diff
+  round n: wait for the chat to be free → fresh READ-ONLY reviewer: the WHOLE diff first, then
+           only what MOVED since the last review; a sweep reads the whole diff again
            (ImplementationService.investigate: no --resume, no session persistence, Bash/Edit denied)
      no BLOCKER/MAJOR → CLEAN │ every blocking issue left survived 2 fixes, none new → STUCK │
      n == max → MAX_ROUNDS
@@ -319,6 +381,33 @@ start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → R
             parse its <review-response> into the DECISION LEDGER → round n+1, whose reviewer is
             told the ledger
 ```
+**A review is held to the task, not to everything that could be better.** A fresh reader always
+finds something, and each fix is more code for the next one to find it in: on 18 saved loops at least 25
+of the 50 blockers after round 1 were in files no fix had touched, UNA-3348 grew from 7 files to 17, and
+UNA-3242 (a page move) was blocked by bugs the moved page had always had. Four things keep a long loop on
+course. None is optional, and none is a setting:
+- **The task includes its plan.** `review_loop_routes._task_text` appends `plan.md` to the ticket (UNA-3343's
+  whole ticket was a title; its plan said what was not needed). So the plan is now a yardstick: one that fell
+  behind the chat reads as a `task` finding, which the fixer rejects with evidence (that settles it).
+- **Every finding says how it belongs** (`relevance`: `task` / `regression` / `unrelated`,
+  `ReviewFinding.is_blocking`). The loop enforces it: `unrelated` is counted apart (`OFF_TASK`), shown, never
+  sent, never blocks. Left blank or misspelled, the finding's severity decides as it did before: an odd word
+  proves nothing about a bug. `NEVER_BLOCKS` in `reviewer_prompt.py` is the bar, shared with the self-check.
+- **A re-check reads only what moved** (`diff.render_changes_since`, a diff of the two diffs: ~6.5% of the
+  reading on the saved loops). A round compares with the last FINISHED review: `round-N-files.json` holds a
+  digest per file (over-budget files included), `round-N-diff.json` stays the whole change, and what the
+  reviewer got is `round-N-changes.json`. Nothing moved, a repository that cannot be read, or an older loop →
+  the whole change. The first review and every sweep read everything, so all code is still read at its
+  final version; a clean re-check says it covered only what moved.
+- **A sweep is told what was ruled out** (rejected / out_of_scope WITH evidence), never how the fixes went.
+  Those rulings are about the task, not the fixes. Told nothing, it reopened them in new words the fingerprint
+  could not match (UNA-3348 round 5: 7 raised, 3 caught). `blind` stays true for it.
+
+**An empty change is `NOTHING_TO_REVIEW`, neither CLEAN nor FAILED.** Checked first, before a self-check or a
+test run spends a turn on it. CLEAN is a verdict on code someone read, so a green result on nothing would be a false
+pass; FAILED means something broke. A plan's parent task is the usual case: its work is in its sub-tasks. A repository
+whose diff could not be READ also has zero files, and stays FAILED with the repo and the error: never "no changes".
+
 **Optional stages** (lib default OFF; in kato `verify_tests`, `confirm_clean`, `extra_sweep` start
 ON and `self_check` OFF — checkboxes in the loop view, remembered in `kato.reviewLoopStages.v2`;
 route `POST .../review-loop {self_check, verify_tests, confirm_clean, extra_sweep}`: an explicit
@@ -358,7 +447,7 @@ tests turn touched a file) the round closes `changed` and the same kind of revie
 way: re-run only when a clean review saw a different digest than the tests passed on.
 
 **Decision ledger:** the fixer answers each finding fixed (+ regression test) / rejected /
-out_of_scope (+ evidence). A rejection WITH evidence settles the finding: a later reviewer
+out_of_scope (+ evidence; for out_of_scope, what the task asks and why this is not part of it). A rejection WITH evidence settles the finding: a later reviewer
 re-raising it without `new_evidence` gets it marked settled (shown, not sent, not blocking).
 A bare disagreement settles nothing; a missing response block = "unanswered", never a failure.
 Modelled on reviewed-in-rounds PRs where the implementer rejects a wrong finding with proof.

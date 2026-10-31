@@ -458,6 +458,52 @@ describe('the stages — picked with the round limit, before a loop starts', () 
 });
 
 describe('the view shows the stages that ran', () => {
+  function showRounds(rounds) {
+    const finished = summary({ status: 'clean', phase: 'done' });
+    kato.loop = { ...finished, rounds };
+    render(<ReviewLoopPane session={session(finished)} onClose={() => {}} />);
+  }
+
+  async function openRound(name) {
+    const row = (await screen.findByText(name)).closest('.review-loop-round');
+    if (!row.querySelector('.review-loop-artifacts')) { fireEvent.click(screen.getByText(name)); }
+    return screen.getByText(name).closest('.review-loop-round');
+  }
+
+  test('a re-check is tagged, and offers what it read beside the whole change', async () => {
+    showRounds([round(1), round(2, {
+      outcome: 'clean', sent_at: 0, findings: [], rechecked_files: 3, diff_files: 12, diff_repos: 2,
+    })]);
+    const row = await openRound('Round 2');
+    expect(within(row).getByText('Re-check of 3 changed files')).toBeInTheDocument();
+    expect(within(row).getByText('What the reviewer re-checked (3 file(s))')).toBeInTheDocument();
+    expect(within(row).getByText('The whole change (12 file(s) in 2 repo(s))')).toBeInTheDocument();
+  });
+
+  test('a full review offers only the diff it read', async () => {
+    showRounds([round(1, { diff_files: 12, diff_repos: 2 })]);
+    const row = await openRound('Round 1');
+    expect(within(row).getByText('Diff the reviewer saw (12 file(s) in 2 repo(s))')).toBeInTheDocument();
+    expect(within(row).queryByText(/re-checked/)).toBeNull();
+  });
+
+  test('what the task has nothing to do with is listed apart, and never as blocking', async () => {
+    showRounds([round(1, {
+      outcome: 'clean', sent_at: 0,
+      findings: [{
+        id: 'R1-1', severity: 'MAJOR', title: 'Dates read back a day early', file: 'helpers.js',
+        repository: 'admin', line: 129, symbol: 'parse', category: 'correctness', detail: '',
+        relevance: 'unrelated',
+      }],
+      counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0, SETTLED: 0, OFF_TASK: 1 },
+    })]);
+    const row = await openRound('Round 1');
+    expect(within(row).getByText('1 off-task')).toBeInTheDocument();
+    expect(within(row).getByText('Not part of this task — not sent')).toBeInTheDocument();
+    expect(within(row).getByText('Dates read back a day early')).toBeInTheDocument();
+    expect(within(row).queryByText('Not blocking — reported only')).toBeNull();
+  });
+
   test('a clean-room sweep is tagged, and a round shows its test result', async () => {
     const tested = round(1, {
       outcome: 'tests_failed', findings: [], counts: { BLOCKER: 0, MAJOR: 0, MINOR: 0, NIT: 0 },

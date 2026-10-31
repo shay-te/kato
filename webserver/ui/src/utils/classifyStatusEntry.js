@@ -3,6 +3,7 @@ import { NOTIFICATION_KIND } from '../constants/notificationKind.js';
 // How each way a review loop can end is announced.
 const REVIEW_LOOP_OUTCOMES = {
   clean: { title: 'Review loop: clean', kind: NOTIFICATION_KIND.COMPLETED },
+  nothing_to_review: { title: 'Review loop: nothing to review', kind: NOTIFICATION_KIND.STATUS_CHANGE },
   max_rounds: { title: 'Review loop: issues left after the last round', kind: NOTIFICATION_KIND.ATTENTION },
   stuck: { title: 'Review loop: stuck on the same issues', kind: NOTIFICATION_KIND.ATTENTION },
   failed: { title: 'Review loop failed', kind: NOTIFICATION_KIND.ERROR },
