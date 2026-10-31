@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from unittest import mock
 
 from lid_awake_core_lib.lid_awake_core_lib import mac_crash_guard
@@ -151,7 +151,8 @@ class WatchdogScriptTests(unittest.TestCase):
 
 
 class InstallScriptTests(unittest.TestCase):
-    SOURCE = Path('/tmp/some folder')
+    # A Mac path on every host: CI also runs this file on Windows.
+    SOURCE = PurePosixPath('/tmp/some folder')
 
     @unittest.skipIf(sys.platform == 'win32', 'needs a POSIX shell')
     def test_is_valid_shell(self):
