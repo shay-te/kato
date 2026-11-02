@@ -141,25 +141,25 @@ class EnumerateRepoIdsTests(unittest.TestCase):
 
 
 class ComputeRepoDiffTests(unittest.TestCase):
-    def test_empty_task_id_does_not_checkout_branch(self):
+    def test_no_branch_checks_nothing_out(self):
         with patch.object(app_module, 'ensure_branch_checked_out') as checkout, \
                 patch.object(app_module, '_resolve_diff_base', return_value='main'), \
                 patch.object(app_module, 'resolve_base_ref', return_value=('origin/main', False)), \
                 patch.object(app_module, 'current_branch', return_value='task-br'), \
                 patch.object(app_module, 'diff_against_base', return_value='DIFF'), \
                 patch.object(app_module, 'conflicted_paths', return_value=[]):
-            result = _compute_repo_diff('client', '/cwd', task_id='', agent_service=None)
+            result = _compute_repo_diff('client', '/cwd', branch='', agent_service=None)
         checkout.assert_not_called()
         self.assertEqual(result['diff'], 'DIFF')
         self.assertEqual(result['base'], 'main')
 
-    def test_truthy_task_id_checks_out_branch(self):
+    def test_the_task_branch_is_checked_out(self):
         with patch.object(app_module, 'ensure_branch_checked_out') as checkout, \
                 patch.object(app_module, '_resolve_diff_base', return_value='main'), \
                 patch.object(app_module, 'current_branch', return_value='task-br'), \
                 patch.object(app_module, 'diff_against_base', return_value='DIFF'), \
                 patch.object(app_module, 'conflicted_paths', return_value=[]):
-            _compute_repo_diff('client', '/cwd', task_id='T-1', agent_service=None)
+            _compute_repo_diff('client', '/cwd', branch='T-1', agent_service=None)
         checkout.assert_called_once_with('/cwd', 'T-1')
 
 

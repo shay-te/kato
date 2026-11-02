@@ -1092,7 +1092,7 @@ class UpdateSourceForTaskTests(unittest.TestCase):
             result = service.publish.update_source_for_task('T1')
         self.assertFalse(result['updated'])
 
-    def test_skips_when_get_repository_fails(self) -> None:
+    def test_fails_when_get_repository_fails(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
@@ -1104,7 +1104,10 @@ class UpdateSourceForTaskTests(unittest.TestCase):
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
             result = service.publish.update_source_for_task('T1')
-        self.assertEqual(len(result['skipped_repositories']), 1)
+        self.assertEqual(result['skipped_repositories'], [])
+        self.assertEqual(
+            [entry['repository_id'] for entry in result['failed_repositories']], ['r1'],
+        )
 
     def test_skips_when_local_path_blank(self) -> None:
         repo_obj = SimpleNamespace(id='r1')

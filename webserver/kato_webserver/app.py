@@ -85,6 +85,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
     session_is_in_explain_mode,
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_session_state_dir
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.model_label_utils import model_display_label
 from kato_core_lib.helpers.workspace_repo_utils import (
     resolve_session_cwd,
@@ -712,18 +713,27 @@ def _workspace_status(workspace_manager, task_id: str) -> str:
     return str(getattr(record, 'status', '') or '')
 
 
+def _task_branch(workspace_manager, task_id: str) -> str:
+    """The branch ``task_id`` works on (the answer is ``task_branch``'s)."""
+    try:
+        record = workspace_manager.get(task_id) if workspace_manager is not None else None
+    except Exception:
+        record = None
+    return task_branch(task_id, getattr(record, 'tags', None))
+
+
 def _compute_repo_diff(
     repo_id: str,
     cwd: str,
     *,
-    task_id: str = '',
+    branch: str = '',
     agent_service=None,
     full_paths=(),
 ) -> dict[str, Any]:
     """Build the per-repo diff payload the Changes-tab accordion expects.
 
-    A per-task workspace clone is supposed to live on the task branch
-    (named after ``task_id`` per kato's branch-naming convention). If
+    A per-task workspace clone is supposed to live on the task ``branch``
+    (``_task_branch``, which is not always the task id). If
     the clone has drifted to ``master`` for any reason, opening the
     Changes tab self-heals it by checking out the task branch first
     — otherwise the operator would see "No changes between master
@@ -745,8 +755,8 @@ def _compute_repo_diff(
     surface as an ``error`` field so the UI can render that single
     accordion section in an error state without breaking the rest.
     """
-    if task_id:
-        ensure_branch_checked_out(cwd, task_id)
+    if branch:
+        ensure_branch_checked_out(cwd, branch)
     return _read_repo_diff(
         repo_id, cwd, agent_service=agent_service, full_paths=full_paths,
     )
@@ -3307,6 +3317,7 @@ def _register_http_routes(app: Flask) -> None:
                 repo_id for repo_id in repository_ids
                 if str(repo_id) == wanted_repo
             ]
+        branch = _task_branch(workspace_manager, task_id)
         # Multi-repo task: compute one diff per clone so the UI can
         # render accordions side by side. Single-repo / legacy path:
         # fall back to the session record cwd, same shape as before.
@@ -3320,7 +3331,7 @@ def _register_http_routes(app: Flask) -> None:
                 if cwd is None:
                     return None
                 return _compute_repo_diff(
-                    repo_id, cwd, task_id=task_id, agent_service=agent_service,
+                    repo_id, cwd, branch=branch, agent_service=agent_service,
                     full_paths=full_paths,
                 )
 
@@ -3362,7 +3373,7 @@ def _register_http_routes(app: Flask) -> None:
                 'workspace_status': workspace_status,
             })
         single = _compute_repo_diff(
-            '', cwd, task_id=task_id, agent_service=agent_service,
+            '', cwd, branch=branch, agent_service=agent_service,
             full_paths=full_paths,
         )
         return _diff_response({

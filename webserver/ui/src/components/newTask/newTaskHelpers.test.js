@@ -32,7 +32,7 @@ test('a stored draft is read defensively; an unknown start falls back to Plan', 
     startMode: 'yolo', model: 'opus', effort: null,
   });
   assert.deepEqual(read, {
-    open: false, title: '', description: 'd', repositories: ['api', 'web'],
+    open: false, title: '', description: 'd', repositories: ['api', 'web'], branch: '',
     startMode: START_MODE.PLAN, model: 'opus', effort: '',
   });
   assert.equal(coerceDraft({ open: true, startMode: 'implement' }).startMode, 'implement');
@@ -44,7 +44,13 @@ test('a draft is dirty once anything is written or picked', () => {
   assert.equal(isDraftDirty(draft({ title: '  ' })), false);
   assert.equal(isDraftDirty(draft({ title: 'x' })), true);
   assert.equal(isDraftDirty(draft({ description: 'x' })), true);
+  assert.equal(isDraftDirty(draft({ branch: 'feature/x' })), true);
   assert.equal(isDraftDirty(draft({ repositories: ['api'] })), true);
+});
+
+test('a branch name survives the saved draft, and anything else reads as none', () => {
+  assert.equal(coerceDraft({ branch: 'feature/x' }).branch, 'feature/x');
+  assert.equal(coerceDraft({ branch: 7 }).branch, '');
 });
 
 test('Create needs a title and a repository', () => {
@@ -54,11 +60,13 @@ test('Create needs a title and a repository', () => {
 
 test('the payload carries the concrete model and effort shown', () => {
   const payload = draftPayload(
-    draft({ title: ' Title ', description: ' body ', repositories: ['api'], startMode: 'chat' }),
+    draft({
+      title: ' Title ', description: ' body ', repositories: ['api'], branch: ' feature/x ', startMode: 'chat',
+    }),
     { model: 'opus', effort: 'high' },
   );
   assert.deepEqual(payload, {
-    summary: 'Title', description: 'body', repositories: ['api'],
+    summary: 'Title', description: 'body', repositories: ['api'], branch: 'feature/x',
     start_mode: 'chat', model: 'opus', effort: 'high',
   });
 });

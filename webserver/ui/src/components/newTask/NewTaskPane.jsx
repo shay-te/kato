@@ -105,6 +105,17 @@ export default function NewTaskPane({ onCreated, onHide }) {
             selected={draft.repositories}
             onChange={(repositories) => updateNewTaskDraft({ repositories })}
           />
+          <label className="new-task-section new-task-field">
+            <span className="new-task-field-label">Branch name</span>
+            <input
+              placeholder="Empty: the task id, like LOCAL-1"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              value={draft.branch}
+              onChange={(event) => updateNewTaskDraft({ branch: event.target.value })}
+            />
+          </label>
           <NewTaskStartMode
             value={draft.startMode}
             onChange={(startMode) => updateNewTaskDraft({ startMode })}

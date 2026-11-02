@@ -67,6 +67,7 @@ def register_local_task_routes(
                 str(body.get('summary') or ''),
                 str(body.get('description') or ''),
                 [str(item) for item in repositories],
+                branch=str(body.get('branch') or ''),
             )
         except LocalTaskRejected as exc:
             status = 403 if exc.unapproved else 400

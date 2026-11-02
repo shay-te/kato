@@ -13651,6 +13651,7 @@ button.settings-prompt-editor-head {
 .new-task-title,
 .new-task-description,
 .new-task-repos-filter,
+.new-task-field input,
 .new-task-field select {
   border: 1px solid $C-NEUTRAL-16;
   border-radius: $RADIUS-6;
@@ -13757,6 +13758,7 @@ button.settings-prompt-editor-head {
 }
 
 .new-task-field-label { color: $C-NEUTRAL-64; }
+.new-task-field input,
 .new-task-field select { padding: $SPACE-5 $SPACE-6; }
 
 .new-task-create {

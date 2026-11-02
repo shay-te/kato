@@ -55,13 +55,38 @@ class DiscoveredRepository(object):
     repo_slug: str
 
 
+def _walk_paths_of(root_path: Path, skipped_paths) -> set[str]:
+    """``skipped_paths`` spelled the way ``os.walk(root_path)`` will spell them.
+
+    Resolved once here rather than per directory: the walk visits every folder
+    under the root, and it compares strings so that a skip costs no system call.
+    """
+    resolved_root = root_path.resolve()
+    walk_paths: set[str] = set()
+    for skipped_path in skipped_paths or ():
+        resolved = Path(skipped_path).expanduser().resolve()
+        if resolved != resolved_root and resolved.is_relative_to(resolved_root):
+            walk_paths.add(os.path.normcase(
+                str(root_path / resolved.relative_to(resolved_root)),
+            ))
+    return walk_paths
+
+
 def discover_git_repositories(
     projects_root: str,
     ignored_folders=None,
+    skipped_paths=None,
 ) -> list[DiscoveredRepository]:
+    """Every repository under ``projects_root``.
+
+    ``skipped_paths`` are whole folders not to look in, for trees full of
+    clones that are not repositories of their own. The root itself is never
+    skipped.
+    """
     root_path = Path(projects_root).expanduser()
     if not root_path.exists() or not root_path.is_dir():
         return []
+    skipped_walk_paths = _walk_paths_of(root_path, skipped_paths)
 
     ignored_folder_names = {
         str(folder).strip().lower()
@@ -80,6 +105,7 @@ def discover_git_repositories(
             for directory in dir_names
             if directory not in DISCOVERY_SKIP_DIRS
             and directory.lower() not in ignored_folder_names
+            and os.path.normcase(os.path.join(current_root, directory)) not in skipped_walk_paths
         ]
         depth = depth_inside.pop(current_root, None)
         if has_git_metadata:

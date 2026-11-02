@@ -97,11 +97,34 @@ describe('NewTaskPane', () => {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith('LOCAL-1'));
     expect(kato.created).toEqual([{
-      summary: 'Add retry', description: 'Times out.', repositories: ['api'],
+      summary: 'Add retry', description: 'Times out.', repositories: ['api'], branch: '',
       start_mode: 'plan', model: 'opus', effort: 'high',
     }]);
     expect(readNewTaskDraft().open).toBe(false);
     expect(readNewTaskDraft().title).toBe('');
+  });
+
+  test('a branch name goes with the task and is optional', async () => {
+    const kato = fakeKato();
+    const { onCreated } = renderPane();
+    await fillIn();
+    expect(screen.getByRole('button', { name: /Create/ })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Branch name'), { target: { value: ' feature/retry ' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(kato.created[0].branch).toBe('feature/retry');
+  });
+
+  test('a branch name the server refuses keeps the draft and shows why', async () => {
+    const error = 'master is the branch api merges into, so the work would land on it with no pull request.';
+    fakeKato({ create: { status: 400, body: { error } } });
+    const { onCreated } = renderPane();
+    await fillIn();
+    fireEvent.change(screen.getByLabelText('Branch name'), { target: { value: 'master' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(screen.getByLabelText('Branch name')).toHaveValue('master'));
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(readNewTaskDraft().branch).toBe('master');
   });
 
   test('another start mode and model are sent as picked', async () => {

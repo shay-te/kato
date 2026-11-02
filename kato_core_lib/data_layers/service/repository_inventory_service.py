@@ -11,6 +11,7 @@ from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from kato_core_lib.helpers.kato_tag_utils import repository_id_from_tag
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.release_notes_settings_utils import workspaces_root
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     build_discovered_repository,
     discover_git_repositories,
@@ -491,10 +492,37 @@ class RepositoryInventoryService(Service):
         if not root_path:
             return []
         ignored_folders = self._ignored_repository_folders(repository_source)
-        repositories: list[object] = []
-        for discovered_repository in discover_git_repositories(root_path, ignored_folders):
-            repositories.append(self._build_repository_entry(discovered_repository))
-        return repositories
+        # kato's own task clones are copies of what is found here, not
+        # repositories: with the workspaces folder inside the root, each one
+        # was a second "<repo>", and the inventory refused the whole list.
+        discovered = discover_git_repositories(
+            root_path, ignored_folders, skipped_paths=[workspaces_root()],
+        )
+        return self._one_repository_per_id(
+            [self._build_repository_entry(repository) for repository in discovered],
+        )
+
+    def _one_repository_per_id(self, repositories: list[object]) -> list[object]:
+        """One repository per id: the folder closest to the root.
+
+        An id comes from the folder's name, so two folders with one name (a
+        backup copy, ``old/api`` beside ``api``) share it. Refusing that emptied
+        the WHOLE inventory: every repository lost its source folder and its
+        pull requests, over a folder no task even used. The closest is also what
+        ``kato:repo:<id>`` finds at ``<root>/<id>``, so the two agree.
+        """
+        kept: dict[str, object] = {}
+        closest_first = sorted(repositories, key=lambda found: len(Path(found.local_path).parts))
+        for repository in closest_first:
+            owner = kept.setdefault(repository.id, repository)
+            if owner is not repository:
+                self.logger.warning(
+                    'auto-discovery: %s and %s are both repository "%s"; using %s. '
+                    'Rename one folder, or add it to KATO_IGNORED_REPOSITORY_FOLDERS, '
+                    'if that is the wrong one.',
+                    owner.local_path, repository.local_path, repository.id, owner.local_path,
+                )
+        return [repository for repository in repositories if kept[repository.id] is repository]
 
     @classmethod
     def _discovered_repository_name(cls, folder_name: str, repo_slug: str) -> str:
@@ -546,22 +574,24 @@ class RepositoryInventoryService(Service):
             aliases.append(normalized_lower_text(alias))
         return [alias for alias in aliases if alias]
 
-    def _kato_repository_tags(self, task) -> list[str]:
-        """The repo ids named by tags kato recorded on ``task`` itself."""
+    def _recorded_task_tags(self, task_id: str) -> list[str]:
+        """The tags kato recorded on the task itself."""
         if self._kato_task_tags is None:
             return []
         try:
-            recorded = self._kato_task_tags(str(getattr(task, 'id', '') or ''))
+            return list(self._kato_task_tags(task_id) or [])
         except Exception:
             # A workspace that cannot be read must not stop the tracker's own
             # tags from resolving the task.
-            self.logger.exception(
-                'could not read kato-side tags for task %s', getattr(task, 'id', ''),
-            )
+            self.logger.exception('could not read kato-side tags for task %s', task_id)
             return []
+
+    def _kato_repository_tags(self, task) -> list[str]:
+        """The repo ids named by tags kato recorded on ``task`` itself."""
+        recorded = self._recorded_task_tags(str(getattr(task, 'id', '') or ''))
         return [
             repository_tag
-            for repository_tag in map(repository_id_from_tag, recorded or [])
+            for repository_tag in map(repository_id_from_tag, recorded)
             if repository_tag
         ]
 

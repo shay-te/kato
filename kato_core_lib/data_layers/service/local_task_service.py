@@ -27,8 +27,13 @@ from kato_core_lib.data_layers.service.local_task_routing import (
     LocalAwareTaskService,
     local_task_as_task,
 )
-from kato_core_lib.helpers.kato_tag_utils import build_repository_tag
+from kato_core_lib.helpers.kato_tag_utils import (
+    build_branch_tag,
+    build_repository_tag,
+    task_branch,
+)
 from kato_core_lib.helpers.logging_utils import configure_logger
+from git_core_lib.git_core_lib.helpers.branch_name_utils import branch_name_problem
 from local_task_core_lib.local_task_core_lib.data.local_task import LocalTaskState
 
 START_PLAN = 'plan'
@@ -80,7 +85,10 @@ class LocalTaskService(object):
         self._approval_check = approval_check or _unapproved_repository_ids
         self.logger = logger or configure_logger(self.__class__.__name__)
 
-    def create(self, summary: str, description: str, repository_ids: Iterable[str]) -> Task:
+    def create(
+        self, summary: str, description: str, repository_ids: Iterable[str], branch: str = '',
+    ) -> Task:
+        """Record the task. ``branch`` names its branch; empty = the task id."""
         summary = str(summary or '').strip()
         if not summary:
             raise LocalTaskRejected('give the task a title')
@@ -96,6 +104,9 @@ class LocalTaskService(object):
                 f'{", ".join(unapproved)}. Approve them in Settings → Repositories.',
                 unapproved=unapproved,
             )
+        branch = str(branch or '').strip()
+        if branch:
+            self._refuse_unusable_branch(branch, repositories)
         local = self._task_service.local_tasks.create(
             summary, description, tags=tags, state=LocalTaskState.IN_PROGRESS,
         )
@@ -105,8 +116,37 @@ class LocalTaskService(object):
             task_description=local.description,
             repository_ids=[str(repository.id) for repository in repositories],
         )
+        if branch:
+            self._workspace_manager.add_tag(local.id, build_branch_tag(branch))
         self.logger.info('local task %s created: %s', local.id, local.summary)
         return local_task_as_task(local)
+
+    def _refuse_unusable_branch(self, branch: str, repositories: list) -> None:
+        """The checks git would make too late, or not at all.
+
+        The task's own branch cannot be the one it merges into: the agent's
+        work would land on it with no pull request. Two tasks cannot share a
+        branch: each has its own clone, and each would push over the other.
+        """
+        problem = branch_name_problem(branch)
+        if problem:
+            raise LocalTaskRejected(f'{branch} cannot be a branch name: {problem}')
+        wanted = branch.lower()
+        for repository in repositories:
+            try:
+                destination = str(self._repository_service.destination_branch(repository))
+            except ValueError as exc:
+                raise LocalTaskRejected(str(exc)) from exc
+            if destination.lower() == wanted:
+                raise LocalTaskRejected(
+                    f'{branch} is the branch {repository.id} merges into, so the work '
+                    f'would land on it with no pull request. Pick another name.',
+                )
+        for record in self._workspace_manager.list_workspaces():
+            if task_branch(record.task_id, record.tags).lower() == wanted:
+                raise LocalTaskRejected(
+                    f'task {record.task_id} already works on {branch}. Pick another name.',
+                )
 
     def prepare(self, task_id: str) -> bool:
         """Clone the task's repositories and check out its branch.

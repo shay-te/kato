@@ -105,6 +105,10 @@ class NewTaskEndToEndTests(unittest.TestCase):
         task_service = LocalAwareTaskService(config, access, self.store)
         repositories = _Repositories(self.source_root)
         self.workspace = build_real_workspace_service(self.workspaces)
+        # The same wiring as ``KatoCoreLib``.
+        repositories.attach_kato_task_tags(
+            lambda task_id: list(self.workspace.get(task_id).tags),
+        )
         planning = WaitPlanningService(
             session_manager=None, repository_service=repositories,
             task_state_service=LocalAwareTaskStateService(config, access, self.store),
@@ -153,14 +157,31 @@ class NewTaskEndToEndTests(unittest.TestCase):
             time.sleep(0.05)
         self.fail('the chat never received its first message')
 
-    def wait_for_clone(self, task_id: str) -> Path:
+    def wait_for_clone(self, task_id: str, branch: str = '') -> Path:
         clone = self.workspaces / task_id / 'api'
+        wanted = branch or task_id
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if (clone / '.git').exists() and _git(clone, 'rev-parse', '--abbrev-ref', 'HEAD') == task_id:
+            if (clone / '.git').exists() and _git(clone, 'rev-parse', '--abbrev-ref', 'HEAD') == wanted:
                 return clone
             time.sleep(0.05)
-        self.fail(f'{task_id} was never cloned onto its branch')
+        self.fail(f'{task_id} was never cloned onto {wanted}')
+
+    def test_a_branch_name_goes_from_the_form_to_the_clone(self) -> None:
+        response = self.create(branch=' feature/export ', start_mode='chat')
+        self.assertEqual(response.status_code, 202, response.get_json())
+
+        clone = self.wait_for_clone('LOCAL-1', 'feature/export')
+
+        self.assertNotIn('LOCAL-1', _git(clone, 'branch', '--format=%(refname:short)'))
+        self.assertEqual(self.client.post('/api/local-tasks', json={}).status_code, 400)
+
+    def test_a_branch_name_that_cannot_work_is_refused_with_the_reason(self) -> None:
+        response = self.create(branch='master')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('merges into', response.get_json()['error'])
+        self.assertEqual(self.store.list(), [])
 
     def test_plan_is_the_default_and_the_agent_is_asked_for_a_plan(self) -> None:
         response = self.create(model='opus', effort='high')

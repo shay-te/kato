@@ -567,6 +567,22 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         self.assertEqual(result['skipped_repositories'][0]['repository_id'], 'backend')
         self.assertIn('local_path', result['skipped_repositories'][0]['reason'])
 
+    def test_a_source_kato_cannot_find_is_a_failure_not_a_skip(self) -> None:
+        # There is work to bring over and nowhere to put it. As a skip this read
+        # "0 updated, 1 skipped, 0 failed" and a calm toast.
+        rs = self._repository_service
+        rs.get_repository.side_effect = ValueError('unknown repository id: backend')
+        with patch.object(self.agent, 'push_task', return_value={'pushed': True}):
+            result = self.agent.update_source_for_task('UNA-1234')
+
+        self.assertEqual(result['updated_repositories'], [])
+        self.assertEqual(result['skipped_repositories'], [])
+        self.assertEqual(
+            sorted(entry['repository_id'] for entry in result['failed_repositories']),
+            ['backend', 'client'],
+        )
+        self.assertIn('unknown repository id', result['failed_repositories'][0]['error'])
+
 
 # ----- Flask endpoint --------------------------------------------------------
 

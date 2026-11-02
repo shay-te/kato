@@ -594,6 +594,17 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
     hardened steps a kato:wait-planning ticket takes) → first chat turn with the opener
     (plan by DEFAULT; "implement"; "chat" = clone only, send nothing)
 ```
+**A task's branch has ONE answer: `kato_tag_utils.task_branch(task_id, kato_tags)`** (reached as
+`RepositoryService.task_branch_name` / `build_branch_name`): the name in a `kato:branch:<name>` tag in kato's
+OWN tags (workspace metadata), else the task id. "New task" takes an optional branch name; empty changes nothing.
+Code holding only a task id must ask, never use the id as the branch: the boot reconcile and the Changes tab's
+self-heal force a clone onto "the task's branch", so a stale `task_id` there would strand the work on the wrong
+branch with no error. `branch_name_problem` (git_core_lib) + `LocalTaskService._refuse_unusable_branch` refuse
+a bad name BEFORE anything exists: not a valid name, the branch a repo merges into (the work would land on it with no
+PR), or one another task has. A branch already on the remote is continued. Tracker tickets and plan steps have no
+name, so theirs is the task id. A named branch is read from the workspace, so once a task is deleted its PR can no
+longer be found by it (a release-note link written after "Finish & forget" is left out).
+
 **The ONE place local tasks are told apart:** `local_task_routing.py`. `LocalAwareTaskService` /
 `LocalAwareTaskStateService` (wired in `kato_core_lib.py` in place of the plain services) send
 every call about a `LOCAL-*` id to the store and add local tasks to every list in the matching
@@ -748,6 +759,13 @@ kato:
 ```
 
 Auto-discovery: if `REPOSITORY_ROOT_PATH` is set (no explicit `repositories:` list), Kato walks the tree for `.git` folders. Result cached after first run. Background warm-up runs this at boot.
+
+**One bad folder must never take the whole list down.** `_validate_inventory` raises on every read, so a duplicate id
+cost EVERY repository its source folder (Update source: "duplicate repository id: <a repo the task never used>") and,
+through the `_resolve_publish_context` stub, its pull requests ("unable to determine pull request provider"). So the
+walk skips the workspaces folder (task clones are copies, not repositories, and a root holding `~/.kato` found every one)
+and `_one_repository_per_id` keeps the folder closest to the root, the one `kato:repo:<id>` finds at `<root>/<id>`, and
+warns naming both. A duplicate in a hand-written `repositories:` list still raises: that is a mistake to stop for.
 
 ---
 

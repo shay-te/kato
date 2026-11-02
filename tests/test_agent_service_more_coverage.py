@@ -3130,8 +3130,11 @@ class UpdateSourceWorkspaceHasChangesBranchTests(unittest.TestCase):
             'workspace-has-changes pre-check failed' in msg
             for msg in log_calls
         ))
-        # ValueError from get_repository ended up in skipped_repositories.
-        self.assertEqual(len(result['skipped_repositories']), 1)
+        # ValueError from get_repository is a failure: the work has nowhere to go.
+        self.assertEqual(result['skipped_repositories'], [])
+        self.assertEqual(
+            [entry['repository_id'] for entry in result['failed_repositories']], ['r1'],
+        )
 
     def test_workspace_no_changes_skips_repo_with_reason(self) -> None:
         # Lines 1817-1821: ``has_changes=False`` → repo added to

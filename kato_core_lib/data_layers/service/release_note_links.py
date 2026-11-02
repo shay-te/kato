@@ -1,7 +1,7 @@
 """The pull requests a finished task shipped through, as release-note links.
 
-One job: per repository, the task's pull request from the git host (its
-branch is the task id) — merged first, else open, never declined — skipping
+One job: per repository, the task's pull request from the git host (found by
+the task's branch) — merged first, else open, never declined — skipping
 any older than the task itself (a task id can be reused, and an earlier task's
 merged pull request must not be linked). A host that cannot be asked just
 means no link; it never stops the note.

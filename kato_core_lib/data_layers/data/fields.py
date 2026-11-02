@@ -106,6 +106,12 @@ class TaskTags(object):
     MODEL_SEGMENT = 'model'
     MODEL_PREFIX = f'{KATO_TAG_NAMESPACE}:{MODEL_SEGMENT}:'
 
+    # Branch name: ``kato:branch:<branch>`` in kato's OWN tags on a task (the
+    # workspace metadata) is the branch the operator named in "New task". No
+    # such tag = the branch is the task id. Read via ``kato_tag_utils.task_branch``.
+    BRANCH_SEGMENT = 'branch'
+    BRANCH_PREFIX = f'{KATO_TAG_NAMESPACE}:{BRANCH_SEGMENT}:'
+
     # Triage workflow: when ``TRIAGE_INVESTIGATE`` is on a task, kato
     # spends one Claude turn investigating (read-only — no edits, no
     # PRs) and replaces it with one of the outcome tags below. The

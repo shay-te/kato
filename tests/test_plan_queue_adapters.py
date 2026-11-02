@@ -101,6 +101,7 @@ class PullRequestProbeTests(unittest.TestCase):
         service = SimpleNamespace(
             get_repository=lambda repository_id: SimpleNamespace(id=repository_id),
             destination_branch=lambda repository: destination,
+            task_branch_name=lambda task_id: 'feature/x' if task_id == 'LOCAL-9' else task_id,
         )
 
         def states(repository, *, source_branch):
@@ -122,6 +123,11 @@ class PullRequestProbeTests(unittest.TestCase):
         facts = KatoPullRequestProbe(repository_service=service).pull_requests('T-1', 'api')
         self.assertEqual(facts, [PullRequestFact('merged', 'u1', 't1'), PullRequestFact('declined', 'u3', '')])
         self.assertEqual(service.asked, ('api', 'T-1'))
+
+    def test_a_task_with_a_named_branch_is_asked_for_by_that_branch(self) -> None:
+        service = self._service([])
+        KatoPullRequestProbe(repository_service=service).pull_requests('LOCAL-9', 'api')
+        self.assertEqual(service.asked, ('api', 'feature/x'))
 
     def test_without_a_known_destination_every_pull_request_counts(self) -> None:
         service = self._service([{'state': 'merged', 'destination_branch': 'release'}], destination='')

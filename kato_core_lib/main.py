@@ -16,6 +16,7 @@ from kato_core_lib.helpers.deadline import run_with_deadline
 import logging
 
 from kato_core_lib.helpers.instance_lock_utils import INSTANCE_RESTART_ENV, hold_instance_lock
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.logging_utils import configure_logger, enable_log_file
 from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
@@ -747,8 +748,8 @@ def _mark_webserver_configured(app) -> None:
 def _reconcile_workspace_branches(app) -> None:
     """Walk every workspace and align each clone to its task branch.
 
-    Per-task workspace clones are *supposed* to live on the branch
-    named after the task (kato's convention: ``branch_name == task_id``).
+    Per-task workspace clones are *supposed* to live on the task's branch
+    (``task_branch``: the name the operator gave it, else the task id).
     A previous kato session can leave them on ``master`` if it crashed
     mid-publish, or if a manual recovery left the clone in a weird
     state. This runs once at boot, idempotent and best-effort —
@@ -777,6 +778,7 @@ def _reconcile_workspace_branches(app) -> None:
         task_id = str(getattr(record, 'task_id', '') or '')
         if not task_id:
             continue
+        branch = task_branch(task_id, getattr(record, 'tags', None))
         for repository_id in (getattr(record, 'repository_ids', []) or []):
             try:
                 clone_path = workspace_manager.repository_path(
@@ -788,12 +790,12 @@ def _reconcile_workspace_branches(app) -> None:
                 continue
             cwd = str(clone_path)
             on = current_branch(cwd)
-            if on == task_id:
+            if on == branch:
                 continue
-            if ensure_branch_checked_out(cwd, task_id):
+            if ensure_branch_checked_out(cwd, branch):
                 app.logger.info(
                     'workspace %s/%s realigned: %s -> %s',
-                    task_id, repository_id, on or '<unknown>', task_id,
+                    task_id, repository_id, on or '<unknown>', branch,
                 )
                 realigned += 1
             else:
@@ -1012,7 +1014,7 @@ def _resume_streaming_sessions(app) -> None:
                 task_summary=str(getattr(record, 'task_summary', '') or ''),
                 initial_prompt=initial_prompt,
                 cwd=cwd,
-                expected_branch=task_id,
+                expected_branch=task_branch(task_id, getattr(record, 'tags', None)),
                 **spawn_defaults,
             )
             resumed += 1

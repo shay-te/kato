@@ -47,6 +47,33 @@ def build_triage_tag(outcome: object) -> str:
     return f'{TaskTags.TRIAGE_PREFIX}{normalized_text(outcome)}'
 
 
+def build_branch_tag(branch: object) -> str:
+    """Return the ``kato:branch:<branch>`` tag that records a task's named branch."""
+    return f'{TaskTags.BRANCH_PREFIX}{normalized_text(branch)}'
+
+
+def branch_from_tag(tag: object) -> str:
+    """The branch a ``kato:branch:`` tag names, case kept; ``''`` for any other tag."""
+    text = normalized_text(tag)
+    if not text.lower().startswith(TaskTags.BRANCH_PREFIX):
+        return ''
+    return normalized_text(text[len(TaskTags.BRANCH_PREFIX):])
+
+
+def task_branch(task_id: object, kato_tags: object) -> str:
+    """The branch a task works on: the one kato's own tags name, else the task id.
+
+    ``kato_tags`` are the tags kato recorded on the task (the workspace's
+    ``tags``), never the tracker's. This is the ONE answer: code that has only
+    a task id must ask here, not use the id as the branch.
+    """
+    for tag in kato_tags or ():
+        branch = branch_from_tag(tag)
+        if branch:
+            return branch
+    return normalized_text(task_id)
+
+
 # The model families a ``kato:model:`` tag may name. Each is also a CLI alias
 # that always resolves to that family's LATEST model, which is what a tag with
 # no version asks for.

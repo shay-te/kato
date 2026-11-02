@@ -34,6 +34,7 @@ export const EMPTY_DRAFT = Object.freeze({
   title: '',
   description: '',
   repositories: [],
+  branch: '',
   startMode: START_MODE.PLAN,
   model: '',
   effort: '',
@@ -55,6 +56,7 @@ export function coerceDraft(parsed) {
     title: text(source.title),
     description: text(source.description),
     repositories,
+    branch: text(source.branch),
     startMode: START_MODE_VALUES.has(source.startMode) ? source.startMode : START_MODE.PLAN,
     model: text(source.model),
     effort: text(source.effort),
@@ -63,7 +65,9 @@ export function coerceDraft(parsed) {
 
 // Has the operator written anything that closing the tab would throw away?
 export function isDraftDirty(draft) {
-  return Boolean(draft.title.trim() || draft.description.trim() || draft.repositories.length);
+  return Boolean(
+    draft.title.trim() || draft.description.trim() || draft.branch.trim() || draft.repositories.length,
+  );
 }
 
 // Why Create is not possible yet ([] when it is).
@@ -76,11 +80,13 @@ export function draftProblems(draft) {
 
 // The POST /api/local-tasks body. Model and effort go as the CONCRETE values
 // the pickers show (never "default"), so what ran is what the operator saw.
+// The branch name is checked on the server only: one set of rules.
 export function draftPayload(draft, { model, effort }) {
   return {
     summary: draft.title.trim(),
     description: draft.description.trim(),
     repositories: draft.repositories,
+    branch: draft.branch.trim(),
     start_mode: draft.startMode,
     model,
     effort,

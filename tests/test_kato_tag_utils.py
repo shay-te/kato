@@ -12,6 +12,8 @@ from kato_core_lib.data_layers.data.fields import (
 )
 from kato_core_lib.helpers.kato_tag_utils import (
     MODEL_FAMILIES,
+    branch_from_tag,
+    build_branch_tag,
     build_model_tag,
     build_repository_tag,
     build_review_loop_tag,
@@ -21,6 +23,7 @@ from kato_core_lib.helpers.kato_tag_utils import (
     model_from_tag,
     repository_id_from_tag,
     review_rounds_from_tag,
+    task_branch,
 )
 
 
@@ -211,3 +214,23 @@ class ReviewLoopTagTests(unittest.TestCase):
     def test_what_it_builds_round_trips_through_the_parser(self):
         self.assertEqual(build_review_loop_tag(), 'kato:review-loop')
         self.assertEqual(review_rounds_from_tag(build_review_loop_tag(12)), 12)
+
+
+class TaskBranchTests(unittest.TestCase):
+    def test_a_named_branch_keeps_its_slashes_and_case(self):
+        tag = build_branch_tag('Feature/Login-2')
+        self.assertEqual(tag, 'kato:branch:Feature/Login-2')
+        self.assertEqual(branch_from_tag(tag), 'Feature/Login-2')
+
+    def test_other_tags_name_no_branch(self):
+        for tag in ('kato:repo:api', 'kato:branch:', 'branch:x', '', None):
+            with self.subTest(tag=tag):
+                self.assertEqual(branch_from_tag(tag), '')
+
+    def test_the_branch_is_the_named_one_else_the_task_id(self):
+        self.assertEqual(
+            task_branch('LOCAL-1', ['kato:repo:api', 'kato:branch:feature/x']), 'feature/x',
+        )
+        self.assertEqual(task_branch(' LOCAL-1 ', ['kato:repo:api']), 'LOCAL-1')
+        self.assertEqual(task_branch('LOCAL-1', []), 'LOCAL-1')
+        self.assertEqual(task_branch('LOCAL-1', None), 'LOCAL-1')

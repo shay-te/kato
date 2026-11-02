@@ -13659,6 +13659,7 @@ button.settings-prompt-editor-head {
 .new-task-title,
 .new-task-description,
 .new-task-repos-filter,
+.new-task-field input,
 .new-task-field select {
   border: 1px solid #2a2a2a;
   border-radius: 6px;
@@ -13800,6 +13801,7 @@ button.settings-prompt-editor-head {
   color: #a3a3a3;
 }
 
+.new-task-field input,
 .new-task-field select {
   padding: 5px 6px;
 }

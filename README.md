@@ -43,7 +43,7 @@ Coding agents are powerful but scary: they run shell commands, touch credentials
 ### See and steer the work
 - **Live diff viewer + inline comments.** Read every change as it lands and drop a comment on any line — kato treats it as a new instruction and re-runs.
 - **Review loop — fresh eyes until it's clean.** Start it from the task's toolbar: an independent reviewer that never saw the work reads the whole change, the task's chat fixes what it found, and kato reviews again — until a review comes back clean. [How it works ↓](#review-loop)
-- **Write a task right in kato — no tracker needed.** The **New task** tab takes a title, a description (as long as you like, markdown), the repositories, and how to start — **Plan** by default, so the agent proposes before it changes anything. Kato clones, branches, and opens the chat.
+- **Write a task right in kato — no tracker needed.** The **New task** tab takes a title, a description (as long as you like, markdown), the repositories, a branch name if you want your own (otherwise it's the task id, like `LOCAL-1`), and how to start — **Plan** by default, so the agent proposes before it changes anything. Kato clones, branches, and opens the chat.
 - **Saved prompts, one click away.** The prompts you send again and again ("review your change", "write the missing tests", …) become buttons on the task toolbar. Click one and it goes into that task's chat.
 - **Smart PR-comment handling.** Reviewer comments get fixed or answered in-thread; comments that @-mention a *human* (not the bot) are ignored, so kato never acts on a side conversation.
 - **Gets better over time.** Lessons from past tasks are fed back into future runs.

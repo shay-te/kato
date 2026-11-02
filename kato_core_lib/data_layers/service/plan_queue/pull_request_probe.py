@@ -1,8 +1,9 @@
 """A step's pull requests, in any state, straight from the git host.
 
-The step's branch is its task id (kato names every task branch after the task),
-so its pull requests are found by branch — nothing has to be recorded when it
-is published, and the lookup still works after the task's workspace is gone.
+A task's pull requests are found by its branch, which is its task id unless the
+operator named one in "New task" — nothing has to be recorded when it is
+published, and for a task id the lookup still works after the workspace is gone
+(a named branch is read from the workspace, so that one does not).
 Only pull requests into the repository's destination branch count.
 """
 
@@ -24,7 +25,9 @@ class KatoPullRequestProbe(object):
         try:
             repository = service.get_repository(repository_id)
             destination = str(service.destination_branch(repository) or '')
-            found = service.pull_request_states(repository, source_branch=task_id)
+            found = service.pull_request_states(
+                repository, source_branch=service.task_branch_name(task_id),
+            )
         except Exception as exc:
             # "Could not ask" must never read as "no pull request".
             raise ProbeError(f'could not read the pull requests of {task_id} in {repository_id}: {exc}') from exc

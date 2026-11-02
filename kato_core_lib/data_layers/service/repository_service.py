@@ -20,6 +20,7 @@ from git_core_lib.git_core_lib.helpers.git_clean_utils import (
 )
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.data.fields import RepositoryFields
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from provider_client_base.provider_client_base.data.fields import PullRequestStates
 from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
@@ -665,7 +666,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         raise ValueError(f'unknown repository id: {repository_id}')
 
     def build_branch_name(self, task: Task, repository) -> str:
-        return normalized_text(task.id)
+        return self.task_branch_name(task.id)
+
+    def task_branch_name(self, task_id: object) -> str:
+        """The branch a task works on: the one it was named, else its id."""
+        return task_branch(task_id, self._recorded_task_tags(normalized_text(task_id)))
 
     def create_pull_request(
         self,

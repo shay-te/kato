@@ -304,9 +304,7 @@ class TaskPublishService(object):
             )
             return False
         repository.local_path = str(clone_path)
-        # The task branch is the task id (build_branch_name == normalized_text
-        # of the id, i.e. just stripped).
-        branch_name = str(task_id).strip()
+        branch_name = self._repository_service.task_branch_name(task_id)
         pushable = self._repository_service.is_branch_pushable(repository, branch_name)
         if pushable:
             clear_read_only_repo(task_id, repo_id)
@@ -479,7 +477,14 @@ class TaskPublishService(object):
         try:
             source_repo = self._repository_service.get_repository(repository.id)
         except ValueError as exc:
-            return _SourceRepoOutcome('skipped', repository.id, reason=str(exc))
+            # Failed, not skipped: there is work to bring over and kato could
+            # not find where it goes. Reported as a skip this read "0 failed"
+            # and a calm toast, on a source that was never updated.
+            self.logger.warning(
+                'update-source for task %s failed for repository %s: %s',
+                task_id, repository.id, exc,
+            )
+            return _SourceRepoOutcome('failed', repository.id, error=str(exc))
         source_path = str(getattr(source_repo, 'local_path', '') or '').strip()
         if not source_path:
             return _SourceRepoOutcome(
