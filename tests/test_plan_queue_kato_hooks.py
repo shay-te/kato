@@ -10,7 +10,7 @@ from __future__ import annotations
 import types
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from omegaconf import OmegaConf
 from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
@@ -18,7 +18,10 @@ from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
 from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAccess
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.plan_queue.step_footer import subtask_description
-from kato_core_lib.data_layers.service.repository_inventory_service import RepositoryInventoryService
+from kato_core_lib.data_layers.service.repository_inventory_service import (
+    RepositoryIgnoredByConfigError,
+    RepositoryInventoryService,
+)
 from kato_core_lib.data_layers.service.task_preflight_service import TaskPreflightService
 from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
@@ -109,7 +112,7 @@ class FooterRepositoryTests(unittest.TestCase):
         self.service = RepositoryInventoryService([self.backend, self.frontend])
 
     def test_the_footer_names_where_a_sub_task_works_before_any_tag(self) -> None:
-        task = build_task(description=footer(('demo-shop-be', 'demo-shop-be')), tags=['kato:repo:frontend'])
+        task = build_task(description=footer(('demo-shop-be', 'demo-shop-be')))
         self.assertEqual([repo.id for repo in self.service.resolve_task_repositories(task)], ['backend'])
 
     def test_a_repository_this_kato_does_not_have_is_named(self) -> None:
@@ -146,12 +149,53 @@ class FooterRepositoryTests(unittest.TestCase):
         self.assertEqual([repo.id for repo in repos], ['backend'])
         self.assertIn('no-such-repo', logs.output[0])
 
-    def test_tags_on_the_ticket_still_rank_below_the_footer_with_kato_tags_present(self) -> None:
-        # The footer outranks what the TRACKER says (another kato may not see it or
-        # may name it differently); only this kato's own recorded tags add.
+    def test_a_repository_tagged_on_the_ticket_joins_the_footers(self) -> None:
+        # The operator tags a repository on the YouTrack sub-task: it was never
+        # cloned, because only tags recorded by this kato were read.
         self.service.attach_kato_task_tags(lambda task_id: [])
         task = build_task(description=footer(('demo-shop-be',)), tags=['kato:repo:frontend'])
-        self.assertEqual([repo.id for repo in self.service.resolve_task_repositories(task)], ['backend'])
+        self.assertEqual(
+            [repo.id for repo in self.service.resolve_task_repositories(task)],
+            ['backend', 'frontend'],
+        )
+
+    def test_a_ticket_tag_counts_on_an_install_that_keeps_no_tags_of_its_own(self) -> None:
+        task = build_task(description=footer(('demo-shop-be',)), tags=['kato:repo:frontend'])
+        self.assertEqual(
+            [repo.id for repo in self.service.resolve_task_repositories(task)],
+            ['backend', 'frontend'],
+        )
+
+    def test_the_same_repository_from_the_footer_ticket_and_kato_is_listed_once(self) -> None:
+        self.service.attach_kato_task_tags(lambda task_id: ['kato:repo:frontend'])
+        task = build_task(
+            description=footer(('demo-shop-be',)),
+            tags=['kato:repo:backend', 'kato:repo:frontend', 'kato:repo:FRONTEND'],
+        )
+        self.assertEqual(
+            [repo.id for repo in self.service.resolve_task_repositories(task)],
+            ['backend', 'frontend'],
+        )
+
+    def test_a_ticket_tag_this_kato_cannot_match_is_left_out_not_fatal(self) -> None:
+        # Another kato may name the repository differently: the sub-task still
+        # works in the footer's repositories, and this is said once, not on every scan.
+        task = build_task(description=footer(('demo-shop-be',)), tags=['kato:repo:no-such-repo'])
+        with self.assertLogs(self.service.logger, 'WARNING') as logs:
+            repos = self.service.resolve_task_repositories(task)
+            self.service.resolve_task_repositories(task)
+        self.assertEqual([repo.id for repo in repos], ['backend'])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('no-such-repo', logs.output[0])
+
+    def test_a_ticket_tag_on_an_ignored_folder_is_refused_as_on_any_ticket(self) -> None:
+        with patch.object(
+            RepositoryInventoryService, '_ignored_repository_folders', return_value=['frontend'],
+        ):
+            task = build_task(description=footer(('demo-shop-be',)), tags=['kato:repo:frontend'])
+            with self.assertRaises(RepositoryIgnoredByConfigError) as caught:
+                self.service.resolve_task_repositories(task)
+        self.assertIn('frontend', str(caught.exception))
 
     def test_a_footer_for_every_repository_falls_back_to_the_usual_rules(self) -> None:
         task = build_task(description=footer(()), tags=['kato:repo:frontend'])

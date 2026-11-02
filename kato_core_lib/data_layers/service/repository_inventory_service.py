@@ -64,6 +64,8 @@ class RepositoryInventoryService(Service):
         # task_id -> tags kato recorded on the task itself (see
         # ``attach_kato_task_tags``). None until the host wires it.
         self._kato_task_tags = None
+        # (task id, tag) pairs already warned about, see ``_warn_tag_left_out``.
+        self._tags_left_out: set[tuple[str, str]] = set()
         # Explicit ``kato.repositories`` config is materialised
         # immediately — it's just a dict→namespace transform, so there
         # is no I/O cost. Validation (duplicate id / alias detection)
@@ -165,7 +167,7 @@ class RepositoryInventoryService(Service):
     def resolve_task_repositories(self, task) -> list[object]:
         planned_repositories = self._repositories_from_plan_footer(task)
         if planned_repositories:
-            return self._with_repositories_added_here(task, planned_repositories)
+            return self._with_tagged_repositories(task, planned_repositories)
         tagged_repositories = self._repositories_from_task_tags(task)
         if tagged_repositories:
             return tagged_repositories
@@ -185,33 +187,41 @@ class RepositoryInventoryService(Service):
             return [repositories[0]]
         raise ValueError(f'no configured repository matched task {task.id}')
 
-    def _with_repositories_added_here(self, task, planned: list[object]) -> list[object]:
-        """The footer's repositories plus the ones the operator added from kato.
+    def _with_tagged_repositories(self, task, planned: list[object]) -> list[object]:
+        """The footer's repositories plus the ones the task's tags name.
 
-        A plan sub-task works where its footer says, and the footer outranks the
-        TRACKER's tags: another kato may not see those or may name them
-        differently. A repository the operator added to this task from THIS kato
-        ("+ Add repository", recorded in the workspace metadata) is a different
-        thing — a deliberate, local choice made after the footer was written.
-        Ignoring it left the add silently doing nothing: the tag was saved, no
-        clone followed, and the toast said "already cloned".
+        A plan sub-task always works where its footer says: the footer is what
+        every kato can read. Tags only add to that, from either place — the
+        ticket (a ``kato:repo:`` tag the operator put on the sub-task) or this
+        kato ("+ Add repository", recorded in the workspace metadata). Both are
+        a deliberate choice made after the footer was written. Reading the
+        footer alone left them silently doing nothing: the ticket's tag was
+        never seen, and an add saved its tag, cloned nothing and said "already
+        cloned". Another kato may name a repository differently, so a tag that
+        matches nothing here is left out rather than failing the sub-task.
         """
         repositories = list(planned)
         known = {str(getattr(repository, 'id', '') or '') for repository in repositories}
-        for repository_tag in self._kato_repository_tags(task):
-            repository = self._resolve_repository_for_tag(repository_tag)
-            if repository is None:
-                self.logger.warning(
-                    'task %s: the repository %s added from kato matches nothing in the '
-                    'inventory, so it is left out',
-                    getattr(task, 'id', ''), repository_tag,
-                )
-                continue
+        matched, unmatched = self._match_repository_tags(task, self._all_repository_tags(task))
+        for repository_tag in unmatched:
+            self._warn_tag_left_out(task, repository_tag)
+        for repository in matched:
             repo_id = str(getattr(repository, 'id', '') or '')
             if repo_id not in known:
                 known.add(repo_id)
                 repositories.append(repository)
         return repositories
+
+    def _warn_tag_left_out(self, task, repository_tag: str) -> None:
+        """Once per task and tag: resolution runs on every scan."""
+        key = (str(getattr(task, 'id', '') or ''), normalized_lower_text(repository_tag))
+        if key in self._tags_left_out:
+            return
+        self._tags_left_out.add(key)
+        self.logger.warning(
+            'task %s: the repository tag %s matches nothing in the inventory, so it is left out',
+            key[0], repository_tag,
+        )
 
     def _repositories_from_plan_footer(self, task) -> list[object]:
         """A plan's sub-task names where it works in its own description (by
@@ -237,14 +247,30 @@ class RepositoryInventoryService(Service):
         return found
 
     def _repositories_from_task_tags(self, task) -> list[object]:
-        repository_tags = [*self._repository_tags(task), *self._kato_repository_tags(task)]
+        repository_tags = self._all_repository_tags(task)
         if not repository_tags:
             return []
+        matched, _unmatched = self._match_repository_tags(task, repository_tags)
+        if not matched:
+            raise ValueError(
+                f'no configured repository matched repo tags on task {task.id}'
+            )
+        return matched
+
+    def _all_repository_tags(self, task) -> list[str]:
+        """The repo ids named by the ticket's tags and by kato's own."""
+        return [*self._repository_tags(task), *self._kato_repository_tags(task)]
+
+    def _match_repository_tags(
+        self, task, repository_tags: list[str],
+    ) -> tuple[list[object], list[str]]:
+        """The repositories these tags name, and the tags that named none."""
         ignored_lower = {
             folder.lower()
             for folder in self._ignored_repository_folders(self._repositories_config)
         }
         matched: list[object] = []
+        unmatched: list[str] = []
         seen_ids: set[str] = set()
         rejected_by_ignore: list[str] = []
         for repository_tag in repository_tags:
@@ -253,6 +279,7 @@ class RepositoryInventoryService(Service):
                 continue
             repository = self._resolve_repository_for_tag(repository_tag)
             if repository is None:
+                unmatched.append(repository_tag)
                 continue
             repo_id = str(getattr(repository, 'id', '') or '')
             if repo_id in seen_ids:
@@ -267,11 +294,7 @@ class RepositoryInventoryService(Service):
                 f'Either remove the kato:repo:<name> tag from the task or '
                 f'remove the folder from KATO_IGNORED_REPOSITORY_FOLDERS.'
             )
-        if not matched:
-            raise ValueError(
-                f'no configured repository matched repo tags on task {task.id}'
-            )
-        return matched
+        return matched, unmatched
 
     def _resolve_repository_for_tag(self, repository_tag: str):
         """Find the inventory entry for a ``kato:repo:<tag>`` value.

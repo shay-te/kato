@@ -576,8 +576,8 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   before triage and wait-planning, which clone and start a chat too, so a `kato:wait-planning` tag
   cannot jump it): a sub-task assigned before its turn waits until its parents are merged and done,
   with no clone, comment or state change (log: `not starting task X yet: it waits for …`). A ticket carrying the record never gets
-  implemented whole again (`PLAN_RECORD_COMMENT_PREFIX` blocks execution). A sub-task's
-  repositories come from its footer before tags (another kato names repos differently).
+  implemented whole again (`PLAN_RECORD_COMMENT_PREFIX` blocks execution). A sub-task works in
+  its footer's repositories plus any its tags add (`_with_tagged_repositories`, below).
 - Unverified against live servers (YouTrack sprint add, Jira `/rest/api/3/search` deprecation,
   `"assignee": null` on create) — each client's report lists what to check.
 
@@ -660,12 +660,14 @@ overwrite one set by hand), and so does an install with no tracker. `supports_ta
 `IssueClientBase` and reaches kato via `TaskDataAccess` → `TaskService.supports_tags(issue_id)`.
 `WorkspaceService.create` preserves `tags` (it is called on every provisioning pass).
 
-**A plan sub-task's footer outranks the TRACKER's tags, never the operator's own add.** A sub-task works
-where its footer says (another kato may not see, or may name differently, the tracker's tags), but a repo
-added from THIS kato is recorded in the workspace metadata and is joined to the footer's set
-(`RepositoryInventoryService._with_repositories_added_here`). Before that, "+ Add repository" on a plan
-sub-task saved the tag, cloned nothing, and the toast said "repository was already cloned" (UNA-3272 +
-event-core-lib). The add flow now also refuses to call itself done: when the sync names the repo in neither
+**A plan sub-task's footer is where it starts; tags only add to it.** A sub-task always works in its
+footer's repositories (every kato can read the footer), and `kato:repo:` tags from the ticket AND from THIS
+kato join that set (`RepositoryInventoryService._with_tagged_repositories`). The footer used to win outright
+over the tracker's tags, so a repo tagged on the YouTrack sub-task was never cloned, and "+ Add repository"
+saved its tag, cloned nothing, and the toast said "repository was already cloned" (UNA-3272 + event-core-lib).
+Another kato may not see a tag or may name the repo differently, so a tag that matches nothing is left out
+with one warning, not fatal; a tag on an ignored folder is refused as on any ticket. Tags only add: taking
+one off does not remove a clone. The add flow now also refuses to call itself done: when the sync names the repo in neither
 `added_repositories` nor `already_present`, the add is reported as a failure (`_require_repositories_on_task`).
 
 **"+ Add repository" takes several at once** (`POST …/add-repository {repository_ids: [...]}` →
