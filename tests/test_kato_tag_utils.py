@@ -14,10 +14,13 @@ from kato_core_lib.helpers.kato_tag_utils import (
     MODEL_FAMILIES,
     build_model_tag,
     build_repository_tag,
+    build_review_loop_tag,
     build_triage_tag,
     is_model_tag,
+    is_review_loop_tag,
     model_from_tag,
     repository_id_from_tag,
+    review_rounds_from_tag,
 )
 
 
@@ -173,3 +176,38 @@ class BuildModelTagTests(unittest.TestCase):
     def test_what_it_builds_round_trips_through_the_parser(self):
         self.assertEqual(model_from_tag(build_model_tag('sonnet', '5.5')), 'claude-sonnet-5-5')
         self.assertEqual(model_from_tag(build_model_tag('haiku')), 'haiku')
+
+
+class ReviewLoopTagTests(unittest.TestCase):
+    def test_the_tag_keeps_its_value(self):
+        # Operators type this on tickets, so renaming it silently turns loops off.
+        self.assertEqual(TaskTags.REVIEW_LOOP, 'kato:review-loop')
+
+    def test_the_bare_tag_takes_the_loops_default_rounds(self):
+        self.assertEqual(review_rounds_from_tag('kato:review-loop'), 5)
+
+    def test_a_number_picks_the_rounds(self):
+        self.assertEqual(review_rounds_from_tag('kato:review-loop:10'), 10)
+        self.assertEqual(review_rounds_from_tag('kato:review-loop:1'), 1)
+        self.assertEqual(review_rounds_from_tag('kato:review-loop:30'), 30)
+
+    def test_it_ignores_case_and_outer_space(self):
+        self.assertEqual(review_rounds_from_tag(' KATO:Review-Loop:7 '), 7)
+
+    def test_a_malformed_tag_asks_for_nothing(self):
+        for tag in ('kato:review-loop:0', 'kato:review-loop:31', 'kato:review-loop:99',
+                    'kato:review-loop:abc', 'kato:review-loop:', 'kato:review-loop:1:2',
+                    'kato:review-loop:-3', 'kato:review-loop:٣', 'kato:review-loop:' + '9' * 5000):
+            with self.subTest(tag=tag[:40]):
+                self.assertEqual(review_rounds_from_tag(tag), 0)
+                self.assertTrue(is_review_loop_tag(tag))
+
+    def test_other_tags_are_not_review_loop_tags(self):
+        for tag in ('kato:review-loop-x', 'kato:model:opus', 'review-loop', '', None):
+            with self.subTest(tag=tag):
+                self.assertFalse(is_review_loop_tag(tag))
+                self.assertEqual(review_rounds_from_tag(tag), 0)
+
+    def test_what_it_builds_round_trips_through_the_parser(self):
+        self.assertEqual(build_review_loop_tag(), 'kato:review-loop')
+        self.assertEqual(review_rounds_from_tag(build_review_loop_tag(12)), 12)

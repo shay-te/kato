@@ -12,7 +12,13 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+from kato_core_lib.data_layers.data.fields import StatusFields
+from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.data_layers.service.agent_service import AgentService
+from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from kato_core_lib.main import _mark_webserver_configured
 from review_loop_core_lib.review_loop_core_lib.service import ReviewLoopService
 from review_loop_core_lib.review_loop_core_lib.store import ReviewLoopStore
 from review_loop_core_lib.review_loop_core_lib.tests.fakes import (
@@ -82,6 +88,9 @@ class _RoutesBase(unittest.TestCase):
         self.chat = FakeChat()
 
     def client(self, reviewer, **service_kwargs):
+        return self.app(reviewer, **service_kwargs).test_client()
+
+    def app(self, reviewer, **service_kwargs):
         self.loops = ReviewLoopService(
             store=ReviewLoopStore(self.root / 'loops'), chat=self.chat,
             reviewer=reviewer, wording=WORDING, options=FAST, **service_kwargs,
@@ -90,11 +99,13 @@ class _RoutesBase(unittest.TestCase):
         from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
         manager = ClaudeSessionManager(state_dir=str(self.root / 'sessions'))
         self.addCleanup(manager.shutdown)
-        app = create_app(
+        return create_app(
             session_manager=manager, workspace_manager=self.workspace,
-            agent_service=SimpleNamespace(review_loops=self.loops),
+            agent_service=self.agent_service(),
         )
-        return app.test_client()
+
+    def agent_service(self):
+        return SimpleNamespace(review_loops=self.loops)
 
     def wait_finished(self) -> None:
         deadline = time.monotonic() + 5
@@ -429,6 +440,84 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(diffs[1].diff, '')
             # Read-only: the clone on another branch was NOT checked out.
             self.assertEqual(_git(web, 'rev-parse', '--abbrev-ref', 'HEAD'), 'somewhere-else')
+
+
+class ParkedTaskStartsItsLoopTests(_RoutesBase):
+    """``kato:review-loop`` end to end: a REAL ``AgentService`` parks the task and
+    a real loop reviews the real diff, wired the way the webserver wires them."""
+
+    in_setup_mode = False
+
+    def agent_service(self):
+        if self.in_setup_mode:
+            return None
+        agent = AgentService(
+            task_service=MagicMock(), task_state_service=MagicMock(),
+            implementation_service=MagicMock(), testing_service=MagicMock(),
+            repository_service=MagicMock(), notification_service=MagicMock(),
+            workspace_manager=MagicMock(),
+        )
+        agent._review_loop_service = self.loops
+        return agent
+
+    def park(self, agent, *tags: str) -> dict:
+        return agent._pause_for_push_approval(
+            Task(id='T-1', tags=list(tags)),
+            PreparedTaskContext(repositories=[], repository_branches={}, branch_name='T-1'),
+            {'success': True},
+        )
+
+    def test_a_tagged_task_is_reviewed_against_its_real_diff_and_ticket(self) -> None:
+        reviewer = FakeReviewer(reply())
+        agent = self.app(reviewer).config['AGENT_SERVICE']
+        self.park(agent, 'kato:review-loop:7')
+        self.wait_finished()
+        self.assertIn('# CHANGED', reviewer.prompts[0])
+        self.assertIn('Email + password.', reviewer.prompts[0])
+        self.assertEqual(self.loops.state('T-1').max_rounds, 7)
+
+    def test_it_runs_the_stages_the_views_checkboxes_start_at(self) -> None:
+        agent = self.app(FakeReviewer(reply())).config['AGENT_SERVICE']
+        self.park(agent, 'kato:review-loop')
+        self.wait_finished()
+        state = self.loops.state('T-1')
+        self.assertEqual(state.max_rounds, 5)
+        self.assertEqual(
+            (state.self_check, state.verify_tests, state.confirm_clean, state.extra_sweep),
+            (False, True, True, True),
+        )
+
+    def test_an_untagged_task_gets_no_loop(self) -> None:
+        reviewer = FakeReviewer(reply())
+        agent = self.app(reviewer).config['AGENT_SERVICE']
+        self.park(agent, 'kato:repo:api')
+        self.assertIsNone(self.loops.state('T-1'))
+        self.assertEqual(reviewer.prompts, [])
+
+    def test_a_loop_that_refuses_to_start_leaves_the_task_parked(self) -> None:
+        # The real refusal, not a stand-in for it: a chat held in Plan mode.
+        app = self.app(FakeReviewer(reply()), can_start=lambda task_id: 'the chat is in Plan mode')
+        agent = app.config['AGENT_SERVICE']
+        with self.assertLogs(agent.logger, 'ERROR') as logs:
+            result = self.park(agent, 'kato:review-loop')
+        self.assertEqual(result[StatusFields.STATUS], 'awaiting_push_approval')
+        self.assertIn('the chat is in Plan mode', logs.output[0])
+        self.assertIsNone(self.loops.state('T-1'))
+
+    def test_a_task_parked_after_setup_mode_still_gets_its_loop(self) -> None:
+        # In setup mode the routes register before any agent service exists. A
+        # first-run install would otherwise ignore the tag until a restart.
+        self.in_setup_mode = True
+        reviewer = FakeReviewer(reply())
+        app = self.app(reviewer)
+        self.in_setup_mode = False
+        agent = self.agent_service()
+        self.assertIsNone(agent.parked_task_listener)
+        _mark_webserver_configured(SimpleNamespace(planning_flask_app=app, service=agent))
+        self.park(agent, 'kato:review-loop:4')
+        self.wait_finished()
+        self.assertEqual(self.loops.state('T-1').max_rounds, 4)
+        self.assertIn('# CHANGED', reviewer.prompts[0])
 
 
 if __name__ == '__main__':

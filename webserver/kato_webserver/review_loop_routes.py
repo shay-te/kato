@@ -32,6 +32,16 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
     def unavailable():
         return jsonify({'error': 'review loops are not available until kato is configured'}), 503
 
+    # What a finished task tagged ``kato:review-loop`` calls once it parks. In
+    # setup mode the agent service does not exist yet, so main hands this over
+    # when it does (``_mark_webserver_configured``).
+    def start_on_park(task_id: str, rounds: int) -> None:
+        start_task_review_loop(app, task_id, collect_diffs=collect_diffs, max_rounds=rounds)
+
+    app.config['START_REVIEW_LOOP_ON_PARK'] = start_on_park
+    if app.config.get('AGENT_SERVICE') is not None:
+        app.config['AGENT_SERVICE'].parked_task_listener = start_on_park
+
     # The model a review runs on when the operator picks none — the picker
     # shows it as the concrete choice it is, never as "Default".
     @app.get('/api/review-loop/default-model')
@@ -62,16 +72,14 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
         model, problem = requested_model(body)
         if problem:
             return jsonify({'error': problem}), 400
-        summary, description = _task_text(app, task_id)
         try:
-            state = loops.start(
+            state = start_task_review_loop(
+                app,
                 task_id,
-                diff_source=collect_diffs,
-                task_summary=summary,
-                task_description=description,
+                collect_diffs=collect_diffs,
                 max_rounds=max_rounds,
                 model=model,
-                **stages,
+                stages=stages,
             )
         except ReviewLoopError as exc:
             return jsonify({'error': str(exc)}), 409
@@ -117,6 +125,32 @@ def register_review_loop_routes(app: Flask, *, collect_diffs: Callable[[str], li
         if text is None:
             return jsonify({'error': 'no such round or artifact'}), 404
         return jsonify({'text': text})
+
+
+def start_task_review_loop(
+    app: Flask,
+    task_id: str,
+    *,
+    collect_diffs: Callable[[str], list],
+    max_rounds: int | None = None,
+    model: str = '',
+    stages: dict[str, bool] | None = None,
+):
+    """Start a loop held to the task's own text: the button and the park step both come here.
+
+    ``stages`` left out means the same defaults the view's checkboxes start at.
+    Raises ``ReviewLoopError`` when the loop refuses to start.
+    """
+    summary, description = _task_text(app, task_id)
+    return app.config['AGENT_SERVICE'].review_loops.start(
+        task_id,
+        diff_source=collect_diffs,
+        task_summary=summary,
+        task_description=description,
+        max_rounds=max_rounds,
+        model=model,
+        **(_STAGE_DEFAULTS if stages is None else stages),
+    )
 
 
 def _requested_rounds(body: object) -> tuple[int | None, str]:

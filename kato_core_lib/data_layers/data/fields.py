@@ -94,6 +94,12 @@ class TaskTags(object):
     # Claude — performs the push when approved.
     WAIT_BEFORE_GIT_PUSH = f'{KATO_TAG_NAMESPACE}:wait-before-git-push'
 
+    # Review on finish: once a task kato ran by itself parks, ``kato:review-loop``
+    # starts its review loop with the default rounds and
+    # ``kato:review-loop:<rounds>`` picks them. No tag, no loop — it spends tokens,
+    # so it is asked for per ticket. Parse it via ``kato_tag_utils``.
+    REVIEW_LOOP = f'{KATO_TAG_NAMESPACE}:review-loop'
+
     # Model pick: ``kato:model:<family>`` runs the task on that family's
     # latest model; ``kato:model:<family>:<version>`` pins one release
     # (``kato:model:sonnet:5.5``). Parse it via ``kato_tag_utils``.

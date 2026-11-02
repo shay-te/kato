@@ -87,6 +87,7 @@ That's it. To make kato work a ticket: open it in your tracker, **assign it to y
 - 🛡 **Block harmful actions while it runs** — Action Guard refuses credential theft, network exfiltration, and destructive commands; you set Block / Ask / Allow per category
 - 🖥 **Watch it work live** — Planning UI (Flask + React) with chat, file tree, diffs, status bar
 - ⏸ **Pause before push** — tag `kato:wait-before-git-push` and approve PR creation from the UI
+- 🔁 **Review on finish** — tag `kato:review-loop` and the review loop starts by itself when the task finishes
 - 📂 **Multi-repo tickets** — one ticket → one PR per `kato:repo:<name>` tag
 - 🔔 **Notifications** — email + Slack on completion / failure
 

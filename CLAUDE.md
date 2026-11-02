@@ -365,7 +365,14 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   Opt-in (titles leave the machine). Failures are kept in `~/.kato/release_notes_sync.json` and shown in the
   header's Release notes dialog with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
 
-### Review loop (operator-started, from the review loop view)
+### Review loop (from the review loop view, or a `kato:review-loop` ticket tag)
+**The tag:** `kato:review-loop` (default rounds) or `kato:review-loop:<n>` on a task kato runs by itself starts
+the loop once the task parks (`AgentService._start_review_loop_if_tagged`, the last step of
+`_pause_for_push_approval`). No tag, no loop, and no setting: it spends tokens, so it is asked for per ticket.
+A loop that cannot start is logged and the task stays parked. Only tasks that park get it: wait-planning and
+other chats return before the park (a chat has no single finished moment), and auto-push publishes instead.
+The agent service reaches the webserver's diffs through `parked_task_listener`, set twice on purpose: when the
+routes register, and in `main._mark_webserver_configured`, because in setup mode the service does not exist yet.
 ```
 start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → ReviewLoopService
   (review_loop_core_lib) thread per task

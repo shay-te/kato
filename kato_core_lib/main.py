@@ -726,6 +726,12 @@ def _mark_webserver_configured(app) -> None:
         return
     flask_app.config['AGENT_SERVICE'] = getattr(app, 'service', None)
     flask_app.config['NEEDS_CONFIG'] = False
+    # The routes were registered before this service existed, so a task tagged
+    # ``kato:review-loop`` would otherwise park with no loop until a restart.
+    if flask_app.config['AGENT_SERVICE'] is not None:
+        flask_app.config['AGENT_SERVICE'].parked_task_listener = (
+            flask_app.config.get('START_REVIEW_LOOP_ON_PARK')
+        )
     # A stale error from an earlier failed attempt must not outlive success.
     flask_app.config['SETUP_ERROR'] = ''
     # The agent-CLI probe is cached for the process lifetime, and in setup

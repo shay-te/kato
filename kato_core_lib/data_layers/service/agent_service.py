@@ -16,6 +16,10 @@ from kato_core_lib.validation.repository_connections import (
 from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
+from kato_core_lib.helpers.kato_tag_utils import (
+    is_review_loop_tag,
+    review_rounds_from_tag,
+)
 from kato_core_lib.helpers.late_binding import call_later, later
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
@@ -182,6 +186,10 @@ class AgentService(MissionStepLoggerMixin, Service):
         # critical section won't deadlock.
         self._pending_publish_lock = threading.RLock()
         self._pending_publish: dict[str, tuple] = {}
+        # ``listener(task_id, rounds)``, called when a parked task asks for a
+        # review loop. Set by the webserver, which alone can read a task's
+        # diffs; None when no webserver runs.
+        self.parked_task_listener = None
         self._build_default_collaborators(
             state_registry=state_registry,
             review_comment_service=review_comment_service,
@@ -969,11 +977,50 @@ class AgentService(MissionStepLoggerMixin, Service):
         self.logger.info(
             'task %s implementation complete; awaiting push approval', task_id,
         )
+        self._start_review_loop_if_tagged(task)
         return {
             StatusFields.STATUS: 'awaiting_push_approval',
             'task_id': task_id,
         }
 
+    def _start_review_loop_if_tagged(self, task: Task) -> None:
+        """Start the review loop a parked task's ``kato:review-loop`` tag asks for.
+
+        Runs after the park, so the task waits for the operator either way: a
+        loop that cannot start (a chat in Plan mode, one already running, no
+        webserver) is logged and changes nothing about the finished task.
+        """
+        rounds = self._review_loop_rounds(task)
+        if not rounds:
+            return
+        task_id = str(task.id)
+        if self.parked_task_listener is None:
+            self.logger.warning(
+                'task %s asked for a review loop but no webserver is running', task_id,
+            )
+            return
+        try:
+            self.parked_task_listener(task_id, rounds)
+        except Exception:
+            self.logger.exception('could not start the review loop for task %s', task_id)
+
+    def _review_loop_rounds(self, task: Task) -> int:
+        """The rounds the task's ``kato:review-loop`` tags ask for; 0 means no loop.
+
+        Two tags on one ticket take the larger, so the answer does not depend on
+        the order the tracker lists them in.
+        """
+        rounds = 0
+        for tag in getattr(task, 'tags', None) or []:
+            if not is_review_loop_tag(tag):
+                continue
+            tag_rounds = review_rounds_from_tag(tag)
+            if not tag_rounds:
+                self.logger.warning(
+                    'ignoring malformed tag %r on task %s', tag, task.id,
+                )
+            rounds = max(rounds, tag_rounds)
+        return rounds
 
 
     # ----- diff-tab comments (kato-local + remote-synced) -----

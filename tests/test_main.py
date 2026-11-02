@@ -1585,7 +1585,7 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
 
     def test_flips_live_flask_config(self) -> None:
         from kato_core_lib.main import _mark_webserver_configured
-        service = object()
+        service = types.SimpleNamespace()
         flask_app = types.SimpleNamespace(
             config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
         )
@@ -1613,7 +1613,7 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
                                    'detail': 'claude not found on PATH'},
         })
         app = types.SimpleNamespace(
-            logger=Mock(), planning_flask_app=flask_app, service=object(),
+            logger=Mock(), planning_flask_app=flask_app, service=types.SimpleNamespace(),
         )
 
         _mark_webserver_configured(app)
@@ -1626,12 +1626,39 @@ class MarkWebserverConfiguredTests(unittest.TestCase):
             config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
         )
         app = types.SimpleNamespace(
-            logger=Mock(), planning_flask_app=flask_app, service=object(),
+            logger=Mock(), planning_flask_app=flask_app, service=types.SimpleNamespace(),
         )
 
         _mark_webserver_configured(app)  # no KeyError
 
         self.assertFalse(flask_app.config['NEEDS_CONFIG'])
+
+    def test_it_hands_the_new_service_the_review_loop_listener(self) -> None:
+        from kato_core_lib.main import _mark_webserver_configured
+        listener = Mock()
+        service = types.SimpleNamespace()
+        flask_app = types.SimpleNamespace(config={
+            'AGENT_SERVICE': None, 'NEEDS_CONFIG': True,
+            'START_REVIEW_LOOP_ON_PARK': listener,
+        })
+
+        _mark_webserver_configured(types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=flask_app, service=service,
+        ))
+
+        self.assertIs(service.parked_task_listener, listener)
+
+    def test_no_service_is_not_an_error(self) -> None:
+        from kato_core_lib.main import _mark_webserver_configured
+        flask_app = types.SimpleNamespace(
+            config={'AGENT_SERVICE': None, 'NEEDS_CONFIG': True},
+        )
+
+        _mark_webserver_configured(types.SimpleNamespace(
+            logger=Mock(), planning_flask_app=flask_app, service=None,
+        ))
+
+        self.assertIsNone(flask_app.config['AGENT_SERVICE'])
 
 
 class RestartInPlaceTests(unittest.TestCase):

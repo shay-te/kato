@@ -18,6 +18,10 @@ from kato_core_lib.data_layers.data.fields import (
     RepositoryFields,
     TaskTags,
 )
+from review_loop_core_lib.review_loop_core_lib.runner import (
+    DEFAULT_MAX_ROUNDS,
+    MAX_ROUNDS_LIMIT,
+)
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
 
@@ -92,3 +96,42 @@ def model_from_tag(tag: object) -> str:
         return ''
     major, minor = match.group(1), int(match.group(2) or 0)
     return f'claude-{family}-{int(major)}' + (f'-{minor}' if minor else '')
+
+
+# Written as digits on purpose: ``\d`` also takes other scripts' digits, and the
+# length keeps ``int`` away from a tag of thousands of them.
+_REVIEW_ROUNDS_RE = re.compile(r'[0-9]{1,3}')
+
+
+def build_review_loop_tag(rounds: object = '') -> str:
+    """Return ``kato:review-loop`` or ``kato:review-loop:<rounds>``."""
+    rounds_text = normalized_text(rounds)
+    return f'{TaskTags.REVIEW_LOOP}:{rounds_text}' if rounds_text else TaskTags.REVIEW_LOOP
+
+
+def is_review_loop_tag(tag: object) -> bool:
+    """Whether ``tag`` is a ``kato:review-loop`` tag, valid or not."""
+    text = normalized_text(tag).lower()
+    return text == TaskTags.REVIEW_LOOP or text.startswith(f'{TaskTags.REVIEW_LOOP}:')
+
+
+def review_rounds_from_tag(tag: object) -> int:
+    """The rounds a ``kato:review-loop`` tag asks for, or ``0`` when it asks for none.
+
+    * ``kato:review-loop``    -> the loop's default rounds.
+    * ``kato:review-loop:10`` -> 10 rounds.
+
+    ``0`` for a tag that is not a review-loop tag AND for a malformed one (not a
+    whole number, or outside 1 to ``MAX_ROUNDS_LIMIT``); tell those apart with
+    :func:`is_review_loop_tag` so a typo can be reported rather than ignored.
+    """
+    text = normalized_text(tag).lower()
+    if text == TaskTags.REVIEW_LOOP:
+        return DEFAULT_MAX_ROUNDS
+    if not is_review_loop_tag(text):
+        return 0
+    value = text[len(TaskTags.REVIEW_LOOP) + 1:]
+    if _REVIEW_ROUNDS_RE.fullmatch(value) is None:
+        return 0
+    rounds = int(value)
+    return rounds if 1 <= rounds <= MAX_ROUNDS_LIMIT else 0
