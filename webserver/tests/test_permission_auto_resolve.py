@@ -374,5 +374,111 @@ class ToolDecisionsRouteTests(_BaseCase):
         self.assertEqual(client.get('/api/tool-decisions').get_json()['decisions'], [])
 
 
+class TaskFolderEditTests(_BaseCase):
+    """"Edit automatically" means no click for an edit inside the task folder.
+
+    Every write reaches the permission path, inside the folder too, so this is
+    where the mode's promise is kept and where everything else stays asked.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.task = Path(os.path.realpath(tmp.name)) / 'workspaces' / 'T-1'
+        self.repo = self.task / 'api'
+        self.repo.mkdir(parents=True)
+
+    def _ask(self, path, tool='Write', mode='acceptEdits', outside=False):
+        session = _Session(tool, {'file_path': str(path)}, outside_sandbox=outside)
+        session.cwd = str(self.repo)
+        session.permission_mode = mode
+        return session
+
+    def _resolve(self, session, *, picked=''):
+        app = self._app(session)
+        if picked:
+            app.config['TASK_PLAN_MODE_OVERRIDES'] = {'T-1': picked}
+        with app.test_client() as client:
+            pending = client.get('/api/permissions/pending').get_json()['pending']
+        return pending
+
+    def test_an_edit_in_the_folder_is_never_shown(self) -> None:
+        session = self._ask(self.repo / 'a.py')
+        self.assertEqual(self._resolve(session), [])
+        self.assertTrue(session.permission_calls[0]['allow'])
+        self.assertIn('inside the task folder', session.permission_calls[0]['rationale'])
+
+    def test_an_edit_goes_through_the_same_enforcement_as_a_click(self) -> None:
+        session = self._ask(self.repo / 'a.py')
+        with mock.patch(
+            'kato_webserver.app._run_pre_tool_use_hook',
+            return_value=(True, 'the operator hook said no'),
+        ):
+            self.assertEqual(self._resolve(session), [])
+        self.assertFalse(session.permission_calls[0]['allow'])
+
+    def _assert_waits_for_a_person(self, session, **kwargs) -> None:
+        self.assertEqual(len(self._resolve(session, **kwargs)), 1)
+        self.assertEqual(session.permission_calls, [])
+
+    def test_manual_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / 'a.py', mode='default'))
+
+    def test_picking_manual_holds_before_the_next_spawn(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / 'a.py'), picked='default')
+
+    def test_plan_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / 'a.py', mode='plan'))
+        self._assert_waits_for_a_person(self._ask(self.repo / 'a.py'), picked='plan')
+
+    def test_explain_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / 'a.py'), picked='explain')
+
+    def test_a_write_outside_the_folder_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.task.parent / 'T-2' / 'a.py', outside=True))
+
+    def test_a_control_file_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / '.git' / 'config'))
+        self._assert_waits_for_a_person(self._ask(self.repo / '.claude' / 'settings.json'))
+
+    def test_kato_s_own_files_ask(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.task / '.kato-meta.json'))
+
+    def test_what_the_action_guard_flags_asks(self) -> None:
+        self._assert_waits_for_a_person(self._ask(self.repo / '.bashrc'))
+
+    def test_a_guard_that_could_not_answer_asks(self) -> None:
+        with mock.patch('kato_webserver.app._classify_action_for', return_value=None):
+            self._assert_waits_for_a_person(self._ask(self.repo / 'a.py'))
+
+    def test_a_command_asks(self) -> None:
+        session = _Session('Bash', {'command': 'mvn verify'})
+        session.cwd = str(self.repo)
+        session.permission_mode = 'acceptEdits'
+        self._assert_waits_for_a_person(session)
+
+    def test_a_file_kato_hands_the_agent_outside_the_folder(self) -> None:
+        lessons = self.task.parent / 'lessons.md'
+        session = self._ask(lessons)
+        session.sandbox_allowed_paths = (str(lessons),)
+        self.assertEqual(self._resolve(session), [])
+        self.assertTrue(session.permission_calls[0]['allow'])
+
+    def test_a_folder_the_session_was_spawned_with(self) -> None:
+        extra = self.task.parent / 'shared'
+        session = self._ask(extra / 'a.py')
+        session.allowed_additional_dirs = lambda: (str(extra),)
+        self.assertEqual(self._resolve(session), [])
+        self.assertTrue(session.permission_calls[0]['allow'])
+
+    def test_a_remembered_deny_wins(self) -> None:
+        from kato_core_lib.helpers.tool_decision_store import remember_tool_decision
+        remember_tool_decision('Write', '', False)
+        session = self._ask(self.repo / 'a.py')
+        self.assertEqual(self._resolve(session), [])
+        self.assertFalse(session.permission_calls[0]['allow'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -32,11 +32,11 @@ from kato_core_lib.data_layers.service.local_task_service import (
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from kato_core_lib.data_layers.service.task_publish_service import TaskPublishService
 from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
+from kato_core_lib.data_layers.service.workspace_manager import build_workspace_manager_from_config
 from kato_core_lib.kato_core_lib import KatoCoreLib
-from kato_core_lib.main import _reconcile_workspace_branches, _resume_streaming_sessions
+from kato_core_lib.main import _reconcile_workspace_branches
 from kato_webserver import app as app_module
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
-from tests.chaos_lib import build_real_workspace_service
 
 BRANCH = 'feature/login'
 
@@ -52,17 +52,11 @@ class _NoTracker(object):
         raise AssertionError(f'the tracker was called: {name}')
 
 
-class _Repositories(RepositoryService):
-    """The real service; only pull request credentials are skipped."""
+class RealLocalTask(object):
+    """A real task in a real clone of a real remote, for a TestCase to mix in."""
 
-    def __init__(self, source_root: Path) -> None:
-        super().__init__(SimpleNamespace(repository_root_path=str(source_root)), 3)
-        self._prepare_repository_access = lambda repository: repository
-
-
-class LocalTaskBranchNameTests(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve()
         self.remote = self.root / 'remote' / 'api.git'
@@ -95,15 +89,24 @@ class LocalTaskBranchNameTests(unittest.TestCase):
         access = TaskDataAccess(config, _NoTracker())
         self.store = LocalTaskStore(self.root / 'local_tasks.json')
         task_service = LocalAwareTaskService(config, access, self.store)
-        self.workspace = build_real_workspace_service(self.workspaces_root)
-        self.repositories = _Repositories(self.source_root)
+        # Production's builder: only its metadata name marks a per-task clone,
+        # and kato treats any other clone as a shared checkout.
+        self.workspace = build_workspace_manager_from_config(
+            SimpleNamespace(workspaces_root=str(self.workspaces_root)), 'claude',
+        )
+        # Nothing here is stubbed: a stub for pull request setup is what hid a
+        # real clone sitting on master. These remotes are folders, a git host
+        # kato does not recognise, and that must still get a branch.
+        self.repositories = RepositoryService(
+            SimpleNamespace(repository_root_path=str(self.source_root)), 3,
+        )
         # The same wiring as ``KatoCoreLib``.
         self.repositories.attach_kato_task_tags(
             lambda task_id: KatoCoreLib._kato_tags_for_task(
                 SimpleNamespace(workspace_manager=self.workspace), task_id,
             ),
         )
-        planning = WaitPlanningService(
+        self.planning = WaitPlanningService(
             session_manager=None, repository_service=self.repositories,
             task_state_service=LocalAwareTaskStateService(config, access, self.store),
             workspace_manager=self.workspace,
@@ -111,17 +114,26 @@ class LocalTaskBranchNameTests(unittest.TestCase):
         self.service = LocalTaskService(
             task_service=task_service, repository_service=self.repositories,
             workspace_manager=self.workspace,
-            prepare_workspace=planning.resolve_planning_context,
+            prepare_workspace=self.planning.resolve_planning_context,
             approval_check=lambda repositories: [],
         )
+        self.task_state = mock.MagicMock()
         self.publisher = TaskPublishService(
             repository_service=self.repositories,
             task_service=task_service,
-            task_state_service=mock.MagicMock(),
+            task_state_service=self.task_state,
             task_publisher=mock.MagicMock(),
             workspace_manager=self.workspace,
             logger=mock.MagicMock(),
         )
+
+    def _add_repository(self, name: str) -> None:
+        remote = self.root / 'remote' / f'{name}.git'
+        remote.mkdir()
+        _git(remote, 'init', '-q', '--bare', '-b', 'master')
+        _git(self.seed, 'push', '-q', str(remote), 'master')
+        _git(self.source_root, 'clone', '-q', str(remote), name)
+        self.repositories._repositories = None
 
     def _create(self, branch: str = BRANCH) -> str:
         task = self.service.create('Add login', 'Do it.', ['api'], branch=branch)
@@ -142,6 +154,8 @@ class LocalTaskBranchNameTests(unittest.TestCase):
         _git(clone, 'add', '-A')
         _git(clone, 'commit', '-qm', 'login')
 
+
+class LocalTaskBranchNameTests(RealLocalTask, unittest.TestCase):
     # ----- the task works on the branch it was given -----
 
     def test_the_clone_is_on_the_named_branch_and_no_other(self) -> None:
@@ -156,6 +170,14 @@ class LocalTaskBranchNameTests(unittest.TestCase):
 
         self.assertEqual(task_id, 'LOCAL-1')
         self.assertEqual(_git(clone, 'rev-parse', '--abbrev-ref', 'HEAD'), 'LOCAL-1')
+
+    def test_creating_a_task_logs_no_error(self) -> None:
+        # It has no id while its repositories are resolved, so there is no
+        # workspace to read tags from. That is normal, not a traceback.
+        with mock.patch.object(self.repositories.logger, 'exception') as logged:
+            self._create()
+
+        logged.assert_not_called()
 
     def test_the_operators_own_checkout_gets_no_branch(self) -> None:
         self._prepared()
@@ -181,6 +203,43 @@ class LocalTaskBranchNameTests(unittest.TestCase):
         self.assertEqual(_git(clone, 'rev-parse', '--abbrev-ref', 'HEAD'), BRANCH)
         self.assertTrue((clone / 'started.py').is_file())
 
+    # ----- a branch needs git, not a pull request host -----
+
+    def test_a_repository_with_no_token_for_its_host_still_gets_its_branch(self) -> None:
+        task_id = self._create()
+        inventory_entry = self.repositories.get_repository('api')
+        inventory_entry.provider = 'github'
+
+        self.assertTrue(self.service.prepare(task_id))
+
+        clone = Path(self.workspace.repository_path(task_id, 'api'))
+        self.assertEqual(_git(clone, 'rev-parse', '--abbrev-ref', 'HEAD'), BRANCH)
+
+    def test_a_chat_still_sets_up_pull_requests_when_it_can(self) -> None:
+        # Optional, not skipped: this is what puts the token on the repository.
+        repository = self.repositories.get_repository('api')
+        with mock.patch.object(self.repositories, '_prepare_pull_request_api') as setup:
+            self.repositories.prepare_task_repositories([repository], pull_requests_required=False)
+
+        setup.assert_called_once_with(repository)
+
+    def test_a_ticket_kato_runs_by_itself_still_needs_a_host_it_knows(self) -> None:
+        # Unchanged on purpose: that flow ends in a pull request, so it fails up
+        # front and says why on the ticket, rather than after the work is done.
+        repository = self.repositories.get_repository('api')
+        with self.assertRaisesRegex(ValueError, 'pull request provider'):
+            self.repositories.prepare_task_repositories([repository])
+
+    def test_a_task_that_cannot_be_prepared_says_so_on_the_task(self) -> None:
+        with mock.patch.object(
+            self.repositories, 'prepare_task_branches', side_effect=RuntimeError('git said no'),
+        ):
+            task_id = self._create()
+            self.assertFalse(self.service.prepare(task_id))
+
+        lines = [entry[-1] for entry in self.workspace.read_preflight_log(task_id)]
+        self.assertIn('the agent was not started', lines[-1])
+
     # ----- nothing puts it back on the task id -----
 
     def test_the_changes_tab_heals_a_drifted_clone_onto_the_named_branch(self) -> None:
@@ -202,19 +261,6 @@ class LocalTaskBranchNameTests(unittest.TestCase):
 
         self.assertEqual(_git(clone, 'rev-parse', '--abbrev-ref', 'HEAD'), BRANCH)
         self.assertNotIn(task_id, self._branches(clone))
-
-    def test_a_chat_resumed_after_a_restart_is_told_the_named_branch(self) -> None:
-        task_id, _clone = self._prepared()
-        session_manager = mock.MagicMock()
-
-        _resume_streaming_sessions(SimpleNamespace(
-            session_manager=session_manager, workspace_manager=self.workspace,
-            planning_session_runner=None, logger=mock.MagicMock(),
-        ))
-
-        session_manager.start_session.assert_called_once()
-        started = session_manager.start_session.call_args.kwargs
-        self.assertEqual((started['task_id'], started['expected_branch']), (task_id, BRANCH))
 
     def test_the_push_goes_to_the_named_branch(self) -> None:
         task_id, clone = self._prepared()

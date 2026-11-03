@@ -290,14 +290,12 @@ def default_config() -> SecurityScannerConfig:
 
     Blocks on CRITICAL only — HIGH+ findings surface as warnings
     but don't refuse the task. The npm-audit runner is included in
-    the default set, but operators who want the kato-side
-    over-blocking protection should disable it via
-    ``KATO_SECURITY_RUNNER_NPM_AUDIT=false`` (every non-trivial JS
-    project has dozens of transitive-dep CVEs).
+    the default set; a host should let its operators switch it off,
+    because every non-trivial JS project has dozens of transitive-dep
+    CVEs.
 
-    Operators override per-runner enable / timeout via
-    ``kato.security_scanner.runners`` in the config file or by
-    passing a custom ``SecurityScannerConfig`` to the constructor.
+    A host overrides per-runner enable / timeout by passing a custom
+    ``SecurityScannerConfig`` to the constructor.
     """
     from security_scanner_core_lib.security_scanner_core_lib.runners import (
         bandit_runner,

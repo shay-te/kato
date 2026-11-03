@@ -330,10 +330,9 @@ Settings → Prompts → Standing instructions (`KATO_STANDING_INSTRUCTIONS`, a 
 of General lifted with `panel: 'prompts'`, ≤ `STANDING_INSTRUCTIONS_MAX_CHARS` — the system prompt is
 argv, and Windows caps a command line at 32,767). `helpers/standing_instructions_utils.py`
 `with_standing_instructions(guidance)` appends it after kato's own `extra_system_prompt`, so it lands
-in `--append-system-prompt` AFTER the boundary + lessons directive. Read fresh (`live_setting`) at BOTH
-Claude spawn sites — `PlanningSessionRunner.start_session` and boot resume's hand-copied
-`main._planning_spawn_defaults` — so a save needs no restart (a running chat keeps its prompt). Not on
-Codex chats or one-shot runs (neither carries `extra_system_prompt`).
+in `--append-system-prompt` AFTER the boundary + lessons directive. Read fresh (`live_setting`) at the
+Claude spawn site, `PlanningSessionRunner.start_session`, so a save needs no restart (a running chat keeps
+its prompt). Not on Codex chats or one-shot runs (neither carries `extra_system_prompt`).
 
 ### Release notes — a dated line per task that reaches Done
 ```
@@ -578,8 +577,11 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   with no clone, comment or state change (log: `not starting task X yet: it waits for …`). A ticket carrying the record never gets
   implemented whole again (`PLAN_RECORD_COMMENT_PREFIX` blocks execution). A sub-task works in
   its footer's repositories plus any its tags add (`_with_tagged_repositories`, below).
-- Unverified against live servers (YouTrack sprint add, Jira `/rest/api/3/search` deprecation,
-  `"assignee": null` on create) — each client's report lists what to check.
+- Unverified against live servers (YouTrack sprint add, `"assignee": null` on create) — each
+  client's report lists what to check. Jira Cloud REMOVED `/rest/api/3/search` (2025-05-01): every
+  Jira search is `/rest/api/3/search/jql`, paged by `nextPageToken` (no `total`; a token handed back
+  twice ends the walk) and always asks for `key` (the search answers with only the id otherwise).
+  Written from Atlassian's docs, not yet run against a live Jira.
 
 ### New task (local tasks — no tracker)
 ```
@@ -594,16 +596,39 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
     hardened steps a kato:wait-planning ticket takes) → first chat turn with the opener
     (plan by DEFAULT; "implement"; "chat" = clone only, send nothing)
 ```
+**A chat needs git, not a pull request API.** Preparing a chat's repositories (`WaitPlanningService._prepare_repositories`,
+so wait-planning and every local task) passes `pull_requests_required=False`. It used to require a known host and a
+token, so a repository on any other host got no branch at all: the clone sat on `master` and the agent worked there.
+A ticket kato runs by itself still requires it (`prepare_task_repositories` default): it ends in a PR, so it fails up
+front. Tests must not stub `_prepare_repository_access` around this; a stub hid exactly this. A local task that cannot
+be prepared says so in its preparation log (`LocalTaskService.prepare`), or the UI just stops at "starting agent".
+
+**Which host a repository's pull requests live on** (`RepositoryInventoryService._resolved_pull_request_provider`): the
+words in the remote were the only clue, so an SSH alias failed (`git@work:team/api.git`: no provider;
+`git@github-work:…`: the API address `https://github-work/api/v3`). Now, in order: the repository's own provider, then the real
+host (`_remote_for_addresses` → `git_core_lib` `ssh_alias_utils.remote_with_real_host`, `ssh -G`, which connects to nothing), then
+a `*_API_BASE_URL` on the same host (`_provider_at_host_of`: the operator already said what a self-hosted host is). The result is
+only for building addresses: **`repository.remote_url` is never rewritten**, because `_assert_remote_is_the_configured_one`
+compares it before every push. The stub `_resolve_publish_context` builds for a repository out of the list has no remote, and
+**must not read one from the clone**: `.git/config` is agent-writable, and the provider token goes to whatever that names. The
+error names the host, or says the repository left the list: they read alike in a log and need different fixes.
+
 **A task's branch has ONE answer: `kato_tag_utils.task_branch(task_id, kato_tags)`** (reached as
 `RepositoryService.task_branch_name` / `build_branch_name`): the name in a `kato:branch:<name>` tag in kato's
 OWN tags (workspace metadata), else the task id. "New task" takes an optional branch name; empty changes nothing.
 Code holding only a task id must ask, never use the id as the branch: the boot reconcile and the Changes tab's
 self-heal force a clone onto "the task's branch", so a stale `task_id` there would strand the work on the wrong
-branch with no error. `branch_name_problem` (git_core_lib) + `LocalTaskService._refuse_unusable_branch` refuse
-a bad name BEFORE anything exists: not a valid name, the branch a repo merges into (the work would land on it with no
-PR), or one another task has. A branch already on the remote is continued. Tracker tickets and plan steps have no
-name, so theirs is the task id. A named branch is read from the workspace, so once a task is deleted its PR can no
-longer be found by it (a release-note link written after "Finish & forget" is left out).
+branch with no error. `task_branch_choice.unusable_branch_reason` (+ `branch_name_problem`, git_core_lib) refuses a bad
+name BEFORE anything exists: not a valid name, the branch a repo merges into (the work would land on it with no PR),
+or one another task has. A branch already on the remote is continued. A ticket can name its branch too, and gets less,
+because anyone who can edit a ticket can add a tag and the branch is where kato pushes: `kato:branch:<name>` on the
+ticket is copied into kato's own tags (`record_branch_from_ticket`, in the provisioning pass that clones) only if it
+names a NEW branch, before the task started, and not on a plan step (plans find a step's PR by ticket id, on every
+kato following the plan). Anything else: the tag is left out, the task runs on its id, and its preparation log says
+why. A rename (`TaskBranchRenameService`, header button) is `git branch -m` in every clone + one tag, all or nothing,
+refused once the branch was ever pushed (`refs/remotes/origin/<old>`, or live `ls-remote`; a remote that cannot be
+asked is a no), while the agent works, and on a plan step. Its name is in other clones and in PRs after that. The name lives in the workspace, so anything that must find the PR after the forget
+flow deletes it reads the branch first: `ReleaseNoteSource.branch`, then `KatoPullRequestProbe.pull_requests_of_branch`.
 
 **The ONE place local tasks are told apart:** `local_task_routing.py`. `LocalAwareTaskService` /
 `LocalAwareTaskStateService` (wired in `kato_core_lib.py` in place of the plain services) send
@@ -681,6 +706,26 @@ with one warning, not fatal; a tag on an ignored folder is refused as on any tic
 one off does not remove a clone. The add flow now also refuses to call itself done: when the sync names the repo in neither
 `added_repositories` nor `already_present`, the add is reported as a failure (`_require_repositories_on_task`).
 
+**A repo added to a running chat needs no restart.** A session's sandbox is fixed at spawn, but it is the task folder
+(`effective_sandbox_roots`: cwd, `--add-dir`s, cwd's parent), and every clone lands in that folder. `requires_session_restart`
+(`_live_session_missing_paths`) asks that same boundary, and "inside", never equal: an exact-path compare told the operator to
+restart for every added repo. Proven with the real CLI and a real `StreamingClaudeSession`: a folder created after the spawn was
+written to, `outside_sandbox=False`, with or without `--add-dir`. Prove such a claim that way: under `claude -p` there is no
+approval tool, so kato's catch-all `ask` rules turn EVERY write into a refusal, even inside cwd. `--add-dir` is not what limits
+writes either: those `ask` rules are, answered by kato. So every write raises a `control_request`, inside the folder too
+(`ask` beats `allow` in the CLI); only `outside_sandbox` differs.
+
+**"Edit automatically" is kept by kato, not the CLI.** Since every write is a `control_request`, each one used to stop for a
+click, and a task with no one watching stopped at its first file. `_maybe_auto_resolve_pending` now answers a write when
+`_is_task_folder_edit` says so; it runs after every carve-out, and a remembered "Deny always" wins. All of it must hold: the
+session is on `acceptEdits` AND the task's next mode is too (picking Manual counts at once), the Action Guard gave a clean verdict
+(no verdict is not clean), and `plain_write.is_plain_write`: a write tool, every path inside the task folder ON DISK (`realpath`:
+a repository can carry a symlink out, so the lexical `outside_sandbox` is not enough to approve on), and no control file:
+`.git`, `.claude`, `.vscode`, `.idea`, `.mcp.json`, `.gitmodules`, … at any depth, or kato's own `.kato-*`, which hold the
+task's branch and repositories. Those decide what runs next with no approval after the write, so they keep asking. It goes through
+`_resolve_permission_decision` like a click (hook, audit). No browser: the 2s `permission_auto_resolver` tick answers it.
+Proven with the real CLI, a real `StreamingClaudeSession` and this path: 3 plain writes through, 6 others stopped, Manual stops all 9.
+
 **"+ Add repository" takes several at once** (`POST …/add-repository {repository_ids: [...]}` →
 `TaskRepositoryService.add_task_repositories`; the single `repository_id` form is a one-item wrapper with its
 old reply shape). Every tag is recorded in kato FIRST, then ONE sync clones them together (parallel), then each
@@ -747,6 +792,15 @@ token) and the footnote says so. Do not add a second price table or compute cost
 ### False-success guards (important — previously bugs)
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
+- **Green means the work landed.** `_push_problems(push_result)` is the ONE answer to "what did not reach the remote":
+  a failed push, or a skip with `problem: true` (any reason but `NOTHING_TO_PUSH`). Update source refuses such a repo
+  (`failed`, source untouched) and Done counts it as a failure; a PR skipped as empty is not a success. Git refusing
+  the source switch is `blocked`, never `updated`. A source kato cannot find is `failed`, never `skipped`.
+- A toast's colour is decided beside its title, in `sessionHeaderFormatters.js` (`kind`), never in the component: a
+  "Source not updated" box came out green. Summaries list every problem; one repo pushing must not hide another's failure.
+- **A failed turn says why.** `failure_reason` (`result`, else `errors`, which a turn that fails during execution
+  sends with no `result`), then `failure_detail` (the last stderr lines, attached before the event is published),
+  then `resultFailureText`'s words per subtype. Never the bare word "failed".
 
 ---
 

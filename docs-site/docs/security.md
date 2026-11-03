@@ -120,6 +120,11 @@ paths like `/tmp` — which would bypass the guard. Kato forces those writes bac
 through the approval flow, and a loud chat warning records any write outside the
 task folder as a backstop.
 
+On "Edit automatically", a plain edit inside the task folder doesn't ask. A file
+that decides what runs next (`.git`, `.claude`, `.mcp.json` and the like) still
+does, and so does a path that leaves the folder through a symlink. "Manual" asks
+for every edit.
+
 ## Audit trail
 
 Every guarded decision is appended to a **hash-chained** audit log with a

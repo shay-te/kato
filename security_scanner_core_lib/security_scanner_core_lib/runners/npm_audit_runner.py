@@ -9,7 +9,7 @@ lockfile the project uses — npm reads yarn.lock fine since v7, and
 running one tool keeps the runner simple.
 
 Severity comes straight from npm's advisory database (npm uses the
-same severity ladder as kato), with one tweak: npm emits ``info``
+same severity ladder as ``Severity``), with one tweak: npm emits ``info``
 which we map to ``LOW``.
 
 When ``npm`` isn't on PATH, raises ``RunnerUnavailableError`` —
@@ -39,7 +39,7 @@ from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import
 )
 
 
-_NPM_TO_KATO_SEVERITY = {
+_NPM_SEVERITY = {
     'critical': Severity.CRITICAL,
     'high':     Severity.HIGH,
     'moderate': Severity.MEDIUM,
@@ -172,12 +172,12 @@ def run(
 
 
 def _findings_from_v7(vulns: dict, manifest_path: str) -> list[SecurityFinding]:
-    """Parse npm v7+ ``vulnerabilities`` into kato findings."""
+    """Parse npm v7+ ``vulnerabilities`` into findings."""
     out: list[SecurityFinding] = []
     seen: set[tuple[str, str]] = set()
     for package_name, entry in vulns.items():
         severity_raw = str(entry.get('severity', 'low'))
-        severity = _NPM_TO_KATO_SEVERITY.get(severity_raw, Severity.LOW)
+        severity = _NPM_SEVERITY.get(severity_raw, Severity.LOW)
         for via in entry.get('via', []):
             if not isinstance(via, dict):
                 continue
@@ -210,11 +210,11 @@ def _findings_from_v7(vulns: dict, manifest_path: str) -> list[SecurityFinding]:
 
 
 def _findings_from_legacy(advisories: dict, manifest_path: str) -> list[SecurityFinding]:
-    """Parse npm v6-style ``advisories`` into kato findings."""
+    """Parse npm v6-style ``advisories`` into findings."""
     out: list[SecurityFinding] = []
     for advisory_id, entry in advisories.items():
         severity_raw = str(entry.get('severity', 'low'))
-        severity = _NPM_TO_KATO_SEVERITY.get(severity_raw, Severity.LOW)
+        severity = _NPM_SEVERITY.get(severity_raw, Severity.LOW)
         package = str(entry.get('module_name', '?'))
         title = str(entry.get('title', 'unknown advisory'))
         out.append(SecurityFinding(

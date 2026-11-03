@@ -274,14 +274,14 @@ class ReviewCommentContextTextTests(unittest.TestCase):
         # bot name).
         comment = SimpleNamespace(all_comments=[
             {'author': 'alice', 'body': 'please rename this'},
-            {'author': 'kato', 'body': 'Kato addressed review comment 5'},
+            {'author': 'review-bot', 'body': 'Bot addressed review comment 5'},
         ])
-        prefixes = ('Kato addressed review comment ', 'Kato addressed this review comment')
+        prefixes = ('Bot addressed review comment ', 'Bot addressed this review comment')
         filtered = review_comment_context_text(comment, prefixes)
         self.assertIn('please rename this', filtered)
-        self.assertNotIn('Kato addressed', filtered)
+        self.assertNotIn('Bot addressed', filtered)
         # Default = no filter: the bot reply stays.
-        self.assertIn('Kato addressed', review_comment_context_text(comment))
+        self.assertIn('Bot addressed', review_comment_context_text(comment))
 
 
 class ReviewCommentLocationTextTests(unittest.TestCase):

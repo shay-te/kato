@@ -244,7 +244,7 @@ def azure_devops_remote(remote_url: str) -> tuple[str, str, str]:
     * ``<org>@vs-ssh.visualstudio.com:v3/<org>/<project>/<repo>``
     * on-prem: ``https://server[:port]/[tfs/]<collection>/<project>/_git/<repo>``
     """
-    host, path, scheme, port = _remote_parts(remote_url)
+    host, path, scheme, port = remote_parts(remote_url)
     if not host or not path:
         return '', '', ''
     parts = [unquote(part) for part in path.strip('/').split('/') if part]
@@ -280,7 +280,7 @@ def azure_devops_remote(remote_url: str) -> tuple[str, str, str]:
     return _web_base(host, scheme, port), '/'.join(owner_parts), slug_parts[0]
 
 
-def _remote_parts(remote_url: str) -> tuple[str, str, str, int | None]:
+def remote_parts(remote_url: str) -> tuple[str, str, str, int | None]:
     """``(host, path, scheme, port)`` of a URL-form or SCP-form remote."""
     text = str(remote_url or '').strip()
     if '://' in text:
@@ -369,7 +369,7 @@ def remote_web_base_url(remote_url: str) -> str:
         # ``ssh.dev.azure.com`` / ``vs-ssh.visualstudio.com`` are SSH-only
         # hosts: the web (and API) host is ``dev.azure.com``.
         return azure_base
-    host, _, scheme, port = _remote_parts(remote_url)
+    host, _, scheme, port = remote_parts(remote_url)
     if not host:
         return ''
     return _web_base(host, scheme, port)

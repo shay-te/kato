@@ -1,7 +1,7 @@
 """Regression: ``get_assigned_tasks`` paginates beyond the first 100.
 
 Before the fix, a team with >100 in-progress issues silently lost
-issues 101+ — kato would never pick them up. The fix iterates
+issues 101+ — the host would never pick them up. The fix iterates
 ``$top`` + ``$skip`` until a short page tells us we're at the end.
 """
 

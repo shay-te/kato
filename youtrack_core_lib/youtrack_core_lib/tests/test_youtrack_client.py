@@ -25,9 +25,9 @@ from youtrack_core_lib.youtrack_core_lib.tests.utils import (
 
 # Prefix strings used in tests that exercise operational-comment filtering.
 _OP_PREFIXES = (
-    'Kato agent could not safely process this task:',
-    'Kato agent skipped this task because it could not detect which repository',
-    'Kato agent skipped this task because the task definition',
+    'Agent could not safely process this task:',
+    'Agent skipped this task because it could not detect which repository',
+    'Agent skipped this task because the task definition',
 )
 
 
@@ -54,9 +54,9 @@ class YouTrackClientConstructionTests(unittest.TestCase):
 
     def test_bot_login_normalized_to_lowercase(self) -> None:
         client = YouTrackClient(
-            'https://youtrack.example', 'yt-token', bot_login='Kato_Bot',
+            'https://youtrack.example', 'yt-token', bot_login='Review_Bot',
         )
-        self.assertEqual(client._bot_login, 'kato_bot')
+        self.assertEqual(client._bot_login, 'review_bot')
 
     def test_bot_login_me_alias_stored_as_empty(self) -> None:
         # YouTrack's ``"me"`` is a query alias, not a real login — it can
@@ -262,13 +262,13 @@ class YouTrackGetAssignedTasksTests(unittest.TestCase):
         comments_response = mock_response(json_data=[
             {
                 YouTrackCommentFields.TEXT: (
-                    'Kato agent could not safely process this task: timeout'
+                    'Agent could not safely process this task: timeout'
                 ),
                 YouTrackCommentFields.AUTHOR: {YouTrackCommentFields.NAME: 'shay'},
             },
             {
                 YouTrackCommentFields.TEXT: (
-                    'Kato agent skipped this task because it could not detect '
+                    'Agent skipped this task because it could not detect '
                     'which repository to use from the task content: no configured '
                     'repository matched task PROJ-1.'
                 ),
@@ -301,14 +301,14 @@ class YouTrackGetAssignedTasksTests(unittest.TestCase):
                     TaskCommentFields.AUTHOR: 'shay',
                     TaskCommentFields.AUTHOR_ID: '',
                     TaskCommentFields.BODY: (
-                        'Kato agent could not safely process this task: timeout'
+                        'Agent could not safely process this task: timeout'
                     ),
                 },
                 {
                     TaskCommentFields.AUTHOR: 'shay',
                     TaskCommentFields.AUTHOR_ID: '',
                     TaskCommentFields.BODY: (
-                        'Kato agent skipped this task because it could not detect '
+                        'Agent skipped this task because it could not detect '
                         'which repository to use from the task content: no configured '
                         'repository matched task PROJ-1.'
                     ),
@@ -1216,19 +1216,19 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
 
     def test_filter_drops_comments_addressed_to_other_humans(self) -> None:
         client = YouTrackClient(
-            'https://x.example', 'tk', bot_login='kato_bot',
+            'https://x.example', 'tk', bot_login='review_bot',
         )
         entries = client._task_comment_entries([
             self._raw('@alice can you take a look'),       # dropped
             self._raw('this also needs a unit test'),      # kept (no @mention)
-            self._raw('@kato_bot please fix the typo'),    # kept (for bot)
-            self._raw('@alice and @kato_bot together'),    # kept (bot included)
+            self._raw('@review_bot please fix the typo'),    # kept (for bot)
+            self._raw('@alice and @review_bot together'),    # kept (bot included)
             self._raw('@bob.smith handle this please'),    # dropped
         ])
         bodies = [e[TaskCommentFields.BODY] for e in entries]
         self.assertIn('this also needs a unit test', bodies)
-        self.assertIn('@kato_bot please fix the typo', bodies)
-        self.assertIn('@alice and @kato_bot together', bodies)
+        self.assertIn('@review_bot please fix the typo', bodies)
+        self.assertIn('@alice and @review_bot together', bodies)
         self.assertNotIn('@alice can you take a look', bodies)
         self.assertNotIn('@bob.smith handle this please', bodies)
         self.assertEqual(len(entries), 3)
@@ -1236,7 +1236,7 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
     def test_explicit_bot_login_does_not_call_users_me(self) -> None:
         # When a real login is configured, no resolution round-trip happens.
         client = YouTrackClient(
-            'https://x.example', 'tk', bot_login='kato_bot',
+            'https://x.example', 'tk', bot_login='review_bot',
         )
         with patch.object(
             client, '_fetch_current_user_logins',
@@ -1254,16 +1254,16 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
         # dropped, while a comment @-mentioning the bot is kept.
         client = YouTrackClient('https://x.example', 'tk')  # unset login
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('review_bot',),
         ) as fetch:
             entries = client._task_comment_entries([
                 self._raw('@alice please review'),           # dropped (human)
                 self._raw('he look yada yda @Alice yes ..'),  # dropped (mid-text)
                 self._raw('general note'),                   # kept (no mention)
-                self._raw('@kato_bot fix the typo'),         # kept (bot)
+                self._raw('@review_bot fix the typo'),         # kept (bot)
             ])
         bodies = [e[TaskCommentFields.BODY] for e in entries]
-        self.assertEqual(bodies, ['general note', '@kato_bot fix the typo'])
+        self.assertEqual(bodies, ['general note', '@review_bot fix the typo'])
         # Resolved once and cached across all comments.
         fetch.assert_called_once()
 
@@ -1271,7 +1271,7 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
         # ``bot_login='me'`` behaves the same as unset: resolve, then filter.
         client = YouTrackClient('https://x.example', 'tk', bot_login='me')
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('review_bot',),
         ):
             entries = client._task_comment_entries([
                 self._raw('@alice please review'),
@@ -1288,7 +1288,7 @@ class YouTrackTaskCommentEntriesMentionFilterTests(unittest.TestCase):
             entries = client._task_comment_entries([
                 self._raw('@alice please review'),
                 self._raw('general note'),
-                self._raw('@kato_bot fix typo'),
+                self._raw('@review_bot fix typo'),
             ])
         self.assertEqual(len(entries), 3)
 

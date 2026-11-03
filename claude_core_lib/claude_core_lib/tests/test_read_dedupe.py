@@ -49,13 +49,12 @@ class ReadDedupeSettingsTests(unittest.TestCase):
     def test_an_explicit_argument_overrides_the_env(self) -> None:
         with patch.dict(os.environ, {'AGENT_READ_DEDUPE_ENABLED': 'true'}):
             self.assertNotIn(
-                'hooks', out_of_workspace_write_settings('/w', (), dedupe_reads=False),
+                'hooks', out_of_workspace_write_settings('/w', dedupe_reads=False),
             )
 
     def test_the_write_rules_are_unchanged_by_the_hook(self) -> None:
         with patch.dict(os.environ, {'AGENT_READ_DEDUPE_ENABLED': 'true'}):
             settings = out_of_workspace_write_settings('/w')
-        self.assertIn('Write(/w/**)', settings['permissions']['allow'])
         self.assertIn('Write', settings['permissions']['ask'])
 
 

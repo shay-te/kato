@@ -63,11 +63,10 @@ class AgentStateDirIsWriteDeniedTests(unittest.TestCase):
             with self.subTest(rule=rule):
                 self.assertTrue(rule.split('(', 1)[1].startswith('//'), rule)
 
-    def test_deny_is_present_ALONGSIDE_allow_and_ask(self) -> None:
-        # The existing scoping must survive: in-workspace writes still
-        # auto-accept, everything else still asks.
+    def test_deny_is_present_ALONGSIDE_ask(self) -> None:
+        # The existing scoping must survive: every write still reaches the
+        # permission path.
         permissions = out_of_workspace_write_settings('/ws/T1')['permissions']
-        self.assertTrue(permissions['allow'], 'in-workspace allow-rules lost')
         self.assertTrue(permissions['ask'], 'out-of-workspace ask-rules lost')
         self.assertTrue(permissions['deny'])
 

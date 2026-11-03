@@ -40,7 +40,7 @@ from agent_core_lib.agent_core_lib.helpers.command_introspection import (
 _PATH_KEYS = ('file_path', 'notebook_path', 'path', 'file')
 
 
-def _candidate_paths(tool_input: Any) -> list[str]:
+def candidate_paths(tool_input: Any) -> list[str]:
     if not isinstance(tool_input, dict):
         return []
     paths: list[str] = []
@@ -58,7 +58,7 @@ def _normalize(path: str, base: str) -> str:
     return os.path.normpath(path)
 
 
-def _is_within(path: str, root: str) -> bool:
+def is_within(path: str, root: str) -> bool:
     if not root:
         return False
     root_norm = os.path.normpath(root)
@@ -141,11 +141,11 @@ def classify_tool_input_sandbox(
     if not norm_roots:
         return False, ''
     norm_allowed = {_normalize(p, cwd) for p in allowed_paths if p}
-    for raw_path in _candidate_paths(tool_input):
+    for raw_path in candidate_paths(tool_input):
         resolved = _normalize(raw_path, cwd)
         if resolved in norm_allowed:
             continue
-        if not any(_is_within(resolved, root) for root in norm_roots):
+        if not any(is_within(resolved, root) for root in norm_roots):
             return True, raw_path
     return False, ''
 
@@ -493,7 +493,7 @@ class _Sandbox:
         self._allowed = allowed
 
     def _contains(self, resolved: str) -> bool:
-        return resolved in self._allowed or any(_is_within(resolved, root) for root in self._roots)
+        return resolved in self._allowed or any(is_within(resolved, root) for root in self._roots)
 
     def escaping_path(self, candidate: str, bases: tuple[str, ...], *, relative_too: bool = True) -> str:
         """The path ``candidate`` names if it leaves the sandbox, else ``''``."""

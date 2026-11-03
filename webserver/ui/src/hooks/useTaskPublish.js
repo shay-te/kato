@@ -28,7 +28,7 @@ export const RETRY_DELAY_MS = 2000;
 
 export function useTaskPublish(taskId) {
   const {
-    hasWorkspace, hasChangesToPush, ready, error,
+    hasWorkspace, hasChangesToPush, branch, ready, error,
   } = useTaskPublishState(taskId);
   const {
     hasPullRequest, pullRequestUrls, pullRequestLookupError, pullRequestRepositories,
@@ -116,6 +116,7 @@ export function useTaskPublish(taskId) {
   return {
     hasWorkspace,
     hasChangesToPush,
+    branch,
     hasPullRequest,
     pullRequestUrls,
     // "kato cannot SEE your pull requests" — distinct from "there is no pull

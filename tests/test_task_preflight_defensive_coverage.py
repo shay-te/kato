@@ -533,6 +533,23 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         # No after_step logging happened.
         service._log_task_step.assert_not_called()
 
+    def test_the_branch_is_named_after_the_workspace_is_provisioned(self) -> None:
+        # Provisioning is what takes a ticket's ``kato:branch:`` tag into
+        # kato's own tags, so a name read before it would miss the tag.
+        steps = []
+
+        def provisioner(_task, repositories):
+            steps.append('provision')
+            return list(repositories)
+
+        service, _ = _make_service(workspace_provisioner=provisioner)
+        service._repository_service.build_branch_name.side_effect = (
+            lambda _task, _repository: steps.append('name') or 'feat/client'
+        )
+        service.prepare_task_execution_context(self.task)
+        self.assertEqual(steps[0], 'provision')
+        self.assertIn('name', steps)
+
 
 if __name__ == '__main__':
     unittest.main()

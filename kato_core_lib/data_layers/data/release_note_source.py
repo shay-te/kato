@@ -17,6 +17,10 @@ class ReleaseNoteSource(object):
     # When kato started the task (epoch): an older pull request on the same
     # branch name belongs to an earlier task that reused the id.
     started_at: float = 0.0
+    # The branch its pull requests are on ('' = the task id). Read now with the
+    # rest: a branch the operator named is kept in the workspace, and the forget
+    # flow deletes that before the links are looked up.
+    branch: str = ''
 
     @property
     def fallback(self) -> str:

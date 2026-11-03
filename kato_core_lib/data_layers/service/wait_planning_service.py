@@ -569,12 +569,22 @@ class WaitPlanningService(object):
         )
 
     def _prepare_repositories(self, task: Task, repositories: list) -> list:
+        """Ready the clones for the task branch. Pull requests are optional here.
+
+        A person is working in this task, and a branch needs git, not a pull
+        request API. Requiring one meant a repository on a host kato does not
+        recognise, or with no token for it, got no branch at all: the clone sat
+        on master and the agent worked there. Opening the pull request is what
+        reports that problem, when someone asks for one.
+        """
         return self._safe_call(
             task,
             'prepare repositories for wait-planning task %s',
             fallback=[],
             action=lambda: list(
-                self._repository_service.prepare_task_repositories(repositories) or [],
+                self._repository_service.prepare_task_repositories(
+                    repositories, pull_requests_required=False,
+                ) or [],
             ),
         )
 

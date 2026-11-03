@@ -51,9 +51,9 @@ asymmetry.
 | Package | How it uses this |
 |---|---|
 | [`claude_core_lib`](../claude_core_lib/) | `ClaudeCliClient` implements `AgentProvider` |
-| [`openhands_core_lib`](../openhands_core_lib/) | `KatoClient` implements `AgentProvider` |
-| [`agent_core_lib`](../agent_core_lib/) | factory returns the contract type |
-| (future) `codex_core_lib` | will implement `AgentProvider` |
+| [`codex_core_lib`](../codex_core_lib/) | `CodexCliClient` implements `AgentProvider` |
+| [`openhands_core_lib`](../openhands_core_lib/) | `OpenHandsClient` implements `AgentProvider` |
+| [`agent_backend_core_lib`](../agent_backend_core_lib/) | factory returns the contract type |
 
 ## Tests
 

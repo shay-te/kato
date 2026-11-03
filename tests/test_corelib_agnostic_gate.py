@@ -35,6 +35,7 @@ _MAX_KATO_LINES = {
     # ---- fully agnostic — LOCKED at 0, do not regress ----
     'agent_backend_core_lib': 0,
     'agent_core_lib': 0,
+    'agent_provider_contracts': 0,
     'azure_devops_core_lib': 0,
     'bitbucket_core_lib': 0,
     'claude_core_lib': 0,
@@ -46,20 +47,21 @@ _MAX_KATO_LINES = {
     'jira_core_lib': 0,
     'lid_awake_core_lib': 0,
     'local_task_core_lib': 0,
+    'openhands_core_lib': 0,
     'openrouter_core_lib': 0,
     'plan_queue_core_lib': 0,
+    'provider_client_base': 0,
+    'repository_core_lib': 0,
     'review_loop_core_lib': 0,
+    'security_scanner_core_lib': 0,
     'task_core_lib': 0,
+    'vcs_provider_contracts': 0,
+    'workspace_core_lib': 0,
+    'youtrack_core_lib': 0,
     # ---- known debt — clean these up; lower the number, never raise it ----
-    'agent_provider_contracts': 18,
-    'openhands_core_lib': 14,
-    'provider_client_base': 52,
-    'repository_core_lib': 2,
+    # Live names, not prose: KATO_* env vars, the kato/claude-sandbox image,
+    # container labels. Each needs a bridge in kato_core_lib, not a rename.
     'sandbox_core_lib': 402,
-    'security_scanner_core_lib': 33,
-    'vcs_provider_contracts': 2,
-    'workspace_core_lib': 8,
-    'youtrack_core_lib': 34,
 }
 
 

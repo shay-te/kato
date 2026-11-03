@@ -4,28 +4,18 @@
 path Claude Code considers in-scope. That scope did NOT reliably cover the
 case that bit us: a SIBLING repo under the operator's home dir (e.g.
 ``~/Desktop/dev/other-repo``) that is NOT a task clone — Claude wrote there
-with no prompt at all. The old ask-rules only enumerated system roots
-(``/tmp``, ``/etc``, …) and DELIBERATELY skipped ``/Users``/``/home`` (a
-blanket home rule would prompt on every in-workspace edit), so home-tree
-siblings matched no rule and sailed through.
+with no prompt at all.
 
-This module now builds task-AWARE settings — allow the sandbox, ask for
-everything else:
+So ``permissions.ask`` lists the write tools UNSCOPED (bare tool name = every
+invocation), and every write reaches the permission path. Nothing can slip
+through un-enumerated.
 
-  * ``permissions.allow`` — the write tools scoped to the task's sandbox
-    roots (``cwd`` + ``--add-dir`` clones + the task-folder parent — the
-    SAME boundary the post-hoc classifier uses). In-workspace edits
-    auto-accept.
-  * ``permissions.ask`` — the write tools UNSCOPED (bare tool name = every
-    invocation). Claude Code precedence is ``deny > allow > ask``, so a
-    write that matches an allow rule (in-workspace) is auto-accepted and
-    never reaches the ask rule; a write ANYWHERE else — any sibling repo,
-    any home path, ``/tmp``, everything — matches only the ask rule and is
-    forced to the operator's approval. Nothing can slip through
-    un-enumerated any more.
-
-With NO workspace known (``cwd`` empty — e.g. the boot smoke test) there is
-nothing to allow, so every write prompts: the fail-safe direction.
+That covers writes INSIDE the task folder too, and no rule here can change it:
+the CLI checks ``ask`` before ``allow``. The host answers those requests, which
+is where "edit without asking" is kept, and where a write can be judged by what
+is on disk (``agent_core_lib.helpers.plain_write``). Verified against the real
+CLI (2.1.316): with allow rules for the folder, each write in it still raised a
+``control_request``.
 
 The post-hoc warning (``_maybe_warn_out_of_sandbox_write`` in
 ``session/streaming.py``) stays as a last-resort visibility backstop.
@@ -41,9 +31,6 @@ from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 import os
 import sys
 
-from agent_core_lib.agent_core_lib.helpers.sandbox_scope import (
-    effective_sandbox_roots,
-)
 # The task folder and its memory directory come from the SAME helpers the
 # workspace-scope prompt uses, so the path the agent is told and the path its
 # CLI actually loads memory from cannot drift apart again.
@@ -78,25 +65,11 @@ def read_dedupe_enabled() -> bool:
 _WRITE_TOOLS: tuple[str, ...] = ('Write', 'Edit', 'MultiEdit', 'NotebookEdit')
 
 
-def in_workspace_write_allow_rules(
-    cwd: str = '', additional_dirs: tuple[str, ...] | list[str] = (),
-) -> list[str]:
-    """``Tool(root/**)`` allow-rules for each write tool × each sandbox root,
-    so edits INSIDE the task folder auto-accept without a prompt. Empty when
-    no workspace is known (then every write falls to the ask rule)."""
-    roots = effective_sandbox_roots(cwd, additional_dirs)
-    return [
-        f'{tool}({root}/**)'
-        for root in roots
-        for tool in _WRITE_TOOLS
-    ]
-
-
 def out_of_workspace_write_ask_rules() -> list[str]:
-    """Unscoped catch-all ask-rules — every write-tool invocation prompts
-    UNLESS an allow rule (in-workspace) matches first. This is what forces
-    approval for ANY out-of-workspace write, including sibling repos under
-    the home tree that no enumerated root list could cover."""
+    """Unscoped catch-all ask-rules: every write-tool invocation reaches the
+    permission path. This is what forces approval for ANY out-of-workspace
+    write, including sibling repos under the home tree that no enumerated root
+    list could cover."""
     return list(_WRITE_TOOLS)
 
 
@@ -238,7 +211,6 @@ def auto_memory_directory_setting(cwd: str = '') -> dict:
 
 def out_of_workspace_write_settings(
     cwd: str = '',
-    additional_dirs: tuple[str, ...] | list[str] = (),
     dedupe_reads: bool | None = None,
 ) -> dict:
     """Settings dict that forces approval for out-of-workspace file writes.
@@ -251,9 +223,8 @@ def out_of_workspace_write_settings(
     if dedupe_reads is None:
         dedupe_reads = read_dedupe_enabled()
     settings = {'permissions': {
-        'allow': in_workspace_write_allow_rules(cwd, additional_dirs),
         'ask': out_of_workspace_write_ask_rules(),
-        # Deny beats allow and ask: the CLI auto-accepts writes to its own
+        # Deny beats ask: the CLI auto-accepts writes to its own
         # state directory, so nothing softer than a denial keeps the agent's
         # memory out of the global agent folder; and memory there is not read
         # back into this task either.
@@ -289,34 +260,29 @@ def out_of_workspace_write_settings(
 
 def out_of_workspace_write_settings_json(
     cwd: str = '',
-    additional_dirs: tuple[str, ...] | list[str] = (),
     dedupe_reads: bool | None = None,
 ) -> str:
     """The settings as a compact JSON string for ``claude --settings``."""
     return json.dumps(
-        out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads),
+        out_of_workspace_write_settings(cwd, dedupe_reads),
         separators=(',', ':'),
     )
 
 
 def out_of_workspace_write_settings_path(
     cwd: str = '',
-    additional_dirs: tuple[str, ...] | list[str] = (),
     dedupe_reads: bool | None = None,
 ) -> str:
     """The same settings, written to a file — pass the PATH to ``--settings``.
 
-    The JSON carries one rule per directory, so a 25-repo workspace produces
-    roughly 8KB. Inline on the command line that is enough to blow Windows'
-    limit on its own, and the spawn dies before the agent ever starts:
+    Every byte of the command line counts, because the multiline
+    ``--append-system-prompt`` after it runs into the limit Windows puts on a
+    command line, and the spawn dies before the agent ever starts:
 
         send failed: failed to launch claude CLI binary "claude":
         [WinError 206] The filename or extension is too long
 
-    ``_build_command`` already notes that cmd.exe caps a command line at
-    ~8K — the settings value alone reaches that, and the multiline
-    ``--append-system-prompt`` is then pure overflow. A path is ~60
-    characters whatever the workspace holds.
+    A path is ~60 characters whatever the settings hold.
 
     Written OUTSIDE the workspace on purpose: this file is what forces
     out-of-workspace writes back through the approval path, so putting it
@@ -324,12 +290,12 @@ def out_of_workspace_write_settings_path(
     Returns '' if the file cannot be written, so the caller can fall back to
     the inline string rather than failing the spawn.
     """
-    payload = out_of_workspace_write_settings(cwd, additional_dirs, dedupe_reads)
+    payload = out_of_workspace_write_settings(cwd, dedupe_reads)
     try:
         directory = Path(tempfile.gettempdir()) / 'agent-write-scope-settings'
         directory.mkdir(parents=True, exist_ok=True)
-        # Named for the workspace it describes, so two concurrent tasks never
-        # share one file and a re-spawn reuses its own.
+        # Named for what it holds, so settings that differ never share a file
+        # and a re-spawn reuses its own.
         digest = hashlib.sha256(
             json.dumps(payload, sort_keys=True).encode('utf-8'),
         ).hexdigest()[:16]

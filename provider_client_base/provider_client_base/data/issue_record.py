@@ -25,7 +25,7 @@ class IssueRecord:
     """Neutral data transfer object for one provider issue.
 
     Returned by every provider's ``get_assigned_tasks``. Field names
-    mirror the kato ``Task`` interface so duck-typed orchestrators can
+    mirror the host's ``Task`` interface so duck-typed orchestrators can
     use it without an explicit conversion step.
     """
 

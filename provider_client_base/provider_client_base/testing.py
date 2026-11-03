@@ -1,7 +1,7 @@
 """Agnostic test helpers shared by every provider/transport lib's test suite.
 
-These were previously in the kato top-level ``tests/utils.py`` (which imports
-``kato_core_lib``), so importing them dragged the whole orchestrator onto the
+These were previously in the host's top-level ``tests/utils.py`` (which imports
+the orchestrator), so importing them dragged the whole orchestrator onto the
 path and stopped each lib's suite from running standalone. They live here in
 ``provider_client_base`` — the shared base every provider client already
 depends on — and use only stdlib + ``provider_client_base`` types, so a lib's
@@ -76,7 +76,7 @@ def build_task(
 
     Returns ``IssueRecord`` — the same duck-typed shape (``id``/``summary``/
     ``description``/``branch_name``/``tags``/``all_comments``) the transports
-    read — so tests don't need the kato ``Task`` type.
+    read — so tests don't need the host's ``Task`` type.
     """
     record = IssueRecord(
         id=task_id,

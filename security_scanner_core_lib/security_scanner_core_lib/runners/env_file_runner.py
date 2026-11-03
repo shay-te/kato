@@ -13,7 +13,8 @@ Severity: ``CRITICAL`` for any real-looking value. The reasoning is
 asymmetric — a placeholder mis-flagged is one warning the operator
 clears; a real credential mis-cleared is a leaked secret. Default
 to over-flagging, let the operator quiet false positives by adding
-``# kato:placeholder`` next to the value.
+``# security-scanner:placeholder`` next to the value (or the
+host's own marker, passed as ``placeholder_annotation``).
 """
 
 from __future__ import annotations

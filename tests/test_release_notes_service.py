@@ -87,6 +87,21 @@ class ReleaseNotesServiceTests(unittest.TestCase):
         self._service().task_done('UNA-1')
         self.assertIn('· [PR](https://git.example/pr/7)', self._notes())
 
+    def test_a_named_branch_still_finds_its_pull_request_after_the_task_is_deleted(self) -> None:
+        # "Finish & forget": the note is written, the workspace holding the
+        # branch's name is deleted, and only then do the links run.
+        from types import SimpleNamespace
+        self.workspaces.add_tag('UNA-1', 'kato:branch:feature/login')
+        self.pull_requests.return_value = [SimpleNamespace(state='merged', url='https://git.example/pr/7', created_at='')]
+        service = self._service(inline=False)
+
+        service.task_done('UNA-1')
+        self.workspaces.delete('UNA-1')
+        self.deferred[0]()
+
+        self.pull_requests.assert_called_once_with('feature/login', 'backend')
+        self.assertIn('· [PR](https://git.example/pr/7)', self._notes())
+
     def test_an_operator_edit_made_meanwhile_is_kept(self) -> None:
         service = self._service(inline=False)
         service.task_done('UNA-1')

@@ -229,6 +229,15 @@ test('classifyStatusEntry: source update WITH failures flags the error variant',
   assert.match(r.body, /1 repo\(s\) updated, 2 failed/);
 });
 
+test('classifyStatusEntry: the desktop notification says "updated" only when something was', function () {
+  const title = (counts) => classifyStatusEntry(
+    _entry(`Mission UNA-9: source update finished (${counts})`),
+  ).title;
+  assert.equal(title('0 updated, 0 skipped, 1 failed'), 'Source not updated');
+  assert.equal(title('0 updated, 1 skipped, 0 failed'), 'Nothing to update');
+  assert.equal(title('1 updated, 1 skipped, 0 failed'), 'Source updated');
+});
+
 test('classifyStatusEntry: a partial source-update line does NOT match', function () {
   // Per-repo progress lines ("update-source for task X: ...") must NOT fire a
   // notification — only the single completion summary does.

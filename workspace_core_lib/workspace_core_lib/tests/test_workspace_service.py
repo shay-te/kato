@@ -107,6 +107,22 @@ class WorkspaceServiceTests(unittest.TestCase):
         assert record is not None
         self.assertEqual(record.repository_ids, ['a', 'b'])
 
+    def test_replace_tag_swaps_one_tag_and_keeps_the_rest(self) -> None:
+        self.service.create(task_id='PROJ-1')
+        self.service.add_tag('PROJ-1', 'repo:alpha')
+        self.service.add_tag('PROJ-1', 'Name:Old')
+        self.service.replace_tag('PROJ-1', 'name:old', 'name:new')
+        self.assertEqual(self.service.get('PROJ-1').tags, ['repo:alpha', 'name:new'])
+
+    def test_replace_tag_with_nothing_to_replace_adds(self) -> None:
+        self.service.create(task_id='PROJ-1')
+        self.service.replace_tag('PROJ-1', 'name:absent', 'name:new')
+        self.assertEqual(self.service.get('PROJ-1').tags, ['name:new'])
+
+    def test_replace_tag_with_no_workspace_says_so(self) -> None:
+        with self.assertRaises(LookupError):
+            self.service.replace_tag('PROJ-404', 'a', 'b')
+
     def test_add_tag_records_once_and_ignores_case_and_blanks(self) -> None:
         self.service.create(task_id='PROJ-1')
         self.assertTrue(self.service.add_tag('PROJ-1', 'repo:Alpha'))

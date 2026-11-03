@@ -25,6 +25,7 @@ Endpoints:
     POST /api/sessions/<task_id>/adopt-agent-session    — body keyed by AGENT_SESSION_ID
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
     POST /api/sessions/<task_id>/add-repository         — body: {"repository_ids": [...]} or {"repository_id"} — tag + clone
+    POST /api/sessions/<task_id>/rename-branch          — body: {"branch": "<name>"} — only before it reaches a remote
     GET  /api/repositories                              — list inventory repos for the chooser
     GET  /api/release-notes                             — the release notes + the Google Doc copy state
     POST /api/release-notes/sync                        — copy the release notes into the Google Doc now
@@ -76,6 +77,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     same_session_id,
 )
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
+from agent_core_lib.agent_core_lib.helpers.plain_write import is_plain_write
 from agent_core_lib.agent_core_lib.helpers.read_only_tools import (
     READ_ONLY_DISALLOWED_TOOLS,
 )
@@ -165,6 +167,10 @@ _SSE_HEARTBEAT_SECONDS = 15.0
 # the agent may read / search / plan but never edit files or run mutating
 # tools. Backs the composer's plan-mode lock.
 PLAN_PERMISSION_MODE = 'plan'
+EDIT_AUTOMATICALLY_MODE = 'acceptEdits'
+# Kato's own files in a task folder (``.kato-meta.json`` holds the task's
+# branch and repositories), which an agent edit must not change unasked.
+KATO_TASK_FILE_PREFIX = '.kato-'
 # Agent modes the composer can select, as the CLI's ``--permission-mode``.
 # '' = kato's configured default (acceptEdits) — the composer's "Edit
 # automatically". Anything outside this set is refused at the route rather
@@ -4064,6 +4070,26 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify(result), status
         return jsonify(result)
 
+    @app.post('/api/sessions/<task_id>/rename-branch')
+    def rename_task_branch(task_id: str):
+        """Rename the task's branch. Body: ``{"branch": "<new name>"}``.
+
+        Refused (409, with the reason) once the branch has reached a remote.
+        """
+        branch = text_from_mapping(request.get_json(silent=True) or {}, 'branch')
+        if not branch:
+            return jsonify({'error': 'branch is required'}), 400
+        rename, err = _resolve_agent_method(
+            app, 'branches.rename_task_branch',
+            not_callable_message='agent service does not support renaming a branch',
+        )
+        if err:
+            return err
+        try:
+            return jsonify(rename(task_id, branch))
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 409
+
     @app.post('/api/sessions/<task_id>/sync-repositories')
     def sync_task_repositories(task_id: str):
         """Add any task repos missing from the workspace; never remove.
@@ -5438,6 +5464,38 @@ def _task_is_plan_locked(app: Flask, task_id: str) -> bool:
         return False
 
 
+def _edits_without_asking(app: Flask, session, task_id: str) -> bool:
+    """Whether the task is on "Edit automatically".
+
+    The running session's mode alone is not enough: a mode pick takes effect at
+    the next spawn, and picking Manual must hold from that moment.
+    """
+    return (
+        str(getattr(session, 'permission_mode', '') or '') == EDIT_AUTOMATICALLY_MODE
+        and _task_mode_of(app, task_id) in ('', EDIT_AUTOMATICALLY_MODE)
+    )
+
+
+def _is_task_folder_edit(
+    app: Flask, session, task_id: str, tool_name: str, tool_input: dict, verdict,
+) -> bool:
+    """Whether "Edit automatically" covers this ask with no click.
+
+    Every write reaches the permission path, inside the task folder too (see
+    ``write_scope_settings``), so the mode's promise is kept here. A guard that
+    could not give a verdict is not a clean verdict.
+    """
+    if verdict is None or _action_guard_enum_value(verdict.category) != 'none':
+        return False
+    return _edits_without_asking(app, session, task_id) and is_plain_write(
+        tool_name, tool_input,
+        cwd=str(getattr(session, 'cwd', '') or ''),
+        additional_dirs=_session_additional_dirs(session),
+        allowed_paths=tuple(getattr(session, 'sandbox_allowed_paths', ()) or ()),
+        reserved_prefixes=(KATO_TASK_FILE_PREFIX,),
+    )
+
+
 def _maybe_auto_resolve_pending(
     app: Flask, session, task_id: str, request_id: str, outside_sandbox: bool,
 ) -> bool:
@@ -5506,11 +5564,15 @@ def _maybe_auto_resolve_pending(
         # above, so a timed grant can never approve something a remembered
         # one would have been refused: it is the same permission with an
         # expiry, not a wider one.
-        if not timed_grant_active(tool_name, programs):
+        if timed_grant_active(tool_name, programs):
+            rationale = 'auto-resolved: time-boxed approval'
+        elif _is_task_folder_edit(app, session, task_id, tool_name, tool_input, verdict):
+            rationale = 'auto-resolved: edit inside the task folder'
+        else:
             return False
         _resolve_permission_decision(
-            app, session, task_id, request_id, True,
-            'auto-resolved: time-boxed approval', hook_tool_name=tool_name,
+            app, session, task_id, request_id, True, rationale,
+            hook_tool_name=tool_name,
         )
         return True
     _resolve_permission_decision(

@@ -2,14 +2,14 @@
 
 Minimal subset of fields the existing two backends (Claude CLI,
 OpenHands) actually consume: id, summary, description,
-repositories. Kato's richer ``Task`` model translates to this at
+repositories. The host's richer ``Task`` model translates to this at
 the call boundary so the contract package stays free of any
-``kato_core_lib`` dependency.
+host dependency.
 
 ``repositories`` is intentionally typed as ``list[Any]`` — each
 backend reads only the fields it needs (``id``, ``remote_url``,
 ``local_path``) via attribute access. Pinning a stricter type here
-would require pulling kato's Repository data class into the
+would require pulling the host's Repository data class into the
 contracts package, which would re-introduce the dependency this
 DTO exists to avoid.
 """

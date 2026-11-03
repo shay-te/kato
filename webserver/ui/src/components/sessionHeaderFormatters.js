@@ -24,30 +24,40 @@ export function formatPushSummary(pushed, options = {}) {
   const pushedRepositories = pushed.pushed_repositories || [];
   const skippedRepositories = pushed.skipped_repositories || [];
   const failedRepositories = pushed.failed_repositories || [];
+  const lines = [];
   if (pushedRepositories.length) {
-    if (pushedSummary === 'count_only') {
-      return `✓ pushed ${pushedRepositories.length} repo(s) to remote`;
+    lines.push(pushedSummary === 'count_only'
+      ? `✓ pushed ${pushedRepositories.length} repo(s) to remote`
+      : `✓ pushed ${pushedRepositories.length} repo(s): ${pushedRepositories.join(', ')}`);
+  }
+  // Name the repo and the backend's REASON. This used to claim "already in
+  // sync" for every skip, which is the one sentence an operator reads as
+  // "kato pushed my work" — including when the clone was sitting on master
+  // with the work never committed to the task branch at all. A skip that
+  // means work did not get there always shows; a harmless one only when
+  // nothing else was pushed.
+  for (const entry of skippedRepositories) {
+    if (entry.problem) {
+      lines.push(`✗ could not push ${entry.repository_id}: ${entry.reason}`);
+    } else if (!pushedRepositories.length) {
+      lines.push(`• push skipped ${entry.repository_id}: ${entry.reason || 'nothing to push'}`);
     }
-    return `✓ pushed ${pushedRepositories.length} repo(s): ${pushedRepositories.join(', ')}`;
   }
-  if (skippedRepositories.length) {
-    // Name the repo and the backend's REASON. This used to claim
-    // "already in sync" for every skip, which is the one sentence an
-    // operator reads as "kato pushed my work" — including when the
-    // clone was sitting on master with the work never committed to the
-    // task branch at all.
-    return skippedRepositories
-      .map((entry) => (
-        `• push skipped ${entry.repository_id}: ${entry.reason || 'nothing to push'}`
-      ))
-      .join('\n');
-  }
+  // Never hidden by a success: one repository pushing used to return here
+  // first, so the one that failed was not mentioned at all.
   if (failedRepositories.length) {
     const errs = failedRepositories
       .map((r) => `${r.repository_id}: ${r.error}`).join('; ');
-    return `✗ push failed: ${errs}`;
+    lines.push(`✗ push failed: ${errs}`);
   }
-  return null;
+  return lines.length ? lines.join('\n') : null;
+}
+
+// How many repositories' work did not reach the remote: failed pushes, and
+// skips the server marked as a problem. The ONE count every push report reads.
+export function pushProblemCount(pushed) {
+  const skipped = (pushed.skipped_repositories || []).filter((entry) => entry.problem);
+  return skipped.length + (pushed.failed_repositories || []).length;
 }
 
 // Format an arbitrary list of per-repo failure entries — used by
@@ -61,7 +71,15 @@ function updateSourceTitle(anyUpdated, problemCount) {
       ? `Source partially updated — ${countNoun(problemCount, 'problem')}`
       : `Source not updated — ${countNoun(problemCount, 'problem')}`;
   }
-  return anyUpdated ? 'Source updated' : 'Source not updated';
+  return anyUpdated ? 'Source updated' : 'Nothing to update';
+}
+
+// Decided here, beside the title, so the two cannot disagree: a "Source not
+// updated" box in green was the report. Green means the source really moved.
+function updateSourceKind(anyUpdated, problemCount, noteCount) {
+  if (problemCount > 0) { return anyUpdated ? 'warning' : 'error'; }
+  if (!anyUpdated) { return 'info'; }
+  return noteCount > 0 ? 'warning' : 'success';
 }
 
 // Raw git output, indented so it reads as DETAIL of the line above rather
@@ -91,6 +109,20 @@ export function formatRequestFailure(result, fallbackTitle) {
     title: fallbackTitle,
     kind: 'error',
     message: apiErrorMessage(result, 'unknown error'),
+  };
+}
+
+export function formatRenameBranchResult(result) {
+  if (!result || !result.ok) {
+    return formatRequestFailure(result, 'Branch not renamed');
+  }
+  const { branch = '', renamed = [] } = result.body || {};
+  return {
+    title: 'Branch renamed',
+    kind: 'success',
+    message: renamed.length
+      ? `Now ${branch} in ${renamed.join(', ')}.`
+      : `Now ${branch}. No repository had the old branch yet.`,
   };
 }
 
@@ -147,6 +179,10 @@ function classifyPullKind({ pulled, skipped, failed }) {
   return 'success';
 }
 
+function harmlessSkips(pushed) {
+  return (pushed?.skipped_repositories || []).filter((entry) => !entry.problem);
+}
+
 // Build the toast for ``POST /update-source``. The shape mixes a
 // nested ``pushed`` block (handled by ``formatPushSummary``) with
 // per-repo update / warning / skip / fail lists.
@@ -191,7 +227,12 @@ export function formatUpdateSourceResult(result) {
   }
 
   const progress = [];
-  const pushLine = formatPushSummary(body.pushed || {}, { pushedSummary: 'count_only' });
+  // A push that went wrong is already above, with its reason, as that
+  // repository's failure: the same git error twice buries the rest.
+  const pushLine = formatPushSummary(
+    { ...(body.pushed || {}), failed_repositories: [], skipped_repositories: harmlessSkips(body.pushed) },
+    { pushedSummary: 'count_only' },
+  );
   if (pushLine) { progress.push(pushLine); }
   if (updated.length) {
     // "repo(s)" not countNoun: the pushed line directly above it says
@@ -217,6 +258,7 @@ export function formatUpdateSourceResult(result) {
     : progress;
   return {
     title: updateSourceTitle(body.updated, problemCount),
+    kind: updateSourceKind(body.updated, problemCount, notes.length),
     message: lines.join('\n'),
   };
 }
@@ -243,12 +285,25 @@ export function formatFinishResult(result, taskId = '') {
   } else {
     lines.push(`✗ ticket did NOT move to In Review: ${body.move_error || 'unknown reason — check kato logs'}`);
   }
-  const baseTitle = body.finished ? 'Done — task finalised' : 'Done — partial completion';
+  const problems = pushProblemCount(body.pushed || {})
+    + (body.pull_request?.failed_repositories || []).length;
+  const clean = body.finished && problems === 0;
+  const baseTitle = clean ? 'Done — task finalised' : 'Done — partial completion';
   const trimmedTask = String(taskId || '').trim();
   return {
     title: trimmedTask ? `${baseTitle} (${trimmedTask})` : baseTitle,
+    kind: finishKind(body, clean),
     message: lines.join('\n'),
   };
+}
+
+// Green only when everything landed. Nothing reached the remote is red, and
+// anything in between is amber.
+function finishKind(body, clean) {
+  if (clean) { return 'success'; }
+  const anythingLanded = (body.pushed?.pushed_repositories || []).length > 0
+    || (body.pull_request?.created_pull_requests || []).length > 0;
+  return body.finished || anythingLanded ? 'warning' : 'error';
 }
 
 // Toast for the operator-triggered "Merge default branch" button.
@@ -551,18 +606,20 @@ export function formatPushResult(result, taskId = '') {
     lines.push(`✓ pushed ${pushed.length} repo(s)${onBranch}: ${pushed.join(', ')}`);
   }
   for (const entry of skipped) {
-    lines.push(`• ${entry.repository_id}: ${entry.reason || 'nothing to push'}`);
+    const marker = entry.problem ? '✗' : '•';
+    lines.push(`${marker} ${entry.repository_id}: ${entry.reason || 'nothing to push'}`);
   }
   lines.push(...formatFailedLines(failed));
 
   // Title + kind reflect what actually happened — never claim "Pushed"
   // when nothing moved (the misleading original).
+  const problems = pushProblemCount(body);
   let title;
   let kind;
   if (pushed.length) {
     title = `Pushed${suffix}`;
-    kind = failed.length ? 'warning' : 'success';
-  } else if (failed.length) {
+    kind = problems ? 'warning' : 'success';
+  } else if (problems) {
     title = `Push failed${suffix}`;
     kind = 'error';
   } else {
@@ -579,16 +636,22 @@ function formatPullRequestStepLine(pr) {
   const created = pr.created_pull_requests || [];
   const skipped = pr.skipped_existing || [];
   const failed = pr.failed_repositories || [];
+  const lines = [];
   if (created.length) {
     const urls = created.map((r) => r.url || r.repository_id).join(', ');
-    return `✓ opened ${created.length} pull request(s): ${urls}`;
-  }
-  if (skipped.length) {
-    return `• PR skipped — already exists for ${skipped.length} repo(s)`;
+    lines.push(`✓ opened ${created.length} pull request(s): ${urls}`);
+  } else {
+    const existing = skipped.filter((entry) => !entry.reason);
+    if (existing.length) {
+      lines.push(`• PR skipped — already exists for ${existing.length} repo(s)`);
+    }
+    for (const entry of skipped.filter((item) => item.reason)) {
+      lines.push(`• PR skipped for ${entry.repository_id}: ${entry.reason}`);
+    }
   }
   if (failed.length) {
     const errs = failed.map((r) => `${r.repository_id}: ${r.error}`).join('; ');
-    return `✗ PR failed: ${errs}`;
+    lines.push(`✗ PR failed: ${errs}`);
   }
-  return `• pull request: ${pr.error || 'no action'}`;
+  return lines.length ? lines.join('\n') : `• pull request: ${pr.error || 'no action'}`;
 }

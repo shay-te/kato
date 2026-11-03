@@ -27,9 +27,9 @@ Workspaces are a generic concept. They appear in any system that:
 * Needs to recover from out-of-band folder drops (an operator
   cloned a repo manually and the host should adopt it).
 
-Originally this code lived inside kato. Lifting it out lets a
-non-kato consumer drop the package in and get the same
-guarantees without inheriting kato's task model, agent
+Originally this code lived inside its first host. Lifting it out
+lets any other consumer drop the package in and get the same
+guarantees without inheriting that host's task model, agent
 backends, or webserver.
 
 ## Layout
@@ -83,8 +83,8 @@ client_path = lib.workspaces.repository_path('PROJ-1', 'client')
 # Lifecycle transitions.
 lib.workspaces.update_status('PROJ-1', 'active')
 
-# Bind an agent session to the workspace (kato writes the Claude
-# session uuid here, but the lib doesn't care which agent).
+# Bind an agent session to the workspace (a host may write a Claude
+# session uuid here; the lib doesn't care which agent).
 lib.workspaces.update_agent_session(
     'PROJ-1', agent_session_id='sess-uuid', cwd=str(client_path),
 )
@@ -168,7 +168,7 @@ while a webserver thread `list_workspaces()` and a worker
 
 ### Backwards-compatible field rename
 
-Older deployments (pre-extraction kato) persisted the agent
+Older deployments (before the extraction) persisted the agent
 session id under `claude_session_id`. This library's canonical
 name is `agent_session_id` (generic — no agent leakage in the
 public API). To avoid forcing a disk migration:
@@ -204,12 +204,12 @@ filesystem itself.
 
 | Concern                                  | Lives where           |
 |------------------------------------------|-----------------------|
-| Cloning git repositories                 | Host (e.g. kato's `RepositoryService`) |
+| Cloning git repositories                 | Host (e.g. its `RepositoryService`) |
 | Talking to ticket trackers               | Host                  |
 | Running agent subprocesses               | Host                  |
 | Cleanup policy ("when to delete a workspace") | Host                  |
 | Mapping orphan folders to live tickets   | Host                  |
-| Agent session resume mechanics           | Host (e.g. kato's `ClaudeSessionManager`) |
+| Agent session resume mechanics           | Host (e.g. its `ClaudeSessionManager`) |
 
 This library knows where workspaces live and tracks their state.
 Everything else is host policy.
@@ -231,7 +231,7 @@ tolerance, the service-level lifecycle and partial-update
 semantics, the scanner's filesystem walk, and the entry-point
 wiring.
 
-Run via the kato suite runner:
+Run via the monorepo's suite runner:
 
 ```
 python scripts/run_all_tests.py
@@ -250,5 +250,5 @@ python -m unittest discover -s workspace_core_lib/workspace_core_lib/tests
   every other core-lib in the ecosystem so a developer fluent
   in any one of them lands in this package on day one.
 
-No kato imports. No environment variable reads. No file-format
+No host imports. No environment variable reads. No file-format
 conventions outside the constructor.

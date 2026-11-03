@@ -12,7 +12,7 @@ from youtrack_core_lib.youtrack_core_lib.youtrack_core_lib import (
 )
 
 yt = YouTrackCoreLib(cfg).issue
-yt.get_assigned_tasks(assignee='kato', states=['Open'])
+yt.get_assigned_tasks(assignee='review-bot', states=['Open'])
 yt.add_comment(task_id='UNA-123', body='…')
 yt.move_task_to_state(task_id='UNA-123', state='In Review')
 ```
@@ -35,7 +35,7 @@ shipped with the package.
 
 ## Where this fits
 
-Selected by kato when `KATO_ISSUE_PLATFORM=youtrack`. Routed
+Selected by the host when its issue platform is `youtrack`. Routed
 through `task_core_lib`'s `TaskClientFactory`.
 
 ## Tests

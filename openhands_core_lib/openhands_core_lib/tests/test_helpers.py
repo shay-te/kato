@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from agent_core_lib.agent_core_lib.data.fields import ImplementationFields
 from agent_core_lib.agent_core_lib.helpers.agents_instruction_utils import (
     _repository_section,
     agents_instructions_for_path,
@@ -108,22 +109,18 @@ class OpenhandsSuccessFlagTests(unittest.TestCase):
         self.assertTrue(openhands_success_flag({}, default=True))
 
     def test_passthrough_for_bool_value(self) -> None:
-        from kato_core_lib.data_layers.data.fields import ImplementationFields
         self.assertTrue(openhands_success_flag({ImplementationFields.SUCCESS: True}))
         self.assertFalse(openhands_success_flag({ImplementationFields.SUCCESS: False}))
 
     def test_string_truthy_values(self) -> None:
-        from kato_core_lib.data_layers.data.fields import ImplementationFields
         for v in ('1', 'true', 'TRUE', 'Yes', 'on'):
             self.assertTrue(openhands_success_flag({ImplementationFields.SUCCESS: v}))
 
     def test_string_falsy_value(self) -> None:
-        from kato_core_lib.data_layers.data.fields import ImplementationFields
         self.assertFalse(openhands_success_flag({ImplementationFields.SUCCESS: 'no'}))
 
     def test_falls_back_to_bool_for_other_types(self) -> None:
         # Line 26: ``return bool(value)`` for non-bool, non-string types.
-        from kato_core_lib.data_layers.data.fields import ImplementationFields
         self.assertTrue(openhands_success_flag({ImplementationFields.SUCCESS: 1}))
         self.assertFalse(openhands_success_flag({ImplementationFields.SUCCESS: 0}))
         self.assertTrue(openhands_success_flag({ImplementationFields.SUCCESS: [1]}))

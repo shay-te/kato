@@ -15,7 +15,7 @@ needed — same approach ``vcs_provider_contracts`` takes for the
 issue / pull-request providers.
 
 Streaming-vs-RPC asymmetry: this contract describes the
-**autonomous** call surface kato uses for the scan loop. The
+**autonomous** call surface the host uses for its scan loop. The
 streaming session protocol the planning UI uses (long-lived
 process, NDJSON events, in-flight permission asks) is
 **Claude-specific** — it lives on ``claude_core_lib``'s
@@ -47,7 +47,7 @@ class AgentProvider(Protocol):
     def validate_connection(self) -> None:
         """Probe the backend reachable + credentialed at startup.
 
-        Called once at boot from kato's startup validators. Raises
+        Called once at boot from the host's startup validators. Raises
         on misconfiguration (bad token, unreachable host, missing
         binary) so the operator gets a clear refusal instead of a
         first-task failure.
@@ -85,7 +85,7 @@ class AgentProvider(Protocol):
         """Run a verification pass after ``implement_task``.
 
         Backends decide what counts as testing (unit suite, lint,
-        type check, smoke run) — this is just kato asking the
+        type check, smoke run) — this is just the host asking the
         backend to verify its own work.
         """
         ...
@@ -125,7 +125,7 @@ class AgentProvider(Protocol):
     def delete_conversation(self, conversation_id: str) -> None:
         """Tear down a single conversation/session by id.
 
-        Used when kato needs to free agent-side resources (an
+        Used when the host needs to free agent-side resources (an
         OpenHands container, a Claude session entry) tied to a
         finished task.
         """
@@ -134,7 +134,7 @@ class AgentProvider(Protocol):
     def stop_all_conversations(self) -> None:
         """Tear down every active conversation.
 
-        Called on kato shutdown so the agent backend doesn't leak
+        Called on host shutdown so the agent backend doesn't leak
         running containers / processes / sessions.
         """
         ...

@@ -34,6 +34,7 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _SUBSYSTEMS = {
     'comments': ('task_comment_service', 'TaskCommentService'),
     'comment_runs': ('task_comment_run_service', 'TaskCommentRunService'),
+    'branches': ('task_branch_rename_service', 'TaskBranchRenameService'),
     'publish': ('task_publish_service', 'TaskPublishService'),
     'repositories': ('task_repository_service', 'TaskRepositoryService'),
     'cleanup': ('task_cleanup_service', 'TaskCleanupService'),

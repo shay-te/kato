@@ -448,9 +448,9 @@ class YouTrackFetchCurrentUserLoginsTests(unittest.TestCase):
         client = _make_base_with_login('')
         with patch.object(
             client, '_get_with_retry',
-            return_value=mock_response(json_data={'login': 'Kato_Bot'}),
+            return_value=mock_response(json_data={'login': 'Review_Bot'}),
         ) as get:
-            self.assertEqual(client._fetch_current_user_logins(), ('kato_bot',))
+            self.assertEqual(client._fetch_current_user_logins(), ('review_bot',))
         get.assert_called_once_with('/api/users/me', params={'fields': 'login'})
 
     def test_echoed_me_alias_returns_empty(self):
@@ -465,7 +465,7 @@ class YouTrackFetchCurrentUserLoginsTests(unittest.TestCase):
         client = _make_base_with_login('')
         with patch.object(
             client, '_get_with_retry',
-            return_value=mock_response(json_data={'name': 'Kato'}),
+            return_value=mock_response(json_data={'name': 'Review Bot'}),
         ):
             self.assertEqual(client._fetch_current_user_logins(), ())
 
@@ -479,7 +479,7 @@ class YouTrackFetchCurrentUserLoginsTests(unittest.TestCase):
 
     def test_raise_for_status_error_returns_empty(self):
         client = _make_base_with_login('')
-        bad = mock_response(json_data={'login': 'kato_bot'})
+        bad = mock_response(json_data={'login': 'review_bot'})
         bad.raise_for_status.side_effect = RuntimeError('401')
         with patch.object(client, '_get_with_retry', return_value=bad):
             self.assertEqual(client._fetch_current_user_logins(), ())
@@ -499,20 +499,20 @@ class YouTrackBotIdentityWiringTests(unittest.TestCase):
         self.assertEqual(_make_base_with_login('me')._bot_login, '')
 
     def test_configured_login_used_without_resolving(self):
-        client = _make_base_with_login('kato_bot')
+        client = _make_base_with_login('review_bot')
         with patch.object(
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
         ):
-            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+            self.assertEqual(client._effective_bot_logins(), ('review_bot',))
 
     def test_unset_login_resolved_via_users_me_once(self):
         client = _make_base_with_login('me')
         with patch.object(
-            client, '_fetch_current_user_logins', return_value=('kato_bot',),
+            client, '_fetch_current_user_logins', return_value=('review_bot',),
         ) as fetch:
-            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
-            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+            self.assertEqual(client._effective_bot_logins(), ('review_bot',))
+            self.assertEqual(client._effective_bot_logins(), ('review_bot',))
         fetch.assert_called_once()
 
     def test_transient_resolution_failure_is_retried_not_cached_forever(self):
@@ -567,7 +567,7 @@ class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
     """``_comment_addressed_elsewhere`` with a resolved bot login."""
 
     def setUp(self):
-        self.client = _make_base_with_login('kato_bot')
+        self.client = _make_base_with_login('review_bot')
 
     def test_mention_of_other_human_is_addressed_elsewhere(self):
         self.assertTrue(
@@ -581,7 +581,7 @@ class YouTrackCommentAddressedElsewhereTests(unittest.TestCase):
 
     def test_mention_of_bot_is_not_addressed_elsewhere(self):
         self.assertFalse(
-            self.client._comment_addressed_elsewhere('@kato_bot fix it'))
+            self.client._comment_addressed_elsewhere('@review_bot fix it'))
 
     def test_no_mention_is_not_addressed_elsewhere(self):
         self.assertFalse(

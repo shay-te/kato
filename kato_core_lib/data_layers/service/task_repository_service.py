@@ -22,11 +22,13 @@ import sys
 import time
 from pathlib import Path
 
+from agent_core_lib.agent_core_lib.helpers.sandbox_scope import effective_sandbox_roots
 from kato_core_lib.helpers.deadline import run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.service_results import failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.task_lookup_utils import find_assigned_or_review_task
+from kato_core_lib.helpers.workspace_repo_utils import is_inside_folder
 
 # A repo added to the ticket mid-task shows up as a tag long before anything
 # re-reads the metadata, so push and PR both reconcile first. 20s is short
@@ -982,24 +984,20 @@ class TaskRepositoryService(object):
     ) -> bool:
         """Did a live Claude session miss the newly-synced repo paths?
 
-        The Claude CLI bakes its sandbox into the subprocess at spawn
-        time — there is NO in-flight widening API. So when an operator
-        clicks "Sync repositories" while a chat tab is already open,
-        the disk gets the new clone but the live subprocess stays
-        locked to its spawn-time ``--add-dir`` set and will refuse to
-        write into the new repo. The UI needs an explicit signal to
-        prompt the operator to restart the tab; that signal is this
-        return value.
+        A session's sandbox is fixed at spawn, but it is the task folder,
+        and every clone of a task lands in that folder. So a repo added
+        mid-chat is normally reachable at once; this asked the operator to
+        restart the tab for nothing while it compared exact paths. It is
+        True only for a clone outside what the session can reach, which
+        the UI then asks the operator to restart the tab for.
 
         Returns False when:
           * no live session for the task,
           * no session manager wired,
           * the session pre-dates ``allowed_additional_dirs`` (older
             subprocess; conservative — caller treats as "no signal"),
-          * every newly-added repo's clone path is ALREADY in the
-            session's allowed-dir set (e.g. the operator triggered
-            a no-op resync after the spawn was widened by some other
-            path).
+          * every newly-added repo's clone path is inside the session's
+            sandbox.
         Returns True only when there is a live session AND at least
         one newly-cloned repo lives outside the session's sandbox.
         """
@@ -1043,15 +1041,12 @@ class TaskRepositoryService(object):
             raw_dirs = get_dirs()
         except Exception:
             return False
-        from pathlib import Path
-        sandbox: set[str] = set()
-        cwd = str(getattr(session, 'cwd', '') or '')
-        if cwd:
-            sandbox.add(str(Path(cwd)))
-        for entry in raw_dirs or ():
-            value = str(entry or '').strip()
-            if value:
-                sandbox.add(str(Path(value)))
+        # The boundary the session itself enforces, so this can never say a
+        # repo is out of reach while the session would let the agent in.
+        sandbox = effective_sandbox_roots(
+            str(getattr(session, 'cwd', '') or ''),
+            [str(entry).strip() for entry in raw_dirs or () if str(entry or '').strip()],
+        )
         added_ids = {str(getattr(r, 'id', '') or '').lower() for r in missing_repos}
         for repo in provisioned:
             if str(getattr(repo, 'id', '') or '').lower() not in added_ids:
@@ -1059,7 +1054,7 @@ class TaskRepositoryService(object):
             local_path = str(getattr(repo, 'local_path', '') or '').strip()
             if not local_path:
                 continue
-            if str(Path(local_path)) not in sandbox:
+            if not any(is_inside_folder(local_path, root) for root in sandbox):
                 return True
         return False
 

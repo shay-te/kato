@@ -23,6 +23,12 @@ const PLAN_QUEUE_EVENTS = [
   { re: /^finished/, title: 'Plan finished', kind: NOTIFICATION_KIND.COMPLETED },
 ];
 
+// The desktop notification's headline. It says "updated" only when something was.
+function sourceUpdateTitle(updated, failed) {
+  if (failed > 0) { return updated > 0 ? 'Source update finished (with errors)' : 'Source not updated'; }
+  return updated > 0 ? 'Source updated' : 'Nothing to update';
+}
+
 const PATTERNS = [
   {
     re: /^task (\S+) tagged kato:wait-planning/,
@@ -165,7 +171,7 @@ const PATTERNS = [
       const failed = Number(m[4]);
       const failedSuffix = failed > 0 ? `, ${failed} failed` : '';
       return {
-        title: failed > 0 ? 'Source update finished (with errors)' : 'Source updated',
+        title: sourceUpdateTitle(updated, failed),
         body: `${m[1]}: ${updated} repo(s) updated${failedSuffix}`,
         taskId: m[1],
         kind: NOTIFICATION_KIND.SOURCE_UPDATE,

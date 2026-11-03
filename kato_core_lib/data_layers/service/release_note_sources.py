@@ -16,6 +16,7 @@ from pathlib import Path
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import PR_DESCRIPTION_FILENAME
 
 from kato_core_lib.data_layers.data.release_note_source import ReleaseNoteSource
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
@@ -41,6 +42,7 @@ class ReleaseNoteSources(object):
                 pr_description=self._pr_description(task_id),
                 repositories=tuple(str(r) for r in getattr(record, 'repository_ids', None) or ()),
                 started_at=float(getattr(record, 'created_at_epoch', 0.0) or 0.0),
+                branch=task_branch(task_id, getattr(record, 'tags', None)),
             )
         task = self._tracker_task(task_id)
         return ReleaseNoteSource(

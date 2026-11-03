@@ -3,7 +3,7 @@
 Wraps Yelp's ``detect-secrets`` plugin scanner. The library does the
 hard work — entropy analysis, regex matching, base64 detection — and
 exposes a stable Python API. We turn its ``PotentialSecret`` records
-into kato ``SecurityFinding``s and map plugin names to severities.
+into ``SecurityFinding``s and map plugin names to severities.
 
 Severity mapping rationale:
 - Live-cloud / private-key / well-known-token plugins → ``CRITICAL``.

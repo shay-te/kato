@@ -631,9 +631,8 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
         ))
 
     def test_new_repo_outside_sandbox_returns_true(self) -> None:
-        # The core happy-bug-path: a freshly-cloned repo at
-        # /x/workspaces/T1/new is NOT in the live session's allowed
-        # set. Operator MUST restart the tab.
+        # A clone the session really cannot reach: it is not in this task's
+        # folder. Operator MUST restart the tab.
         session = _FakeLiveSession(
             cwd='/x/workspaces/T1/client',
             dirs=('/x/workspaces/T1/backend',),
@@ -645,8 +644,35 @@ class SyncRequiresSessionRestartTests(unittest.TestCase):
             provisioned=[
                 SimpleNamespace(id='client', local_path='/x/workspaces/T1/client'),
                 SimpleNamespace(id='backend', local_path='/x/workspaces/T1/backend'),
-                SimpleNamespace(id='new', local_path='/x/workspaces/T1/new'),
+                SimpleNamespace(id='new', local_path='/x/elsewhere/new'),
             ],
+            missing_repos=[SimpleNamespace(id='new')],
+        ))
+
+    def test_new_repo_in_the_task_folder_needs_no_restart(self) -> None:
+        # The usual case, and what this used to get wrong: an exact-path
+        # comparison called this outside, so the operator was told to restart
+        # a chat that could already reach it. Confirmed with the real CLI and
+        # a real session: a folder created after the spawn was written to, and
+        # the session did not count it as outside, with or without --add-dir.
+        for dirs in (('/x/workspaces/T1',), ()):
+            with self.subTest(dirs=dirs):
+                session = _FakeLiveSession(cwd='/x/workspaces/T1/client', dirs=dirs)
+                mgr = _RecordingSessionManager({'T1': session})
+                service = self._service_with(session_manager=mgr)
+                self.assertFalse(service.repositories._sync_requires_session_restart(
+                    'T1',
+                    provisioned=[SimpleNamespace(id='new', local_path='/x/workspaces/T1/new')],
+                    missing_repos=[SimpleNamespace(id='new')],
+                ))
+
+    def test_another_task_s_folder_is_still_outside(self) -> None:
+        session = _FakeLiveSession(cwd='/x/workspaces/T1/client', dirs=('/x/workspaces/T1',))
+        mgr = _RecordingSessionManager({'T1': session})
+        service = self._service_with(session_manager=mgr)
+        self.assertTrue(service.repositories._sync_requires_session_restart(
+            'T1',
+            provisioned=[SimpleNamespace(id='new', local_path='/x/workspaces/T2/new')],
             missing_repos=[SimpleNamespace(id='new')],
         ))
 
@@ -775,7 +801,7 @@ class SyncTaskRepositoriesRestartIntegrationTests(unittest.TestCase):
                  'provision_task_workspace_clones',
                  return_value=[
                      SimpleNamespace(id='existing', local_path='/x/workspaces/T1/existing'),
-                     SimpleNamespace(id='added', local_path='/x/workspaces/T1/added'),
+                     SimpleNamespace(id='added', local_path='/x/elsewhere/added'),
                  ],
              ):
             result = service.repositories.sync_task_repositories('T1')
@@ -1109,7 +1135,7 @@ class UpdateSourceForTaskTests(unittest.TestCase):
             [entry['repository_id'] for entry in result['failed_repositories']], ['r1'],
         )
 
-    def test_skips_when_local_path_blank(self) -> None:
+    def test_fails_when_local_path_blank(self) -> None:
         repo_obj = SimpleNamespace(id='r1')
         repo = MagicMock()
         repo.build_branch_name.return_value = 'feat/x'
@@ -1123,7 +1149,8 @@ class UpdateSourceForTaskTests(unittest.TestCase):
                           return_value=([repo_obj], 'feat/x',
                                         SimpleNamespace(id='T1'))):
             result = service.publish.update_source_for_task('T1')
-        self.assertEqual(len(result['skipped_repositories']), 1)
+        self.assertEqual(result['skipped_repositories'], [])
+        self.assertEqual(len(result['failed_repositories']), 1)
 
     def test_records_update_warning(self) -> None:
         repo_obj = SimpleNamespace(id='r1')

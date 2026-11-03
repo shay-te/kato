@@ -560,6 +560,16 @@ export function addTaskRepositories(taskId, repositoryIds) {
   );
 }
 
+// Answers ``{ branch, renamed }``, or a refusal with its reason (409) once the
+// branch has reached a remote.
+export function renameTaskBranch(taskId, branch) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(
+    `/api/sessions/${encodeURIComponent(taskId)}/rename-branch`,
+    { branch },
+  );
+}
+
 export function finishTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   return requestEnvelope(

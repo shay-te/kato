@@ -17,7 +17,6 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
@@ -25,10 +24,6 @@ from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
 )
 from claude_core_lib.claude_core_lib.session.streaming import (
     StreamingClaudeSession,
-)
-from kato_core_lib import main as main_module
-from kato_core_lib.data_layers.service.planning_session_runner import (
-    StreamingSessionDefaults,
 )
 from kato_core_lib.helpers.kato_settings_schema_utils import (
     schema_for_api,
@@ -175,21 +170,6 @@ class SystemPromptTests(_SettingsFile):
         self.assertLess(prompt.index(str(lessons)), prompt.index('# Plans end with'))
         self.assertLess(prompt.index('# Plans end with'), prompt.index(_HEADING))
         self.assertTrue(prompt.endswith(_RULE), prompt[-80:])
-
-
-class BootResumeTests(_SettingsFile):
-    """A chat resumed at boot is spawned from a hand-copied field list, not
-    through the runner — it must carry the instructions too."""
-
-    def test_a_resumed_session_is_given_the_standing_instructions(self) -> None:
-        self._save(**{KEY: _RULE})
-        result = main_module._planning_spawn_defaults(
-            SimpleNamespace(_defaults=StreamingSessionDefaults()),
-        )
-        self.assertTrue(
-            result['extra_system_prompt'].startswith(PLAN_PROGRESS_GUIDANCE.rstrip()),
-        )
-        self.assertTrue(result['extra_system_prompt'].endswith(_RULE))
 
 
 if __name__ == '__main__':

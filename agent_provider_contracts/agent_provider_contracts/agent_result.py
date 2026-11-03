@@ -9,7 +9,7 @@ shape loosely and individual impls remain free to add their own
 diagnostic keys.
 
 A future tightening could replace this with a real frozen
-dataclass once the kato call sites have been audited for which
+dataclass once the host's call sites have been audited for which
 keys they actually read.
 """
 

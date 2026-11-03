@@ -126,6 +126,10 @@ class RepositoryPublicationService(Service):
             state=state,
         )
 
+    def prepare_api_if_possible(self, repository) -> None:
+        """Set ``repository`` up for pull requests, or say once that it cannot be."""
+        self._ensure_pr_api_or_log_once(repository, 'setup')
+
     def _ensure_pr_api_or_log_once(self, repository, operation: str) -> bool:
         """Prepare the PR API for ``repository`` or log+remember the skip.
 

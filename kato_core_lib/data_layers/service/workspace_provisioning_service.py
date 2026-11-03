@@ -30,6 +30,7 @@ from workspace_core_lib.workspace_core_lib import (
     WorkspaceService,
 )
 
+from kato_core_lib.data_layers.service.task_branch_choice import record_branch_from_ticket
 from kato_core_lib.helpers.preflight_log_utils import (
     clone_failed_message,
     cloned_message,
@@ -227,6 +228,8 @@ def provision_task_workspace_clones(
         raise
 
     if to_clone:
+        # Only here: a pass that clones nothing has nothing new to name.
+        record_branch_from_ticket(workspace_service, repository_service, task, provisioned)
         workspace_service.append_preflight_log(task_id, ready_message(len(to_clone)))
     workspace_service.update_status(task_id, WORKSPACE_STATUS_ACTIVE)
     return provisioned

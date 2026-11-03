@@ -458,6 +458,7 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
             local_path=f'/fake/source/{repo_id}',
         )
         rs.build_branch_name.side_effect = lambda task, repo: task.id
+        rs.update_source_to_task_branch.return_value = {'updated': True, 'blocked': False}
 
     def test_returns_error_when_task_id_is_blank(self) -> None:
         result = self.agent.update_source_for_task('')
@@ -546,11 +547,11 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
         # operator gets a partial-success toast, not a hard failure.
         self.assertTrue(result['updated'])
 
-    def test_skips_repo_when_inventory_entry_has_no_local_path(self) -> None:
+    def test_fails_repo_when_inventory_entry_has_no_local_path(self) -> None:
         # Inventory entry exists but ``local_path`` is empty (operator
         # configured kato without REPOSITORY_ROOT_PATH, or the entry
-        # was added manually without a path). Skip with a clear
-        # reason rather than crashing on the empty path.
+        # was added manually without a path). The source cannot be updated,
+        # so that is a failure with a clear reason, not a quiet skip.
         rs = self._repository_service
 
         def _lookup(repo_id):
@@ -563,9 +564,9 @@ class UpdateSourceForTaskOrchestrationTests(unittest.TestCase):
             result = self.agent.update_source_for_task('UNA-1234')
 
         self.assertEqual(result['updated_repositories'], ['client'])
-        self.assertEqual(len(result['skipped_repositories']), 1)
-        self.assertEqual(result['skipped_repositories'][0]['repository_id'], 'backend')
-        self.assertIn('local_path', result['skipped_repositories'][0]['reason'])
+        self.assertEqual(result['skipped_repositories'], [])
+        self.assertEqual(result['failed_repositories'][0]['repository_id'], 'backend')
+        self.assertIn('local_path', result['failed_repositories'][0]['error'])
 
     def test_a_source_kato_cannot_find_is_a_failure_not_a_skip(self) -> None:
         # There is work to bring over and nowhere to put it. As a skip this read

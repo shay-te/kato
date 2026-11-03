@@ -775,3 +775,191 @@ test('formatCreatePullRequestResult: failures are red and lead', () => {
   assert.equal(out.kind, 'error');
   assert.match(out.message.split('\n')[0], /^✗ bad: 401/);
 });
+
+
+// ── Green means the work really landed ───────
+// "don't show me a updated source green box for this, it is very misleading"
+// — a "Source not updated" toast had come out green. The colour is decided
+// beside the title now.
+
+const sourceResult = (body) => formatUpdateSourceResult({ ok: true, body: { pushed: {}, ...body } });
+
+test('Update source: green only when a source really moved', () => {
+  const out = sourceResult({ updated: true, updated_repositories: ['api'] });
+  assert.equal(out.title, 'Source updated');
+  assert.equal(out.kind, 'success');
+});
+
+test('Update source: a repository that failed makes it red, and says why', () => {
+  const out = sourceResult({
+    updated: false,
+    updated_repositories: [],
+    failed_repositories: [
+      { repository_id: 'api', error: 'not updated, because its work did not reach the remote: 403' },
+    ],
+  });
+  assert.equal(out.kind, 'error');
+  assert.match(out.title, /^Source not updated/);
+  assert.match(out.message, /did not reach the remote: 403/);
+});
+
+test('Update source: git refusing the switch is red, not updated', () => {
+  const out = sourceResult({
+    updated: false,
+    updated_repositories: [],
+    warnings: [{ repository_id: 'api', warning: 'local changes would be overwritten', blocked: true }],
+  });
+  assert.equal(out.kind, 'error');
+  assert.match(out.title, /^Source not updated/);
+  assert.doesNotMatch(out.message, /source updated for/);
+});
+
+test('Update source: some updated and some not is amber, problems first', () => {
+  const out = sourceResult({
+    updated: true,
+    updated_repositories: ['web'],
+    failed_repositories: [{ repository_id: 'api', error: 'boom' }],
+  });
+  assert.equal(out.kind, 'warning');
+  assert.match(out.title, /^Source partially updated/);
+  assert.ok(out.message.indexOf('api') < out.message.indexOf('source updated for'));
+});
+
+test('Update source: nothing to do is neither green nor a failure', () => {
+  const out = sourceResult({
+    updated: false,
+    updated_repositories: [],
+    skipped_repositories: [{ repository_id: 'api', reason: 'no changes in workspace clone' }],
+  });
+  assert.equal(out.title, 'Nothing to update');
+  assert.equal(out.kind, 'info');
+});
+
+test('Update source: a note on a real update is amber', () => {
+  const out = sourceResult({
+    updated: true,
+    updated_repositories: ['api'],
+    warnings: [{ warning: 'changes carried across untouched', blocked: false }],
+  });
+  assert.equal(out.kind, 'warning');
+});
+
+test('Update source: a request that failed is red', () => {
+  assert.equal(formatUpdateSourceResult({ ok: false, body: { error: 'nope' } }).kind, 'error');
+});
+
+test('formatPushSummary: one repository pushing does not hide the one that failed', () => {
+  const out = formatPushSummary({
+    pushed_repositories: ['web'],
+    failed_repositories: [{ repository_id: 'api', error: '403' }],
+  });
+  assert.match(out, /✓ pushed 1 repo\(s\)/);
+  assert.match(out, /✗ push failed: api: 403/);
+});
+
+test('formatPushSummary: a skip that is a problem always shows, a harmless one only alone', () => {
+  const out = formatPushSummary({
+    pushed_repositories: ['web'],
+    skipped_repositories: [
+      { repository_id: 'api', reason: 'clone is on master', problem: true },
+      { repository_id: 'docs', reason: 'nothing to push' },
+    ],
+  });
+  assert.match(out, /✗ could not push api: clone is on master/);
+  assert.doesNotMatch(out, /docs/);
+});
+
+test('formatPushResult: a skip that is a problem is a failed push, not "Nothing to push"', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: { skipped_repositories: [{ repository_id: 'api', reason: 'clone is on master', problem: true }] },
+  }, 'T-1');
+  assert.equal(out.title, 'Push failed (T-1)');
+  assert.equal(out.kind, 'error');
+  assert.match(out.message, /✗ api: clone is on master/);
+});
+
+test('formatPushResult: pushed some with a problem elsewhere is amber', () => {
+  const out = formatPushResult({
+    ok: true,
+    body: {
+      pushed_repositories: ['web'],
+      skipped_repositories: [{ repository_id: 'api', reason: 'clone is on master', problem: true }],
+    },
+  });
+  assert.equal(out.kind, 'warning');
+});
+
+const finishResult = (body) => formatFinishResult({ ok: true, body: { pull_request: {}, ...body } });
+
+test('Done: green only when everything landed', () => {
+  const out = finishResult({
+    finished: true, moved_to_review: true, pushed: { pushed_repositories: ['api'] },
+    pull_request: { created_pull_requests: [{ url: 'u' }] },
+  });
+  assert.equal(out.title, 'Done — task finalised');
+  assert.equal(out.kind, 'success');
+});
+
+test('Done: a repository left behind is amber even though the ticket moved', () => {
+  const out = finishResult({
+    finished: true, moved_to_review: true,
+    pushed: { pushed_repositories: ['web'], failed_repositories: [{ repository_id: 'api', error: '403' }] },
+  });
+  assert.equal(out.title, 'Done — partial completion');
+  assert.equal(out.kind, 'warning');
+  assert.match(out.message, /✗ push failed: api: 403/);
+});
+
+test('Done: a pull request that failed beside one that opened is shown', () => {
+  const out = finishResult({
+    finished: true, moved_to_review: true, pushed: {},
+    pull_request: {
+      created_pull_requests: [{ url: 'u' }],
+      failed_repositories: [{ repository_id: 'api', error: 'no token' }],
+    },
+  });
+  assert.equal(out.kind, 'warning');
+  assert.match(out.message, /✗ PR failed: api: no token/);
+});
+
+test('Done: nothing reaching the remote is red', () => {
+  const out = finishResult({
+    finished: false, moved_to_review: false, move_error: 'not moving',
+    pushed: { failed_repositories: [{ repository_id: 'api', error: '403' }] },
+  });
+  assert.equal(out.kind, 'error');
+});
+
+test('Done: only the ticket move failing stays amber: the work landed', () => {
+  const out = finishResult({
+    finished: false, moved_to_review: false, move_error: 'tracker down',
+    pushed: { pushed_repositories: ['api'] },
+  });
+  assert.equal(out.kind, 'warning');
+});
+
+test('Done: a request that failed is red', () => {
+  assert.equal(formatFinishResult({ ok: false, body: {} }).kind, 'error');
+});
+
+test('Update source: a failed push is told once, as that repository\'s failure', () => {
+  const out = sourceResult({
+    updated: false,
+    updated_repositories: [],
+    pushed: { failed_repositories: [{ repository_id: 'api', error: 'remote: 403' }] },
+    failed_repositories: [
+      { repository_id: 'api', error: 'not updated, because its work did not reach the remote: remote: 403' },
+    ],
+  });
+  assert.equal(out.message.split('remote: 403').length - 1, 1);
+});
+
+test('Update source: a harmless push skip is still mentioned', () => {
+  const out = sourceResult({
+    updated: true,
+    updated_repositories: ['api'],
+    pushed: { skipped_repositories: [{ repository_id: 'api', reason: 'nothing to push — origin already has every commit' }] },
+  });
+  assert.match(out.message, /• push skipped api: nothing to push/);
+});

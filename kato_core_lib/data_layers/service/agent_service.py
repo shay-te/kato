@@ -424,6 +424,15 @@ class AgentService(MissionStepLoggerMixin, Service):
             logger=later(self, 'logger'),
         )
 
+        from kato_core_lib.data_layers.service.task_branch_rename_service import (
+            TaskBranchRenameService,
+        )
+        self._task_branch_rename_service = TaskBranchRenameService(
+            repository_service=later(self, '_repository_service'),
+            workspace_manager=later(self, '_workspace_manager'),
+            session_manager=later(self, '_session_manager'),
+        )
+
         # Publishing (push / pull / merge / PR / update-source) and the
         # push-approval hold: the second subsystem to get its own object.
         from kato_core_lib.data_layers.service.task_publish_service import (
@@ -549,6 +558,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         TaskRepositoryService.
         """
         return self._task_repository_service
+
+    @property
+    def branches(self):
+        """Renaming a task's branch — ``agent_service.branches.rename_task_branch(…)``."""
+        return self._task_branch_rename_service
 
     @property
     def publish(self):

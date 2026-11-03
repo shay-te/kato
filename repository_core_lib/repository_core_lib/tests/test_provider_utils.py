@@ -1,10 +1,10 @@
 """Coverage for ``repository_core_lib/helpers/provider_utils.py``.
 
-These four helpers replaced the kato-side ``_fallback_web_base_url``,
+These four helpers replaced the host-side ``_fallback_web_base_url``,
 ``_provider_from_url_string``, ``_default_provider_base_url``, and
 ``_missing_pull_request_token_message`` static methods on
 ``RepositoryInventoryService``. The originals had no direct tests
-because they were exercised only through kato integration paths; the
+because they were exercised only through host integration paths; the
 extracted helpers get their own unit tests here per CLAUDE.md core-lib
 quality rule #1 (100% coverage).
 """

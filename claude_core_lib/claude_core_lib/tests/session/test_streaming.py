@@ -1541,13 +1541,11 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         self.assertIn('Bash(mkfs:*)', disallowed)
         self.assertIn('Bash(nsenter:*)', disallowed)
         # And forces approval for out-of-workspace writes: an unscoped ask on
-        # every write tool (acceptEdits would otherwise auto-accept them),
-        # with the workspace allow-listed so in-folder edits still flow.
+        # every write tool (acceptEdits would otherwise auto-accept them).
         self.assertIn('--settings', cmd)
-        # A PATH now, not the JSON inline: the settings hold a rule per
-        # directory (~8KB on a 25-repo workspace) and inline that alone blew
-        # the Windows command-line limit — "[WinError 206] The filename or
-        # extension is too long". The content assertions move inside the file.
+        # A PATH, not the JSON inline: inline it counted towards the Windows
+        # command-line limit — "[WinError 206] The filename or extension is
+        # too long". The content assertions move inside the file.
         settings_path = cmd[cmd.index('--settings') + 1]
         self.assertTrue(os.path.isfile(settings_path), settings_path)
         # Parsed, not string-matched: the file is pretty-printed where the
@@ -1558,7 +1556,6 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             settings['permissions']['ask'],
             ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'],
         )
-        self.assertTrue(settings['permissions']['allow'])
 
     def test_pending_request_input_reads_server_side(self) -> None:
         session = StreamingClaudeSession(task_id='PROJ-1', cwd=tempfile.gettempdir())

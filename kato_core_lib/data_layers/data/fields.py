@@ -107,8 +107,9 @@ class TaskTags(object):
     MODEL_PREFIX = f'{KATO_TAG_NAMESPACE}:{MODEL_SEGMENT}:'
 
     # Branch name: ``kato:branch:<branch>`` in kato's OWN tags on a task (the
-    # workspace metadata) is the branch the operator named in "New task". No
-    # such tag = the branch is the task id. Read via ``kato_tag_utils.task_branch``.
+    # workspace metadata) is the branch it works on: named in "New task", taken
+    # from a ticket's tag (``task_branch_choice``), or set by a rename. No such
+    # tag = the branch is the task id. Read via ``kato_tag_utils.task_branch``.
     BRANCH_SEGMENT = 'branch'
     BRANCH_PREFIX = f'{KATO_TAG_NAMESPACE}:{BRANCH_SEGMENT}:'
 

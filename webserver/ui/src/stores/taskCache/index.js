@@ -130,6 +130,7 @@ export function useTaskPublishState(taskId) {
   return publishChild.use(taskId, (sl) => ({
     hasWorkspace: sl.data.hasWorkspace,
     hasChangesToPush: sl.data.hasChangesToPush,
+    branch: sl.data.branch,
     ready: sl.status === 'ready',
     error: sl.status === 'error',
   }));

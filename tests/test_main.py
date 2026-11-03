@@ -4,20 +4,16 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import ANY, Mock, call, patch
+from unittest.mock import ANY, Mock, patch
 
 
 from kato_core_lib.main import (
-    _RESUME_CONTINUE_PROMPT,
-    _RESUME_WAIT_PROMPT,
     _cleanup_done_tasks_at_boot,
     _requeue_stuck_comments,
     _start_pending_comment_work_after_ui,
     _start_pending_comment_work,
     _start_pending_comment_work_when_ui_ready,
     _reset_stuck_workspace_statuses,
-    _resume_prompt_for_workspace,
-    _resume_streaming_sessions,
     _run_task_scan_loop,
     main,
 )
@@ -147,92 +143,7 @@ class MainTests(unittest.TestCase):
             60.0,
         )
 
-    def test_resume_prompt_continues_interrupted_work_by_default(self) -> None:
-        record = types.SimpleNamespace()
-
-        self.assertEqual(_resume_prompt_for_workspace(record), _RESUME_CONTINUE_PROMPT)
-
-    def test_resume_prompt_waits_for_operator_for_planning_workspace(self) -> None:
-        record = types.SimpleNamespace(resume_on_startup=False)
-
-        self.assertEqual(_resume_prompt_for_workspace(record), _RESUME_WAIT_PROMPT)
-
-    def test_resume_prompt_includes_forbidden_repository_guardrails(self) -> None:
-        record = types.SimpleNamespace()
-
-        with patch.dict(
-            'os.environ',
-            {'AGENT_IGNORED_REPOSITORY_FOLDERS': 'secret-client'},
-        ):
-            prompt = _resume_prompt_for_workspace(record)
-
-        self.assertIn('Forbidden repository folders', prompt)
-        self.assertIn('secret-client', prompt)
-        self.assertTrue(prompt.endswith(_RESUME_CONTINUE_PROMPT))
-
-    def test_resume_streaming_sessions_starts_active_workspace_with_continue_prompt(self) -> None:
-        workspace_root = types.SimpleNamespace(is_dir=Mock(return_value=True))
-        workspace_manager = types.SimpleNamespace(
-            list_workspaces=Mock(
-                return_value=[
-                    types.SimpleNamespace(
-                        task_id='PROJ-1',
-                        task_summary='continue me',
-                        status='active',
-                        cwd='',
-                        repository_ids=['client'],
-                    )
-                ]
-            ),
-            repository_path=Mock(return_value=workspace_root),
-        )
-        session_manager = types.SimpleNamespace(start_session=Mock())
-        app = types.SimpleNamespace(
-            logger=Mock(),
-            session_manager=session_manager,
-            workspace_manager=workspace_manager,
-            planning_session_runner=None,
-        )
-
-        _resume_streaming_sessions(app)
-
-        session_manager.start_session.assert_called_once()
-        call_kwargs = session_manager.start_session.call_args.kwargs
-        self.assertEqual(call_kwargs['task_id'], 'PROJ-1')
-        self.assertEqual(call_kwargs['initial_prompt'], _RESUME_CONTINUE_PROMPT)
-        self.assertEqual(call_kwargs['cwd'], str(workspace_root))
-
-    def test_resume_streaming_sessions_uses_wait_prompt_for_operator_driven_workspace(self) -> None:
-        workspace_manager = types.SimpleNamespace(
-            list_workspaces=Mock(
-                return_value=[
-                    types.SimpleNamespace(
-                        task_id='PROJ-2',
-                        task_summary='planning chat',
-                        status='active',
-                        cwd='/repo',
-                        repository_ids=['client'],
-                        resume_on_startup=False,
-                    )
-                ]
-            ),
-        )
-        session_manager = types.SimpleNamespace(start_session=Mock())
-        app = types.SimpleNamespace(
-            logger=Mock(),
-            session_manager=session_manager,
-            workspace_manager=workspace_manager,
-            planning_session_runner=None,
-        )
-
-        _resume_streaming_sessions(app)
-
-        session_manager.start_session.assert_called_once()
-        call_kwargs = session_manager.start_session.call_args.kwargs
-        self.assertEqual(call_kwargs['task_id'], 'PROJ-2')
-        self.assertEqual(call_kwargs['initial_prompt'], _RESUME_WAIT_PROMPT)
-
-    def test_resume_streaming_sessions_recovers_latest_agent_session_id_after_restart(self) -> None:
+    def test_a_restart_reattaches_the_chat_to_its_persisted_session_id(self) -> None:
         """End-to-end: a kato restart re-attaches the existing chat to its
         most recently persisted Claude session id, not a fresh session.
 
@@ -240,8 +151,8 @@ class MainTests(unittest.TestCase):
         temp state dir. Starts a session for PROJ-1 — this writes
         ``agent_session_id`` to ``<state_dir>/PROJ-1.json``. Then
         simulates "kato restart" by building a brand-new manager pointed
-        at the same dir and feeding it through ``_resume_streaming_sessions``.
-        Asserts that the resumed session inherits the persisted session id,
+        at the same dir and starting the chat again, as the operator's next
+        message does. Asserts that the resumed session inherits the persisted session id,
         which is what makes the chat resume from where it left off instead
         of starting a fresh conversation.
         """
@@ -277,30 +188,7 @@ class MainTests(unittest.TestCase):
                 state_dir=state_dir, session_factory=second_factory,
             )
 
-            workspace_root = types.SimpleNamespace(is_dir=Mock(return_value=True))
-            workspace_manager = types.SimpleNamespace(
-                list_workspaces=Mock(
-                    return_value=[
-                        types.SimpleNamespace(
-                            task_id='PROJ-1',
-                            task_summary='resume me',
-                            status='active',
-                            cwd='',
-                            repository_ids=['client'],
-                        )
-                    ]
-                ),
-                repository_path=Mock(return_value=workspace_root),
-                update_agent_session=Mock(),
-            )
-            app = types.SimpleNamespace(
-                logger=Mock(),
-                session_manager=rebooted_manager,
-                workspace_manager=workspace_manager,
-                planning_session_runner=None,
-            )
-
-            _resume_streaming_sessions(app)
+            rebooted_manager.start_session(task_id='PROJ-1', task_summary='resume me')
 
             # Exactly one new session spawned, and it inherits the
             # persisted agent_session_id as its resume target — proving
@@ -308,7 +196,7 @@ class MainTests(unittest.TestCase):
             self.assertEqual(len(second_fakes), 1)
             self.assertEqual(second_fakes[0].resume_session_id, persisted_session_id)
 
-    def test_resume_streaming_sessions_keeps_original_id_when_re_adopt_is_attempted(self) -> None:
+    def test_a_restart_keeps_the_original_id_when_re_adopt_is_attempted(self) -> None:
         """Restart resume must use the first pinned session id."""
         from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
         from claude_core_lib.claude_core_lib.tests.session.test_manager import _FakeStreamingSession
@@ -337,40 +225,19 @@ class MainTests(unittest.TestCase):
             latest_session_id = mgr_2.get_record('PROJ-1').agent_session_id
             self.assertEqual(latest_session_id, persisted_session_id)
 
-            # Manager 3 (simulated restart 2): _resume_streaming_sessions
-            # MUST pick up the original pinned id, not the rejected id.
+            # Manager 3 (simulated restart 2) MUST pick up the original
+            # pinned id, not the rejected id.
             fakes_3: list = []
             mgr_3 = ClaudeSessionManager(
                 state_dir=state_dir,
                 session_factory=lambda **kw: fakes_3.append(_FakeStreamingSession(**kw)) or fakes_3[-1],
             )
-            workspace_manager = types.SimpleNamespace(
-                list_workspaces=Mock(
-                    return_value=[
-                        types.SimpleNamespace(
-                            task_id='PROJ-1',
-                            task_summary='first run',
-                            status='active',
-                            cwd='/repo',
-                            repository_ids=['client'],
-                        )
-                    ]
-                ),
-                update_agent_session=Mock(),
-            )
-            app = types.SimpleNamespace(
-                logger=Mock(),
-                session_manager=mgr_3,
-                workspace_manager=workspace_manager,
-                planning_session_runner=None,
-            )
-
-            _resume_streaming_sessions(app)
+            mgr_3.start_session(task_id='PROJ-1', task_summary='first run', cwd='/repo')
 
             self.assertEqual(len(fakes_3), 1)
             self.assertEqual(fakes_3[0].resume_session_id, persisted_session_id)
 
-    def test_resume_streaming_sessions_seeds_from_workspace_metadata_before_spawn(self) -> None:
+    def test_a_restart_seeds_from_workspace_metadata_before_spawn(self) -> None:
         """Empty manager state still resumes the id stored on workspace metadata."""
         from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
         from claude_core_lib.claude_core_lib.tests.session.test_manager import _FakeStreamingSession
@@ -395,18 +262,12 @@ class MainTests(unittest.TestCase):
                 repository_ids=['client'],
                 agent_session_id='workspace-session-id',
             )
-            workspace_manager = types.SimpleNamespace(
+            manager.attach_workspace_manager(types.SimpleNamespace(
                 list_workspaces=Mock(return_value=[workspace_record]),
                 update_agent_session=Mock(),
-            )
-            app = types.SimpleNamespace(
-                logger=Mock(),
-                session_manager=manager,
-                workspace_manager=workspace_manager,
-                planning_session_runner=None,
-            )
+            ))
 
-            _resume_streaming_sessions(app)
+            manager.start_session(task_id='PROJ-1', task_summary='from workspace', cwd='/repo')
 
             self.assertEqual(len(fakes), 1)
             self.assertEqual(fakes[0].resume_session_id, 'workspace-session-id')

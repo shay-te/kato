@@ -955,7 +955,9 @@ class KatoCoreLib(CoreLib):
             ),
             writer=ReleaseNoteWriter(one_shot=make_one_shot(binary=binary, model=model, cwd=cwd)),
             links=ReleaseNoteLinks(
-                pull_requests=KatoPullRequestProbe(repository_service=repository_service).pull_requests,
+                pull_requests=KatoPullRequestProbe(
+                    repository_service=repository_service,
+                ).pull_requests_of_branch,
             ),
             after_write=google_sync.request,
         )

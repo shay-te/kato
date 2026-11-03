@@ -5,7 +5,7 @@ Bitbucket Issues) pulls comments off the issue and embeds them in the
 task description that ultimately reaches the agent. Without filtering,
 a comment like ``@jane.doe please look at this`` becomes work the
 agent attempts — even though it was clearly directed at a human, not
-the kato bot user. This module is the one helper every platform's
+the host's bot user. This module is the one helper every platform's
 client calls to decide whether a given comment is "for someone else".
 
 Single rule:

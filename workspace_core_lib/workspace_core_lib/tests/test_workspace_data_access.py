@@ -77,13 +77,13 @@ class WorkspaceDataAccessTests(unittest.TestCase):
         self.assertEqual(path.parent, self.root / 'PROJ-1')
 
     def test_custom_metadata_filename_is_honored(self) -> None:
-        # Backwards-compat use case: kato pins ``.kato-meta.json``
+        # Backwards-compat use case: a host pins ``.host-meta.json``
         # at construction time so existing on-disk records load.
         da = WorkspaceDataAccess(
-            root=self.root, metadata_filename='.kato-meta.json',
+            root=self.root, metadata_filename='.host-meta.json',
         )
         path = da.metadata_path('PROJ-1')
-        self.assertEqual(path.name, '.kato-meta.json')
+        self.assertEqual(path.name, '.host-meta.json')
 
     def test_save_then_get_round_trips_record(self) -> None:
         record = WorkspaceRecord(

@@ -1,6 +1,6 @@
 """DTO for a review comment handed to an agent for fixing.
 
-Mirrors the fields kato's ``ReviewComment`` carries that both
+Mirrors the fields the host's ``ReviewComment`` carries that both
 backends actually consume — id (``comment_id``), pull-request id,
 author, body, file path, line number, line type. Kept as a plain
 frozen dataclass so the contracts package stays standalone.

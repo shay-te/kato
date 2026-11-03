@@ -822,7 +822,7 @@ class YouTrackClient(YouTrackClientBase):
             extract_body=lambda c: text_from_mapping(c, YouTrackCommentFields.TEXT),
             extract_author=self._comment_author_name,
             extract_author_id=self._comment_author_login,
-            # Drop comments that @-mention humans other than the kato
+            # Drop comments that @-mention humans other than the host's
             # bot — those are operator-to-employee discussions, not
             # requests the agent should act on. Comments with no
             # @-mention are kept (general project context). See

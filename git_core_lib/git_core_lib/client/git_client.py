@@ -236,6 +236,35 @@ class GitClientMixin:
         result = self._run_git(local_path, args, failure_message, repository)
         return result.stdout.strip()
 
+    def remote_has_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+    ) -> bool:
+        """Is ``branch_name`` on the remote right now? Raises if it cannot tell."""
+        return bool(self._git_stdout(
+            local_path,
+            ['ls-remote', '--heads', 'origin', f'refs/heads/{branch_name}'],
+            f'failed to ask origin about {branch_name}',
+            repository,
+        ))
+
+    def has_local_branch(self, local_path: str, branch_name: str) -> bool:
+        return self._git_reference_exists(local_path, f'refs/heads/{branch_name}')
+
+    def has_remote_tracking_branch(self, local_path: str, branch_name: str) -> bool:
+        """Whether this clone has ever seen ``branch_name`` on the remote."""
+        return self._git_reference_exists(local_path, f'refs/remotes/origin/{branch_name}')
+
+    def rename_local_branch(self, local_path: str, old_name: str, new_name: str) -> None:
+        """``git branch -m``: refuses an existing name, and moves nothing else."""
+        self._run_git(
+            local_path,
+            ['branch', '-m', old_name, new_name],
+            f'failed to rename branch {old_name} to {new_name}',
+        )
+
     def history_mentions(
         self,
         local_path: str,

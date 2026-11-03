@@ -161,7 +161,7 @@ Kato runs an autonomous agent on your code, your repos, and your credentials —
 
 **Always on**
 
-- ✋ **Per-tool Approve / Deny** — the agent's tool calls go through a permission modal in the Planning UI by default; high-risk ones can never be "allowed always".
+- ✋ **Per-tool Approve / Deny** — the agent's tool calls go through a permission modal in the Planning UI by default; high-risk ones can never be "allowed always". On "Edit automatically", a plain edit inside the task folder doesn't ask; pick "Manual" to approve each one.
 - 🔒 **Hard git denylist** — the agent can never `push`, `commit`, `reset`, or otherwise mutate git. Kato owns the branch and the PR; nothing leaves your machine until you click **Done – Push**.
 
 **Optional hardening (one env var)**

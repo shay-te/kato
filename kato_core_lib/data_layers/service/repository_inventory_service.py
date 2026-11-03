@@ -4,6 +4,7 @@ import shutil
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 from core_lib.data_layers.service.service import Service
 from omegaconf import OmegaConf
 
@@ -16,9 +17,11 @@ from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,
+    remote_web_base_url,
     repository_id_from_name,
     review_url_for_remote,
 )
+from git_core_lib.git_core_lib.helpers.ssh_alias_utils import remote_with_real_host
 from repository_core_lib.repository_core_lib.helpers.provider_utils import (
     default_provider_base_url,
     fallback_web_base_url,
@@ -576,7 +579,9 @@ class RepositoryInventoryService(Service):
 
     def _recorded_task_tags(self, task_id: str) -> list[str]:
         """The tags kato recorded on the task itself."""
-        if self._kato_task_tags is None:
+        # No id = a task still being created ("New task" resolves its
+        # repositories first): it has no workspace to ask yet.
+        if self._kato_task_tags is None or not task_id:
             return []
         try:
             return list(self._kato_task_tags(task_id) or [])
@@ -653,10 +658,13 @@ class RepositoryInventoryService(Service):
         return normalized.startswith('ssh://') or bool(re.match(r'^[^@]+@[^:]+:.+', normalized))
 
     def _prepare_repository_access(self, repository) -> None:
+        self._prepare_repository_git_access(repository)
+        self._prepare_pull_request_api(repository)
+
+    def _prepare_repository_git_access(self, repository) -> None:
         self._validate_local_path(repository)
         self._validate_git_remote_auth(repository)
         self._prepare_repository_git_auth(repository)
-        self._prepare_pull_request_api(repository)
 
     def _prepare_repository_git_auth(self, repository) -> None:
         if normalized_lower_text(text_from_attr(repository, 'provider')) != 'bitbucket':
@@ -721,11 +729,48 @@ class RepositoryInventoryService(Service):
         provider = provider_from_url_string(provider_base_url)
         if provider:
             return provider
-        provider = provider_from_url_string(text_from_attr(repository, 'remote_url'))
+        remote_url = self._remote_for_addresses(repository)
+        provider = provider_from_url_string(remote_url) or self._provider_at_host_of(remote_url)
         if provider:
             return provider
-        raise ValueError(
-            f'unable to determine pull request provider for repository {repository.id}'
+        raise ValueError(self._unknown_provider_message(repository.id, remote_url))
+
+    @staticmethod
+    def _remote_for_addresses(repository) -> str:
+        """The remote to work a web or API address out from.
+
+        Not ``remote_url`` itself for an SSH alias, whose name is not a host.
+        Never written back: a push compares ``remote_url`` with the clone's.
+        """
+        return remote_with_real_host(text_from_attr(repository, 'remote_url'))
+
+    def _provider_at_host_of(self, remote_url: str) -> str:
+        """The provider whose API the operator's settings put on this host.
+
+        A self-hosted GitHub or GitLab has no telling name, but a base URL on
+        the same host already says what it is.
+        """
+        host = urlparse(remote_web_base_url(remote_url)).hostname
+        for provider, values in self._provider_api_defaults.items():
+            base_url = values.get(RepositoryFields.PROVIDER_BASE_URL, '')
+            if host and urlparse(base_url).hostname == host:
+                return provider
+        return ''
+
+    @staticmethod
+    def _unknown_provider_message(repository_id: str, remote_url: str) -> str:
+        """Says which of the two causes it is: they read alike in a log, and
+        need different fixes."""
+        opening = f'unable to determine pull request provider for repository {repository_id}'
+        if not remote_url:
+            return (
+                f'{opening}: it is not in the repository list, so its git host is '
+                'unknown. Check that REPOSITORY_ROOT_PATH still finds it.'
+            )
+        host = urlparse(remote_web_base_url(remote_url)).hostname or 'its remote'
+        return (
+            f'{opening}: {host} is not a git host kato recognises. If it runs GitHub '
+            'or GitLab, set GITHUB_API_BASE_URL or GITLAB_API_BASE_URL to its API address.'
         )
 
     def _resolved_pull_request_api_values(
@@ -744,7 +789,7 @@ class RepositoryInventoryService(Service):
             return provider_base_url, token
         return default_provider_base_url(
             provider,
-            text_from_attr(repository, 'remote_url'),
+            self._remote_for_addresses(repository),
         ), token
 
     def review_comment_bot_login(self, repository_id: str) -> str:
@@ -873,7 +918,7 @@ class RepositoryInventoryService(Service):
         return PullRequestDataAccess(config, client)
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
-        remote_url = text_from_attr(repository, 'remote_url')
+        remote_url = self._remote_for_addresses(repository)
         provider = text_from_attr(repository, 'provider')
         owner = text_from_attr(repository, 'owner')
         repo_slug = text_from_attr(repository, 'repo_slug')

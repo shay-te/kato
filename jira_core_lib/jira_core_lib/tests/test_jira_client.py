@@ -118,7 +118,7 @@ class JiraClientValidateConnectionTests(unittest.TestCase):
             client.validate_connection('PROJ', 'developer', ['To Do', 'Open'])
 
         mock_get.assert_called_once_with(
-            '/rest/api/3/search',
+            '/rest/api/3/search/jql',
             params={
                 'jql': 'project = "PROJ" AND assignee = "developer" AND status IN ("To Do", "Open") ORDER BY updated DESC',
                 'fields': 'key',
@@ -156,10 +156,10 @@ class JiraClientGetAssignedTasksTests(unittest.TestCase):
             client.get_assigned_tasks('PROJ', 'developer', ['To Do'])
 
         mock_get.assert_called_once_with(
-            '/rest/api/3/search',
+            '/rest/api/3/search/jql',
             params={
                 'jql': 'project = "PROJ" AND assignee = "developer" AND status IN ("To Do") ORDER BY updated DESC',
-                'fields': 'summary,description,comment,attachment,labels',
+                'fields': 'key,summary,description,comment,attachment,labels',
                 'maxResults': 100,
             },
         )
@@ -1443,7 +1443,7 @@ class JiraClientTagSupportTests(unittest.TestCase):
 # Sub-tasks: create / find / assign / batch status / comments / current user
 # ---------------------------------------------------------------------------
 
-_SEARCH = '/rest/api/3/search'
+_SEARCH = '/rest/api/3/search/jql'
 _PARENT = '/rest/api/3/issue/PROJ-1'
 _PROJECT = '/rest/api/3/project/PROJ'
 _NEW = '/rest/api/3/issue/PROJ-9'
@@ -1475,14 +1475,16 @@ def _created_response(key: str = 'PROJ-9'):
     return mock_response(json_data={'id': '10050', 'key': key, 'self': f'https://jira.example/{key}'})
 
 
-def _search_page(issues: list, *, total: int | None = None, start_at: int = 0):
-    payload = {'startAt': start_at, 'maxResults': 100, 'issues': issues}
-    payload['total'] = len(issues) if total is None else total
+def _search_page(issues: list, *, next_token: str = ''):
+    payload = {'issues': issues, 'isLast': not next_token}
+    if next_token:
+        payload['nextPageToken'] = next_token
     return mock_response(json_data=payload)
 
 
-def _search_params(jql: str, fields: str, start_at: int = 0) -> dict:
-    return {'jql': jql, 'fields': fields, 'startAt': start_at, 'maxResults': 100}
+def _search_params(jql: str, fields: str, token: str = '') -> dict:
+    params = {'jql': jql, 'fields': f'key,{fields}', 'maxResults': 100}
+    return {**params, 'nextPageToken': token} if token else params
 
 
 class JiraClientSubtaskSupportTests(unittest.TestCase):
@@ -1656,8 +1658,8 @@ class JiraClientFindSubtaskTests(unittest.TestCase):
             _search_page([
                 self._issue('PROJ-7', _adf_paragraph('other work')),
                 self._issue('PROJ-8', None),
-            ], total=3),
-            _search_page([self._issue('PROJ-9', _adf_paragraph('ref: abc-123'))], total=3, start_at=2),
+            ], next_token='page-2'),
+            _search_page([self._issue('PROJ-9', _adf_paragraph('ref: abc-123'))]),
         ]
 
         with patch.object(client, '_get', side_effect=pages) as mock_get:
@@ -1666,7 +1668,7 @@ class JiraClientFindSubtaskTests(unittest.TestCase):
         self.assertEqual(key, 'PROJ-9')
         self.assertEqual(
             mock_get.call_args_list[1],
-            call(_SEARCH, params=_search_params(self._JQL, 'description', start_at=2)),
+            call(_SEARCH, params=_search_params(self._JQL, 'description', token='page-2')),
         )
 
     def test_no_match_is_empty(self) -> None:
@@ -1787,7 +1789,7 @@ class JiraClientGetIssuesStatusTests(unittest.TestCase):
             with patch.object(client, '_get', return_value=_search_page([_status_issue('PROJ-2')])) as mock_get:
                 statuses = client.get_issues_status(['PROJ-2'], state_field)
             with self.subTest(state_field=state_field):
-                self.assertEqual(mock_get.call_args.kwargs['params']['fields'], self._FIELDS)
+                self.assertEqual(mock_get.call_args.kwargs['params']['fields'], f'key,{self._FIELDS}')
                 self.assertEqual(statuses['PROJ-2'].state, 'In Progress')
 
     def test_a_custom_state_field_reads_its_value(self) -> None:
@@ -1802,7 +1804,7 @@ class JiraClientGetIssuesStatusTests(unittest.TestCase):
             statuses = client.get_issues_status(['PROJ-2', 'PROJ-3', 'PROJ-4'], 'customfield_10010')
 
         self.assertEqual(
-            mock_get.call_args.kwargs['params']['fields'], 'customfield_10010,assignee,created,parent',
+            mock_get.call_args.kwargs['params']['fields'], 'key,customfield_10010,assignee,created,parent',
         )
         self.assertEqual(
             [statuses[key].state for key in ('PROJ-2', 'PROJ-3', 'PROJ-4')], ['Ready', 'Blocked', ''],
@@ -1831,15 +1833,15 @@ class JiraClientGetIssuesStatusTests(unittest.TestCase):
     def test_follows_the_search_pages(self) -> None:
         client = _make_client()
         pages = [
-            _search_page([_status_issue('PROJ-2')], total=2),
-            _search_page([_status_issue('PROJ-3')], total=2, start_at=1),
+            _search_page([_status_issue('PROJ-2')], next_token='page-2'),
+            _search_page([_status_issue('PROJ-3')]),
         ]
 
         with patch.object(client, '_get', side_effect=pages) as mock_get:
             statuses = client.get_issues_status(['PROJ-2', 'PROJ-3'], 'status')
 
         self.assertTrue(statuses['PROJ-2'].exists and statuses['PROJ-3'].exists)
-        self.assertEqual(mock_get.call_args.kwargs['params']['startAt'], 1)
+        self.assertEqual(mock_get.call_args.kwargs['params']['nextPageToken'], 'page-2')
 
     def test_a_rejected_batch_falls_back_to_one_read_per_issue(self) -> None:
         # Jira rejects the whole ``key in (...)`` query with a 400 when one
@@ -2121,6 +2123,53 @@ class JiraClientPagingTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 response = mock_response(json_data=payload)
                 self.assertIsNone(JiraClient._next_page(response, '/p', self._PARAMS, [1]))
+
+
+class JiraClientSearchPagingTests(unittest.TestCase):
+    """``_next_search_page``: the search's next page is the token Jira hands out."""
+
+    _PARAMS = {'jql': 'x', 'fields': 'key', 'maxResults': 100}
+
+    def _next(self, payload, params=None, page_items=(1,)):
+        response = mock_response(json_data=payload)
+        return JiraClient._next_search_page(response, '/p', params or self._PARAMS, list(page_items))
+
+    def test_follows_the_token(self) -> None:
+        self.assertEqual(
+            self._next({'isLast': False, 'nextPageToken': 'abc'}),
+            ('/p', {**self._PARAMS, 'nextPageToken': 'abc'}),
+        )
+
+    def test_follows_a_token_when_jira_does_not_say_it_is_the_last(self) -> None:
+        self.assertEqual(self._next({'nextPageToken': 'abc'})[1]['nextPageToken'], 'abc')
+
+    def test_stops_at_the_last_page(self) -> None:
+        self.assertIsNone(self._next({'isLast': True, 'nextPageToken': 'abc'}))
+
+    def test_stops_with_no_token(self) -> None:
+        for payload in ({'isLast': False}, {'isLast': False, 'nextPageToken': '  '}, {}, None):
+            with self.subTest(payload=payload):
+                self.assertIsNone(self._next(payload))
+
+    def test_stops_on_an_empty_page(self) -> None:
+        self.assertIsNone(self._next({'isLast': False, 'nextPageToken': 'abc'}, page_items=()))
+
+    def test_a_token_handed_back_twice_ends_the_walk(self) -> None:
+        # Read with token abc, answered with token abc: the same page again.
+        params = {**self._PARAMS, 'nextPageToken': 'abc'}
+        self.assertIsNone(self._next({'isLast': False, 'nextPageToken': 'abc'}, params=params))
+
+    def test_a_repeated_token_reads_every_issue_once_and_stops(self) -> None:
+        client = _make_client()
+        pages = [
+            _search_page([{'key': 'PROJ-1', 'fields': {}}], next_token='t1'),
+            _search_page([{'key': 'PROJ-2', 'fields': {}}], next_token='t1'),
+        ]
+        with patch.object(client, '_get', side_effect=pages) as mock_get:
+            issues = client._search_issues('project = PROJ', 'summary')
+
+        self.assertEqual([issue['key'] for issue in issues], ['PROJ-1', 'PROJ-2'])
+        self.assertEqual(mock_get.call_count, 2)
 
 
 class JiraClientIssueReadTests(unittest.TestCase):

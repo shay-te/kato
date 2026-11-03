@@ -400,11 +400,11 @@ class ProtocolMethodNotImplementedTests(unittest.TestCase):
 
     def test_issue_provider_add_tag(self) -> None:
         with self.assertRaises(NotImplementedError):
-            IssueProvider.add_tag(None, 'issue-1', 'kato:ready')
+            IssueProvider.add_tag(None, 'issue-1', 'bot:ready')
 
     def test_issue_provider_remove_tag(self) -> None:
         with self.assertRaises(NotImplementedError):
-            IssueProvider.remove_tag(None, 'issue-1', 'kato:ready')
+            IssueProvider.remove_tag(None, 'issue-1', 'bot:ready')
 
 
 class IssueCommentDataclassTests(unittest.TestCase):

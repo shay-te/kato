@@ -43,7 +43,14 @@ class ReleaseNoteSourcesTests(unittest.TestCase):
         self.assertEqual(source.repositories, ('backend', 'client'))
         self.assertEqual(source.pr_description, 'Adds the button.')
         self.assertGreater(source.started_at, 0)
+        self.assertEqual(source.branch, 'UNA-1')
         self.tracker.get_task.assert_not_called()
+
+    def test_a_branch_the_operator_named_is_read_with_the_rest(self) -> None:
+        materialize_workspace(self.workspaces, 'LOCAL-1', repository_ids=['backend'])
+        self.workspaces.add_tag('LOCAL-1', 'kato:branch:feature/login')
+
+        self.assertEqual(self._sources().read('LOCAL-1').branch, 'feature/login')
 
     def test_no_workspace_here_means_the_tracker_is_asked(self) -> None:
         self.tracker.get_task.return_value = SimpleNamespace(summary='From the ticket', description='D')
@@ -83,6 +90,19 @@ class ReleaseNoteLinksTests(unittest.TestCase):
         source = ReleaseNoteSource(task_id='UNA-1', repositories=('backend', 'client'))
         links = ReleaseNoteLinks(pull_requests=lambda task, repo: [self._fact('merged', f'https://x/{repo}')])
         self.assertEqual(links.links(source), [('backend', 'https://x/backend'), ('client', 'https://x/client')])
+
+    def test_pull_requests_are_looked_up_by_the_branch_read_at_done_time(self) -> None:
+        asked = []
+
+        def pull_requests(branch, repo):
+            asked.append((branch, repo))
+            return []
+
+        links = ReleaseNoteLinks(pull_requests=pull_requests)
+        links.links(ReleaseNoteSource(task_id='LOCAL-1', repositories=('api',), branch='feature/login'))
+        links.links(ReleaseNoteSource(task_id='UNA-1', repositories=('api',)))
+
+        self.assertEqual(asked, [('feature/login', 'api'), ('UNA-1', 'api')])
 
     def test_a_host_that_cannot_be_asked_just_means_no_link(self) -> None:
         def boom(task, repo):

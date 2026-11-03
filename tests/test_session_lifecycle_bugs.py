@@ -108,21 +108,7 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
             for p in ctx:
                 p.stop()
 
-    def test_main_does_not_call_resume_streaming_sessions(self) -> None:
-        # Hard lock: if a future refactor wires ``_resume_streaming_sessions``
-        # back into ``main()`` this test fails. The function is still
-        # defined for unit-test reachability, but the boot path no longer
-        # invokes it.
-        with patch.object(
-            main_module, '_resume_streaming_sessions',
-        ) as resume_mock:
-            self._run_main()
-        resume_mock.assert_not_called()
-
-    def test_main_calls_post_init_helpers_but_not_resume(self) -> None:
-        # Spot-check that the OTHER post-init helpers DO fire — proves
-        # the assertion above isn't passing because we shortcut out of
-        # ``main()`` before reaching the (removed) resume step.
+    def test_main_calls_its_post_init_helpers(self) -> None:
         with patch.object(
             main_module, '_recover_orphan_workspaces',
         ) as recover_mock, patch.object(
@@ -131,21 +117,17 @@ class Bug1NoAutoResumeOnKatoRestartTests(unittest.TestCase):
             main_module, '_reset_stuck_workspace_statuses',
         ) as reset_mock, patch.object(
             main_module, '_start_planning_webserver_if_enabled',
-        ) as webserver_mock, patch.object(
-            main_module, '_resume_streaming_sessions',
-        ) as resume_mock:
+        ) as webserver_mock:
             self._run_main(
                 _recover_orphan_workspaces=recover_mock,
                 _reconcile_workspace_branches=reconcile_mock,
                 _reset_stuck_workspace_statuses=reset_mock,
                 _start_planning_webserver_if_enabled=webserver_mock,
-                _resume_streaming_sessions=resume_mock,
             )
         recover_mock.assert_called_once()
         reconcile_mock.assert_called_once()
         reset_mock.assert_called_once()
         webserver_mock.assert_called_once()
-        resume_mock.assert_not_called()
 
 
 class Bug2ResumeSendsRawUserMessageTests(unittest.TestCase):

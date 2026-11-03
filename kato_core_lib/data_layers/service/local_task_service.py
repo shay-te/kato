@@ -27,13 +27,12 @@ from kato_core_lib.data_layers.service.local_task_routing import (
     LocalAwareTaskService,
     local_task_as_task,
 )
+from kato_core_lib.data_layers.service.task_branch_choice import unusable_branch_reason
 from kato_core_lib.helpers.kato_tag_utils import (
     build_branch_tag,
     build_repository_tag,
-    task_branch,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
-from git_core_lib.git_core_lib.helpers.branch_name_utils import branch_name_problem
 from local_task_core_lib.local_task_core_lib.data.local_task import LocalTaskState
 
 START_PLAN = 'plan'
@@ -51,6 +50,12 @@ _OPENING_MESSAGE = {
     ),
     START_IMPLEMENT: 'Implement this task.',
 }
+
+
+_NOT_PREPARED_MESSAGE = (
+    '✗ the task branch could not be prepared, so the agent was not started. '
+    "Kato's log says why."
+)
 
 
 def opening_message(start_mode: str) -> str:
@@ -122,44 +127,29 @@ class LocalTaskService(object):
         return local_task_as_task(local)
 
     def _refuse_unusable_branch(self, branch: str, repositories: list) -> None:
-        """The checks git would make too late, or not at all.
-
-        The task's own branch cannot be the one it merges into: the agent's
-        work would land on it with no pull request. Two tasks cannot share a
-        branch: each has its own clone, and each would push over the other.
-        """
-        problem = branch_name_problem(branch)
-        if problem:
-            raise LocalTaskRejected(f'{branch} cannot be a branch name: {problem}')
-        wanted = branch.lower()
-        for repository in repositories:
-            try:
-                destination = str(self._repository_service.destination_branch(repository))
-            except ValueError as exc:
-                raise LocalTaskRejected(str(exc)) from exc
-            if destination.lower() == wanted:
-                raise LocalTaskRejected(
-                    f'{branch} is the branch {repository.id} merges into, so the work '
-                    f'would land on it with no pull request. Pick another name.',
-                )
-        for record in self._workspace_manager.list_workspaces():
-            if task_branch(record.task_id, record.tags).lower() == wanted:
-                raise LocalTaskRejected(
-                    f'task {record.task_id} already works on {branch}. Pick another name.',
-                )
+        reason = unusable_branch_reason(
+            branch, repositories, self._repository_service, self._workspace_manager,
+        )
+        if reason:
+            raise LocalTaskRejected(reason)
 
     def prepare(self, task_id: str) -> bool:
         """Clone the task's repositories and check out its branch.
 
-        True when the branch is ready. A failure is already on the task's
-        preparation log; the caller then does not start the agent on it.
+        True when the branch is ready. A failure goes on the task's preparation
+        log, the one place the operator is looking: the last line there says
+        "starting agent", and without this the task simply stopped there. The
+        caller then does not start the agent on it.
         """
         task = self._task_service.get_task(task_id)
         if task is None:
             self.logger.warning('local task %s is gone; nothing to prepare', task_id)
             return False
         context = self._prepare_workspace(task)
-        return bool(getattr(context, 'expected_branch', ''))
+        ready = bool(getattr(context, 'expected_branch', ''))
+        if not ready:
+            self._workspace_manager.append_preflight_log(task_id, _NOT_PREPARED_MESSAGE)
+        return ready
 
     def _resolve(self, task: Task) -> list:
         try:

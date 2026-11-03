@@ -72,6 +72,10 @@ _clone_locks: dict[str, threading.Lock] = {}
 # while never touching one that is still arriving.
 _LIVE_DOWNLOAD_SECONDS = 10.0
 
+#: How every ``push_skip_reason`` that means "the remote is not missing
+#: anything" starts. Any other reason means work did NOT reach the remote.
+NOTHING_TO_PUSH = 'nothing to push'
+
 
 def _clone_lock_for(target: Path) -> threading.Lock:
     """The process-wide lock for one clone directory."""
@@ -190,10 +194,14 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             bitbucket_username_attr=RepositoryFields.BITBUCKET_USERNAME,
         )
 
-    def prepare_task_repositories(self, repositories: list[object]) -> list[object]:
+    def prepare_task_repositories(
+        self, repositories: list[object], *, pull_requests_required: bool = True,
+    ) -> list[object]:
+        """Ready each repository. With ``pull_requests_required`` off, a repository
+        pull requests cannot be set up for is still ready for its branch."""
         self._validate_git_executable()
         return [
-            self._prepare_task_repository(repository)
+            self._prepare_task_repository(repository, pull_requests_required=pull_requests_required)
             for repository in repositories
         ]
 
@@ -1297,7 +1305,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         except Exception:
             return 'could not compare the task branch with its destination'
         if ahead_destination == 0 and not is_dirty:
-            return 'nothing to push — no commits on the task branch and a clean tree'
+            return f'{NOTHING_TO_PUSH} — no commits on the task branch and a clean tree'
         # Precondition 3 — push must send something the remote doesn't
         # already have. Dirty tree → upcoming commit will exceed origin.
         if is_dirty:
@@ -1319,7 +1327,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             return 'could not compare the task branch with origin'
         if ahead_remote > 0:
             return ''
-        return 'nothing to push — origin already has every commit'
+        return f'{NOTHING_TO_PUSH} — origin already has every commit'
 
     def workspace_has_task_changes(self, repository, branch_name: str) -> bool:
         """True when the workspace clone has commits on the task branch.
@@ -1969,8 +1977,12 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 f'[Error] {local_path} git push validation failed. {error_detail}'
             ) from None
 
-    def _prepare_task_repository(self, repository):
-        self._prepare_repository_access(repository)
+    def _prepare_task_repository(self, repository, *, pull_requests_required: bool = True):
+        if pull_requests_required:
+            self._prepare_repository_access(repository)
+        else:
+            self._prepare_repository_git_access(repository)
+            self._publication_service.prepare_api_if_possible(repository)
         setattr(repository, 'destination_branch', self.destination_branch(repository))
         # A per-task workspace clone is NOT put back on the destination
         # branch here.

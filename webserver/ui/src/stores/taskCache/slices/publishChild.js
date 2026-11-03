@@ -10,6 +10,7 @@ export const publishChild = createDataStore({
   parse: (body) => ({
     hasWorkspace: !!body?.has_workspace,
     hasChangesToPush: !!body?.has_changes_to_push,
+    branch: String(body?.branch || ''),
   }),
-  empty: { hasWorkspace: false, hasChangesToPush: false },
+  empty: { hasWorkspace: false, hasChangesToPush: false, branch: '' },
 });

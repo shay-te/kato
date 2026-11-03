@@ -82,7 +82,7 @@ class AgentProviderProtocolTests(unittest.TestCase):
 
     def test_missing_method_backend_does_not_satisfy_protocol(self) -> None:
         # Pinning so a backend that forgets one method gets caught
-        # at boot (when kato wires the factory) instead of at the
+        # at boot (when the host wires the factory) instead of at the
         # first call to the missing method.
         self.assertNotIsInstance(_MissingMethodBackend(), AgentProvider)
 
@@ -113,7 +113,7 @@ class AgentTaskDTOTests(unittest.TestCase):
         # A backend constructing AgentTask() with no args must not
         # blow up — used by tests + by the DTO converters in
         # ``claude_core_lib`` / ``openhands_core_lib`` for fallback
-        # paths when kato hands them a partially-populated task.
+        # paths when the host hands them a partially-populated task.
         task = AgentTask()
         self.assertEqual(task.id, '')
         self.assertEqual(task.summary, '')
@@ -137,7 +137,7 @@ class AgentReviewCommentDTOTests(unittest.TestCase):
         self.assertEqual(comment.all_comments, [])
 
     def test_line_number_accepts_int_or_blank_string(self) -> None:
-        # Mirrors what kato's ReviewComment carries today: int when
+        # Mirrors what the host's ReviewComment carries today: int when
         # the platform reports a line, '' when it's a file-level
         # comment. Pinning so the contract doesn't accidentally
         # narrow to int-only and break file-level comments.
@@ -148,7 +148,7 @@ class AgentReviewCommentDTOTests(unittest.TestCase):
 class AgentResultAliasTests(unittest.TestCase):
     def test_dict_with_success_bool_satisfies_alias(self) -> None:
         # AgentResult is a typing alias for dict[str, Any]; the only
-        # contract the kato call sites read is ``success: bool``.
+        # contract the host's call sites read is ``success: bool``.
         # This test is mostly a hint for future readers of what the
         # backends always populate.
         result: AgentResult = {'success': True, 'message': 'done'}

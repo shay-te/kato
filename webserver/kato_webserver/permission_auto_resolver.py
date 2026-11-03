@@ -11,7 +11,7 @@ tool call.
 This runs the same check on a timer. It decides nothing new: every carve-out
 (a question for the operator, a write outside the task folder, leaving plan
 mode, a high-risk Action Guard verdict) lives in the one path it calls, and an
-ask with no standing answer still waits for a person.
+ask nothing there answers still waits for a person.
 """
 
 from __future__ import annotations

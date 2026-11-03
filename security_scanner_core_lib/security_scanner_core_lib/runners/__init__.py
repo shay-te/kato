@@ -2,7 +2,7 @@
 
 Each runner is a function ``run(workspace_path, logger=None,
 timeout_seconds=None) -> list[SecurityFinding]`` that knows nothing
-about kato services or the orchestrator. The orchestrator wires
+about the host or the orchestrator. The orchestrator wires
 them, applies timeouts, dedupes results, and decides block/warn.
 
 Adding a new runner:

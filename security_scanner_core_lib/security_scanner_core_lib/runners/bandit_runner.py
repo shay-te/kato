@@ -6,7 +6,7 @@ stateful at the global level — running multiple bandit scans in the
 same process can leak config — and the orchestrator already isolates
 runners with timeouts at the subprocess boundary.
 
-Severity mapping is ``bandit_severity → kato_severity``:
+Severity mapping is ``bandit_severity → Severity``:
 - ``HIGH`` → ``HIGH``        (e.g. hardcoded password match, use of ``pickle.loads`` on user input)
 - ``MEDIUM`` → ``MEDIUM``    (e.g. ``eval``, weak hash, ``yaml.load`` without safe loader)
 - ``LOW`` → ``LOW``          (informational; e.g. ``assert`` in non-test code)
@@ -46,21 +46,21 @@ _BANDIT_EXCLUDE_DIRS = ','.join([
 ])
 
 
-_BANDIT_TO_KATO_SEVERITY = {
+_BANDIT_SEVERITY = {
     'HIGH':   Severity.HIGH,
     'MEDIUM': Severity.MEDIUM,
     'LOW':    Severity.LOW,
 }
 
 
-def _kato_severity(bandit_severity: str, confidence: str) -> Severity:
-    """Map bandit's (severity, confidence) → kato severity.
+def _scanner_severity(bandit_severity: str, confidence: str) -> Severity:
+    """Map bandit's (severity, confidence) → ``Severity``.
 
     Demote one notch when confidence is ``LOW`` so noisy heuristics
     don't block tasks. Confidence ``HIGH`` / ``MEDIUM`` keeps the
     raw severity.
     """
-    base = _BANDIT_TO_KATO_SEVERITY.get(
+    base = _BANDIT_SEVERITY.get(
         bandit_severity.upper(), Severity.LOW,
     )
     if confidence.upper() == 'LOW':
@@ -137,7 +137,7 @@ def run(
         line_no = int(raw.get('line_number', 0) or 0)
         findings.append(SecurityFinding(
             tool='bandit',
-            severity=_kato_severity(bandit_severity, confidence),
+            severity=_scanner_severity(bandit_severity, confidence),
             rule_id=rule_id,
             message=f'{rule_name}: {message}',
             path=workspace_relative(workspace, Path(filename)) if filename else '',

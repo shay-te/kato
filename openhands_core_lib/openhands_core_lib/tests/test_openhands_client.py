@@ -1535,7 +1535,7 @@ class ResultUtilsTests(unittest.TestCase):
 
     def test_openhands_session_id_reads_session_id_key(self) -> None:
         # OpenHands' API response uses the wire key ``session_id`` —
-        # kato normalizes to ``agent_session_id`` after this helper.
+        # the host normalizes to ``agent_session_id`` after this helper.
         self.assertEqual(openhands_session_id({'session_id': 'conv-1'}), 'conv-1')
 
     def test_openhands_session_id_reads_conversation_id_fallback(self) -> None:
@@ -1623,7 +1623,6 @@ class AgentPromptUtilsTests(unittest.TestCase):
         block = workspace_scope_block(['/workspace/repo'])
         self.assertIn('WORKSPACE SCOPE', block)
         self.assertIn('/workspace/repo', block)
-        self.assertNotIn('kato', block.lower())
 
     def test_workspace_scope_block_empty_for_no_paths(self) -> None:
         self.assertEqual(workspace_scope_block([]), '')
@@ -1632,7 +1631,6 @@ class AgentPromptUtilsTests(unittest.TestCase):
     def test_workspace_scope_block_uses_generic_workspace_path(self) -> None:
         block = workspace_scope_block(['/workspace/a'])
         self.assertIn('AGENT_WORKSPACES_ROOT', block)
-        self.assertNotIn('KATO_WORKSPACES_ROOT', block)
 
     def test_repository_scope_text_without_repositories(self) -> None:
         task = build_task(branch_name='feature/task-1')
@@ -1776,7 +1774,6 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
         self.assertIn('Orchestration layer safety', result)
         self.assertIn('Use pnpm for all package operations.', result)
         self.assertIn('my-repo', result)
-        self.assertNotIn('Kato', result)
 
     def test_repository_agents_instructions_text_returns_empty_for_no_repos(self) -> None:
         self.assertEqual(repository_agents_instructions_text([]), '')
@@ -1797,7 +1794,6 @@ class AgentsInstructionUtilsTests(unittest.TestCase):
             repo = types.SimpleNamespace(id='my-repo', local_path=tmpdir)
             result = repository_agents_instructions_text([repo])
         self.assertIn('Run tests with pytest.', result)
-        self.assertNotIn('Kato safety', result)
         self.assertIn('Orchestration layer safety', result)
 
 

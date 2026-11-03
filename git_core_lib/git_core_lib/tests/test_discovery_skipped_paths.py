@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import discover_git_repositories
 
@@ -18,7 +19,7 @@ def make_repository(path: Path) -> None:
 
 class SkippedPathsTests(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name).resolve() / 'root'
         make_repository(self.root / 'api')
@@ -52,11 +53,19 @@ class SkippedPathsTests(unittest.TestCase):
             ['api', os.path.join('clones-old', 'web')],
         )
 
-    @unittest.skipUnless(hasattr(os, 'symlink'), 'needs symbolic links')
     def test_a_root_reached_through_a_link_still_skips_the_real_folder(self) -> None:
         link = self.root.parent / 'link'
-        link.symlink_to(self.root, target_is_directory=True)
+        try:
+            link.symlink_to(self.root, target_is_directory=True)
+        except OSError:
+            self.skipTest('this machine does not allow symbolic links')  # Windows, unprivileged
         self.assertEqual(self.names(root=link, skipped_paths=[self.root / 'clones']), ['api'])
+
+    def test_on_a_file_system_that_ignores_case_the_spelling_does_not_matter(self) -> None:
+        # Windows: ``normcase`` folds case, and a path from settings need not be
+        # spelled as the folder is on disk.
+        with patch('os.path.normcase', str.lower):
+            self.assertEqual(self.names(skipped_paths=[self.root / 'CLONES']), ['api'])
 
 
 if __name__ == '__main__':

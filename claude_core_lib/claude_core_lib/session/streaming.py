@@ -43,6 +43,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
 from agent_core_lib.agent_core_lib.helpers.credential_scan import (
     scan_text_for_credentials_and_phishing,
 )
+from claude_core_lib.claude_core_lib.helpers.result_failure import failure_reason
 from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     append_additional_dirs,
     append_model_effort_flags,
@@ -139,6 +140,10 @@ TURN_ACK_GRACE_SECONDS = 60.0
 # per request and ~5MB per image; the orchestrator is more conservative because a
 # misclick on a 4K screenshot can blow up the prompt and the per-task
 # token bill. Operator can paste up to 10 screenshots per message.
+#: How much of the CLI's stderr a failed turn with no reason of its own carries.
+_FAILURE_DETAIL_LINES = 3
+_FAILURE_DETAIL_MAX_CHARS = 600
+
 _MAX_IMAGES_PER_MESSAGE = 10
 _MAX_IMAGE_BYTES = 5 * 1024 * 1024
 _ALLOWED_IMAGE_MEDIA_TYPES = frozenset({
@@ -522,12 +527,12 @@ class StreamingClaudeSession(object):
         """Spawn-time ``--add-dir`` paths the live subprocess was given.
 
         The Claude CLI bakes its sandbox into the subprocess at spawn
-        time — there's no in-flight widening API. Operators who clone
-        new repos for the task after the chat tab is already open
-        need to restart the tab to pick them up. Callers
-        (``AgentService.sync_task_repositories``) compare the new
-        clone paths against this set to surface a
-        ``requires_session_restart`` signal in the sync response.
+        time — there's no in-flight widening API. A folder inside these
+        paths counts even if it appeared later, so a clone added to the
+        task folder is reachable. Callers
+        (``AgentService.sync_task_repositories``) compare new clone paths
+        against this boundary to surface a ``requires_session_restart``
+        signal in the sync response.
         """
         return tuple(self._additional_dirs)
 
@@ -1589,10 +1594,9 @@ class StreamingClaudeSession(object):
             out_of_workspace_write_settings_json,
             out_of_workspace_write_settings_path,
         )
-        # BY PATH, not inline. The JSON carries a rule per directory, so a
-        # 25-repo workspace is ~8KB — on its own enough to hit the command
-        # line limit this method's opening comment warns about, after which
-        # the spawn dies before the agent starts:
+        # BY PATH, not inline: every byte counts towards the command line
+        # limit this method's opening comment warns about, and past it the
+        # spawn dies before the agent starts:
         #
         #     [WinError 206] The filename or extension is too long
         #
@@ -1600,11 +1604,9 @@ class StreamingClaudeSession(object):
         # written, a too-long command line is still better than launching the
         # agent with NO write-scope settings at all, which would let
         # out-of-workspace writes through unapproved.
-        settings_path = out_of_workspace_write_settings_path(
-            self._cwd, self._additional_dirs,
-        )
+        settings_path = out_of_workspace_write_settings_path(self._cwd)
         command.extend(['--settings', settings_path or (
-            out_of_workspace_write_settings_json(self._cwd, self._additional_dirs)
+            out_of_workspace_write_settings_json(self._cwd)
         )])
         if self._permission_prompt_tool:
             command.extend(['--permission-prompt-tool', self._permission_prompt_tool])
@@ -1719,6 +1721,7 @@ class StreamingClaudeSession(object):
                 # audit signal. Detective-only: the agent's text has
                 # already crossed to Anthropic.
                 self._scan_terminal_for_credentials(event)
+                self._attach_failure_detail(event)
             # An answer to one of OUR control requests (Remote Control) is
             # plumbing for a caller already blocked on it — hand it over and
             # drop it, rather than replaying it into the operator's chat log.
@@ -1749,6 +1752,19 @@ class StreamingClaudeSession(object):
         # the explicit ``terminate`` path above.
         with self._events_changed:
             self._events_changed.notify_all()
+
+    def _attach_failure_detail(self, event: SessionEvent) -> None:
+        """Put the CLI's last stderr lines on a failed turn that names no reason.
+
+        Before ``_publish_event``, so they ship with the event. Stderr otherwise
+        reaches only the log, and the chat said nothing about what went wrong.
+        """
+        if not event.raw.get('is_error') or failure_reason(event.raw):
+            return
+        lines = self.stderr_snapshot()[-_FAILURE_DETAIL_LINES:]
+        detail = '\n'.join(lines).strip()[-_FAILURE_DETAIL_MAX_CHARS:]
+        if detail:
+            event.raw['failure_detail'] = detail
 
     def _scan_terminal_for_credentials(self, event: SessionEvent) -> None:
         """WARNING-log credential AND phishing patterns in terminal text.
@@ -2047,15 +2063,14 @@ class StreamingClaudeSession(object):
         if event_type in PERMISSION_REQUEST_EVENT_TYPES:
             tool_name, request_id = self._permission_request_details(event)
             self.logger.info(
-                'task %s: claude is asking permission to run %s '
-                '(request_id=%s) — open the planning UI to approve or deny',
+                'task %s: claude asked permission to run %s (request_id=%s)',
                 self._task_id,
                 tool_name,
                 request_id,
             )
         elif event_type == CLAUDE_EVENT_RESULT:
             is_error = bool(event.raw.get('is_error', False))
-            result_text = condensed_text(event.raw.get('result', ''))[:160]
+            result_text = failure_reason(event.raw)[:160]
             stderr_tail = self.stderr_snapshot()[-10:] if is_error else []
             # Silence the transient error from a stale --resume id:
             # the session manager auto-recovers by spawning a fresh

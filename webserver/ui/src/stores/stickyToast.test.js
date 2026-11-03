@@ -38,7 +38,7 @@ test('the Update-source toast asks for no timeout even when it SUCCEEDS', () => 
     join(ROOT, 'components/SessionHeader.jsx'), 'utf8',
   );
   const call = source.slice(
-    source.indexOf('formatUpdateSourceResult(result), kind'),
+    source.indexOf('formatUpdateSourceResult(result)'),
   ).slice(0, 200);
   // The failure half is now the store's default. This override is for the
   // other half: a CLEAN sync is still a per-repo record and still the only

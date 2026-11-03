@@ -14,7 +14,6 @@ Tests are organised by layer:
 
 from __future__ import annotations
 
-import logging
 import tempfile
 import time
 import unittest
@@ -462,8 +461,8 @@ class SecurityScannerConfigTests(unittest.TestCase):
         # HIGH+ findings surface as warnings in the ticket comment
         # but don't refuse the task — transitive-dep CVE noise on
         # routine codebases would otherwise self-DoS the operator.
-        # Operators who want a stricter gate tighten this via YAML
-        # (kato.security_scanner.block_on_severity).
+        # Operators who want a stricter gate tighten this through the
+        # host's config (``block_on_severity``).
         config = default_config()
         self.assertEqual(config.block_on_severity, (Severity.CRITICAL,))
 

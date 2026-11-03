@@ -14,6 +14,7 @@ import PlanQueueButton from './planQueue/PlanQueueButton.jsx';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import PullRequestList from './PullRequestList.jsx';
+import RenameBranchButton from './RenameBranchButton.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
@@ -174,32 +175,13 @@ export default function SessionHeader({
         if (typeof taskPublish.refresh === 'function') {
           taskPublish.refresh();
         }
-        const body = (result && result.body) || {};
-        const failed = (body.failed_repositories || []).length;
-        const updated = (body.updated_repositories || []).length;
-        const warnings = body.warnings || [];
-        // Stash conflicts (or any warning) downgrade success → warning
-        // so the toast is yellow, not green — operator should see it
-        // and act on the conflict markers in the working tree.
-        const hasWarnings = warnings.length > 0;
-        let kind;
-        if (!result.ok || failed > 0) {
-          kind = updated > 0 ? 'warning' : 'error';
-        } else if (hasWarnings) {
-          kind = 'warning';
-        } else {
-          kind = 'success';
-        }
         // STICKY — never auto-dismissed. This toast is a per-repo report
         // (updated / skipped / blocked / failed, one line each), and on a
         // task with many repos it is the only place that record exists. Any
         // timeout means the operator can lose the answer to "what actually
         // synced?" while still reading it. It closes on click like every
-        // other toast.
-        toastResult(
-          { ...formatUpdateSourceResult(result), kind },
-          { defaultMs: 0 },  // problems are sticky by default now
-        );
+        // other toast. Its colour comes from the formatter, with its title.
+        toastResult(formatUpdateSourceResult(result), { defaultMs: 0 });
       },
     },
   );
@@ -217,16 +199,9 @@ export default function SessionHeader({
         if (typeof taskPublish.refresh === 'function') {
           taskPublish.refresh();
         }
-        // Toast classification: full success → green, partial → amber,
-        // request-level failure → red. Multi-line message is fine — the
-        // toast component renders <pre> and wraps long lines.
-        const body = (result && result.body) || {};
-        const kind = !result.ok
-          ? 'error'
-          : body.finished
-            ? 'success'
-            : 'warning';
-        toastResult({ ...formatFinishResult(result, session.task_id), kind });
+        // Multi-line message is fine — the toast component renders <pre> and
+        // wraps long lines.
+        toastResult(formatFinishResult(result, session.task_id));
       },
     },
   );
@@ -511,6 +486,12 @@ export default function SessionHeader({
             lookupError={taskPublish.pullRequestLookupError}
             onOpen={taskPublish.refresh}
           />
+          <RenameBranchButton
+            taskId={session.task_id}
+            branch={taskPublish.branch}
+            disabled={gitDisabled}
+            onRenamed={taskPublish.refresh}
+          />
           <button
             id="session-update-source"
             type="button"
@@ -583,6 +564,7 @@ export function SessionHeaderPlaceholder() {
     { icon: 'arrow-down', label: 'Pull' },
     { icon: 'pull-request', label: 'Open pull request' },
     { icon: 'external-link', label: 'Open pull request in a new tab' },
+    { icon: 'edit', label: 'Rename branch' },
     { icon: 'refresh', label: 'Update source' },
     { icon: 'check', label: 'Finish', primary: true },
     { icon: 'history', label: 'Sync now' },
@@ -606,9 +588,9 @@ export function SessionHeaderPlaceholder() {
         <FastPromptButtons disabled />
         {buttons.slice(0, 1).map(placeholderButton)}
         <HeaderSeparator />
-        {buttons.slice(1, 7).map(placeholderButton)}
+        {buttons.slice(1, 8).map(placeholderButton)}
         <HeaderSeparator />
-        {buttons.slice(7).map(placeholderButton)}
+        {buttons.slice(8).map(placeholderButton)}
       </div>
     </header>
   );

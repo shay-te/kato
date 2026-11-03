@@ -29,6 +29,7 @@ import copy
 from types import SimpleNamespace
 from dataclasses import dataclass
 from kato_core_lib.data_layers.service.repository_service import (
+    NOTHING_TO_PUSH,
     RepositoryHasNoChangesError,
 )
 
@@ -144,7 +145,7 @@ def _is_permanent_auth_failure(exc) -> bool:
 
 @dataclass(frozen=True)
 class _SourceRepoOutcome(object):
-    """What updating ONE operator clone did: updated, skipped, or failed.
+    """What updating ONE operator clone did: updated, skipped, blocked or failed.
 
     Returned per repository so the caller can bucket the run without a
     hundred-line loop appending into four lists as it goes.
@@ -169,6 +170,22 @@ class _PublishTaskLite(object):
 
     id: str
     summary: str = ''
+
+
+def _push_problems(push_result: dict) -> dict[str, str]:
+    """Why each repository's work did not reach the remote; empty when it all did.
+
+    A failed push, and a push skipped for any reason but "nothing to push". The
+    one answer for every caller that goes on to report or act on a push.
+    """
+    problems = {
+        str(entry.get('repository_id')): str(entry.get('error') or '')
+        for entry in push_result.get('failed_repositories') or []
+    }
+    for entry in push_result.get('skipped_repositories') or []:
+        if entry.get('problem'):
+            problems[str(entry.get('repository_id'))] = str(entry.get('reason') or '')
+    return problems
 
 
 class TaskPublishService(object):
@@ -380,9 +397,11 @@ class TaskPublishService(object):
         if not normalized:
             return failure('empty task id', flag='updated', task_id=task_id)
         push_result = self.push_task(normalized)
-        # Even if push partially failed, attempt to update the
-        # source for the repos that DID push — partial success is
-        # still useful (tester can see whatever made it to origin).
+        # A repository whose work did not reach the remote is refused, not
+        # updated: its source would switch to whatever origin has, and read
+        # "updated" without the work. The others still go ahead, because
+        # partial success is useful (a tester sees what made it to origin).
+        push_problems = _push_problems(push_result)
         repos, _branch, task_obj = self._resolve_publish_context(normalized)
         if not repos:
             return failure(
@@ -399,16 +418,26 @@ class TaskPublishService(object):
         # Surfaced to the UI toast so the operator knows the repo did
         # update but they have something to clean up.
         warnings_per_repo: list[dict[str, object]] = []
+        blocked_count = 0
         for repository in repos:
-            outcome = self._update_one_source_repository(
-                normalized,
-                repository,
-                self._repository_service.build_branch_name(task_obj, repository),
-            )
+            push_problem = push_problems.get(str(repository.id))
+            if push_problem is not None:
+                outcome = _SourceRepoOutcome(
+                    'failed', repository.id,
+                    error=f'not updated, because its work did not reach the remote: {push_problem}',
+                )
+            else:
+                outcome = self._update_one_source_repository(
+                    normalized,
+                    repository,
+                    self._repository_service.build_branch_name(task_obj, repository),
+                )
+            if outcome.warning is not None:
+                warnings_per_repo.append(outcome.warning)
             if outcome.kind == 'updated':
                 updated_repositories.append(outcome.repository_id)
-                if outcome.warning is not None:
-                    warnings_per_repo.append(outcome.warning)
+            elif outcome.kind == 'blocked':
+                blocked_count += 1
             elif outcome.kind == 'skipped':
                 skipped_repositories.append({
                     'repository_id': outcome.repository_id,
@@ -427,7 +456,7 @@ class TaskPublishService(object):
         self.logger.info(
             'Mission %s: source update finished (%d updated, %d skipped, %d failed)',
             normalized, len(updated_repositories), len(skipped_repositories),
-            len(failed_repositories),
+            len(failed_repositories) + blocked_count,
         )
         return {
             'updated': bool(updated_repositories),
@@ -488,9 +517,9 @@ class TaskPublishService(object):
         source_path = str(getattr(source_repo, 'local_path', '') or '').strip()
         if not source_path:
             return _SourceRepoOutcome(
-                'skipped', repository.id,
-                reason='inventory entry has no local_path '
-                       '(REPOSITORY_ROOT_PATH not configured?)',
+                'failed', repository.id,
+                error='inventory entry has no local_path '
+                      '(REPOSITORY_ROOT_PATH not configured?)',
             )
         try:
             update_result = self._repository_service.update_source_to_task_branch(
@@ -524,6 +553,12 @@ class TaskPublishService(object):
                 'blocked': bool(update_result.get('blocked', False)),
                 'blocking_paths': list(update_result.get('blocking_paths') or []),
             }
+            if warning_detail['blocked']:
+                self.logger.warning(
+                    'update-source for task %s: %s was not updated: %s',
+                    task_id, repository.id, warning,
+                )
+                return _SourceRepoOutcome('blocked', repository.id, warning=warning_detail)
         self.logger.info(
             'update-source for task %s: %s @ %s now on %s%s',
             task_id, repository.id, source_path, branch_name,
@@ -646,6 +681,7 @@ class TaskPublishService(object):
                 skipped_repositories.append({
                     'repository_id': repository.id,
                     'reason': skip_reason,
+                    'problem': not skip_reason.startswith(NOTHING_TO_PUSH),
                 })
                 continue
             try:
@@ -1136,13 +1172,20 @@ class TaskPublishService(object):
         # no-ops (already pushed, PR already exists — no failures
         # recorded at all) and partial successes still proceed exactly
         # as before; this only blocks the all-repos-failed case.
-        any_failure = bool(push_result.get('failed_repositories')) or bool(
+        any_failure = bool(_push_problems(push_result)) or bool(
             pr_result.get('failed_repositories'),
         )
+        # ``skipped_existing`` also holds repositories left out because a
+        # pull request would be empty (those carry a ``reason``). Only a pull
+        # request that really exists is a success: the empty kind let Done move
+        # a ticket to In Review with nothing pushed anywhere.
         any_success = (
             bool(push_result.get('pushed_repositories'))
             or bool(pr_result.get('created_pull_requests'))
-            or bool(pr_result.get('skipped_existing'))
+            or any(
+                not entry.get('reason')
+                for entry in pr_result.get('skipped_existing') or []
+            )
         )
         if any_failure and not any_success:
             move_error = (
@@ -1290,7 +1333,7 @@ class TaskPublishService(object):
         normalized = str(task_id or '').strip()
         if not normalized:
             return {'has_workspace': False, 'has_changes_to_push': False}
-        repos, _branch_name, task_obj = self._resolve_publish_context(normalized)
+        repos, task_branch_name, task_obj = self._resolve_publish_context(normalized)
         if not repos:
             return {'has_workspace': False, 'has_changes_to_push': False}
         # ``has_workspace`` is the answer the BUTTONS gate on, and it is already
@@ -1334,7 +1377,11 @@ class TaskPublishService(object):
                 'y' if len(repos) == 1 else 'ies',
             ),
         )
-        return {'has_workspace': True, 'has_changes_to_push': has_changes_to_push}
+        return {
+            'has_workspace': True,
+            'has_changes_to_push': has_changes_to_push,
+            'branch': task_branch_name,
+        }
 
     # How long the pull-request lookup may take, all repositories at once —
     # under the 8s the page waits for it (api.js), so a slow git host costs

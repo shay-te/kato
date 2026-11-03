@@ -31,7 +31,7 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `JIRA_DONE_STATE_FIELD` | Jira field used for the done transition (the forget dialog’s “this task is done” checkbox). |
 | `JIRA_DONE_STATE` | Jira value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `JIRA_ISSUE_STATES` | Jira issue states that qualify for processing. |
-| `GITHUB_API_BASE_URL` | GitHub Issues API base URL. |
+| `GITHUB_API_BASE_URL` | GitHub API base URL. On a self-hosted GitHub, also how Kato recognises that host for pull requests. |
 | `GITHUB_API_TOKEN` | GitHub API token. Also used for GitHub git push and PR creation when needed. |
 | `GITHUB_OWNER` | GitHub repository owner used to scope issues. |
 | `GITHUB_REPO` | GitHub repository name used to scope issues. |
@@ -43,7 +43,7 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `GITHUB_DONE_STATE_FIELD` | GitHub Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
 | `GITHUB_DONE_STATE` | GitHub Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
 | `GITHUB_ISSUE_STATES` | GitHub Issues states that qualify for processing. |
-| `GITLAB_API_BASE_URL` | GitLab Issues API base URL. |
+| `GITLAB_API_BASE_URL` | GitLab API base URL. On a self-hosted GitLab, also how Kato recognises that host for pull requests. |
 | `GITLAB_API_TOKEN` | GitLab API token. Also used for GitLab git push and merge request creation when needed. |
 | `GITLAB_PROJECT` | GitLab project path used to scope issues. |
 | `GITLAB_ASSIGNEE` | GitLab assignee to scan for tasks. |

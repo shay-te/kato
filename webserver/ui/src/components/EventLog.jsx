@@ -21,6 +21,7 @@ import { commentStatusKey } from '../utils/commentStatus.js';
 import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
+import { resultFailureText } from '../utils/resultFailure.js';
 import {
   anchoredScrollTop,
   isNearTop,
@@ -1136,14 +1137,12 @@ function resultBubbles(raw, index) {
   // render — they carry diagnostic info (rate-limit notices,
   // tool-failure summaries) the assistant bubble doesn't repeat.
   if (ok) { return []; }
-  const summary = raw.result || 'failed';
-  const resultText = `(result: error) ${summary}`;
   return [
     <Bubble
       key={keyOf(raw, index, 'result')}
       kind={BUBBLE_KIND.ERROR}
     >
-      {resultText}
+      {resultFailureText(raw)}
     </Bubble>,
   ];
 }

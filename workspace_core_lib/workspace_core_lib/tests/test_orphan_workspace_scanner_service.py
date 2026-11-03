@@ -87,15 +87,15 @@ class OrphanWorkspaceScannerServiceTests(unittest.TestCase):
         self.assertEqual(orphans[0].git_repository_dirs, ())
 
     def test_scan_honors_custom_metadata_filename(self) -> None:
-        # When a host pins a different metadata filename (kato uses
-        # ``.kato-meta.json``), the scanner must check for THAT
+        # When a host pins a different metadata filename (say
+        # ``.host-meta.json``), the scanner must check for THAT
         # specific name — not the default.
         custom_da = WorkspaceDataAccess(
-            root=self.root, metadata_filename='.kato-meta.json',
+            root=self.root, metadata_filename='.host-meta.json',
         )
         custom_scanner = OrphanWorkspaceScannerService(custom_da)
         # Folder with the lib's default name is still an orphan from
-        # the kato-pinned scanner's POV.
+        # the host-pinned scanner's POV.
         (self.root / 'LOOKS-MANAGED').mkdir()
         (self.root / 'LOOKS-MANAGED' / DEFAULT_METADATA_FILENAME).write_text(
             '{}', encoding='utf-8',
@@ -105,7 +105,7 @@ class OrphanWorkspaceScannerServiceTests(unittest.TestCase):
 
     def test_git_subdirs_returns_empty_when_iterdir_fails(self) -> None:
         # Lines 109-110: ``orphan_dir.iterdir()`` raises OSError → return ().
-        # Set up: one orphan directory (no .kato-meta.json), then patch
+        # Set up: one orphan directory (no metadata file), then patch
         # iterdir to raise selectively on that directory.
         orphan = self.root / 'ORPHAN-1'
         orphan.mkdir()

@@ -44,7 +44,7 @@ def task_workspace_root(workspace_manager, task_id: str) -> str:
         return ''
 
 
-def _is_inside(candidate: str, root: str) -> bool:
+def is_inside_folder(candidate: str, root: str) -> bool:
     """Is ``candidate`` the same directory as ``root`` or below it?
 
     Resolves both so a symlinked workspaces root (``/tmp`` → ``/private/tmp``
@@ -117,7 +117,7 @@ def resolve_session_cwd(workspace_manager, task_id: str, candidate_cwd: str = ''
     root = task_workspace_root(workspace_manager, task_id)
     if not root:
         return candidate
-    if candidate and _is_inside(candidate, root):
+    if candidate and is_inside_folder(candidate, root):
         return candidate
     clones = task_repository_clones(workspace_manager, task_id)
     return clones[0] if clones else root

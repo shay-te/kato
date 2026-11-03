@@ -6,7 +6,7 @@ line)``, classifies severity against the operator's
 ``block_on_severity`` config, and decides whether to block the task.
 
 Keep this file dependency-free — runners and consumers both import
-from it, and pulling kato services in here would invert the
+from it, and pulling host services in here would invert the
 dependency graph.
 """
 

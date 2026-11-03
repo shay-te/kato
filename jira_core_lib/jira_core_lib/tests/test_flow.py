@@ -152,7 +152,7 @@ class F1_FullIssueLifecycle(unittest.TestCase):
             client.validate_connection(PROJECT, ASSIGNEE, STATES)
         validate_resp.raise_for_status.assert_called_once_with()
         validate_params = mock_get.call_args.kwargs['params']
-        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search')
+        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search/jql')
         self.assertEqual(validate_params['maxResults'], 1)
         self.assertEqual(validate_params['fields'], JiraIssueFields.KEY)
         self.assertIn(f'project = "{PROJECT}"', validate_params['jql'])
@@ -196,12 +196,12 @@ class F1_FullIssueLifecycle(unittest.TestCase):
             records = client.get_assigned_tasks(PROJECT, ASSIGNEE, STATES)
 
         # endpoint + the full field projection were sent
-        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search')
+        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search/jql')
         search_params = mock_get.call_args.kwargs['params']
         self.assertEqual(search_params['maxResults'], 100)
         self.assertEqual(
             search_params['fields'],
-            'summary,description,comment,attachment,labels',
+            'key,summary,description,comment,attachment,labels',
         )
 
         # response parsed into the lib's data type
@@ -496,12 +496,12 @@ class F5_SubtaskLifecycle(unittest.TestCase):
         )
 
         # --- C. a retried create finds the first one by its marker ---
-        search = mock_response(json_data={'startAt': 0, 'maxResults': 100, 'total': 1, 'issues': [
+        search = mock_response(json_data={'isLast': True, 'issues': [
             {'key': 'DEMO-102', 'fields': {'description': sent['description']}},
         ]})
         with patch.object(client, '_get', return_value=search) as mock_get:
             self.assertEqual(client.find_subtask('DEMO-101', marker), 'DEMO-102')
-        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search')
+        self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search/jql')
         self.assertEqual(
             mock_get.call_args.kwargs['params']['jql'], 'parent = "DEMO-101" ORDER BY created ASC',
         )
@@ -516,16 +516,15 @@ class F5_SubtaskLifecycle(unittest.TestCase):
         assigned.raise_for_status.assert_called_once_with()
 
         # --- E. its state and its parent's, in ONE search ---
-        statuses_resp = mock_response(json_data={'startAt': 0, 'maxResults': 100, 'total': 2, 'issues': [
+        statuses_resp = mock_response(json_data={'isLast': True, 'issues': [
             _status_issue('DEMO-101', 'In Progress'),
             _status_issue('DEMO-102', 'In Progress', assignee=_user('acc-bot', 'Helper Bot'), parent='DEMO-101'),
         ]})
         with patch.object(client, '_get', return_value=statuses_resp) as mock_get:
             statuses = client.get_issues_status(['DEMO-101', 'DEMO-102'], 'status')
-        mock_get.assert_called_once_with('/rest/api/3/search', params={
+        mock_get.assert_called_once_with('/rest/api/3/search/jql', params={
             'jql': 'key in ("DEMO-101", "DEMO-102")',
-            'fields': 'status,assignee,created,parent',
-            'startAt': 0,
+            'fields': 'key,status,assignee,created,parent',
             'maxResults': 100,
         })
         self.assertEqual(statuses['DEMO-102'], IssueStatus(
@@ -592,7 +591,7 @@ class F6_StaleIdInBatchStatus(unittest.TestCase):
         client = _client()
         fields = 'status,assignee,created,parent'
         routes = {
-            '/rest/api/3/search': _http_error(400, json_data={
+            '/rest/api/3/search/jql': _http_error(400, json_data={
                 'errorMessages': ["An issue with key 'DEMO-404' does not exist for field 'key'."],
             }),
             '/rest/api/3/issue/DEMO-102': mock_response(

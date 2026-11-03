@@ -2,8 +2,8 @@
 
 A task's pull requests are found by its branch, which is its task id unless the
 operator named one in "New task" — nothing has to be recorded when it is
-published, and for a task id the lookup still works after the workspace is gone
-(a named branch is read from the workspace, so that one does not).
+published. A named branch is kept in the workspace, so whoever needs the answer
+after that is gone reads the branch first and asks ``pull_requests_of_branch``.
 Only pull requests into the repository's destination branch count.
 """
 
@@ -21,16 +21,18 @@ class KatoPullRequestProbe(object):
         self._get_repository_service = provider_for(repository_service)
 
     def pull_requests(self, task_id: str, repository_id: str) -> list[PullRequestFact]:
+        branch = self._get_repository_service().task_branch_name(task_id)
+        return self.pull_requests_of_branch(branch, repository_id)
+
+    def pull_requests_of_branch(self, branch: str, repository_id: str) -> list[PullRequestFact]:
         service = self._get_repository_service()
         try:
             repository = service.get_repository(repository_id)
             destination = str(service.destination_branch(repository) or '')
-            found = service.pull_request_states(
-                repository, source_branch=service.task_branch_name(task_id),
-            )
+            found = service.pull_request_states(repository, source_branch=branch)
         except Exception as exc:
             # "Could not ask" must never read as "no pull request".
-            raise ProbeError(f'could not read the pull requests of {task_id} in {repository_id}: {exc}') from exc
+            raise ProbeError(f'could not read the pull requests of {branch} in {repository_id}: {exc}') from exc
         facts = []
         for pull_request in found or []:
             state = str(pull_request.get('state', '') or '')

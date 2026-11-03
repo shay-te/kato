@@ -57,10 +57,10 @@ from security_scanner_core_lib.security_scanner_core_lib import (
 )
 ```
 
-## Where this fits in kato
+## Where this fits in a host
 
-`TaskPreflightService` wires the orchestrator after workspace
-clones land but before the agent spawns. `CRITICAL`/`HIGH`
+The host runs the orchestrator after workspace clones land but
+before the agent spawns. `CRITICAL`/`HIGH`
 findings raise `SecurityScanBlocked`; the existing failure-handler
 chain catches it. `MEDIUM`/`LOW` findings are logged and the
 task proceeds.
@@ -73,7 +73,7 @@ Plausible second consumer: any agent-orchestration tool wanting
 "scan a workspace before running an agent" gets the entire
 runner pack + the ScannerProvider contract for free. New
 scanners (semgrep, trufflehog, custom rule packs) drop in
-without touching kato.
+without touching the host.
 
 ## Tests
 

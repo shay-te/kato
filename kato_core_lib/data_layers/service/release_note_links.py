@@ -20,7 +20,7 @@ _PREFERENCE = ('merged', 'open')
 
 class ReleaseNoteLinks(object):
     def __init__(self, *, pull_requests: Callable[[str, str], list] | None, logger=None) -> None:
-        """``pull_requests(task_id, repository_id)`` → facts with state, url, created_at."""
+        """``pull_requests(branch, repository_id)`` → facts with state, url, created_at."""
         self._pull_requests = pull_requests
         self.logger = logger or configure_logger('ReleaseNoteLinks')
 
@@ -39,7 +39,7 @@ class ReleaseNoteLinks(object):
 
     def _best_url(self, source: ReleaseNoteSource, repository: str) -> str:
         try:
-            facts = list(self._pull_requests(source.task_id, repository) or [])
+            facts = list(self._pull_requests(source.branch or source.task_id, repository) or [])
         except Exception as exc:  # noqa: BLE001 - "could not ask" is just "no link"
             self.logger.info('no pull request link for %s in %s: %s', source.task_id, repository, exc)
             return ''

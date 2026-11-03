@@ -183,7 +183,7 @@ class DescriptionTests(unittest.TestCase):
         client = _make_client()
         client._is_operational_comment = lambda body: body.startswith('[bot]')
         result = client._comment_lines([
-            {ISSUE_COMMENT_AUTHOR: 'kato', ISSUE_COMMENT_BODY: '[bot] op'},
+            {ISSUE_COMMENT_AUTHOR: 'review_bot', ISSUE_COMMENT_BODY: '[bot] op'},
             {ISSUE_COMMENT_AUTHOR: 'alice', ISSUE_COMMENT_BODY: 'real'},
         ])
         self.assertEqual(result, ['- alice: real'])
@@ -733,8 +733,8 @@ def _alias_client(**kwargs) -> _AliasClient:
 class ConfigureBotLoginTests(unittest.TestCase):
     def test_real_login_stored_lowercased(self) -> None:
         client = _make_client()
-        client._configure_bot_login('Kato_Bot')
-        self.assertEqual(client._bot_login, 'kato_bot')
+        client._configure_bot_login('Review_Bot')
+        self.assertEqual(client._bot_login, 'review_bot')
 
     def test_empty_and_whitespace_stored_as_unset(self) -> None:
         client = _make_client()
@@ -752,12 +752,12 @@ class ConfigureBotLoginTests(unittest.TestCase):
 class EffectiveBotLoginsTests(unittest.TestCase):
     def test_configured_login_returned_without_resolving(self) -> None:
         client = _make_client()
-        client._configure_bot_login('kato_bot')
+        client._configure_bot_login('review_bot')
         with patch.object(
             client, '_fetch_current_user_logins',
             side_effect=AssertionError('should not resolve'),
         ):
-            self.assertEqual(client._effective_bot_logins(), ('kato_bot',))
+            self.assertEqual(client._effective_bot_logins(), ('review_bot',))
 
     def test_unset_resolves_once_and_caches(self) -> None:
         client = _make_client()
@@ -838,19 +838,19 @@ class CommentAddressedElsewhereTests(unittest.TestCase):
 
     def test_human_mention_is_elsewhere(self) -> None:
         client = _make_client()
-        client._configure_bot_login('kato_bot')
+        client._configure_bot_login('review_bot')
         self.assertTrue(client._comment_addressed_elsewhere('@alice ping'))
 
     def test_mid_sentence_human_mention_is_elsewhere(self) -> None:
         client = _make_client()
-        client._configure_bot_login('kato_bot')
+        client._configure_bot_login('review_bot')
         self.assertTrue(
             client._comment_addressed_elsewhere('he look yada yda @Alice yes ..'))
 
     def test_bot_mention_is_kept(self) -> None:
         client = _make_client()
-        client._configure_bot_login('kato_bot')
-        self.assertFalse(client._comment_addressed_elsewhere('@kato_bot ping'))
+        client._configure_bot_login('review_bot')
+        self.assertFalse(client._comment_addressed_elsewhere('@review_bot ping'))
 
     def test_unresolvable_identity_keeps_comment(self) -> None:
         client = _make_client()

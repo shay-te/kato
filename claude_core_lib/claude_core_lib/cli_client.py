@@ -601,9 +601,7 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
             out_of_workspace_write_settings_json,
         )
-        command.extend(['--settings', out_of_workspace_write_settings_json(
-            cwd, additional_dirs,
-        )])
+        command.extend(['--settings', out_of_workspace_write_settings_json(cwd)])
         append_model_effort_flags(
             command,
             # A per-run model (the review loop's pick) outranks the client's.

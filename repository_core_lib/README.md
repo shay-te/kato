@@ -24,8 +24,7 @@ config's provider field. New providers register there.
 
 ## Where this fits
 
-Kato calls into this lib from
-`kato_core_lib/data_layers/service/repository_service.py` whenever
+The host calls into this lib from its repository service whenever
 it needs to push a branch to a remote, open a PR, sync review
 comments, or close a thread.
 

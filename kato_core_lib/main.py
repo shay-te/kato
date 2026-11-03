@@ -11,7 +11,6 @@ import time
 import hydra
 from omegaconf import DictConfig
 
-from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.deadline import run_with_deadline
 import logging
 
@@ -22,9 +21,6 @@ from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
     sleep_with_countdown_spinner,
     supports_inline_status,
-)
-from kato_core_lib.helpers.standing_instructions_utils import (
-    with_standing_instructions,
 )
 from kato_core_lib.helpers.status_broadcaster_utils import (
     StatusBroadcaster,
@@ -928,159 +924,6 @@ def _provisioning_workspace_has_git_repo(
         if repo_path.is_dir() and (repo_path / '.git').exists():
             return True
     return False
-
-
-_RESUME_CONTINUE_PROMPT = (
-    "kato has been restarted while this task workspace was still active. "
-    "Resume the interrupted task now. First inspect the existing worktree "
-    "and conversation context so you do not duplicate or overwrite work, "
-    "then continue from the last safe point. If the task is already complete, "
-    "say so and end with the normal Kato completion token."
-)
-
-_RESUME_WAIT_PROMPT = (
-    "kato has been restarted. This is a system notice — no user "
-    "action requested. Please reply with one short line "
-    "acknowledging you're ready to continue, then wait for the "
-    "operator's next message."
-)
-
-
-def _resume_streaming_sessions(app) -> None:
-    """Re-spawn Claude sessions for every active workspace at boot.
-
-    Without this, restarting kato leaves every previously-open chat
-    tab in a "Claude: sleeping" state until the operator types into
-    it. We walk the workspace registry and call ``start_session`` for
-    each ``active`` workspace; the session manager's existing
-    resume-id plumbing reuses the saved ``agent_session_id`` so the
-    chat picks up where it left off. A short system-notice prompt is
-    sent so the Claude CLI doesn't exit on empty stdin (it requires
-    at least one message at startup).
-
-    Best-effort: any per-task failure is logged and skipped — the tab
-    falls back to the existing "operator types to wake it" path.
-    """
-    session_manager = getattr(app, 'session_manager', None)
-    workspace_manager = getattr(app, 'workspace_manager', None)
-    runner = getattr(app, 'planning_session_runner', None)
-    if session_manager is None or workspace_manager is None:
-        return
-    attach = getattr(session_manager, 'attach_workspace_manager', None)
-    if callable(attach):
-        attach(workspace_manager)
-    try:
-        from kato_core_lib.data_layers.service.workspace_manager import (
-            WORKSPACE_STATUS_ACTIVE,
-            WORKSPACE_STATUS_PROVISIONING,
-        )
-    except ImportError:
-        return
-    try:
-        records = workspace_manager.list_workspaces()
-    except Exception:
-        app.logger.exception('failed to list workspaces during session resume')
-        return
-    spawn_defaults = _planning_spawn_defaults(runner)
-    resumed = 0
-    skipped: list[str] = []
-    for record in records:
-        task_id = str(getattr(record, 'task_id', '') or '')
-        if not task_id:
-            continue
-        status = str(getattr(record, 'status', '') or '')
-        if status not in (WORKSPACE_STATUS_ACTIVE, WORKSPACE_STATUS_PROVISIONING):
-            continue
-        cwd = str(getattr(record, 'cwd', '') or '')
-        if not cwd:
-            # Fall back to the first repo clone if cwd wasn't recorded.
-            for repo_id in (getattr(record, 'repository_ids', []) or []):
-                try:
-                    candidate = workspace_manager.repository_path(
-                        task_id, str(repo_id),
-                    )
-                except Exception:
-                    continue
-                if candidate.is_dir():
-                    cwd = str(candidate)
-                    break
-        if not cwd:
-            skipped.append(f'{task_id} (no cwd)')
-            continue
-        try:
-            initial_prompt = _resume_prompt_for_workspace(record)
-            session_manager.start_session(
-                task_id=task_id,
-                task_summary=str(getattr(record, 'task_summary', '') or ''),
-                initial_prompt=initial_prompt,
-                cwd=cwd,
-                expected_branch=task_branch(task_id, getattr(record, 'tags', None)),
-                **spawn_defaults,
-            )
-            resumed += 1
-        except Exception as exc:
-            app.logger.warning(
-                'could not resume Claude session for %s: %s '
-                '(operator can send a message to wake the tab manually)',
-                task_id, exc,
-            )
-            skipped.append(task_id)
-    if resumed:
-        app.logger.info(
-            'resumed %d Claude session(s) from previous kato run',
-            resumed,
-        )
-    if skipped:
-        app.logger.info(
-            'skipped resume for %d session(s): %s',
-            len(skipped), ', '.join(skipped[:10]),
-        )
-
-
-def _planning_spawn_defaults(runner) -> dict[str, object]:
-    """Mirror ``WaitPlanningService._session_starter_defaults`` so the
-    resumed sessions use the same binary / model / permission-mode the
-    autonomous flow uses.
-    """
-    if runner is None:
-        return {}
-    defaults = getattr(runner, '_defaults', None)
-    if defaults is None:
-        return {}
-    fields = (
-        'binary',
-        'model',
-        'permission_mode',
-        'permission_prompt_tool',
-        'allowed_tools',
-        'disallowed_tools',
-        'effort',
-        # Without this a session resumed at boot is spawned with no lessons
-        # directive at all: it starts work without the one document every
-        # other spawn is required to read first. The field list is copied by
-        # hand, and this one was simply never on it.
-        'lessons_path',
-        # Same trap: the plan progress-checklist rule rides here.
-        'extra_system_prompt',
-    )
-    result: dict[str, object] = {
-        field: (getattr(defaults, field, '') or '') for field in fields
-    }
-    result['max_turns'] = getattr(defaults, 'max_turns', None)
-    # The operator's standing instructions ride with kato's guidance, as on
-    # every other spawn (``PlanningSessionRunner.start_session``).
-    result['extra_system_prompt'] = with_standing_instructions(
-        result['extra_system_prompt'],
-    )
-    return result
-
-
-def _resume_prompt_for_workspace(record) -> str:
-    if bool(getattr(record, 'resume_on_startup', True)):
-        return agent_prompt_utils.prepend_forbidden_repository_guardrails(
-            _RESUME_CONTINUE_PROMPT,
-        )
-    return agent_prompt_utils.prepend_forbidden_repository_guardrails(_RESUME_WAIT_PROMPT)
 
 
 def _load_hooks_or_refuse(app, logger) -> None:

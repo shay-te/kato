@@ -294,6 +294,22 @@ class WorkspaceService(Service):
             raise LookupError(f'no workspace for task {task_id!r} to record tag {cleaned!r} in')
         return added
 
+    def replace_tag(self, task_id: str, old_tag: str, new_tag: str) -> None:
+        """Swap ``old_tag`` for ``new_tag`` in one write, so no reader sees neither.
+
+        ``old_tag`` need not be there. Raises ``LookupError`` when the task has
+        no workspace, as ``add_tag`` does.
+        """
+        old_lowered = str(old_tag or '').strip().lower()
+        cleaned = str(new_tag or '').strip()
+
+        def apply(record: WorkspaceRecord) -> None:
+            kept = [tag for tag in record.tags if tag.lower() != old_lowered]
+            record.tags = [*kept, cleaned]
+
+        if self._mutate(task_id, apply) is None:
+            raise LookupError(f'no workspace for task {task_id!r} to record tag {cleaned!r} in')
+
     def delete(self, task_id: str) -> None:
         """Remove a workspace, fast, without blocking anyone else.
 

@@ -1697,7 +1697,8 @@ class FinishTaskPlanningSessionTests(unittest.TestCase):
             service.publish, 'create_pull_request_for_task',
             return_value={
                 'created': False, 'created_pull_requests': [],
-                'skipped_existing': ['client'], 'failed_repositories': [],
+                'skipped_existing': [{'repository_id': 'client', 'url': 'https://x/1'}],
+                'failed_repositories': [],
             },
         ), patch.object(service.publish, '_kick_lesson_extraction'):
             result = service.publish.finish_task_planning_session('T1')

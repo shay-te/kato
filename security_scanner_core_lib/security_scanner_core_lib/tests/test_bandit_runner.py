@@ -7,48 +7,47 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from security_scanner_core_lib.security_scanner_core_lib.runners._helpers import (
     RunnerUnavailableError,
 )
 from security_scanner_core_lib.security_scanner_core_lib.runners.bandit_runner import (
-    _kato_severity,
+    _scanner_severity,
     run,
 )
 from security_scanner_core_lib.security_scanner_core_lib.security_finding import Severity
 
 
 # ---------------------------------------------------------------------------
-# _kato_severity mapping
+# _scanner_severity mapping
 # ---------------------------------------------------------------------------
 
 
-class KatoSeverityTests(unittest.TestCase):
+class ScannerSeverityTests(unittest.TestCase):
     def test_high_confidence_maps_directly(self) -> None:
-        self.assertEqual(_kato_severity('HIGH', 'HIGH'), Severity.HIGH)
-        self.assertEqual(_kato_severity('HIGH', 'MEDIUM'), Severity.HIGH)
-        self.assertEqual(_kato_severity('MEDIUM', 'HIGH'), Severity.MEDIUM)
-        self.assertEqual(_kato_severity('LOW', 'HIGH'), Severity.LOW)
+        self.assertEqual(_scanner_severity('HIGH', 'HIGH'), Severity.HIGH)
+        self.assertEqual(_scanner_severity('HIGH', 'MEDIUM'), Severity.HIGH)
+        self.assertEqual(_scanner_severity('MEDIUM', 'HIGH'), Severity.MEDIUM)
+        self.assertEqual(_scanner_severity('LOW', 'HIGH'), Severity.LOW)
 
     def test_low_confidence_demotes_high_to_medium(self) -> None:
-        self.assertEqual(_kato_severity('HIGH', 'LOW'), Severity.MEDIUM)
+        self.assertEqual(_scanner_severity('HIGH', 'LOW'), Severity.MEDIUM)
 
     def test_low_confidence_demotes_medium_to_low(self) -> None:
-        self.assertEqual(_kato_severity('MEDIUM', 'LOW'), Severity.LOW)
+        self.assertEqual(_scanner_severity('MEDIUM', 'LOW'), Severity.LOW)
 
     def test_low_confidence_keeps_low_as_low(self) -> None:
-        self.assertEqual(_kato_severity('LOW', 'LOW'), Severity.LOW)
+        self.assertEqual(_scanner_severity('LOW', 'LOW'), Severity.LOW)
 
     def test_unknown_bandit_severity_falls_back_to_low(self) -> None:
-        self.assertEqual(_kato_severity('UNKNOWN', 'HIGH'), Severity.LOW)
+        self.assertEqual(_scanner_severity('UNKNOWN', 'HIGH'), Severity.LOW)
 
     def test_case_insensitive_severity(self) -> None:
-        self.assertEqual(_kato_severity('high', 'high'), Severity.HIGH)
+        self.assertEqual(_scanner_severity('high', 'high'), Severity.HIGH)
 
     def test_case_insensitive_confidence(self) -> None:
-        self.assertEqual(_kato_severity('HIGH', 'low'), Severity.MEDIUM)
+        self.assertEqual(_scanner_severity('HIGH', 'low'), Severity.MEDIUM)
 
 
 # ---------------------------------------------------------------------------

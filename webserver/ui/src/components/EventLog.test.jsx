@@ -434,14 +434,25 @@ describe('EventLog — server event rendering', () => {
     expect(container.querySelectorAll('.bubble').length).toBe(0);
   });
 
-  test('RESULT (error) renders "(result: error)" error bubble', () => {
-    render(<EventLog agentName="Claude" entries={[_server({
+  test('RESULT (error) renders its reason in an error bubble', () => {
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
       type: CLAUDE_EVENT.RESULT,
       is_error: true,
       result: 'rate limited',
     })]} />);
-    expect(screen.getByText(/result: error/)).toBeInTheDocument();
-    expect(screen.getByText(/rate limited/)).toBeInTheDocument();
+    expect(container.querySelectorAll('.bubble').length).toBe(1);
+    expect(screen.getByText('rate limited')).toBeInTheDocument();
+  });
+
+  test('RESULT (error) with its reason in ``errors`` shows it, not the word "failed"', () => {
+    render(<EventLog agentName="Claude" entries={[_server({
+      type: CLAUDE_EVENT.RESULT,
+      subtype: 'error_during_execution',
+      is_error: true,
+      errors: ['No conversation found with session ID: abc'],
+    })]} />);
+    expect(screen.getByText('No conversation found with session ID: abc')).toBeInTheDocument();
+    expect(screen.queryByText(/failed$/)).toBeNull();
   });
 
   test('event with no type renders nothing', () => {

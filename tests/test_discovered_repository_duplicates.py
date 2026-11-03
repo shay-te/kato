@@ -35,7 +35,7 @@ def make_repository(path: Path, remote: str = '') -> None:
 
 class DiscoveredDuplicatesTests(unittest.TestCase):
     def setUp(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
+        tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name).resolve()
         self.root = self.home / 'dev'
