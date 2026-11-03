@@ -272,11 +272,12 @@ class SharedPlanTests(unittest.TestCase):
             self.dana.service.follow(forged)
         self.assertIn('posted by mallory', str(caught.exception))
         self._followed(plan_id)
-        reordered = type(good)(**{**good.__dict__, 'steps': tuple(
-            RecordStep(s.task_id, s.step_id, s.title, (), s.repositories) for s in good.steps)})
+        taken_and_reordered = type(good)(**{
+            **good.__dict__, 'driver': 'host-bob', 'driver_user': 'bob', 'author': 'bob',
+            'steps': tuple(RecordStep(s.task_id, s.step_id, s.title, (), s.repositories) for s in good.steps)})
         with self.assertRaises(PlanQueueError) as caught:
-            self.dana.service.follow(reordered)
-        self.assertIn('changes which step waits for which', str(caught.exception))
+            self.dana.service.follow(taken_and_reordered)
+        self.assertIn('may not also change which step waits for which', str(caught.exception))
 
     def test_what_a_task_still_waits_for_and_following_it_from_the_tracker(self) -> None:
         plan_id = self._approved()
@@ -414,7 +415,7 @@ class SharedPlanTests(unittest.TestCase):
         self.tracker.post(SOURCE, reordered)
         with self.assertLogs('PlanQueueService', 'WARNING') as logs:
             self.dana.tick()
-        self.assertIn('changes which step waits for which', '\n'.join(logs.output))
+        self.assertIn('may not also change which step waits for which', '\n'.join(logs.output))
         self.assertEqual(self.dana.plan(plan_id).driver_user, 'shay')
 
     def test_a_record_of_another_plan_or_an_unreadable_tracker_changes_nothing(self) -> None:

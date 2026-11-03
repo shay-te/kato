@@ -14648,6 +14648,14 @@ button.settings-prompt-editor-head {
   margin-right: auto;
 }
 
+.plan-proposal-plan-first {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #d4d4d4;
+}
+
 /* ---------- The board ---------- */
 .plan-board {
   display: flex;
@@ -14802,6 +14810,11 @@ button.plan-card-code:hover {
 .plan-card-worker {
   font-size: 11px;
   color: #93c5fd;
+}
+
+.plan-card-state {
+  font-size: 11px;
+  color: #a3a3a3;
 }
 
 .plan-card.is-failed .plan-card-note {

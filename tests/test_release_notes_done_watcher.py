@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from kato_core_lib.data_layers.service.release_notes_done_watcher import ReleaseNotesDoneWatcher
 from provider_client_base.provider_client_base.data.subtask import IssueStatus
@@ -76,6 +76,14 @@ class ReleaseNotesDoneWatcherTests(unittest.TestCase):
         self._sweep({'UNA-2'}, 'UNA-1', 'UNA-2')
         self.assertEqual(self.done, ['UNA-1'])
         self.assertEqual(self.tracker.asked, [['UNA-1']])
+
+    def test_a_ticket_in_a_state_listed_as_done_is_handed_on(self) -> None:
+        # "Waiting Deploy" is merged work, as done as "Done" (KATO_DONE_STATES).
+        self._sweep({'UNA-1', 'UNA-2'}, 'UNA-1', 'UNA-2')
+        self.tracker.states = {'UNA-1': 'Waiting Deploy', 'UNA-2': 'In Progress'}
+        with patch.dict('os.environ', {'KATO_DONE_STATES': 'waiting deploy, Ready'}):
+            self._sweep(set(), 'UNA-1', 'UNA-2')
+        self.assertEqual(self.done, ['UNA-1'])
 
     def test_a_ticket_that_left_for_another_reason_is_dropped(self) -> None:
         self._sweep({'UNA-1'}, 'UNA-1')

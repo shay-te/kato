@@ -200,6 +200,12 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_MAX_PARALLEL_TASKS', 'number', 'Max parallel tasks',
              'How many tasks execute concurrently (1 = sequential).',
              {}),
+            ('KATO_DONE_STATES', 'text', 'States that mean done',
+             'Comma-separated ticket states that count as done beside the '
+             'task provider\'s done state, e.g. "Waiting Deploy". A plan\'s '
+             'sub-task in one of them is finished (it then waits for its '
+             'merge), and a ticket closed into one gets a release note. '
+             'Applies at once, no restart.', {}),
             # ``panel`` moves a field OUT of its section's generic tab and
             # into the named bespoke panel — these two decide which repos
             # kato may touch at all, so they belong beside the per-repo

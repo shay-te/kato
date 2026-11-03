@@ -379,6 +379,14 @@ class YouTrackClient(YouTrackClientBase):
         self._join_parent_sprints(parent_id, database_id, readable_id)
         return readable_id
 
+    def update_subtask(self, issue_id: str, summary: str, description: str) -> None:
+        response = self._post_with_retry(
+            f'{self.ISSUES_PATH}/{issue_id}',
+            params={'fields': self.READABLE_ID},
+            json={'summary': summary, 'description': description},
+        )
+        self.raise_for_status_with_detail(response)
+
     def find_subtask(self, parent_id: str, marker: str) -> str:
         """The readable id of ``parent_id``'s sub-task whose description holds
         ``marker``, or ''. A blank marker would match any sub-task, so it

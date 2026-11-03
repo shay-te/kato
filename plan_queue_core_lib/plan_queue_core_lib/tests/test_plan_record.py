@@ -87,15 +87,35 @@ class AcceptTests(unittest.TestCase):
         self.assertIn('posted by mallory, not by its driver alice', acceptable(self._record(author='mallory'), previous=None))
         self.assertIn('posted by nobody', acceptable(self._record(author=''), previous=None))
 
-    def test_a_later_record_of_the_same_plan_keeps_its_order(self) -> None:
+    def test_a_later_record_of_the_same_plan_keeps_its_order_across_a_take_over(self) -> None:
         first = self._record()
         recreated = self._record(steps='PROJ-2 | a | A | in api | waits for — | done\n'
                                        'PROJ-7 | b | B | in api | waits for PROJ-2', user='bob', author='bob')
         self.assertEqual(acceptable(recreated, previous=first), '')
-        reordered = self._record(steps='PROJ-2 | a | A | in api | waits for —\nPROJ-3 | b | B | in api | waits for —')
-        self.assertIn('changes which step waits for which', acceptable(reordered, previous=first))
+        taken_and_reordered = self._record(
+            steps='PROJ-2 | a | A | in api | waits for —\nPROJ-3 | b | B | in api | waits for —',
+            user='bob', author='bob')
+        self.assertIn('may not also change which step waits for which',
+                      acceptable(taken_and_reordered, previous=first))
         another_plan = self._record(plan_id='b' * 32, steps='PROJ-5 | z | Z | in api | waits for —')
         self.assertEqual(acceptable(another_plan, previous=first), '')
+
+    def test_the_driver_may_rewire_and_add_tasks_that_have_not_finished(self) -> None:
+        # The driver edited the plan: tasks still waiting may change.
+        first = self._record()
+        rewired = self._record(steps='PROJ-2 | a | A | in api | waits for —\n'
+                                     'PROJ-3 | b | B | in api | waits for —\n'
+                                     'PROJ-9 | c | C | in api | waits for PROJ-3')
+        self.assertEqual(acceptable(rewired, previous=first), '')
+
+    def test_a_task_already_done_never_changes(self) -> None:
+        first = self._record(steps='PROJ-2 | a | A | in api | waits for —\n'
+                                   'PROJ-3 | b | B | in api | waits for PROJ-2 | done')
+        rewired = self._record(steps='PROJ-2 | a | A | in api | waits for —\n'
+                                     'PROJ-3 | b | B | in api | waits for —')
+        self.assertIn('changes PROJ-3, which is already done', acceptable(rewired, previous=first))
+        taken_out = self._record(steps='PROJ-2 | a | A | in api | waits for —')
+        self.assertIn('changes PROJ-3, which is already done', acceptable(taken_out, previous=first))
 
 
 if __name__ == '__main__':

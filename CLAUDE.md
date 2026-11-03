@@ -504,8 +504,26 @@ exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
       track each released step's task → once its task is DONE, poll its PRs (branch = task id,
       state=all, destination = the plan's branch, CREATED AFTER the release) → MERGED → satisfied
       → a step whose every parent is satisfied → ready → released (local: create LOCAL-n
-        "UNA-1234 · Task n: …" IN_PROGRESS + start the chat in implement mode)
+        "UNA-1234 · Task n: …" IN_PROGRESS + start the chat in the plan's start mode)
 ```
+**Each task plans first by default.** Approve carries "Plan each task first" (ticked): `start_mode=plan` —
+a local step's chat opens in Plan mode; a shared sub-task gets `kato:wait-planning` AT CREATION
+(`TrackerStepLauncher.prepare`; a failed tag fails the create, never "runs unplanned"), so every kato's
+pickup opens it in Plan and it codes once its plan is approved in its chat. Unticked = `implement`.
+**Run starts every ready step; a card's Start starts ONE** (`start_step` → `PlanTicker.release_now`, any live
+plan, even approved/paused; only the driver; only a READY step). **"Done" is the provider's done state OR one
+listed in `KATO_DONE_STATES`** (`helpers/done_states_utils.py`, General settings, read fresh). The plan on
+UNA-3267 stalled for good because its first tasks sat in "Waiting Deploy": an unknown state read as "still
+to do", and YouTrack does not mark it resolved, so its own flag cannot say. The board shows each ticket's
+own state (`Step.task_state`) and says "handed over — not started yet" for a STARTING step (it sat in "In
+progress" looking like work while kato had not picked it up, e.g. `KATO_MAX_PARALLEL_TASKS` full).
+**An approved plan's waiting tasks can be edited** ("Edit tasks" on the board, the same `PUT .../steps`, the
+proposal's rows from `PlanStepRows.jsx`): `live_edit.py` — only a step still BLOCKED/READY and never handed
+over (`can_change`; a step someone took early has `released_at`) changes or is taken out; a started one
+must come back exactly as it is, else 409 and nothing changes. On a shared tracker: taken out → withdrawn
+(ticket kept, unassigned, noted), new → `prepare` (parents first), changed text/footer → `launcher.update`
+(`update_subtask`, YouTrack/Jira) AFTER the new tickets exist; a rewrite that fails keeps the edit and
+answers 503 naming the ticket (save again retries).
 **A dependent step starts only when every parent is merged AND its task is done**, and then
 clones the destination branch fresh — no stacked branches, no cloning from another workspace.
 Kato still never publishes: the step parks for push like any task; merging and moving it to
@@ -524,9 +542,10 @@ is `None` otherwise). UI: `components/planQueue/` — a TAB among the task's fil
 (`planQueueTab` in `utils/fileTabs.js`: a virtual tab, `view: plan_queue`, path
 `plan-queue:<task>`; `PlanQueueView` is its pane) — NEVER a popup: a proposal takes minutes and a
 modal blocked the whole window. It shows the split folders found + "split plan.md", the
-proposal, then a READ-ONLY board (Waiting / In progress / In review / Waiting for merge / Done;
-cards never move by hand; only a stuck card offers Retry / Count as done; a card's code opens its
-task). Polled only while the tab shows; `planQueueChanges` refreshes the toolbar button at once. Its states are the QUEUE's
+proposal, then the board (Waiting / In progress / In review / Waiting for merge / Done; cards never
+move by hand: a ready card offers Start, a waiting one Count as done (confirmed — it moves the ticket to
+done and frees what waits on it), a stuck one Retry / Count as done; "Edit tasks" for the waiting ones; a
+card's code opens its task). Polled only while the tab shows; `planQueueChanges` refreshes the toolbar button at once. Its states are the QUEUE's
 axis (`planQueueHelpers.js`) — never `session.working`, never `AGENT_STATUS_KIND` (a node test
 greps the folder). The task a plan was split from carries the board mark on its TAB while the plan
 is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`; no timer of
@@ -569,8 +588,10 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   board; whoever has a sub-task is shown on its card; kato never assigns over a person.
 - One DRIVER per plan (an install id in `<plan_queues>/host.json` + the token's user): only it
   releases (assigns to the user kato polls for). Every other kato FOLLOWS read-only; "Take over"
-  republishes the record naming itself. Records are untrusted: author must be the driver user,
-  every task a real sub-task of the parent, and a later record may not change who waits for whom.
+  republishes the record naming itself. Records are untrusted: author must be the driver user, and
+  every task a real sub-task of the parent. A later record may change who waits for whom (the driver
+  edited waiting tasks) only from the SAME driver, never in a take-over record, never for a done task
+  (`plan_record.acceptable`); a follower takes it in `_follow_the_steps` (adds, drops, rewires).
 - Every kato's pickup keeps the order (`step_gate.py`, checked FIRST in `process_assigned_task` —
   before triage and wait-planning, which clone and start a chat too, so a `kato:wait-planning` tag
   cannot jump it): a sub-task assigned before its turn waits until its parents are merged and done,
@@ -805,6 +826,12 @@ token) and the footnote says so. Do not add a second price table or compute cost
   the source switch is `blocked`, never `updated`. A source kato cannot find is `failed`, never `skipped`.
 - A toast's colour is decided beside its title, in `sessionHeaderFormatters.js` (`kind`), never in the component: a
   "Source not updated" box came out green. Summaries list every problem; one repo pushing must not hide another's failure.
+- **A PR that cannot be created says why.** `RepositoryPublicationService.create_pull_request` sets the PR API
+  up ITSELF (`_prepare_pull_request_api`, raising the real cause: no token, no Bitbucket API email…). It used to
+  rely on the lookup before it, which swallows its failure (logged once per process, then "no pull requests"), so
+  every cause read "incomplete pull request configuration" — the calendar/audit-core-lib reports of 2026-11-03.
+  That message now names what is missing; an owner/name missing from the inventory is read off its configured
+  remote (never the clone's). Provider API settings are read at boot: change a token or email → restart.
 - **A failed turn says why.** `failure_reason` (`result`, else `errors`, which a turn that fails during execution
   sends with no `result`), then `failure_detail` (the last stderr lines, attached before the event is published),
   then `resultFailureText`'s words per subtype. Never the bare word "failed".

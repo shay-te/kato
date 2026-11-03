@@ -60,7 +60,7 @@ export function isStuck(step) {
     || (step.status === 'awaiting_merge' && String(step.reason || '').startsWith(NO_PR_PREFIX));
 }
 
-// The only actions a card offers: ways to unstick it. A healthy card has none.
+// Ways to unstick a card. A healthy card has none of these.
 export function stuckActions(step) {
   if (step.status === 'failed') {
     return [{ action: 'retry', label: 'Retry' }, { action: 'satisfy', label: 'Count as done' }];
@@ -71,6 +71,46 @@ export function stuckActions(step) {
   return [];
 }
 
+// Plan states in which its steps are tracked and may be handed over.
+const LIVE_PLAN = ['approved', 'running', 'paused'];
+
+// Whether the board may change this plan's tasks: one this kato drives, while
+// its steps are tracked.
+export function canEditPlan(plan) {
+  return LIVE_PLAN.includes(plan?.status) && !isFollowed(plan);
+}
+
+// The server's rule for an approved plan: a task still waiting, never handed
+// over (nor taken by someone), may change; any other is locked as it is.
+export function canChangeStep(step) {
+  return (step.status === 'blocked' || step.status === 'ready') && !step.released_at;
+}
+
+// An id for a task added by hand: "t" and the next number no task uses.
+export function newStepId(steps) {
+  const taken = new Set((steps || []).map((step) => step.id));
+  let number = (steps || []).length + 1;
+  while (taken.has(`t${String(number).padStart(2, '0')}`)) { number += 1; }
+  return `t${String(number).padStart(2, '0')}`;
+}
+
+// What a card offers. A ready task can be started on its own (one at a time,
+// even while the plan is paused or not yet running), and a task still waiting
+// can be counted as done when its work was merged some other way — which also
+// frees the tasks waiting for it. Anything else: only a way out when stuck.
+export function cardActions(step, planStatus) {
+  if (LIVE_PLAN.includes(planStatus) && (step.status === 'ready' || step.status === 'blocked')) {
+    const satisfy = {
+      action: 'satisfy',
+      label: 'Count as done',
+      confirm: `Count ${stepCode(step)} as done? Its ticket moves to done, and the tasks `
+        + 'waiting for it may start. Use it when its work was already merged some other way.',
+    };
+    return step.status === 'ready' ? [{ action: 'start', label: 'Start' }, satisfy] : [satisfy];
+  }
+  return stuckActions(step);
+}
+
 // What a card says under its title. A step that is ready to be handed over says
 // what it waits for: while the plan is PAUSED nothing is handed over — a restart
 // pauses every running plan — so the server's "it will be retried" would promise
@@ -78,6 +118,9 @@ export function stuckActions(step) {
 // while its tab was open in the working tasks).
 export function stepNote(step, planStatus = '') {
   if (step.status === 'cancelled') { return 'cancelled'; }
+  // Handed over (assigned) but nobody has started it yet. It sat in "In
+  // progress" looking like work, while kato had not picked it up.
+  if (step.status === 'starting' && !step.reason) { return 'handed over — not started yet'; }
   if (step.status === 'ready' && planStatus === 'paused') {
     return step.released_at
       ? 'paused — press Run to hand it over again'
@@ -90,6 +133,12 @@ export function stepNote(step, planStatus = '') {
 export function stepWorker(step) {
   if (!step.worker || step.status === 'satisfied') { return ''; }
   return `with ${step.worker}`;
+}
+
+// Its ticket's own state on the tracker ('' when it has no ticket or none was
+// read yet) — so the board shows what the tracker says, word for word.
+export function stepTaskState(step) {
+  return step.task_id ? String(step.task_state || '') : '';
 }
 
 // A plan another kato drives: shown here, changed only there (or after Take over).

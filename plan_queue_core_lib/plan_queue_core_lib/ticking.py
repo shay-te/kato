@@ -37,6 +37,7 @@ from plan_queue_core_lib.plan_queue_core_lib.data.plan import (
     Step,
     StepStatus,
 )
+from plan_queue_core_lib.plan_queue_core_lib.errors import ErrorKind, PlanQueueError
 from plan_queue_core_lib.plan_queue_core_lib.launching import build_request, release_task
 from plan_queue_core_lib.plan_queue_core_lib.merge import (
     MergeVerdict,
@@ -67,6 +68,7 @@ from plan_queue_core_lib.plan_queue_core_lib.progress import change_from_observa
 from plan_queue_core_lib.plan_queue_core_lib.registry import PlanRegistry
 from plan_queue_core_lib.plan_queue_core_lib.release import (
     blocked_reason,
+    initial_status,
     is_finished,
     releasable,
     unblocked,
@@ -364,10 +366,30 @@ class PlanTicker(object):
         me = self.identity()
         return bool(me) and me == plan.driver
 
-    def _claim(self, plan_id: str, step: Step, claimed_at: float) -> bool:
+    def release_now(self, plan_id: str, step_id: str) -> None:
+        """Hand ONE ready step over now, whatever the plan's status: its card's
+        Start. Run hands over every ready step; this one, even while paused."""
+        plan = self._registry.get(plan_id)
+        if not self._may_release(plan):
+            raise PlanQueueError('only the host that drives this plan starts its tasks; take it over to start one here')
+        launcher = self._launcher(plan)
+        if launcher is None or not _available(launcher):
+            raise PlanQueueError('nothing can start tasks right now', ErrorKind.UNAVAILABLE)
+        step = plan.step(step_id)
+        claimed_at = self._clock()
+        if step is None or not self._claim(plan_id, step, claimed_at, any_status=True):
+            raise PlanQueueError(f'step {step_id} is not ready to start: it still waits for another task')
+        request = build_request(self._registry.get(plan_id), step)
+        outcome = release_task(launcher, request, step.task_id)
+        self._record_release(plan_id, step, claimed_at, outcome)
+
+    def _claim(self, plan_id: str, step: Step, claimed_at: float, *, any_status: bool = False) -> bool:
+        """Mark a READY step as handed over. Only while the plan runs, unless
+        ``any_status`` (one step started by hand, in any live plan)."""
         def apply(live: Plan) -> bool:
             target = live.step(step.id)
-            if live.status != PlanStatus.RUNNING or target is None or target.status != StepStatus.READY:
+            running = live.status.has_steps_in_flight if any_status else live.status == PlanStatus.RUNNING
+            if not running or target is None or target.status != StepStatus.READY:
                 return False
             target.status = StepStatus.STARTING
             target.released_at = claimed_at
@@ -470,10 +492,12 @@ def apply_record(live: Plan, record: PlanRecord, me: str) -> str:
         live.driver_user = record.driver_user
         live.mode = PlanMode.TRACKER if me and me == record.driver else PlanMode.FOLLOWED
         events.append(f'now driven by {record.driver_user}')
-    # ``acceptable`` holds the steps to the plan's own (same ids, same order),
-    # so every entry names a step this plan has.
+    if live.mode == PlanMode.FOLLOWED:
+        events.extend(_follow_the_steps(live, record))
     for entry in record.steps:
         step = live.step(entry.step_id)
+        if step is None:
+            continue  # the driver's own record never names a step it does not have
         if step.task_id != entry.task_id:
             step.previous_task_ids.append(step.task_id)
             step.task_id = entry.task_id
@@ -490,6 +514,33 @@ def apply_record(live: Plan, record: PlanRecord, me: str) -> str:
         live.status = status
         events.append(f'status {status.value}')
     return '; '.join(events)
+
+
+def _follow_the_steps(live: Plan, record: PlanRecord) -> list[str]:
+    """A follower takes the driver's steps as they are now: a task added or
+    taken out, a title changed, what waits for what. (``acceptable`` already
+    refused a record that changes a task that is done.) Every step still
+    waiting is placed again against the new graph."""
+    step_of = {entry.task_id: entry.step_id for entry in record.steps}
+    named = {entry.step_id for entry in record.steps}
+    events = [f'{step.task_id or step.id} left the plan' for step in live.steps
+              if step.id not in named and not step.is_satisfied]
+    kept = {step.id: step for step in live.steps if step.id in named or step.is_satisfied}
+    steps = []
+    for entry in record.steps:
+        step = kept.pop(entry.step_id, None)
+        if step is None:
+            step = Step(id=entry.step_id, title=entry.title, brief='', task_id=entry.task_id)
+            events.append(f'{entry.task_id} joined the plan')
+        step.title = entry.title
+        step.depends_on = [step_of[task] for task in entry.waits_for]
+        steps.append(step)
+    live.steps = steps + list(kept.values())
+    for step in live.steps:
+        if step.status in (StepStatus.BLOCKED, StepStatus.READY):
+            step.status = initial_status(live, step)
+            step.reason = blocked_reason(live, step)
+    return events
 
 
 def _settle(target: Step, verdict: MergeVerdict, in_history: bool, repos: list[RepoMerge], now: float) -> str:
@@ -514,8 +565,11 @@ def _settle(target: Step, verdict: MergeVerdict, in_history: bool, repos: list[R
 
 
 def _note_worker(step: Step, observation: TaskObservation) -> bool:
-    """Who has the step's task, and when the task was created."""
+    """Who has the step's task, its state on the tracker, and when it was created."""
     changed = False
+    if observation.state and step.task_state != observation.state:
+        step.task_state = observation.state
+        changed = True
     if (step.worker, step.worker_handle) != (observation.assignee_name, observation.assignee):
         step.worker = observation.assignee_name
         step.worker_handle = observation.assignee

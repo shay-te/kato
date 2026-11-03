@@ -99,6 +99,8 @@ class FakeLauncher(object):
         self.release_errors: dict[str, Exception] = {}
         self.prepare_returns_empty: set[str] = set()
         self.counted: list[str] = []
+        self.updated: list[tuple[LaunchRequest, str]] = []
+        self.update_errors: dict[str, Exception] = {}
         self._counter = 100
 
     def available(self):
@@ -123,6 +125,11 @@ class FakeLauncher(object):
         if self.creates_at_approval:
             return task_id
         return self._new_id()
+
+    def update(self, request, task_id):
+        if task_id in self.update_errors:
+            raise self.update_errors.pop(task_id)
+        self.updated.append((request, task_id))
 
     def withdraw(self, task_id, reason):
         self.withdrawn.append((task_id, reason))
@@ -219,7 +226,7 @@ class FakeTracker(object):
                 continue
             found[task_id] = TaskObservation(
                 _tracker_phase(task), assignee=task['assignee'], assignee_name=task['name'],
-                created_at=task['created'], counted_done=task['counted'],
+                created_at=task['created'], counted_done=task['counted'], state=task['state'],
             )
         return found
 
@@ -266,6 +273,9 @@ class TrackerLauncher(object):
         if not task['assignee']:
             task.update(assignee=self.user, name=self.user.title())
         return task_id
+
+    def update(self, request, task_id):
+        self.tracker.tasks[task_id].update(title=request.title, waits_for=request.waits_for)
 
     def withdraw(self, task_id, reason):
         task = self.tracker.tasks.get(task_id)

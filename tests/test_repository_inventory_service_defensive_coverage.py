@@ -411,6 +411,49 @@ class ValidatePullRequestApiValuesTests(unittest.TestCase):
 
 
 class PullRequestDataAccessIncompleteTests(unittest.TestCase):
+    def test_the_message_names_what_is_missing(self) -> None:
+        service = _make_service()
+        repo = SimpleNamespace(
+            id='r', provider='github', provider_base_url='https://api.github.com',
+            owner='team', repo_slug='r', token='', remote_url='git@github.com:team/r.git',
+        )
+        with self.assertRaises(ValueError) as caught:
+            service._pull_request_data_access(repo)
+        self.assertEqual(str(caught.exception), 'incomplete pull request configuration for repository r: no token')
+
+    def test_an_owner_and_name_missing_from_the_inventory_are_read_off_its_remote(self) -> None:
+        # A repository listed by hand carries a remote but no owner or name.
+        service = _make_service()
+        repo = SimpleNamespace(
+            id='audit-core-lib', provider='bitbucket', provider_base_url='https://api.bitbucket.org/2.0',
+            owner='', repo_slug='', token='t', bitbucket_api_email='bot@example.com',
+            remote_url='git@bitbucket.org:shacoshe/audit-core-lib.git',
+        )
+        with patch('kato_core_lib.data_layers.service.repository_inventory_service.RepositoryCoreLib') as core:
+            service._pull_request_data_access(repo)
+        sent = core.call_args.args[0]
+        self.assertEqual((sent.owner, sent.repo_slug), ('shacoshe', 'audit-core-lib'))
+
+    def test_an_owner_kato_cannot_read_names_the_remote_without_its_login(self) -> None:
+        service = _make_service()
+        repo = SimpleNamespace(
+            id='r', provider='bitbucket', provider_base_url='https://api.bitbucket.org/2.0',
+            owner='', repo_slug='', token='t', remote_url='https://bot:s3cret@bitbucket.org/r.git',
+        )
+        with self.assertRaises(ValueError) as caught:
+            service._pull_request_data_access(repo)
+        message = str(caught.exception)
+        self.assertIn('no owner, repository name', message)
+        self.assertIn('its remote https://bitbucket.org/r.git', message)
+        self.assertNotIn('s3cret', message)
+
+    def test_no_remote_at_all_says_to_check_the_repository_folder(self) -> None:
+        service = _make_service()
+        repo = SimpleNamespace(id='r', provider='github', provider_base_url='https://api.github.com',
+                               owner='', repo_slug='', token='t', remote_url='')
+        with self.assertRaisesRegex(ValueError, 'no remote kato knows: check that REPOSITORY_ROOT_PATH finds it'):
+            service._pull_request_data_access(repo)
+
     def test_raises_on_incomplete_config(self) -> None:
         # Lines 639-642.
         service = _make_service()

@@ -40,6 +40,7 @@ class TaskObservation(object):
     assignee: str = ''
     assignee_name: str = ''
     created_at: float = 0.0      # when the task was created (0 = unknown)
+    state: str = ''              # the task's state as its tracker names it ('' = unknown)
     # The driver counted it as done without a change request (a shared mark
     # every host can read, e.g. its comment on the task).
     counted_done: bool = False
@@ -112,6 +113,10 @@ class TaskLauncher(Protocol):
         failed release created). Raise ``LaunchRefused`` for a reason the
         operator can fix, anything else for a failure.
         """
+
+    def update(self, request: LaunchRequest, task_id: str) -> None:
+        """The step of a prepared, never-started task was edited: rewrite the
+        task to match (its title and description, what it waits for)."""
 
     def withdraw(self, task_id: str, reason: str) -> None:
         """A prepared task will not be started (the plan or step was

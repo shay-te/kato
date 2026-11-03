@@ -168,6 +168,7 @@ class Step(object):
     created_at: float = 0.0      # when its task was created (the tracker's clock)
     worker: str = ''             # who has its task, by name ('' = nobody yet)
     worker_handle: str = ''      # the same person's stable handle
+    task_state: str = ''         # its task's state as the tracker names it ('' = unknown)
 
     @property
     def is_satisfied(self) -> bool:
@@ -198,6 +199,7 @@ class Step(object):
             'created_at': self.created_at,
             'worker': self.worker,
             'worker_handle': self.worker_handle,
+            'task_state': self.task_state,
         }
 
     @classmethod
@@ -221,6 +223,7 @@ class Step(object):
             created_at=_float(data.get('created_at')),
             worker=str(data.get('worker', '') or ''),
             worker_handle=str(data.get('worker_handle', '') or ''),
+            task_state=str(data.get('task_state', '') or ''),
         )
 
 

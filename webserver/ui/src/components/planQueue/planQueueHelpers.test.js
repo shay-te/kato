@@ -10,7 +10,11 @@ import {
   boardColumns,
   buttonDot,
   buttonLabel,
+  canChangeStep,
+  canEditPlan,
+  cardActions,
   isBoardStatus,
+  newStepId,
   isFollowed,
   columnOf,
   headerActions,
@@ -24,6 +28,7 @@ import {
   stepCode,
   stepNote,
   stepRounds,
+  stepTaskState,
   stepWorker,
   stuckActions,
   withRepoEverywhere,
@@ -71,6 +76,52 @@ test('only a stuck card offers anything', function () {
   assert.equal(isStuck(noPr), true);
   assert.deepEqual(stuckActions(noPr).map((a) => a.action), ['satisfy']);
   assert.equal(isStuck(step('awaiting_merge', { reason: 'waiting for the merge' })), false);
+});
+
+test('a card offers Start when ready, Count as done while waiting, only in a live plan', function () {
+  const actions = (s, planStatus) => cardActions(s, planStatus).map((a) => a.action);
+  for (const live of ['approved', 'running', 'paused']) {
+    assert.deepEqual(actions(step('ready'), live), ['start', 'satisfy']);
+    assert.deepEqual(actions(step('blocked'), live), ['satisfy']);
+  }
+  for (const over of ['proposed', 'finished', 'cancelled']) {
+    assert.deepEqual(actions(step('ready'), over), []);
+  }
+  assert.deepEqual(actions(step('failed'), 'running'), ['retry', 'satisfy']);  // still its way out
+  assert.deepEqual(actions(step('active'), 'running'), []);
+  assert.match(cardActions(step('blocked', { task_id: 'T-9' }), 'running')[0].confirm, /Count T-9 as done\?/);
+});
+
+test('a task handed over but not started says so; a reason the server gave wins', function () {
+  assert.equal(stepNote(step('starting')), 'handed over — not started yet');
+  assert.equal(stepNote(step('starting', { reason: 'its workspace is being prepared' })), 'its workspace is being prepared');
+});
+
+test('a card shows its ticket\'s own state, once it has a ticket', function () {
+  assert.equal(stepTaskState(step('active', { task_id: 'T-1', task_state: 'Waiting Deploy' })), 'Waiting Deploy');
+  assert.equal(stepTaskState(step('blocked', { task_state: 'Open' })), '');
+  assert.equal(stepTaskState(step('active', { task_id: 'T-1' })), '');
+});
+
+test('only a waiting task never handed over can change; only a live plan driven here is edited', function () {
+  assert.equal(canChangeStep(step('blocked')), true);
+  assert.equal(canChangeStep(step('ready')), true);
+  assert.equal(canChangeStep(step('ready', { released_at: 5 })), false);  // handed back: someone had it
+  for (const started of ['starting', 'active', 'in_review', 'awaiting_merge', 'satisfied', 'failed', 'cancelled']) {
+    assert.equal(canChangeStep(step(started)), false);
+  }
+  assert.equal(canEditPlan({ status: 'running', mode: 'tracker' }), true);
+  assert.equal(canEditPlan({ status: 'running', mode: 'followed' }), false);
+  assert.equal(canEditPlan({ status: 'proposed' }), false);
+  assert.equal(canEditPlan(null), false);
+});
+
+test('a new task gets the next free id', function () {
+  assert.equal(newStepId([{ id: 'a' }, { id: 'b' }]), 't03');
+  assert.equal(newStepId([{ id: 't01' }, { id: 't02' }]), 't03');
+  assert.equal(newStepId([{ id: 'x' }, { id: 't02' }]), 't03');
+  assert.equal(newStepId([{ id: 't03' }, { id: 'y' }]), 't04');
+  assert.equal(newStepId([]), 't01');
 });
 
 test('a step waiting to be handed over in a paused plan says it needs Run, not "will be retried"', function () {

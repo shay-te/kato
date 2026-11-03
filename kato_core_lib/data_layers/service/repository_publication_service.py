@@ -28,6 +28,12 @@ class RepositoryPublicationService(Service):
         description: str = '',
         commit_message: str = '',
     ) -> dict[str, str]:
+        # Set the pull request API up HERE, so a failure says why ("missing
+        # Bitbucket API email", no token). This used to rely on the lookup that
+        # runs first having done it; that lookup swallows its failure (logged
+        # once per process, then "no pull requests"), so creating went on with
+        # nothing set up and every cause read "incomplete configuration".
+        self._repository_service._prepare_pull_request_api(repository)
         destination_branch = self._repository_service.destination_branch(repository)
         try:
             validation_report_description = self._repository_service._publish_branch_updates(

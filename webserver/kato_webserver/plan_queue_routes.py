@@ -48,7 +48,7 @@ _STATUS_BY_KIND = {
     ErrorKind.INVALID: 400,
     ErrorKind.UNAVAILABLE: 503,
 }
-_STEP_ACTIONS = ('satisfy', 'retry', 'cancel', 'check')
+_STEP_ACTIONS = ('start', 'satisfy', 'retry', 'cancel', 'check')
 
 
 def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[str]]) -> None:
@@ -220,6 +220,7 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         if action not in _STEP_ACTIONS:
             return jsonify({'error': f'unknown action {action!r}'}), 404
         methods = {
+            'start': 'start_step',
             'satisfy': 'mark_satisfied',
             'retry': 'retry_step',
             'cancel': 'cancel_step',

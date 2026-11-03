@@ -84,6 +84,11 @@ class IssueClientBase(RetryingClientBase):
         """
         raise self._no_subtasks()
 
+    def update_subtask(self, issue_id: str, summary: str, description: str) -> None:
+        """Rewrite a sub-task's title and description, as ``create_subtask``
+        wrote them (an edited plan step)."""
+        raise self._no_subtasks()
+
     def find_subtask(self, parent_id: str, marker: str) -> str:
         """The readable id of ``parent_id``'s sub-task whose description holds
         ``marker`` ('' when none) — so a retried create finds the first."""

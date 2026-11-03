@@ -67,6 +67,7 @@ The list below catalogs every environment key kato reads (set them in the Settin
 | `BITBUCKET_REVIEW_STATE` | Bitbucket Issues value used for the review transition. |
 | `BITBUCKET_DONE_STATE_FIELD` | Bitbucket Issues field used for the done transition (the forget dialog’s “this task is done” checkbox). |
 | `BITBUCKET_DONE_STATE` | Bitbucket Issues value used for the done transition. Operator-triggered only — kato never closes a ticket on its own. |
+| `KATO_DONE_STATES` | Comma-separated ticket states that also mean done, beside the provider's done state (e.g. `Waiting Deploy`). A plan's sub-task in one is finished (it then waits for its merge), and a ticket closed into one gets a release note. Read fresh: no restart. |
 | `BITBUCKET_ISSUE_STATES` | Bitbucket Issues states that qualify for processing. |
 | `AZURE_API_BASE_URL` | Azure DevOps host for every Azure Repos repository. Leave blank: each repository's own host is used (`https://dev.azure.com`, or your Azure DevOps Server). |
 | `AZURE_API_TOKEN` | Azure DevOps personal access token (Code: Read & write). Used for git push over HTTPS and for pull requests and their review comments. Azure Boards is not a task provider. |

@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import call, patch
 
@@ -1505,6 +1506,29 @@ def _search_params(jql: str, fields: str, token: str = '') -> dict:
 class JiraClientSubtaskSupportTests(unittest.TestCase):
     def test_it_can_hold_work_as_subtasks(self) -> None:
         self.assertTrue(JiraClient.supports_subtasks)
+
+
+class JiraClientUpdateSubtaskTests(unittest.TestCase):
+    """An edited plan step: its sub-task's summary and description (ADF) rewritten."""
+
+    def test_the_summary_and_description_are_rewritten(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_put', return_value=mock_response(status_code=204)) as put:
+            client.update_subtask('PROJ-9', 'Part A, again', 'line one\nline two')
+        put.assert_called_once()
+        path, sent = put.call_args.args[0], put.call_args.kwargs['json']
+        self.assertEqual(path, '/rest/api/3/issue/PROJ-9')
+        self.assertEqual(sent['fields']['summary'], 'Part A, again')
+        self.assertEqual(sent['fields']['description']['type'], 'doc')
+        self.assertIn('line two', json.dumps(sent['fields']['description']))
+
+    def test_a_refusal_says_why(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_put', return_value=_http_error_response(
+            403, text='{"errorMessages":["You do not have permission to edit issues."]}',
+        )):
+            with self.assertRaisesRegex(HTTPError, 'permission to edit issues'):
+                client.update_subtask('PROJ-9', 'A', 'B')
 
 
 class JiraClientCreateSubtaskTests(unittest.TestCase):

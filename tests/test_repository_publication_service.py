@@ -24,6 +24,25 @@ class RepositoryPublicationServiceTests(unittest.TestCase):
         }
         self.service = RepositoryPublicationService(self.repository_service, 3)
 
+    def test_a_pull_request_api_that_cannot_be_set_up_says_why_and_pushes_nothing(self) -> None:
+        # The lookup before it swallows this (logged once per process, then
+        # "no pull requests"); creating used to go on with nothing set up and
+        # report "incomplete pull request configuration" for every cause.
+        self.repository_service._prepare_pull_request_api.side_effect = ValueError(
+            'missing Bitbucket API email for repository audit-core-lib',
+        )
+        repository = types.SimpleNamespace(id='audit-core-lib', local_path='/workspace/audit-core-lib')
+        self.assertEqual(self.service.find_pull_requests(repository, source_branch='UNA-1'), [])
+        with self.assertRaisesRegex(ValueError, 'missing Bitbucket API email for repository audit-core-lib'):
+            self.service.create_pull_request(repository, 'UNA-1 title', 'UNA-1')
+        self.repository_service._publish_branch_updates.assert_not_called()
+        self.repository_service._pull_request_data_access.assert_not_called()
+
+    def test_create_pull_request_sets_the_api_up_itself(self) -> None:
+        repository = types.SimpleNamespace(id='client', local_path='/workspace/client')
+        self.service.create_pull_request(repository, 'client: update flow', 'feature/client')
+        self.repository_service._prepare_pull_request_api.assert_called_once_with(repository)
+
     def test_create_pull_request_uses_validation_report_as_description(self) -> None:
         repository = types.SimpleNamespace(
             id='client',

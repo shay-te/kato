@@ -373,6 +373,7 @@ def _live_settings_keys() -> frozenset[str]:
     from kato_core_lib.data_layers.service.lid_awake.settings import (
         LID_AWAKE_ENABLED_KEY,
     )
+    from kato_core_lib.helpers.done_states_utils import DONE_STATES_KEY
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
@@ -386,6 +387,7 @@ def _live_settings_keys() -> frozenset[str]:
             REVIEW_COMMENTS_ENABLED_KEY,
             STANDING_INSTRUCTIONS_KEY,
             LID_AWAKE_ENABLED_KEY,
+            DONE_STATES_KEY,
         })
         | RELEASE_NOTES_KEYS
     )
@@ -404,12 +406,15 @@ def _apply_live_settings(app: Flask, updates: dict) -> str:
     from kato_core_lib.data_layers.service.lid_awake.settings import (
         LID_AWAKE_ENABLED_KEY,
     )
+    from kato_core_lib.helpers.done_states_utils import DONE_STATES_KEY
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.standing_instructions_utils import (
         STANDING_INSTRUCTIONS_KEY,
     )
 
     messages = [_apply_review_comment_switch(app, updates)]
+    if DONE_STATES_KEY in updates:
+        messages.append('Saved. Plan boards read ticket states with it within a minute.')
     if LID_AWAKE_ENABLED_KEY in updates:
         messages.append('Saved. The header shows the lid status within seconds.')
     if RELEASE_NOTES_KEYS & set(updates):

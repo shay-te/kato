@@ -20,6 +20,7 @@ from workspace_core_lib.workspace_core_lib.data_layers.data.workspace_record imp
     WORKSPACE_STATUS_PROVISIONING,
 )
 
+from kato_core_lib.helpers.done_states_utils import is_done_state
 from kato_core_lib.helpers.late_binding import provider_for
 
 REFRESH_SECONDS = 60
@@ -78,9 +79,13 @@ def _observation(status, names: dict[str, str], record) -> TaskObservation:
         'assignee': status.assignee,
         'assignee_name': status.assignee_name,
         'created_at': _epoch(status.created_at),
+        'state': status.state.strip(),
     }
     state = status.state.strip().lower()
-    if state == names['done'].strip().lower():
+    # The provider's done state, or one the operator listed as meaning done
+    # ("Waiting Deploy"): any other state read as still to do, and a plan
+    # whose first task sat there waited for it forever.
+    if is_done_state(state, names['done']):
         return TaskObservation(TaskPhase.DONE, **seen)
     if state == names['review'].strip().lower():
         return TaskObservation(TaskPhase.IN_REVIEW, **seen)

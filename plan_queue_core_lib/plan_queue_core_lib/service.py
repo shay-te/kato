@@ -47,6 +47,7 @@ from plan_queue_core_lib.plan_queue_core_lib.launching import (
     prepare_task,
     withdraw_task,
 )
+from plan_queue_core_lib.plan_queue_core_lib.live_edit import LiveEdit, apply_live_edit, tasks_to_rewrite
 from plan_queue_core_lib.plan_queue_core_lib.ports import (
     HistoryProbe,
     Ownership,
@@ -344,17 +345,22 @@ class PlanQueueService(object):
         self, plan_id: str, drafts: Sequence[StepDraft], *, title: str | None = None,
         repositories: Sequence[str] = (),
     ) -> Plan:
-        """The operator's edit of a proposed split, checked by the same validator.
+        """The operator's edit of a split, checked by the same validator.
 
-        ``repositories`` are more repositories the plan's tasks may work in (one
-        the operator added — e.g. a shared library every task builds on).
+        While proposed, anything. Once approved, only the tasks that have not
+        started (see ``live_edit``). ``repositories`` are more repositories the
+        plan's tasks may work in (one the operator added — e.g. a shared
+        library every task builds on).
         """
         plan = self._registry.get(plan_id)
+        _require_driven_here(plan)
         allowed = _merged(plan.repository_ids, repositories)
         try:
             steps = validate_split(list(drafts), allowed_repositories=allowed)
         except SplitValidationError as exc:
             raise PlanQueueError(str(exc), ErrorKind.INVALID) from exc
+        if plan.status.has_steps_in_flight:
+            return self._edit_live(plan_id, steps, title=title, repositories=repositories)
 
         def apply(live: Plan) -> None:
             _require(live, PlanStatus.PROPOSED)
@@ -370,6 +376,46 @@ class PlanQueueService(object):
                 live.title = title.strip()
 
         self._registry.mutate(plan_id, apply)
+        return self._registry.get(plan_id)
+
+    def _edit_live(
+        self, plan_id: str, steps: list[StepDraft], *, title: str | None, repositories: Sequence[str],
+    ) -> Plan:
+        """An approved plan changed where nothing has started, then its tasks
+        brought in line: taken-out ones withdrawn, new ones created (parents
+        first), and every waiting one whose text changed rewritten."""
+        def apply(live: Plan) -> LiveEdit:
+            _require_driven_here(live)
+            _require_in_flight(live)
+            change = apply_live_edit(live, steps)
+            live.repository_ids = _merged(live.repository_ids, repositories)
+            if title is not None and title.strip():
+                live.title = title.strip()
+            return change
+
+        change = self._registry.mutate(plan_id, apply)
+        self._note(plan_id, 'edited')
+        self._withdraw(plan_id, list(change.withdrawn), 'the task was taken out of the plan')
+        launcher = self._launcher_for(self._registry.get(plan_id))
+        if launcher is None or not launcher.creates_at_approval:
+            return self._registry.get(plan_id)
+        for step_id in change.added:
+            self._prepare_one(plan_id, step_id, launcher)
+        if change.added:
+            self._registry.mutate(plan_id, lambda live: live.touch_record())
+        problems = []
+        for step, request in tasks_to_rewrite(self._registry.get(plan_id), change.before):
+            try:
+                launcher.update(request, step.task_id)
+            except Exception as exc:
+                self._logger.exception('could not rewrite %s after the plan was edited', step.task_id)
+                problems.append(f'{step.task_id}: {exc}')
+        if problems:
+            raise PlanQueueError(
+                'the plan was changed, but these tasks still read the old text: '
+                f'{"; ".join(problems)}. Save again to retry.',
+                ErrorKind.UNAVAILABLE,
+            )
         return self._registry.get(plan_id)
 
     # ----- approving and running -----
@@ -599,6 +645,16 @@ class PlanQueueService(object):
         if needs_task:
             self._prepare_one(plan_id, step_id, launcher)
             self._registry.mutate(plan_id, lambda live: live.touch_record())
+        return self._registry.get(plan_id)
+
+    def start_step(self, plan_id: str, step_id: str) -> Plan:
+        """Hand one ready step over now (its card's Start), even while the plan
+        is approved or paused: Run hands over every ready step, this just one."""
+        plan = self._registry.get(plan_id)
+        _require_driven_here(plan)
+        _require_in_flight(plan)
+        self._require_launcher(plan.mode)
+        self._ticker.release_now(plan_id, step_id)
         return self._registry.get(plan_id)
 
     def check_now(self, plan_id: str, step_id: str) -> Plan:

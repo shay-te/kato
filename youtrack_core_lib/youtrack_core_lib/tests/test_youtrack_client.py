@@ -1479,6 +1479,25 @@ class YouTrackSubtaskSupportTests(unittest.TestCase):
         self.assertTrue(YouTrackClient.supports_subtasks)
 
 
+class YouTrackUpdateSubtaskTests(unittest.TestCase):
+    """An edited plan step: its sub-task's title and description rewritten."""
+
+    def test_the_summary_and_description_are_rewritten(self) -> None:
+        client = _subtask_client()
+        with patch.object(client, '_post', return_value=mock_response(json_data={})) as post:
+            client.update_subtask('PROJ-9', 'Part A, again', 'new body <!-- m-1 -->')
+        post.assert_called_once_with(
+            '/api/issues/PROJ-9', params={'fields': 'idReadable'},
+            json={'summary': 'Part A, again', 'description': 'new body <!-- m-1 -->'},
+        )
+
+    def test_a_refusal_says_why(self) -> None:
+        client = _subtask_client()
+        with patch.object(client, '_post', return_value=_refused('no permission')):
+            with self.assertRaisesRegex(Exception, 'no permission'):
+                client.update_subtask('PROJ-9', 'A', 'B')
+
+
 class YouTrackCreateSubtaskTests(unittest.TestCase):
     """Create in the parent's project, link, make sure it is unassigned, join sprints."""
 

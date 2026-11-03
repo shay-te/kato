@@ -6,8 +6,11 @@
 //   proposal takes minutes and nothing may wait on it;
 // - the proposal is the trust boundary: every brief is shown in full and is
 //   exactly what is saved; edits are saved BEFORE the approval they precede;
-// - the board is read-only: every step lands in the column its status names,
-//   no card can be dragged or edited, and only a STUCK card offers a way out;
+// - every step lands in the column its status names and no card is dragged; a
+//   ready card starts on its own, a waiting one can be counted as done, a
+//   stuck one offers its way out;
+// - an approved plan's tasks that have not started can be edited from the
+//   board ("Edit tasks"); a started task is locked, sent back unchanged;
 // - the plan is polled only while its tab shows.
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -343,7 +346,7 @@ describe('PlanQueueView — the proposal', () => {
     fireEvent.change(screen.getByLabelText('Title of api'), { target: { value: 'The endpoint' } });
     fireEvent.click(screen.getByRole('button', { name: 'Approve and run' }));
 
-    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: true, shared: false }));
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: true, shared: false, planFirst: true }));
     const [, saved] = editPlanQueueSteps.mock.calls[0];
     expect(saved[0]).toEqual({
       id: 'api', title: 'The endpoint', brief: 'The whole brief of api.\nSecond line.',
@@ -360,7 +363,7 @@ describe('PlanQueueView — the proposal', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
 
-    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: false, shared: false }));
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: false, shared: false, planFirst: true }));
     expect(editPlanQueueSteps).not.toHaveBeenCalled();
   });
 
@@ -586,19 +589,47 @@ describe('PlanQueueView — the board', () => {
     expect(board.querySelectorAll('input, textarea, select, [contenteditable]')).toHaveLength(0);
   });
 
-  test('only a stuck card offers a way out', async () => {
+  test('a ready card starts on its own, a waiting one can be counted done, a stuck one has its way out', async () => {
     serve(BOARD);
     const { container } = render(<PlanQueueView taskId="UNA-1" />);
     await screen.findByRole('region', { name: 'Done' });
 
     const actionsOf = (id) => [...container.querySelectorAll(`[data-step="${id}"] .plan-card-action`)]
       .map((button) => button.textContent);
+    expect(actionsOf('ready')).toEqual(['Start', 'Count as done']);
+    expect(actionsOf('blocked')).toEqual(['Count as done']);
     expect(actionsOf('declined')).toEqual(['Retry', 'Count as done']);
     expect(actionsOf('gone')).toEqual(['Retry', 'Count as done']);
     expect(actionsOf('nopr')).toEqual(['Count as done']);
-    for (const healthy of ['blocked', 'ready', 'active', 'review', 'merging', 'done', 'dropped']) {
+    for (const healthy of ['active', 'review', 'merging', 'done', 'dropped']) {
       expect(actionsOf(healthy)).toEqual([]);
     }
+  });
+
+  test('Start hands over that one task', async () => {
+    serve(BOARD);
+    planQueueStepAction.mockReturnValue(ok(BOARD));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    fireEvent.click((await column('Waiting')).getByRole('button', { name: 'Start' }));
+
+    await waitFor(() => expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'ready', 'start'));
+  });
+
+  test('counting a waiting task as done asks first, and does nothing when declined', async () => {
+    serve(BOARD);
+    planQueueStepAction.mockReturnValue(ok(BOARD));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { container } = render(<PlanQueueView taskId="UNA-1" />);
+    await screen.findByRole('region', { name: 'Done' });
+    const countDone = () => container.querySelector('[data-step="blocked"] .plan-card-action');
+
+    fireEvent.click(countDone());
+    expect(confirm.mock.calls[0][0]).toMatch(/its work was already merged some other way/);
+    expect(planQueueStepAction).not.toHaveBeenCalled();
+    fireEvent.click(countDone());
+    await waitFor(() => expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'blocked', 'satisfy'));
+    confirm.mockRestore();
   });
 
   test('a stuck card\'s action reaches its step', async () => {
@@ -701,14 +732,14 @@ describe('PlanQueueView — a plan shared on the tracker', () => {
       .toMatch(/Nothing goes to the tracker/);
     expect(screen.queryByRole('button', { name: 'Approve and run' })).toBeNull();
     fireEvent.click(create);
-    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: true, shared: true }));
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: true, shared: true, planFirst: true }));
   });
 
   test('or kept in kato only, or created without running yet', async () => {
     serve(plan({ can_share: true }));
     approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
-    for (const [name, choice] of [['Keep them in kato only', { run: true, shared: false }],
-                                  ['Create 2 sub-tasks', { run: false, shared: true }]]) {
+    for (const [name, choice] of [['Keep them in kato only', { run: true, shared: false, planFirst: true }],
+                                  ['Create 2 sub-tasks', { run: false, shared: true, planFirst: true }]]) {
       const { unmount } = render(<PlanQueueView taskId="UNA-1" />);
       fireEvent.click(await screen.findByRole('button', { name }));
       await waitFor(() => expect(approvePlanQueue).toHaveBeenLastCalledWith('p1', choice));
@@ -776,5 +807,121 @@ describe('the plan tab', () => {
     expect(fetchPlanQueues).toHaveBeenCalledTimes(1);
     act(() => planQueueChanges.notify('UNA-1'));
     await waitFor(() => expect(fetchPlanQueues).toHaveBeenCalledTimes(2));
+  });
+});
+
+
+describe('PlanQueueView — changing an approved plan', () => {
+  // Running: 'a' started, 'b' waits for it, 'c' waits for nothing yet.
+  const LIVE = plan({
+    status: 'running',
+    steps: [
+      step('a', { status: 'active', task_id: 'T-1', released_at: 10 }),
+      step('b', { depends_on: ['a'], reason: 'waits for T-1' }),
+      step('c', { status: 'ready' }),
+      step('d', { status: 'satisfied', task_id: 'T-4', released_at: 10 }),
+    ],
+  });
+
+  test('a waiting task is edited and saved with the started one sent back as it is', async () => {
+    serve(LIVE);
+    editPlanQueueSteps.mockReturnValue(ok(LIVE));
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open b' }));
+    fireEvent.change(screen.getByLabelText('Title of b'), { target: { value: 'Use it in the page' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const [planId, sent] = editPlanQueueSteps.mock.calls[0];
+    expect(planId).toBe('p1');
+    expect(sent.map((draft) => [draft.id, draft.title])).toEqual([
+      ['a', 'Title of a'], ['b', 'Use it in the page'], ['c', 'Title of c'], ['d', 'Title of d'],
+    ]);
+    expect(await screen.findByRole('region', { name: 'Waiting' })).toBeInTheDocument();  // back on the board
+  });
+
+  test('a started task is locked: no editor, no remove', async () => {
+    serve(LIVE);
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    expect(screen.getByText('started — T-1 stays as it is')).toBeInTheDocument();
+    expect(screen.getByText('done — T-4 stays as it is')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open a' }));
+    expect(screen.queryByLabelText('Title of a')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove a' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open c' }));
+    expect(screen.getByRole('button', { name: 'Remove c' })).toBeInTheDocument();
+  });
+
+  test('a task can be added and one taken out', async () => {
+    serve(LIVE);
+    editPlanQueueSteps.mockReturnValue(ok(LIVE));
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open c' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove c' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add a task to the plan' }));
+    fireEvent.change(screen.getByLabelText('Title of t04'), { target: { value: 'Write the guide' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const sent = editPlanQueueSteps.mock.calls[0][1];
+    expect(sent.map((draft) => draft.id)).toEqual(['a', 'b', 'd', 't04']);
+    expect(sent[3]).toMatchObject({ title: 'Write the guide', depends_on: [], repositories: ['api', 'web'] });
+  });
+
+  test('Cancel goes back to the board without saving', async () => {
+    serve(LIVE);
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('region', { name: 'Waiting' })).toBeInTheDocument();
+    expect(editPlanQueueSteps).not.toHaveBeenCalled();
+  });
+
+  test('a plan another kato drives, or one that finished, has no Edit tasks', async () => {
+    for (const shown of [plan({ ...LIVE, mode: 'followed', driver_user: 'dana' }), plan({ ...LIVE, status: 'finished' })]) {
+      serve(shown);
+      const { unmount } = render(<PlanQueueView taskId="UNA-1" />);
+      await screen.findByRole('region', { name: 'Waiting' });
+      expect(screen.queryByRole('button', { name: 'Edit tasks' })).toBeNull();
+      unmount();
+    }
+  });
+
+  test('a card says when its task was handed over but not started, and its ticket\'s state', async () => {
+    serve(plan({
+      status: 'running',
+      steps: [step('a', { status: 'starting', task_id: 'T-1', released_at: 10, task_state: 'Open' })],
+    }));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    const progress = await column('In progress');
+    expect(progress.getByText('handed over — not started yet')).toBeInTheDocument();
+    expect(progress.getByText('Open')).toBeInTheDocument();
+  });
+
+  test('the board says when each task plans first', async () => {
+    serve(plan({ ...LIVE, start_mode: 'plan' }));
+    render(<PlanQueueView taskId="UNA-1" />);
+    expect(await screen.findByText(/each task plans first/)).toBeInTheDocument();
+  });
+
+  test('unticking "Plan each task first" approves tasks that code at once', async () => {
+    serve(plan({ steps: [step('a'), step('b', { depends_on: ['a'] })] }));
+    approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    const box = await screen.findByRole('checkbox', { name: 'Plan each task first' });
+    expect(box.checked).toBe(true);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalledWith('p1', { run: false, shared: false, planFirst: false }));
   });
 });

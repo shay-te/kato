@@ -5,12 +5,18 @@ tickets assigned to the user it polls for, so unassigned is the hold — it
 fails safe). At its turn a step is released by assigning it to that user; the
 normal pickup then runs it. A sub-task someone already took is never assigned
 over, and a cancelled one is left unassigned with a note — nothing is deleted.
+
+A plan whose tasks plan first tags each sub-task ``kato:wait-planning``: every
+kato's pickup then opens it in Plan mode, and it codes only once its plan is
+approved in its chat. The tag is on the ticket, so it holds on any kato.
 """
 
 from __future__ import annotations
 
 from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
 
+from kato_core_lib.data_layers.data.fields import TaskTags
+from kato_core_lib.data_layers.service.local_task_service import START_PLAN
 from kato_core_lib.data_layers.service.plan_queue.step_footer import subtask_description, subtask_summary
 from kato_core_lib.helpers.agent_comment_classification import (
     PLAN_STEP_COMMENT_PREFIX,
@@ -40,13 +46,14 @@ class TrackerStepLauncher(object):
     def prepare(self, request: LaunchRequest) -> str:
         tracker = self._tracker()
         found = tracker.find_subtask(request.source_task_id, request.marker)
-        if found:
-            return found  # a retried create finds the first
-        return tracker.create_subtask(
+        task_id = found or tracker.create_subtask(  # a retried create finds the first
             request.source_task_id,
             subtask_summary(request),
             subtask_description(request, self._repository_labels(request.repositories)),
         )
+        if request.start_mode == START_PLAN:
+            self._get_task_service().add_tag(task_id, TaskTags.WAIT_PLANNING)
+        return task_id
 
     def release(self, request: LaunchRequest, task_id: str) -> str:
         tracker = self._tracker()
@@ -59,6 +66,15 @@ class TrackerStepLauncher(object):
             self._get_task_service().add_comment(task_id, RELEASED_AGAIN_COMMENT)
         tracker.assign_issue(task_id, self.assignee())
         return task_id
+
+    def update(self, request: LaunchRequest, task_id: str) -> None:
+        """An edited step's sub-task, rewritten: its title and its description
+        with the footer (what it waits for, where it works)."""
+        self._tracker().update_subtask(
+            task_id,
+            subtask_summary(request),
+            subtask_description(request, self._repository_labels(request.repositories)),
+        )
 
     def withdraw(self, task_id: str, reason: str) -> None:
         tracker = self._tracker()

@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanStatus
+from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanStatus, StepStatus
 from plan_queue_core_lib.plan_queue_core_lib.service import PlanQueueService
 from plan_queue_core_lib.plan_queue_core_lib.store import PlanQueueStore
 from plan_queue_core_lib.plan_queue_core_lib.tests.fakes import (
@@ -209,6 +209,39 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ui/cancel').status_code, 200)
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ghost/cancel').status_code, 404)
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ui/explode').status_code, 404)
+
+    def test_start_hands_over_one_ready_step_before_run(self) -> None:
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'start_mode': 'plan'})
+        started = self._post(f'/api/plan-queues/{plan_id}/steps/api/start')
+        self.assertEqual(started.status_code, 200, started.get_json())
+        steps = {step['id']: step for step in started.get_json()['steps']}
+        self.assertEqual(steps['api']['status'], 'starting')
+        self.assertEqual(started.get_json()['status'], 'approved')
+        self.assertEqual([request.step_id for request, _task in self.launcher.released], ['api'])
+        self.assertEqual(self.launcher.released[0][0].start_mode, 'plan')  # the task plans first
+        refused = self._post(f'/api/plan-queues/{plan_id}/steps/ui/start')
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn('still waits', refused.get_json()['error'])
+
+    def test_an_approved_plan_s_waiting_task_is_edited_through_the_same_route(self) -> None:
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'run': True})
+        self.queue.tick()  # 'api' waits for nothing: handed over
+        self.assertEqual(self.queue.get(plan_id).step('api').status, StepStatus.STARTING)
+        steps = [
+            {'id': step.id, 'title': step.title, 'brief': step.brief,
+             'depends_on': list(step.depends_on), 'repositories': list(step.repositories)}
+            for step in self.queue.get(plan_id).steps
+        ]
+        steps[1]['title'] = 'Use it in the page'
+        edited = self.client.put(f'/api/plan-queues/{plan_id}/steps', json={'steps': steps})
+        self.assertEqual(edited.status_code, 200, edited.get_json())
+        self.assertEqual(edited.get_json()['steps'][1]['title'], 'Use it in the page')
+        steps[0]['title'] = 'Something else'  # 'api' has started
+        refused = self.client.put(f'/api/plan-queues/{plan_id}/steps', json={'steps': steps})
+        self.assertEqual(refused.status_code, 409)
+        self.assertIn('has already started', refused.get_json()['error'])
 
     # ----- a split the operator already wrote as files -----
 

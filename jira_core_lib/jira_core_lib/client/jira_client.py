@@ -451,6 +451,17 @@ class JiraClient(IssueClientBase):
             self._safe_dict(fields, JiraIssueFields.ASSIGNEE), JiraCommentFields.ACCOUNT_ID,
         )
 
+    def update_subtask(self, issue_id: str, summary: str, description: str) -> None:
+        # v3 takes the description as an ADF document, as ``create_subtask`` sends it.
+        response = self._put_with_retry(
+            f'/rest/api/3/issue/{issue_id}',
+            json={'fields': {
+                JiraIssueFields.SUMMARY: summary,
+                JiraIssueFields.DESCRIPTION: adf_from_text(description),
+            }},
+        )
+        self.raise_for_status_with_detail(response)
+
     def find_subtask(self, parent_id: str, marker: str) -> str:
         if not normalized_text(marker):
             # An empty marker is in every description — it would "find" any

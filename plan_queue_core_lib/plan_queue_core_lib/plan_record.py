@@ -11,10 +11,11 @@ it satisfied — so a host without that repository still sees it done)::
     PROJ-3 | ui | Use it in the page | in web | waits for PROJ-2
 
 Anyone who can comment can post such text, so it is trusted only so far:
-the driver posts its own record (its author is the user it names), every task
-in it is a sub-task of the plan's task (the host checks that — it can ask the
-tracker), and a later record of the same plan may not change what waits for
-what (only who drives it, its status, what is done, and a re-created step's task).
+the driver posts its own record (its author is the user it names), and every
+task in it is a sub-task of the plan's task (the host checks that — it can ask
+the tracker). A later record may change what waits for what — the driver edited
+the tasks that had not started — but only from the same driver, never in the
+record that changes who drives it, and never for a task already done.
 """
 
 from __future__ import annotations
@@ -82,8 +83,14 @@ def acceptable(record: PlanRecord, *, previous: PlanRecord | None) -> str:
         return f'the record was posted by {record.author or "nobody"}, not by its driver {record.driver_user}'
     if previous is None or previous.plan_id != record.plan_id:
         return ''
-    if _graph(previous) != _graph(record):
-        return 'the record changes which step waits for which'
+    if _graph(previous) == _graph(record):
+        return ''
+    if record.driver_user != previous.driver_user:
+        return 'a record that changes who drives the plan may not also change which step waits for which'
+    graph = _graph(record)
+    for step in previous.steps:
+        if step.done and graph.get(step.step_id) != _graph(previous)[step.step_id]:
+            return f'the record changes {step.task_id}, which is already done'
     return ''
 
 

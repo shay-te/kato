@@ -56,5 +56,8 @@ class LocalStepLauncher(object):
         starter.start(str(task.id), start_mode, model=request.model, effort=request.effort)
         return str(task.id)
 
+    def update(self, request: LaunchRequest, task_id: str) -> None:
+        """Nothing to do: a local step's task never exists before release."""
+
     def withdraw(self, task_id: str, reason: str) -> None:
         """Nothing to do: a local step's task never exists before release."""

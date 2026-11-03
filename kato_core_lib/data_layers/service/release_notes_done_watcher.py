@@ -33,6 +33,7 @@ from pathlib import Path
 
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
 
+from kato_core_lib.helpers.done_states_utils import is_done_state
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
 
@@ -118,7 +119,7 @@ class ReleaseNotesDoneWatcher(object):
                 unanswered.append(norm)
                 continue
             state = str(getattr(status, 'state', '') or '').strip().lower()
-            if getattr(status, 'exists', True) and done and state == done:
+            if getattr(status, 'exists', True) and is_done_state(state, done):
                 self._on_done(pending[norm]['id'])
             del pending[norm]  # done, or left the list for another reason
         self._count_attempt(pending, unanswered)

@@ -14414,6 +14414,13 @@ button.settings-prompt-editor-head {
 }
 
 .plan-proposal-discard { margin-right: auto; }
+.plan-proposal-plan-first {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-5;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-83;
+}
 
 /* ---------- The board ---------- */
 .plan-board {
@@ -14543,6 +14550,7 @@ button.plan-card-code:hover { color: $C-NEUTRAL-96; text-decoration: underline; 
 
 /* Who has the sub-task — a teammate, or the user kato works as. */
 .plan-card-worker { font-size: $TEXT-11; color: $C-CYAN-78; }
+.plan-card-state { font-size: $TEXT-11; color: $C-NEUTRAL-64; }
 .plan-card.is-failed .plan-card-note { color: $C-RED-71; }
 
 .plan-card-prs,

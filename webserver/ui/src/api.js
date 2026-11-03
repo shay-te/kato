@@ -870,9 +870,12 @@ export function editPlanQueueSteps(planId, steps, repositories = []) {
 
 // ``shared`` true puts the steps on the tracker as sub-tasks of the plan's
 // ticket; false keeps them kato's own tasks. Always stated — creating tickets is
-// the operator's explicit choice, never a default.
-export function approvePlanQueue(planId, { run = false, shared = false } = {}) {
-  return postEnvelope(planQueueUrl(planId, '/approve'), { run, shared, start_mode: 'implement' });
+// the operator's explicit choice, never a default. ``planFirst``: each task
+// opens in Plan mode and codes only once its plan is approved.
+export function approvePlanQueue(planId, { run = false, shared = false, planFirst = false } = {}) {
+  return postEnvelope(planQueueUrl(planId, '/approve'), {
+    run, shared, start_mode: planFirst ? 'plan' : 'implement',
+  });
 }
 
 export function takeOverPlanQueue(planId) {
@@ -894,7 +897,7 @@ export function discardPlanQueue(planId) {
   return postEnvelope(planQueueUrl(planId), {}, 'DELETE');
 }
 
-// ``action``: 'satisfy' | 'retry' | 'cancel' | 'check'.
+// ``action``: 'start' | 'satisfy' | 'retry' | 'cancel' | 'check'.
 export function planQueueStepAction(planId, stepId, action) {
   return postEnvelope(planQueueUrl(planId, `/steps/${encodeURIComponent(stepId)}/${action}`), {});
 }

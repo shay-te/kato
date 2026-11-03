@@ -85,6 +85,9 @@ class FakeSubtaskTracker(object):
         self.issues[issue_id]['summary'] = summary
         return issue_id
 
+    def update_subtask(self, issue_id, summary, description):
+        self.issues[issue_id].update(summary=summary, description=description)
+
     def find_subtask(self, parent_id, marker):
         return next((issue_id for issue_id, issue in self.issues.items()
                      if issue['parent'] == parent_id and marker in issue['description']), '')
@@ -125,20 +128,23 @@ class Services(object):
         self.tracker = tracker
         self.comments: list[tuple[str, str]] = []
         self.moved_done: list[str] = []
+        self.tags: list[tuple[str, str]] = []
         self.task_service = SimpleNamespace(
             subtask_tracker=lambda: self.tracker, bot_login=bot_login,
             add_comment=lambda issue_id, text: self.comments.append((issue_id, text)),
+            add_tag=lambda issue_id, tag: self.tags.append((issue_id, tag)),
         )
         self.task_state_service = SimpleNamespace(
             state_names=lambda: dict(STATES), move_task_to_done=self.moved_done.append,
         )
 
 
-def request(step_id='ui', *, waits_for=('PROJ-11',), repositories=('web',)) -> LaunchRequest:
+def request(step_id='ui', *, waits_for=('PROJ-11',), repositories=('web',), start_mode='', title='Use the endpoint',
+            count=3) -> LaunchRequest:
     return LaunchRequest(
-        plan_id=PLAN_ID, step_id=step_id, index=2, count=3, title='Use the endpoint',
+        plan_id=PLAN_ID, step_id=step_id, index=2, count=count, title=title,
         description='Step 2 of 3 of the plan.\n\nDo it.', repositories=repositories,
-        source_task_id='PROJ-1', plan_title='Discounts', waits_for=waits_for,
+        source_task_id='PROJ-1', plan_title='Discounts', waits_for=waits_for, start_mode=start_mode,
     )
 
 
@@ -184,6 +190,34 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('Repositories: demo-shop-fe, gone', issue['description'])
         self.assertEqual(self.launcher.prepare(request()), task_id)  # a retry finds the first
         self.assertEqual(len(self.tracker.issues), 1)
+
+    def test_a_plan_whose_tasks_plan_first_tags_each_sub_task_even_on_a_retried_create(self) -> None:
+        # The tag is on the ticket, so every kato's pickup opens it in Plan mode.
+        task_id = self.launcher.prepare(request(start_mode='plan'))
+        self.assertEqual(self.launcher.prepare(request(start_mode='plan')), task_id)
+        self.assertEqual(self.services.tags, [(task_id, 'kato:wait-planning')] * 2)
+
+    def test_a_plan_whose_tasks_code_at_once_tags_nothing(self) -> None:
+        self.launcher.prepare(request(start_mode='implement'))
+        self.launcher.prepare(request(step_id='api'))
+        self.assertEqual(self.services.tags, [])
+
+    def test_a_tag_that_cannot_be_added_fails_the_create_rather_than_run_unplanned(self) -> None:
+        def refuse(issue_id, tag):
+            raise RuntimeError('tracker down')
+
+        self.services.task_service.add_tag = refuse
+        with self.assertRaisesRegex(RuntimeError, 'tracker down'):
+            self.launcher.prepare(request(start_mode='plan'))
+
+    def test_update_rewrites_the_title_and_the_footer(self) -> None:
+        task_id = self.launcher.prepare(request())
+        self.launcher.update(request(title='Use the new endpoint', waits_for=('PROJ-11', 'PROJ-12'), count=4), task_id)
+        issue = self.tracker.issues[task_id]
+        self.assertEqual(issue['summary'], 'Subtask of PROJ-1: Use the new endpoint')
+        self.assertIn('Waits for: PROJ-11, PROJ-12', issue['description'])
+        self.assertIn('task 2 of 4', issue['description'])
+        self.assertIn('Repositories: demo-shop-fe', issue['description'])
 
     def test_release_assigns_to_the_user_kato_polls_for_and_never_over_someone(self) -> None:
         self.tracker.issue('PROJ-5')
@@ -258,6 +292,22 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual((seen['PROJ-2'].assignee, seen['PROJ-2'].assignee_name), ('dana', 'Dana'))
         self.assertEqual(seen['PROJ-1'].created_at, 1792231200.0)
         self.assertEqual(seen['PROJ-404'].phase, TaskPhase.MISSING)
+
+    def test_a_state_the_operator_listed_counts_as_done(self) -> None:
+        # The plan on UNA-3267 stalled: its first tasks sat in "Waiting Deploy",
+        # read as still to do, and every other task waited on them.
+        self.tracker.issue('PROJ-6', state='Waiting Deploy', assignee='shay')
+        self.tracker.issue('PROJ-7', state='Lead', assignee='shay')
+        with mock.patch.dict('os.environ', {'KATO_DONE_STATES': ' waiting deploy , Released'}):
+            seen = self.progress.observe(['PROJ-6', 'PROJ-7'])
+        self.assertEqual(seen['PROJ-6'].phase, TaskPhase.DONE)
+        self.assertEqual(seen['PROJ-7'].phase, TaskPhase.WAITING)  # not listed: still to do
+        self.assertEqual((seen['PROJ-6'].state, seen['PROJ-7'].state), ('Waiting Deploy', 'Lead'))
+
+    def test_unlisted_the_same_state_is_still_to_do(self) -> None:
+        self.tracker.issue('PROJ-6', state='Waiting Deploy', assignee='shay')
+        with mock.patch.dict('os.environ', {'KATO_DONE_STATES': ''}):
+            self.assertEqual(self.progress.observe(['PROJ-6'])['PROJ-6'].phase, TaskPhase.WAITING)
 
     def test_what_this_kato_knows_about_its_own_run(self) -> None:
         self.tracker.issue('PROJ-1', state='In Progress', assignee='shay')

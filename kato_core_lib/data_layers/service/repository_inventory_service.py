@@ -17,6 +17,7 @@ from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     build_discovered_repository,
     discover_git_repositories,
     display_name_from_repo_slug,
+    parse_git_remote_url,
     remote_web_base_url,
     repository_id_from_name,
     review_url_for_remote,
@@ -890,15 +891,18 @@ class RepositoryInventoryService(Service):
     def _pull_request_data_access(self, repository) -> PullRequestDataAccess:
         provider = self._resolved_pull_request_provider(repository)
         provider_base_url = text_from_attr(repository, RepositoryFields.PROVIDER_BASE_URL)
-        owner = text_from_attr(repository, RepositoryFields.OWNER)
-        repo_slug = text_from_attr(repository, RepositoryFields.REPO_SLUG)
+        owner, repo_slug = self._owner_and_repo_slug(repository)
         token = text_from_attr(repository, 'token')
         api_email = text_from_attr(repository, RepositoryFields.BITBUCKET_API_EMAIL)
         destination_branch = text_from_attr(repository, RepositoryFields.DESTINATION_BRANCH)
-        if not provider_base_url or not owner or not repo_slug or not token:
-            raise ValueError(
-                f'incomplete pull request configuration for repository {repository.id}'
-            )
+        missing = [label for label, value in (
+            ('pull request API address', provider_base_url),
+            ('owner', owner),
+            ('repository name', repo_slug),
+            ('token', token),
+        ) if not value]
+        if missing:
+            raise ValueError(self._incomplete_configuration_message(repository, missing))
         if provider_base_url and 'bitbucket' in provider_base_url.lower() and not api_email:
             raise ValueError(
                 f'missing Bitbucket API email for repository {repository.id}'
@@ -916,6 +920,35 @@ class RepositoryInventoryService(Service):
         )
         client = RepositoryCoreLib(config, self._max_retries).pull_request
         return PullRequestDataAccess(config, client)
+
+    def _owner_and_repo_slug(self, repository) -> tuple[str, str]:
+        """The repository's owner and name on its git host: as the inventory
+        has them, else both read off its configured remote. Never off the
+        clone's ``.git/config``, which the agent can write."""
+        owner = text_from_attr(repository, RepositoryFields.OWNER)
+        repo_slug = text_from_attr(repository, RepositoryFields.REPO_SLUG)
+        if owner and repo_slug:
+            return owner, repo_slug
+        _, remote_owner, remote_slug = parse_git_remote_url(self._remote_for_addresses(repository))
+        if remote_owner and remote_slug:
+            return remote_owner, remote_slug
+        return owner, repo_slug
+
+    @staticmethod
+    def _incomplete_configuration_message(repository, missing: list[str]) -> str:
+        """Which part is missing, and — for an owner or name — the remote kato
+        read them from (any user and password left out). The bare "incomplete
+        configuration" left the operator nothing to check."""
+        message = (
+            f'incomplete pull request configuration for repository {repository.id}: '
+            f'no {", ".join(missing)}'
+        )
+        if not {'owner', 'repository name'} & set(missing):
+            return message
+        remote_url = text_from_attr(repository, 'remote_url')
+        if not remote_url:
+            return f'{message}. It has no remote kato knows: check that REPOSITORY_ROOT_PATH finds it.'
+        return f'{message}. kato could not read them from its remote {_without_credentials(remote_url)}.'
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
         remote_url = self._remote_for_addresses(repository)
@@ -951,3 +984,7 @@ class RepositoryInventoryService(Service):
         repository_path = f'{owner}/{repo_slug}'.strip('/')
         return f'{web_base_url}/{repository_path}'
 
+
+def _without_credentials(remote_url: str) -> str:
+    """A remote to show: an ``https://user:secret@host`` login left out."""
+    return re.sub(r'(://)[^/@]*@', r'\1', remote_url)
