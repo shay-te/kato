@@ -116,13 +116,22 @@ export function formatRenameBranchResult(result) {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Branch not renamed');
   }
-  const { branch = '', renamed = [] } = result.body || {};
+  const {
+    branch = '', renamed = [], renamed_on_remote: onRemote = [], problems = [],
+  } = result.body || {};
+  // Problems first: the rename stands, but an old branch left on a remote
+  // is the operator's to clean up, and a green box would hide it.
+  const lines = problems.map((problem) => `⚠ ${problem}`);
+  lines.push(renamed.length
+    ? `Now ${branch} in ${renamed.join(', ')}.`
+    : `Now ${branch}. No repository had the old branch yet.`);
+  if (onRemote.length) {
+    lines.push(`Renamed on the remote too: ${onRemote.join(', ')}.`);
+  }
   return {
-    title: 'Branch renamed',
-    kind: 'success',
-    message: renamed.length
-      ? `Now ${branch} in ${renamed.join(', ')}.`
-      : `Now ${branch}. No repository had the old branch yet.`,
+    title: problems.length ? 'Branch renamed, with problems' : 'Branch renamed',
+    kind: problems.length ? 'error' : 'success',
+    message: lines.join('\n'),
   };
 }
 

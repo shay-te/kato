@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -142,6 +143,17 @@ class NewTaskEndToEndTests(unittest.TestCase):
             agent_service=SimpleNamespace(local_tasks=service),
         )
         self.client = app.test_client()
+        # Runs before the folder is deleted (cleanups run last-in, first-out).
+        self.addCleanup(self._wait_for_preparation)
+
+    @staticmethod
+    def _wait_for_preparation() -> None:
+        # The task is prepared on its own thread, which keeps writing into the
+        # task folder after the clone appears. A test that ends first deleted
+        # the folder under it: "Directory not empty" at cleanup.
+        for thread in threading.enumerate():
+            if thread.name.startswith('local-task-'):
+                thread.join(timeout=30)
 
     def create(self, **overrides):
         body = {'summary': TITLE, 'description': DESCRIPTION, 'repositories': ['api']}

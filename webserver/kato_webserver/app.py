@@ -25,7 +25,7 @@ Endpoints:
     POST /api/sessions/<task_id>/adopt-agent-session    — body keyed by AGENT_SESSION_ID
     POST /api/sessions/<task_id>/sync-repositories      — clone task repos missing from workspace
     POST /api/sessions/<task_id>/add-repository         — body: {"repository_ids": [...]} or {"repository_id"} — tag + clone
-    POST /api/sessions/<task_id>/rename-branch          — body: {"branch": "<name>"} — only before it reaches a remote
+    POST /api/sessions/<task_id>/rename-branch          — body: {"branch": "<name>"} — every clone, and the remote where pushed
     GET  /api/repositories                              — list inventory repos for the chooser
     GET  /api/release-notes                             — the release notes + the Google Doc copy state
     POST /api/release-notes/sync                        — copy the release notes into the Google Doc now
@@ -4074,7 +4074,9 @@ def _register_http_routes(app: Flask) -> None:
     def rename_task_branch(task_id: str):
         """Rename the task's branch. Body: ``{"branch": "<new name>"}``.
 
-        Refused (409, with the reason) once the branch has reached a remote.
+        Every clone, and the remote where the branch was pushed. Refused (409,
+        with the reason) where that would lose or break something; a rename
+        that stands but left something behind lists it in ``problems``.
         """
         branch = text_from_mapping(request.get_json(silent=True) or {}, 'branch')
         if not branch:
@@ -5659,7 +5661,12 @@ def _register_get_pending_permissions_route(app: Flask) -> None:
                     getattr(record, 'agent_backend', '') or '',
                 )
                 pending.append(envelope)
-        return jsonify({'pending': pending})
+        # Tagged like the diff: polled every 1.5s, and a waiting Write ask
+        # carries the whole file it would write. The list is still built (and
+        # auto-resolved) on every poll; only re-sending an unchanged one stops.
+        return conditional_json_response(
+            app, request, TaggedPayload.from_payload({'pending': pending}),
+        )
 
 
 def _register_tool_decisions_routes(app: Flask) -> None:

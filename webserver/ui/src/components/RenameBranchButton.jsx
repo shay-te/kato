@@ -8,8 +8,10 @@ import Icon from './Icon.jsx';
 import ModalFooterActions from './ModalFooterActions.jsx';
 import { formatRenameBranchResult } from './sessionHeaderFormatters.js';
 
-// The server refuses a rename once the branch has reached a remote, and says
-// why. That takes a call to each remote, so the button cannot know beforehand.
+// Renames the branch in every repository of the task, and on the remote where
+// it was pushed. The server refuses where that would lose or break something
+// (an open pull request, commits only the remote has) and says why; that takes
+// a call to each remote, so the button cannot know beforehand.
 export default function RenameBranchButton({ taskId, branch, disabled, onRenamed }) {
   const [open, setOpen] = useState(false);
   return (
@@ -18,7 +20,7 @@ export default function RenameBranchButton({ taskId, branch, disabled, onRenamed
         id="session-rename-branch"
         type="button"
         className="session-action"
-        data-tooltip="Rename this task's branch. Only while it has never been pushed."
+        data-tooltip="Rename this task's branch in every repository, and on the remote where it was pushed."
         onClick={() => setOpen(true)}
         disabled={disabled}
         aria-label="Rename branch"
@@ -78,6 +80,10 @@ function RenameBranchDialog({ taskId, branch, onClose, onRenamed }) {
           }}
         />
       </label>
+      <p className="rename-branch-note">
+        Every repository of the task moves. Where the branch was pushed, it is
+        renamed on the remote too; commits you have not pushed stay here.
+      </p>
       <ModalFooterActions
         onCancel={onClose}
         onConfirm={submit}

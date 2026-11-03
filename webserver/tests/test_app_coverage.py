@@ -1378,6 +1378,30 @@ class PendingPermissionProbeTests(unittest.TestCase):
         # The raising session is skipped; the healthy one still reports.
         self.assertEqual([e['task_id'] for e in pending], ['OK'])
 
+    def test_pending_permissions_feed_confirms_an_unchanged_list_with_304(self):
+        # Polled every 1.5s, and a waiting Write ask carries the whole file:
+        # an unchanged list is confirmed with an empty 304, never re-sent.
+        asks = [{'type': 'control_request', 'request_id': 'w1',
+                 'request': {'tool_name': 'Write', 'input': {'content': 'x' * 5000}}}]
+        session = SimpleNamespace(pending_control_requests=lambda: list(asks))
+        manager = _FakeManager(records=[_FakeWorkspaceRecord(task_id='POJ-1')])
+        manager.get_session = lambda task_id: session
+        client = create_app(session_manager=manager).test_client()
+
+        with patch('kato_webserver.app._maybe_auto_resolve_pending', return_value=False) as auto:
+            etag = client.get('/api/permissions/pending').headers['ETag']
+            again = client.get('/api/permissions/pending', headers={'If-None-Match': etag})
+            # Still built and checked against remembered decisions first:
+            # only the re-send stops.
+            self.assertEqual(auto.call_count, 2)
+        self.assertEqual(again.status_code, 304)
+        self.assertEqual(again.data, b'')
+
+        asks.append({'type': 'control_request', 'request_id': 'w2', 'request': {}})
+        changed = client.get('/api/permissions/pending', headers={'If-None-Match': etag})
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual([e['request_id'] for e in changed.get_json()['pending']], ['w1', 'w2'])
+
     def test_live_probe_empty_string_returns_empty(self):
         from kato_webserver.app import _session_pending_permission_tool
 

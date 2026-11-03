@@ -10,6 +10,7 @@ import {
   fetchSessionContextUsage,
   fetchAgentVersion,
   fetchModels,
+  fetchPendingPermissions,
   refreshAgentBackends,
   postChatMessage,
 } from './api.js';
@@ -436,4 +437,24 @@ test('a failed refresh still performs the read', async () => {
   const body = await fetchModels(true);
   assert.equal(calls.length, 2);
   assert.deepEqual(body, { models: [] });
+});
+
+
+test('fetchPendingPermissions returns the list with its signature', async () => {
+  const calls = _stubFetch({
+    ok: true, status: 200,
+    headers: { get: (name) => (name === 'etag' ? '"abc"' : null) },
+    json: () => Promise.resolve({ pending: [{ request_id: 'r1' }] }),
+  });
+  const body = await fetchPendingPermissions();
+  assert.deepEqual(body, { pending: [{ request_id: 'r1' }], signature: '"abc"' });
+  assert.equal(calls[0].url, '/api/permissions/pending');
+  assert.equal(calls[0].init.headers, undefined);
+});
+
+test('fetchPendingPermissions sends the signature and reads a 304 as unchanged', async () => {
+  const calls = _stubFetch({ ok: false, status: 304, json: () => Promise.reject(new Error('no body')) });
+  const body = await fetchPendingPermissions('"abc"');
+  assert.deepEqual(body, { unchanged: true });
+  assert.equal(calls[0].init.headers['If-None-Match'], '"abc"');
 });

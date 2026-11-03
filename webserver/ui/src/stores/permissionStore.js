@@ -42,6 +42,8 @@ let _pending = new Map();
 const _resolved = new Map();
 let _error = '';
 let _snapshot = { list: [], error: '' };
+// The last list the server sent, and its signature.
+let _polled = { list: [], signature: '' };
 
 // taskId -> appendLocalEvent(bubble). Lets the globally-owned modal drop
 // its approve/deny audit bubble into whichever task's chat is mounted.
@@ -117,11 +119,18 @@ function _reconcile(polled) {
 function _refresh() {
   if (_inFlight) { return _inFlight; }
   _inFlight = Promise.resolve()
-    .then(() => fetchPendingPermissions())
+    .then(() => fetchPendingPermissions(_polled.signature))
     .then((body) => {
-      const list = Array.isArray(body?.pending) ? body.pending : [];
+      // The signature travels with the list it describes: an "unchanged"
+      // answer means THIS list, so it is reconciled again as if re-sent.
+      if (!body?.unchanged) {
+        _polled = {
+          list: Array.isArray(body?.pending) ? body.pending : [],
+          signature: String(body?.signature || ''),
+        };
+      }
       _error = '';
-      _reconcile(list);
+      _reconcile(_polled.list);
     })
     .catch(() => {
       // Keep the last-known asks on a transient failure — a blip must not
@@ -206,6 +215,7 @@ export const permissionStore = {
     _resolved.clear();
     _auditSinks.clear();
     _error = '';
+    _polled = { list: [], signature: '' };
     _lastSig = '#';
     _inFlight = null;
     _rebuildSnapshot();

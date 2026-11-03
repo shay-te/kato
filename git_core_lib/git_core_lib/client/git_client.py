@@ -7,7 +7,6 @@ non-empty header string when the repository uses an HTTP remote.
 """
 from __future__ import annotations
 
-import logging
 import os
 import re
 import shutil
@@ -243,19 +242,91 @@ class GitClientMixin:
         repository=None,
     ) -> bool:
         """Is ``branch_name`` on the remote right now? Raises if it cannot tell."""
-        return bool(self._git_stdout(
+        return bool(self.remote_branch_commit(local_path, branch_name, repository))
+
+    def remote_branch_commit(
+        self,
+        local_path: str,
+        branch_name: str,
+        repository=None,
+    ) -> str:
+        """The commit ``branch_name`` points at on the remote right now, '' when
+        it is not there. Raises if it cannot tell."""
+        ref = f'refs/heads/{branch_name}'
+        output = self._git_stdout(
             local_path,
-            ['ls-remote', '--heads', 'origin', f'refs/heads/{branch_name}'],
+            ['ls-remote', '--heads', 'origin', ref],
             f'failed to ask origin about {branch_name}',
             repository,
+        )
+        # ``ls-remote`` matches a pattern by its tail, so take the exact ref.
+        for line in output.splitlines():
+            commit, _, name = line.partition('\t')
+            if name.strip() == ref:
+                return commit.strip()
+        return ''
+
+    def branch_contains(self, local_path: str, branch_name: str, commit: str) -> bool:
+        """Whether ``commit`` is in ``branch_name``'s history in this clone.
+        A commit the clone does not have is not."""
+        result = self._run_capture(self._git_command(
+            local_path, ['merge-base', '--is-ancestor', commit, f'refs/heads/{branch_name}'],
         ))
+        return result.returncode == 0
+
+    def push_commit_as_new_branch(
+        self,
+        local_path: str,
+        commit: str,
+        branch_name: str,
+        repository=None,
+    ) -> None:
+        """Put ``commit`` on the remote as a NEW branch ``branch_name``.
+
+        The empty lease means the branch must not exist there yet: a branch
+        someone pushed in the meantime is refused, never moved.
+        """
+        self._assert_remote_is_the_configured_one(local_path, repository)
+        self._run_git(
+            local_path,
+            [
+                'push', f'--force-with-lease=refs/heads/{branch_name}:',
+                'origin', f'{commit}:refs/heads/{branch_name}',
+            ],
+            f'failed to push {branch_name}',
+            repository,
+        )
+
+    def delete_remote_branch(
+        self,
+        local_path: str,
+        branch_name: str,
+        expected_commit: str,
+        repository=None,
+    ) -> None:
+        """Delete ``branch_name`` on the remote, only while it still points at
+        ``expected_commit``: anything pushed to it since stays."""
+        self._assert_remote_is_the_configured_one(local_path, repository)
+        self._run_git(
+            local_path,
+            [
+                'push', f'--force-with-lease=refs/heads/{branch_name}:{expected_commit}',
+                'origin', f':refs/heads/{branch_name}',
+            ],
+            f'failed to delete {branch_name} on origin',
+            repository,
+        )
+
+    def set_upstream_branch(self, local_path: str, branch_name: str) -> None:
+        """Track ``origin/<branch_name>``: a rename leaves the old upstream."""
+        self._run_git(
+            local_path,
+            ['branch', f'--set-upstream-to=origin/{branch_name}', branch_name],
+            f'failed to set the upstream of {branch_name}',
+        )
 
     def has_local_branch(self, local_path: str, branch_name: str) -> bool:
         return self._git_reference_exists(local_path, f'refs/heads/{branch_name}')
-
-    def has_remote_tracking_branch(self, local_path: str, branch_name: str) -> bool:
-        """Whether this clone has ever seen ``branch_name`` on the remote."""
-        return self._git_reference_exists(local_path, f'refs/remotes/origin/{branch_name}')
 
     def rename_local_branch(self, local_path: str, old_name: str, new_name: str) -> None:
         """``git branch -m``: refuses an existing name, and moves nothing else."""

@@ -287,6 +287,21 @@ class JiraClientGetAssignedTasksTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'states must not be empty'):
             client.get_assigned_tasks('PROJ', 'developer', [])
 
+    def test_reads_every_page_of_assigned_issues(self) -> None:
+        # Only the first page used to be read: issue 101 and on were never picked up.
+        client = _make_client()
+        pages = [
+            _search_page([_issue_payload(key=f'PROJ-{n}') for n in range(1, 101)], next_token='p2'),
+            _search_page([_issue_payload(key='PROJ-101')]),
+        ]
+
+        with patch.object(client, '_get', side_effect=pages) as mock_get:
+            records = client.get_assigned_tasks('PROJ', 'developer', ['To Do'])
+
+        self.assertEqual(len(records), 101)
+        self.assertEqual(records[-1].id, 'PROJ-101')
+        self.assertEqual(mock_get.call_args.kwargs['params']['nextPageToken'], 'p2')
+
     def test_returns_empty_list_when_no_issues(self) -> None:
         client = _make_client()
         response = mock_response(json_data={'issues': []})

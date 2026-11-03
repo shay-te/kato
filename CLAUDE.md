@@ -625,9 +625,16 @@ because anyone who can edit a ticket can add a tag and the branch is where kato 
 ticket is copied into kato's own tags (`record_branch_from_ticket`, in the provisioning pass that clones) only if it
 names a NEW branch, before the task started, and not on a plan step (plans find a step's PR by ticket id, on every
 kato following the plan). Anything else: the tag is left out, the task runs on its id, and its preparation log says
-why. A rename (`TaskBranchRenameService`, header button) is `git branch -m` in every clone + one tag, all or nothing,
-refused once the branch was ever pushed (`refs/remotes/origin/<old>`, or live `ls-remote`; a remote that cannot be
-asked is a no), while the agent works, and on a plan step. Its name is in other clones and in PRs after that. The name lives in the workspace, so anything that must find the PR after the forget
+why. A rename (`TaskBranchRenameService`, the header's pencil among the git buttons) is `git branch -m` in every clone
++ one tag, AND on the remote where the branch was pushed: git has no remote rename, so the commit the OLD REMOTE branch
+holds is pushed under the new name (`push_commit_as_new_branch`, empty lease = must not exist, even a fast-forward is
+refused), then the old one is deleted (`delete_remote_branch`, lease = the commit checked: anything pushed since stays).
+Never a push of unpushed work: local commits stay local until Push. Refused, changing nothing anywhere: an OPEN pull
+request from the branch (deleting its branch closes it on GitHub, strands it elsewhere), a PR API that cannot be asked
+(`pull_request_states` raises, never `[]`), commits only the remote has ("pull first"), a remote that cannot be asked,
+the new name already local or remote, while the agent works, on a plan step. Local renames + new-name pushes + the tag
+are all or nothing (rollback deletes the new remote branches it made); deleting the old remote branches comes after,
+and a failure there is listed in `problems` (red toast), never hidden. The name lives in the workspace, so anything that must find the PR after the forget
 flow deletes it reads the branch first: `ReleaseNoteSource.branch`, then `KatoPullRequestProbe.pull_requests_of_branch`.
 
 **The ONE place local tasks are told apart:** `local_task_routing.py`. `LocalAwareTaskService` /

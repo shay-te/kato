@@ -197,26 +197,19 @@ class JiraClient(IssueClientBase):
         assignee: str,
         states: list[str],
     ) -> list[IssueRecord]:
-        response = self._get_with_retry(
-            _SEARCH_PATH,
-            params={
-                'jql': self._build_assigned_tasks_query(project, assignee, states),
-                'fields': ','.join([
-                    JiraIssueFields.KEY,
-                    JiraIssueFields.SUMMARY,
-                    JiraIssueFields.DESCRIPTION,
-                    JiraIssueFields.COMMENT,
-                    JiraIssueFields.ATTACHMENT,
-                    JiraIssueFields.LABELS,
-                ]),
-                'maxResults': 100,
-            },
+        # Every page is read: a team with more than one page of assigned
+        # issues must not silently miss the ones past the first.
+        issues = self._search_issues(
+            self._build_assigned_tasks_query(project, assignee, states),
+            ','.join([
+                JiraIssueFields.SUMMARY,
+                JiraIssueFields.DESCRIPTION,
+                JiraIssueFields.COMMENT,
+                JiraIssueFields.ATTACHMENT,
+                JiraIssueFields.LABELS,
+            ]),
         )
-        self.raise_for_status_with_detail(response)
-        return self._normalize_issue_records(
-            self._json_items(response, items_key='issues'),
-            to_record=self._to_record,
-        )
+        return self._normalize_issue_records(issues, to_record=self._to_record)
 
     def add_comment(self, issue_id: str, comment: str) -> None:
         # v3 takes the body as an ADF document; a plain string is a 400.

@@ -10,6 +10,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from agent_core_lib.agent_core_lib.helpers.plain_write import WRITE_TOOLS, is_plain_write
 
@@ -171,6 +172,15 @@ class NothingToJudgeTests(_TaskFolderCase):
 
     def test_a_path_the_system_cannot_read(self) -> None:
         self.assertFalse(self.plain('a\x00b.py'))
+
+    def test_a_nul_is_refused_even_where_realpath_lets_it_through(self) -> None:
+        # Windows' realpath passes a NUL through where POSIX refuses it, and
+        # CI on Windows approved 'a\x00b.py' until the check stopped leaning
+        # on realpath to refuse it.
+        lenient = lambda path, *args, **kwargs: os.path.normpath(path)  # noqa: E731
+        with patch('agent_core_lib.agent_core_lib.helpers.plain_write.os.path.realpath', lenient):
+            self.assertTrue(self.plain('a.py'))
+            self.assertFalse(self.plain('a\x00b.py'))
 
 
 if __name__ == '__main__':

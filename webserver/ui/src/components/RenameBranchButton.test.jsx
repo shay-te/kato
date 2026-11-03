@@ -47,14 +47,14 @@ describe('RenameBranchButton', () => {
 
   test('a refusal shows its reason in red and leaves the name to change', async () => {
     renameTaskBranch.mockResolvedValue({
-      ok: false, status: 409, body: { error: 'T-1 has been pushed to api' },
+      ok: false, status: 409, body: { error: 'a pull request is open from T-1 on api' },
     });
     const { input, onRenamed } = open();
     type(input, 'feature/a');
     confirm();
     await waitFor(() => expect(toastResult).toHaveBeenCalled());
     expect(toastResult.mock.calls[0][0]).toMatchObject({
-      kind: 'error', title: 'Branch not renamed', message: 'T-1 has been pushed to api',
+      kind: 'error', title: 'Branch not renamed', message: 'a pull request is open from T-1 on api',
     });
     expect(onRenamed).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Branch name').value).toBe('feature/a');
@@ -72,6 +72,41 @@ describe('RenameBranchButton', () => {
     const { input } = open();
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(renameTaskBranch).not.toHaveBeenCalled();
+  });
+
+  test('a pushed branch says it moved on the remote too', async () => {
+    renameTaskBranch.mockResolvedValue({ ok: true, body: {
+      branch: 'feature/a', renamed: ['api', 'web'], renamed_on_remote: ['api'], problems: [],
+    } });
+    const { input } = open();
+    type(input, 'feature/a');
+    confirm();
+    await waitFor(() => expect(toastResult).toHaveBeenCalled());
+    expect(toastResult.mock.calls[0][0]).toMatchObject({
+      kind: 'success',
+      message: 'Now feature/a in api, web.\nRenamed on the remote too: api.',
+    });
+  });
+
+  test('a rename with problems is red and lists them first', async () => {
+    // The rename stands, so the dialog still closes; the old branch left on
+    // the remote is the operator's to clean up, and must not read as green.
+    renameTaskBranch.mockResolvedValue({ ok: true, body: {
+      branch: 'feature/a', renamed: ['api'], renamed_on_remote: ['api'],
+      problems: ['T-1 is still on the remote of api: protected.'],
+    } });
+    const { input, onRenamed } = open();
+    type(input, 'feature/a');
+    confirm();
+    await waitFor(() => expect(onRenamed).toHaveBeenCalled());
+    const toast = toastResult.mock.calls[0][0];
+    expect(toast).toMatchObject({ kind: 'error', title: 'Branch renamed, with problems' });
+    expect(toast.message.split('\n')[0]).toBe('⚠ T-1 is still on the remote of api: protected.');
+  });
+
+  test('the dialog says the remote moves and unpushed commits stay', () => {
+    open();
+    expect(screen.getByText(/renamed on the remote too; commits you have not pushed stay here/)).toBeTruthy();
   });
 
   test('stays shut while git is busy', () => {

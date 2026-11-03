@@ -89,6 +89,68 @@ describe('permissionStore', () => {
     sub.unsubscribe();
   });
 
+  test('the next poll sends the signature of the list it holds', async () => {
+    api.fetchPendingPermissions.mockResolvedValue({ pending: [_ask('T1', 'r1')], signature: 'sig-1' });
+    const sub = track();
+    await flush();
+    await permissionStore.refresh();
+    expect(api.fetchPendingPermissions.mock.calls.map((c) => c[0])).toEqual(['', 'sig-1']);
+    sub.unsubscribe();
+    permissionStore.resolve('r1');
+  });
+
+  test('an unchanged answer keeps the asks it confirmed on screen', async () => {
+    api.fetchPendingPermissions.mockResolvedValueOnce({ pending: [_ask('T1', 'r1')], signature: 'sig-1' });
+    api.fetchPendingPermissions.mockResolvedValue({ unchanged: true });
+    const sub = track();
+    await flush();
+    await permissionStore.refresh();
+    await permissionStore.refresh();
+    expect(sub.last().list.map((e) => e.request_id)).toEqual(['r1']);
+    // Still the same signature: "unchanged" never replaces what it confirms.
+    expect(api.fetchPendingPermissions.mock.calls.at(-1)[0]).toBe('sig-1');
+    sub.unsubscribe();
+    permissionStore.resolve('r1');
+  });
+
+  test('an unchanged answer does not bring back an ask already answered', async () => {
+    api.fetchPendingPermissions.mockResolvedValueOnce({ pending: [_ask('T1', 'r1')], signature: 'sig-1' });
+    api.fetchPendingPermissions.mockResolvedValue({ unchanged: true });
+    const sub = track();
+    await flush();
+    permissionStore.resolve('r1');
+    await permissionStore.refresh();
+    expect(sub.last().list).toHaveLength(0);
+    sub.unsubscribe();
+  });
+
+  test('a new list replaces the old one and its signature', async () => {
+    api.fetchPendingPermissions.mockResolvedValueOnce({ pending: [_ask('T1', 'r1')], signature: 'sig-1' });
+    api.fetchPendingPermissions.mockResolvedValueOnce({ pending: [_ask('T2', 'r2')], signature: 'sig-2' });
+    api.fetchPendingPermissions.mockResolvedValue({ unchanged: true });
+    const sub = track();
+    await flush();
+    await permissionStore.refresh();
+    await permissionStore.refresh();
+    expect(sub.last().list.map((e) => e.request_id)).toEqual(['r2']);
+    expect(api.fetchPendingPermissions.mock.calls.at(-1)[0]).toBe('sig-2');
+    sub.unsubscribe();
+    permissionStore.resolve('r2');
+  });
+
+  test('a reset forgets the signature with the list', async () => {
+    api.fetchPendingPermissions.mockResolvedValue({ pending: [], signature: 'sig-1' });
+    const sub = track();
+    await flush();
+    sub.unsubscribe();
+    permissionStore.__resetForTests();
+    api.fetchPendingPermissions.mockClear();
+    const again = track();
+    await flush();
+    expect(api.fetchPendingPermissions.mock.calls[0][0]).toBe('');
+    again.unsubscribe();
+  });
+
   test('push is ignored for an already-resolved ask', async () => {
     const sub = track();
     await flush();

@@ -123,9 +123,16 @@ export function syncReleaseNotes() {
 
 // Every unanswered permission ask across ALL live sessions (not just the
 // focused tab's SSE stream) — so the modal can pop no matter which task is
-// in view. Returns ``{ pending: [{ task_id, type, request_id, request, … }] }``.
-export function fetchPendingPermissions() {
-  return fetchJson('/api/permissions/pending');
+// in view. Returns ``{ pending: [{ task_id, type, request_id, request, … }],
+// signature }``.
+//
+// ``signature``: the one from the answer the caller still holds. An unchanged
+// list then comes back as ``{ unchanged: true }`` with no body — the store
+// polls every 1.5s, and a waiting Write ask carries the whole file.
+export async function fetchPendingPermissions(signature = '') {
+  const result = await fetchConditionalJson('/api/permissions/pending', signature);
+  if (result.unchanged) { return { unchanged: true }; }
+  return { ...result.payload, signature: result.etag };
 }
 
 // Backend-owned remembered "Allow always" / "Deny always" decisions —
@@ -984,7 +991,9 @@ async function fetchConditionalJson(url, signature = '') {
     payload: await response.json(),
     // Absent if something between here and the server strips it; the caller
     // then falls back to comparing the payload itself.
-    etag: response.headers.get('etag') || '',
+    // Optional chaining as in ``fetchJson``: test doubles hand back a bare
+    // ``{ ok, json }``.
+    etag: response.headers?.get?.('etag') || '',
     headers: response.headers,
   };
 }

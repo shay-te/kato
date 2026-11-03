@@ -65,6 +65,11 @@ def is_plain_write(
 
 
 def _real_path(path: str, cwd: str) -> str:
+    # POSIX refuses a NUL in a path; Windows' realpath passes it through, and
+    # the write it names could never land. Refused everywhere, so the answer
+    # does not depend on the platform.
+    if '\x00' in path:
+        raise ValueError('a path cannot hold a NUL character')
     return os.path.normcase(os.path.realpath(os.path.join(cwd, path)))
 
 

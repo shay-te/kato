@@ -85,6 +85,7 @@ jobs:
           tests.test_task_branch_rename
           agent_core_lib.agent_core_lib.tests.test_plain_write
           git_core_lib.git_core_lib.tests.test_branch_name_utils
+          git_core_lib.git_core_lib.tests.test_branch_rename_helpers
           git_core_lib.git_core_lib.tests.test_discovery_skipped_paths
 
   shellcheck:

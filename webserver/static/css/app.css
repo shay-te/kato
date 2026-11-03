@@ -13805,6 +13805,11 @@ button.settings-prompt-editor-head {
   padding: 6px 0;
 }
 
+.rename-branch-note {
+  margin: 0 0 6px;
+  color: #a3a3a3;
+}
+
 .new-task-field input,
 .new-task-field select {
   padding: 5px 6px;
