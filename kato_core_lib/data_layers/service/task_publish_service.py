@@ -566,8 +566,11 @@ class TaskPublishService(object):
         )
         return _SourceRepoOutcome('updated', repository.id, warning=warning_detail)
 
-    def configured_destination_branch(self, repository_id: str) -> str:
+    def configured_destination_branch(self, repository_id: str, local_path: str = '') -> str:
         """Branch the task was forked from for ``repository_id``, per kato config.
+
+        With ``local_path`` (the task's clone): a plan sub-task's clone was
+        forked from, and merges into, its plan's branch, so that is the answer.
 
         This is the authoritative answer for the diff base in the
         Changes tab — kato always creates a task branch off this
@@ -590,6 +593,8 @@ class TaskPublishService(object):
         except Exception:
             return ''
         try:
+            if local_path:
+                return self._repository_service.destination_branch_of_clone(repository, local_path) or ''
             return self._repository_service.destination_branch(repository) or ''
         except Exception:
             # ``destination_branch`` raises when no configured value

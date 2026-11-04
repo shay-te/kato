@@ -43,6 +43,15 @@ class LocalStepLauncherTests(unittest.TestCase):
         )
         self.starter.start.assert_called_once_with('LOCAL-7', 'implement', model='sonnet', effort='high')
 
+    def test_the_new_task_is_announced_as_a_step_before_it_starts(self) -> None:
+        # Cloning starts at once and the queue records the task only after
+        # release returns: said first, its clone is cut from the plan's branch.
+        order = []
+        launcher = LocalStepLauncher(self.app, announce_task=lambda *args: order.append(('announce', args)))
+        self.starter.start.side_effect = lambda *args, **kwargs: order.append(('start', args[0]))
+        launcher.release(_request(), '')
+        self.assertEqual(order, [('announce', ('LOCAL-7', 'UNA-1234')), ('start', 'LOCAL-7')])
+
     def test_an_unknown_start_mode_starts_by_implementing(self) -> None:
         self.launcher.release(_request(start_mode=''), '')
         self.assertEqual(self.starter.start.call_args.args[1], 'implement')

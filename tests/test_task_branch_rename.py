@@ -281,6 +281,19 @@ class RefusedTests(_Rename):
         clone = Path(self.workspace.repository_path('UNA-9', 'api'))
         self.assert_refused('UNA-9', clone, 'how the plan finds its pull request')
 
+    def test_the_task_a_live_plan_was_split_from_keeps_its_branch(self) -> None:
+        # Its sub-tasks' pull requests go into this branch: renaming it would
+        # delete the branch they are open against.
+        task_id, clone = self._prepared('feature/old')
+        live = {task_id.lower()}
+        self.renames = TaskBranchRenameService(
+            self.repositories, self.workspace, self.sessions, live_plan_sources=live,
+        )
+        self.assert_refused(task_id, clone, "sub-tasks' pull requests go into this branch")
+        live.clear()  # the plan is done or stopped
+        self.renames.rename_task_branch(task_id, NEW_NAME)
+        self.assertEqual(self._current(clone), NEW_NAME)
+
     def test_a_task_with_no_workspace(self) -> None:
         with self.assertRaises(BranchRenameRefused):
             self.renames.rename_task_branch('UNA-404', NEW_NAME)

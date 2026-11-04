@@ -99,7 +99,7 @@ class ReleaseNotesServiceTests(unittest.TestCase):
         self.workspaces.delete('UNA-1')
         self.deferred[0]()
 
-        self.pull_requests.assert_called_once_with('feature/login', 'backend')
+        self.pull_requests.assert_called_once_with('feature/login', 'backend', task_id='UNA-1')
         self.assertIn('· [PR](https://git.example/pr/7)', self._notes())
 
     def test_an_operator_edit_made_meanwhile_is_kept(self) -> None:

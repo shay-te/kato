@@ -385,6 +385,15 @@ class AgentService(MissionStepLoggerMixin, Service):
                 session_manager=later(self, '_session_manager'),
                 workspace_manager=later(self, '_workspace_manager'),
             )
+        # Where a plan's sub-task merges: the branch of the task it was split
+        # from. Built even without a queue: a tracker sub-task's footer says
+        # which plan it belongs to.
+        from kato_core_lib.data_layers.service.plan_queue.merge_target import PlanMergeTarget
+        self._plan_merge_target = PlanMergeTarget(
+            queue=later(self, '_plan_queue_service'),
+            repository_service=later(self, '_repository_service'),
+            workspace_manager=later(self, '_workspace_manager'),
+        )
 
         # Comments (operator diff comments + provider PR review comments) are
         # their own subsystem: one store, one queue, one scheduler. They were
@@ -431,6 +440,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             repository_service=later(self, '_repository_service'),
             workspace_manager=later(self, '_workspace_manager'),
             session_manager=later(self, '_session_manager'),
+            live_plan_sources=later(self, '_live_plan_sources'),
         )
 
         # Publishing (push / pull / merge / PR / update-source) and the
@@ -486,6 +496,17 @@ class AgentService(MissionStepLoggerMixin, Service):
         adapters behind it).
         """
         return self._plan_queue_service
+
+    @property
+    def plan_merge_target(self):
+        """Where a plan's sub-task merges (``plan_queue/merge_target.py``)."""
+        return self._plan_merge_target
+
+    @property
+    def _live_plan_sources(self) -> set[str]:
+        """The tasks a live plan was split from, lower-cased."""
+        queue = getattr(self, '_plan_queue_service', None)
+        return {source.strip().lower() for source in queue.live_by_source()} if queue is not None else set()
 
     @property
     def plan_questions(self):

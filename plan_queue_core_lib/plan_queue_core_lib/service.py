@@ -186,6 +186,12 @@ class PlanQueueService(object):
         matching = [plan for plan in self._registry.all() if plan.step_for_task(task_id) is not None]
         return matching[-1] if matching else None
 
+    def source_of_step_task(self, task_id: str) -> str:
+        """The task ``task_id``'s plan was split from, when ``task_id`` runs
+        one of a plan's steps ('' otherwise). Any plan state: a step's task
+        stays part of its plan after the plan is done or stopped."""
+        return self._registry.source_of_task(task_id)
+
     def waiting_for(self, task_id: str) -> list[str] | None:
         """What the step running as ``task_id`` still waits for (its parents'
         task ids, or step ids for parents with no task yet) — [] when it may

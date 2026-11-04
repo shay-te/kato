@@ -6,9 +6,10 @@ then the old branch is deleted. Only what the remote already holds moves, so a
 rename never publishes a commit nobody pushed.
 
 Refused where a rename would lose or break something: the remote holds commits
-this clone does not, or a pull request is open from the branch (deleting its
-branch closes it on GitHub and strands it elsewhere). A remote or a pull request
-API that cannot be asked is a no.
+this clone does not, a pull request is open from the branch (deleting its
+branch closes it on GitHub and strands it elsewhere), or a live plan was split
+from the task (its sub-tasks' pull requests go into this branch). A remote or a
+pull request API that cannot be asked is a no.
 
 All or nothing until the tag is saved: a repository left on the old name would
 have its work pushed to a branch the task no longer knows. Deleting the old
@@ -40,10 +41,14 @@ class BranchRenameRefused(ValueError):
 
 
 class TaskBranchRenameService(object):
-    def __init__(self, repository_service, workspace_manager, session_manager=None) -> None:
+    def __init__(
+        self, repository_service, workspace_manager, session_manager=None, live_plan_sources=None,
+    ) -> None:
         self._get_repository_service = provider_for(repository_service)
         self._get_workspace_manager = provider_for(workspace_manager)
         self._get_session_manager = provider_for(session_manager)
+        # The tasks a live plan was split from, lower-cased (None = no plans).
+        self._get_live_plan_sources = provider_for(live_plan_sources)
 
     @property
     def _repository_service(self):
@@ -72,6 +77,11 @@ class TaskBranchRenameService(object):
         if parse_footer(getattr(record, 'task_description', '')) is not None:
             raise BranchRenameRefused(
                 "a plan's sub-task works on its ticket id, which is how the plan finds its pull request.",
+            )
+        if task_id.lower() in (self._get_live_plan_sources() or ()):
+            raise BranchRenameRefused(
+                "a plan split from this task is still running, and its sub-tasks' pull requests "
+                'go into this branch. Rename it once the plan is done or stopped.',
             )
         repositories = self._task_clones(task_id, record)
         reason = unusable_branch_reason(

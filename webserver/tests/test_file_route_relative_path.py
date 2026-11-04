@@ -76,7 +76,7 @@ class _FakeAgentService:
     def __init__(self, base_branch: str) -> None:
         self._base_branch = base_branch
 
-    def configured_destination_branch(self, repo_id):  # noqa: ARG002
+    def configured_destination_branch(self, repo_id, local_path=''):  # noqa: ARG002
         return self._base_branch
 
 

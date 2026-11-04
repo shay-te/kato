@@ -29,6 +29,7 @@ from kato_core_lib.data_layers.data_access.task_data_access import TaskDataAcces
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.local_task_routing import LocalAwareTaskService
 from kato_core_lib.data_layers.service.plan_queue.parent_question import ParentQuestions
+from kato_core_lib.data_layers.service.plan_queue.merge_target import PlanMergeTarget
 from kato_core_lib.data_layers.service.plan_queue.wiring import PLAN_QUEUES_DIR_ENV
 
 
@@ -87,6 +88,18 @@ class AgentServiceWiringTests(unittest.TestCase):
         self.assertIsNone(service.plan_queue)
         self.assertIsNone(service.plan_questions)
 
+    def test_the_merge_target_asks_this_queue_and_is_there_without_one(self) -> None:
+        service = _agent_service(self, local=True)
+        self.assertIsInstance(service.plan_merge_target, PlanMergeTarget)
+        self.assertEqual(service.plan_merge_target.source_of('T-404'), '')
+        self.assertEqual(service._live_plan_sources, set())
+        service.plan_queue._registry.add(Plan.new('UNA-1', plan_markdown='x', repository_ids=['api'], now=1.0))
+        self.assertEqual(service._live_plan_sources, {'una-1'})
+        # No queue: a tracker sub-task's footer still names its plan.
+        headless = _agent_service(self, local=False)
+        self.assertIsInstance(headless.plan_merge_target, PlanMergeTarget)
+        self.assertEqual(headless._live_plan_sources, set())
+
     def test_shutdown_stops_the_queue_and_survives_its_failure(self) -> None:
         service = _agent_service(self, local=True)
         service.plan_queue.start()
@@ -138,7 +151,18 @@ class BootHookTests(unittest.TestCase):
                               logger=logging.getLogger('test.pq.start'))
         main_module._start_plan_queue(app)
         self.assertIs(queue._launchers[PlanMode.LOCAL]._app, flask_app)
+        self.assertIsNone(queue._launchers[PlanMode.LOCAL]._announce_task)  # no merge target here
         self.assertTrue(queue._thread.running)
+
+    def test_the_local_launcher_announces_its_tasks_to_the_merge_target(self) -> None:
+        queue = self._queue()
+        merge_target = Mock()
+        app = SimpleNamespace(
+            service=SimpleNamespace(plan_queue=queue, plan_merge_target=merge_target),
+            planning_flask_app=SimpleNamespace(config={}), logger=logging.getLogger('test.pq.announce'),
+        )
+        main_module._start_plan_queue(app)
+        self.assertEqual(queue._launchers[PlanMode.LOCAL]._announce_task, merge_target.announce)
 
     def test_without_a_webserver_nothing_is_launched_but_the_queue_ticks(self) -> None:
         queue = self._queue()

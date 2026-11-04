@@ -4,7 +4,10 @@ A task's pull requests are found by its branch, which is its task id unless the
 operator named one in "New task" — nothing has to be recorded when it is
 published. A named branch is kept in the workspace, so whoever needs the answer
 after that is gone reads the branch first and asks ``pull_requests_of_branch``.
-Only pull requests into the repository's destination branch count.
+Only pull requests into the repository's destination branch count — or, for a
+plan's sub-task, into the branch of the task it was split from, which is where
+its pull request goes (one opened into the destination before sub-tasks merged
+that way still counts).
 """
 
 from __future__ import annotations
@@ -22,9 +25,13 @@ class KatoPullRequestProbe(object):
 
     def pull_requests(self, task_id: str, repository_id: str) -> list[PullRequestFact]:
         branch = self._get_repository_service().task_branch_name(task_id)
-        return self.pull_requests_of_branch(branch, repository_id)
+        return self.pull_requests_of_branch(branch, repository_id, task_id=task_id)
 
-    def pull_requests_of_branch(self, branch: str, repository_id: str) -> list[PullRequestFact]:
+    def pull_requests_of_branch(
+        self, branch: str, repository_id: str, *, task_id: str = '',
+    ) -> list[PullRequestFact]:
+        """``task_id`` (when known) lets a plan sub-task's pull requests into
+        its plan's branch count."""
         service = self._get_repository_service()
         try:
             repository = service.get_repository(repository_id)
@@ -33,11 +40,12 @@ class KatoPullRequestProbe(object):
         except Exception as exc:
             # "Could not ask" must never read as "no pull request".
             raise ProbeError(f'could not read the pull requests of {branch} in {repository_id}: {exc}') from exc
+        targets = {destination, service.plan_merge_branch(task_id)} - {''} if destination else set()
         facts = []
         for pull_request in found or []:
             state = str(pull_request.get('state', '') or '')
             target = str(pull_request.get('destination_branch', '') or '')
-            if state not in _STATES or (destination and target and target != destination):
+            if state not in _STATES or (targets and target and target not in targets):
                 continue
             facts.append(PullRequestFact(
                 state=state,

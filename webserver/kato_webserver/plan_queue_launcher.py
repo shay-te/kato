@@ -1,13 +1,16 @@
 """Start a plan step as a local kato task (no tracker).
 
 A local step's task is created only when the step is released — its
-repositories are cloned fresh then, so it starts from the code its parents
-already merged. It is started through the same ``LocalTaskStarter`` the "New
+repositories are cloned fresh then, from the branch of the task the plan was
+split from (where its parents merged), so it starts from the code they already
+merged. It is started through the same ``LocalTaskStarter`` the "New
 task" tab uses: created IN_PROGRESS (the autonomous scan never picks it up),
 cloned, branched, and its chat opened in the plan's start mode.
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 from flask import Flask
 
@@ -27,8 +30,14 @@ def local_step_title(request: LaunchRequest) -> str:
 class LocalStepLauncher(object):
     creates_at_approval = False
 
-    def __init__(self, app: Flask) -> None:
+    def __init__(self, app: Flask, *, announce_task: Callable[[str, str], None] | None = None) -> None:
         self._app = app
+        # ``announce_task(task_id, source_task_id)``: the new task is a step of
+        # the plan split from ``source_task_id``, said BEFORE it starts —
+        # cloning begins at once, and the queue records the task only after
+        # ``release`` returns. Without it the first clone is cut from the
+        # repository's destination instead of the plan's branch.
+        self._announce_task = announce_task
 
     def _local_tasks(self):
         return getattr(self._app.config.get('AGENT_SERVICE'), 'local_tasks', None)
@@ -52,6 +61,8 @@ class LocalStepLauncher(object):
             task = service.create(local_step_title(request), request.description, list(request.repositories))
         except LocalTaskRejected as exc:
             raise LaunchRefused(str(exc)) from exc
+        if self._announce_task is not None:
+            self._announce_task(str(task.id), request.source_task_id)
         start_mode = request.start_mode if request.start_mode in START_MODES else START_IMPLEMENT
         starter.start(str(task.id), start_mode, model=request.model, effort=request.effort)
         return str(task.id)

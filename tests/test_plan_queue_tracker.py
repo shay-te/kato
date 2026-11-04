@@ -480,6 +480,7 @@ class HistoryTests(unittest.TestCase):
         service = mock.Mock()
         service.get_repository.return_value = SimpleNamespace(local_path='/repo')
         service.destination_branch.return_value = 'master'
+        service.plan_merge_branch.return_value = ''
         service.history_mentions.return_value = True
         probe = GitHistoryProbe(repository_service=service)
         self.assertTrue(probe.merged_in_history('PROJ-12', 'api', since=5.0))
@@ -488,6 +489,30 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(kwargs['since'], 5.0)
         self.assertFalse(probe.merged_in_history('LOCAL step; rm -rf', 'api', since=0))
         service.history_mentions.side_effect = RuntimeError('fetch failed')
+        with self.assertRaises(ProbeError):
+            probe.merged_in_history('PROJ-12', 'api', since=0)
+
+    def test_a_plan_sub_task_is_looked_for_in_its_plans_branch_then_the_destination(self) -> None:
+        repository = SimpleNamespace(local_path='/repo')
+        service = mock.Mock()
+        service.get_repository.return_value = repository
+        service.destination_branch.return_value = 'master'
+        service.plan_merge_branch.return_value = 'PROJ-1'
+        service.remote_has_branch.return_value = True
+        service.history_mentions.side_effect = [False, True]
+        probe = GitHistoryProbe(repository_service=service)
+        self.assertTrue(probe.merged_in_history('PROJ-12', 'api', since=0))
+        self.assertEqual([c.args[1] for c in service.history_mentions.call_args_list], ['PROJ-1', 'master'])
+        service.plan_merge_branch.assert_called_with('PROJ-12')
+        service.remote_has_branch.assert_called_with('/repo', 'PROJ-1', repository)
+        # Not on the remote yet (no sub-task opened a pull request): only the destination.
+        service.history_mentions.reset_mock(side_effect=True)
+        service.history_mentions.return_value = False
+        service.remote_has_branch.return_value = False
+        self.assertFalse(probe.merged_in_history('PROJ-12', 'api', since=0))
+        self.assertEqual([c.args[1] for c in service.history_mentions.call_args_list], ['master'])
+        # "Could not ask the remote" is never "not merged".
+        service.remote_has_branch.side_effect = RuntimeError('offline')
         with self.assertRaises(ProbeError):
             probe.merged_in_history('PROJ-12', 'api', since=0)
 

@@ -34,6 +34,9 @@ class RepositoryPublicationService(Service):
         # once per process, then "no pull requests"), so creating went on with
         # nothing set up and every cause read "incomplete configuration".
         self._repository_service._prepare_pull_request_api(repository)
+        # A plan's sub-task goes into the branch of the task it was split from;
+        # the first one to open its pull request puts that branch on the remote.
+        self._repository_service.put_plan_merge_branch_on_remote(repository)
         destination_branch = self._repository_service.destination_branch(repository)
         try:
             validation_report_description = self._repository_service._publish_branch_updates(

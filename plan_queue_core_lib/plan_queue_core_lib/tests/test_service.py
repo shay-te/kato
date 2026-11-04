@@ -392,6 +392,25 @@ class ServiceTests(unittest.TestCase):
         ))
         self.assertEqual(self.service.live_task_codes(), set())
 
+    def test_source_of_step_task_names_the_task_a_steps_task_was_split_from(self) -> None:
+        self.assertEqual(self.service.source_of_step_task('UNA-1'), '')
+        old = self._approved()
+        self.service._registry.mutate(old.plan_id, lambda live: (
+            setattr(live.step('api'), 'task_id', 'UNA-1'),
+            setattr(live, 'status', PlanStatus.CANCELLED),
+        ))
+        # Any state: a step's task stays part of its plan once the plan stops.
+        self.assertEqual(self.service.source_of_step_task('una-1'), old.source_task_id)
+        newer = self._approved()
+        self.service._registry.mutate(newer.plan_id, lambda live: (
+            setattr(live, 'source_task_id', 'SRC-2'),
+            setattr(live.step('api'), 'task_id', 'Una-1'),
+        ))
+        self.assertEqual(self.service.source_of_step_task(' UNA-1 '), 'SRC-2')  # the newest plan
+        self.assertEqual(self.service.source_of_step_task(old.source_task_id), '')  # a source is no step
+        self.assertEqual(self.service.source_of_step_task(''), '')
+        self.assertEqual(self.service.source_of_step_task(None), '')
+
     def test_a_step_with_no_task_yet_is_not_a_code(self) -> None:
         self._approved()
         self.assertNotIn('', self.service.live_task_codes())

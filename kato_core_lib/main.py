@@ -1563,7 +1563,11 @@ def _start_plan_queue(app) -> None:
         flask_app = getattr(app, 'planning_flask_app', None)
         if flask_app is not None:
             from kato_webserver.plan_queue_launcher import LocalStepLauncher
-            queue.bind_launcher(LocalStepLauncher(flask_app))
+            merge_target = getattr(app.service, 'plan_merge_target', None)
+            queue.bind_launcher(LocalStepLauncher(
+                flask_app,
+                announce_task=merge_target.announce if merge_target is not None else None,
+            ))
         queue.start()
     except Exception:
         app.logger.exception('failed to start the plan queue')

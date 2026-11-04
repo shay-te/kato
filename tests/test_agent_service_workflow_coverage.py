@@ -46,6 +46,17 @@ class ConfiguredDestinationBranchTests(unittest.TestCase):
         service = AgentService(**_kwargs(repository_service=repo))
         self.assertEqual(service.publish.configured_destination_branch('r1'), 'main')
 
+    def test_a_task_clone_is_asked_about_as_that_clone(self) -> None:
+        # A plan sub-task's clone merges into its plan's branch: the clone's
+        # path is what tells them apart.
+        repo = MagicMock()
+        repo.destination_branch_of_clone.return_value = 'UNA-1'
+        service = AgentService(**_kwargs(repository_service=repo))
+        self.assertEqual(service.publish.configured_destination_branch('r1', local_path='/ws/UNA-2/r1'), 'UNA-1')
+        repo.destination_branch_of_clone.assert_called_once_with(repo.get_repository.return_value, '/ws/UNA-2/r1')
+        repo.destination_branch_of_clone.side_effect = ValueError('cannot infer')
+        self.assertEqual(service.publish.configured_destination_branch('r1', local_path='/ws/UNA-2/r1'), '')
+
 
 class SearchTaskWorkspaceTests(unittest.TestCase):
     def _service(self, repo_ids, grep_by_path):

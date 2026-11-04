@@ -532,6 +532,11 @@ class KatoCoreLib(CoreLib):
         repository_service.attach_kato_task_tags(
             lambda task_id: self._kato_tags_for_task(task_id),
         )
+        # A plan's sub-task merges into the branch of the task it was split
+        # from; the agent service (built later) knows which task that is.
+        repository_service.attach_plan_merge_target(
+            lambda task_id: self._plan_merge_branch(task_id),
+        )
         self.release_notes_service = self._build_release_notes_service(
             open_cfg, task_service, repository_service,
         )
@@ -860,6 +865,11 @@ class KatoCoreLib(CoreLib):
         if ticket_cfg is None:
             raise ValueError(f'missing issue platform config for: {platform.value}')
         return platform, ticket_cfg
+
+    def _plan_merge_branch(self, task_id: str) -> str:
+        """The branch a plan sub-task merges into ('' before the agent service exists)."""
+        merge_target = getattr(getattr(self, 'service', None), 'plan_merge_target', None)
+        return merge_target.branch_for(task_id) if merge_target is not None else ''
 
     def _kato_tags_for_task(self, task_id: str) -> list[str]:
         """The tags kato recorded on a task itself (none without a workspace)."""

@@ -71,16 +71,16 @@ class ReleaseNoteLinksTests(unittest.TestCase):
         return SimpleNamespace(state=state, url=url, created_at=created_at)
 
     def test_merged_wins_over_open_and_declined_is_never_linked(self) -> None:
-        links = ReleaseNoteLinks(pull_requests=lambda task, repo: [
+        links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [
             self._fact('declined', 'https://x/1'), self._fact('open', 'https://x/2'),
             self._fact('merged', 'https://x/3'),
         ], logger=MagicMock())
         self.assertEqual(links.links(self.SOURCE), [('PR', 'https://x/3')])
-        only_declined = ReleaseNoteLinks(pull_requests=lambda t, r: [self._fact('declined', 'https://x/1')])
+        only_declined = ReleaseNoteLinks(pull_requests=lambda t, r, **_: [self._fact('declined', 'https://x/1')])
         self.assertEqual(only_declined.links(self.SOURCE), [])
 
     def test_a_pull_request_from_before_the_task_started_is_another_task_s(self) -> None:
-        links = ReleaseNoteLinks(pull_requests=lambda task, repo: [
+        links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [
             self._fact('merged', 'https://x/old', '2020-01-01T00:00:00Z'),
             self._fact('open', 'https://x/new', '2026-10-01T00:00:00Z'),
         ])
@@ -88,24 +88,25 @@ class ReleaseNoteLinksTests(unittest.TestCase):
 
     def test_several_repositories_are_labelled_by_repository(self) -> None:
         source = ReleaseNoteSource(task_id='UNA-1', repositories=('backend', 'client'))
-        links = ReleaseNoteLinks(pull_requests=lambda task, repo: [self._fact('merged', f'https://x/{repo}')])
+        links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [self._fact('merged', f'https://x/{repo}')])
         self.assertEqual(links.links(source), [('backend', 'https://x/backend'), ('client', 'https://x/client')])
 
     def test_pull_requests_are_looked_up_by_the_branch_read_at_done_time(self) -> None:
         asked = []
 
-        def pull_requests(branch, repo):
-            asked.append((branch, repo))
+        def pull_requests(branch, repo, *, task_id):
+            asked.append((branch, repo, task_id))
             return []
 
         links = ReleaseNoteLinks(pull_requests=pull_requests)
         links.links(ReleaseNoteSource(task_id='LOCAL-1', repositories=('api',), branch='feature/login'))
         links.links(ReleaseNoteSource(task_id='UNA-1', repositories=('api',)))
 
-        self.assertEqual(asked, [('feature/login', 'api'), ('UNA-1', 'api')])
+        # The task id goes too: a plan sub-task's pull request is into its plan's branch.
+        self.assertEqual(asked, [('feature/login', 'api', 'LOCAL-1'), ('UNA-1', 'api', 'UNA-1')])
 
     def test_a_host_that_cannot_be_asked_just_means_no_link(self) -> None:
-        def boom(task, repo):
+        def boom(task, repo, **_):
             raise RuntimeError('401')
 
         self.assertEqual(ReleaseNoteLinks(pull_requests=boom, logger=MagicMock()).links(self.SOURCE), [])

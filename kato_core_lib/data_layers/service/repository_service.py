@@ -12,6 +12,7 @@ from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
     PR_DESCRIPTION_FILENAME,
 )
 from git_core_lib.git_core_lib.client.git_client import GitClientMixin
+from git_core_lib.git_core_lib.helpers.branch_name_utils import branch_name_problem
 from git_core_lib.git_core_lib.helpers.git_clean_utils import (
     generated_artifact_paths_from_status,
     git_ready_command_summary,
@@ -165,6 +166,17 @@ def _is_per_task_workspace_clone(repository) -> bool:
         return False
 
 
+def _task_id_of_clone(repository) -> str:
+    """The task a per-task workspace clone belongs to ('' for any other folder).
+
+    A clone lives at ``<workspace_root>/<task_id>/<repo_id>/``: the folder
+    above it is named by kato for the task, and never by the agent.
+    """
+    if not _is_per_task_workspace_clone(repository):
+        return ''
+    return Path(str(getattr(repository, 'local_path', '') or '').strip()).parent.name
+
+
 class RepositoryHasNoChangesError(RuntimeError):
     """Raised when a task branch has nothing to publish in a given repo.
 
@@ -182,6 +194,9 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def __init__(self, repositories_config, max_retries: int) -> None:
         super().__init__(repositories_config, max_retries)
         self._publication_service = RepositoryPublicationService(self, max_retries)
+        # ``task_id -> branch`` a plan's sub-task merges into ('' = none);
+        # see ``attach_plan_merge_target``. None until the host wires it.
+        self._plan_merge_target = None
         # Serialises merge-finalisation so a burst of polled reads (Files
         # tab + Changes tab both refresh ~every 5s) can't race two commits
         # of the same pending merge. Finalisation is rare, so one lock for
@@ -1917,7 +1932,47 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     def reply_to_review_comment(self, repository, comment, body: str) -> None:
         self._publication_service.reply_to_review_comment(repository, comment, body)
 
+    def attach_plan_merge_target(self, merge_target) -> None:
+        """Wire ``task_id -> branch`` ('' = none): the branch a plan's
+        sub-task merges into, which is the branch of the task it was split
+        from (``plan_queue/merge_target.py``)."""
+        self._plan_merge_target = merge_target
+
+    def plan_merge_branch(self, task_id: object) -> str:
+        """The branch ``task_id``'s pull requests go into when it is a plan's
+        sub-task, '' for any other task."""
+        task_id = normalized_text(task_id)
+        merge_target = getattr(self, '_plan_merge_target', None)
+        if merge_target is None or not task_id:
+            return ''
+        try:
+            branch = normalized_text(merge_target(task_id))
+        except Exception:
+            self.logger.exception('could not tell whether task %s is a plan sub-task', task_id)
+            return ''
+        # It goes on git command lines (refs, a push): only a real branch name.
+        problem = branch_name_problem(branch) if branch else ''
+        if problem:
+            self.logger.warning(
+                'task %s: its plan branch %r cannot be used (%s); it merges into '
+                'the repository destination', task_id, branch, problem,
+            )
+            return ''
+        return branch
+
     def destination_branch(self, repository) -> str:
+        """The branch ``repository``'s work merges into.
+
+        For the clone of a plan's sub-task: the branch of the task the plan was
+        split from, once that branch is on the remote (the first sub-task's
+        pull request puts it there: ``put_plan_merge_branch_on_remote``). Until
+        then the sub-task is cut from, and compared with, the repository's own
+        destination, which is where that branch is cut from. Every other
+        repository: its configured destination, else the remote's default.
+        """
+        merge_branch = self._plan_merge_branch_of_clone(repository)
+        if merge_branch:
+            return merge_branch
         configured_branch = text_from_attr(repository, 'destination_branch')
         if configured_branch:
             return configured_branch
@@ -1933,6 +1988,79 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 f'unable to determine destination branch for repository {repository.id}'
             )
         return inferred_branch
+
+    def destination_branch_of_clone(self, repository, local_path: str) -> str:
+        """Where the task clone at ``local_path`` of ``repository`` merges:
+        its plan's branch for a plan sub-task (as ``destination_branch``),
+        else the repository's destination, read off ``repository`` itself."""
+        clone = SimpleNamespace(id=text_from_attr(repository, 'id'), local_path=str(local_path or ''))
+        return self._plan_merge_branch_of_clone(clone) or self.destination_branch(repository)
+
+    def _plan_merge_branch_of_clone(self, repository) -> str:
+        """The plan branch this clone merges into, once the clone sees it on
+        the remote; '' for a clone of any other task, or any other folder."""
+        branch = self.plan_merge_branch(_task_id_of_clone(repository))
+        if not branch:
+            return ''
+        local_path = text_from_attr(repository, 'local_path')
+        if not self._git_reference_exists(local_path, f'refs/remotes/origin/{branch}'):
+            return ''
+        return branch
+
+    def put_plan_merge_branch_on_remote(self, repository) -> str:
+        """Before a plan sub-task's pull request: make sure the branch it goes
+        into is on the remote. Returns that branch ('' for any other clone).
+
+        A branch that is missing is cut from the repository's own destination
+        as the remote holds it now: that is where the main task's branch starts,
+        and it carries nothing nobody pushed. This runs only as part of opening
+        the sub-task's pull request, which is the operator's push, so kato
+        still never publishes on its own. The empty lease refuses to move a
+        branch someone else pushed meanwhile; then theirs is used.
+        """
+        branch = self.plan_merge_branch(_task_id_of_clone(repository))
+        if not branch:
+            return ''
+        local_path = text_from_attr(repository, 'local_path')
+        if not self.remote_has_branch(local_path, branch, repository):
+            base = self._own_destination_branch(repository)
+            if base == branch:
+                return ''
+            self._run_git(
+                local_path, ['fetch', 'origin', f'{base}:refs/remotes/origin/{base}'],
+                f'failed to fetch {base} to cut {branch} from', repository,
+            )
+            commit = self._git_stdout(
+                local_path, ['rev-parse', '--verify', f'refs/remotes/origin/{base}^{{commit}}'],
+                f'{base} is not on the remote, so {branch} cannot be cut from it', repository,
+            )
+            try:
+                self.push_commit_as_new_branch(local_path, commit, branch, repository)
+            except RuntimeError:
+                if not self.remote_has_branch(local_path, branch, repository):
+                    raise
+            self.logger.info(
+                'created %s on the remote of %s from %s, for the pull requests of its plan',
+                branch, text_from_attr(repository, 'id'), base,
+            )
+        self._run_git(
+            local_path, ['fetch', 'origin', f'{branch}:refs/remotes/origin/{branch}'],
+            f'failed to fetch {branch}', repository,
+        )
+        return branch
+
+    def _own_destination_branch(self, repository) -> str:
+        """What ``repository`` merges into without a plan: the inventory's
+        answer, never the clone's (the clone's ``destination_branch`` is
+        where the CLONE merges, a plan's branch included)."""
+        try:
+            source = self.get_repository(text_from_attr(repository, 'id'))
+        except ValueError as exc:
+            raise ValueError(
+                f'unable to determine the destination branch of repository '
+                f'{text_from_attr(repository, "id")}: it is not in the repository list'
+            ) from exc
+        return self.destination_branch(source)
 
     def is_branch_pushable(self, repository, branch_name: str) -> bool:
         """True when kato can push ``branch_name`` to ``repository``'s remote.
@@ -2185,10 +2313,10 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
 
     def _prepare_task_branch(self, repository, branch_name: str):
         self._validate_local_path(repository)
-        destination_branch = text_from_attr(
-            repository,
-            'destination_branch',
-        ) or self.destination_branch(repository)
+        # Asked every time, not read off the attribute: a plan sub-task's clone
+        # is cut from its plan's branch, which the attribute (copied from the
+        # inventory's configured destination) does not know.
+        destination_branch = self.destination_branch(repository)
         setattr(repository, 'destination_branch', destination_branch)
         self._prepare_workspace_for_branch(
             repository.local_path,
@@ -2348,8 +2476,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         '' and every artifact is treated as untracked, i.e. the old behaviour.
         """
         try:
-            destination = text_from_attr(repository, 'destination_branch') \
-                or self.destination_branch(repository)
+            destination = self.destination_branch(repository)
         except Exception:
             return ''
         if not destination:
@@ -2989,6 +3116,10 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
     ) -> None:
         remote_reference = f'origin/{destination_branch}'
         if not self._git_reference_exists(local_path, remote_reference):
+            return
+        # No local branch, no local commits: a plan's branch in a fresh
+        # sub-task clone exists only as ``origin/<branch>``.
+        if not self._git_reference_exists(local_path, f'refs/heads/{destination_branch}'):
             return
         ahead_count, _ = self._left_right_commit_counts(
             local_path,

@@ -57,6 +57,22 @@ class PlanRegistry(object):
             plans = sorted(self._plans.values(), key=lambda plan: plan.created_at)
             return [_copy(plan) for plan in plans]
 
+    def source_of_task(self, task_id: str) -> str:
+        """The task the newest plan with a step running as ``task_id`` was
+        split from ('' when no plan has one). Read in place, copying nothing:
+        a host asks this on paths it takes many times a minute."""
+        key = str(task_id or '').strip().lower()
+        if not key:
+            return ''
+        with self._lock:
+            newest = None
+            for plan in self._plans.values():
+                if plan.step_for_task(key) is None:
+                    continue
+                if newest is None or plan.created_at >= newest.created_at:
+                    newest = plan
+            return newest.source_task_id if newest is not None else ''
+
     def mutate(self, plan_id: str, change: Callable[[Plan], T]) -> T:
         """Apply ``change`` to the live plan and save it if it changed.
 

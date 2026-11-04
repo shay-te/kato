@@ -771,6 +771,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),  # refs/heads/main exists
                 Mock(returncode=0, stdout='2 0\n', stderr=''),
             ],
         ):
@@ -796,6 +797,7 @@ class RepositoryServiceTests(unittest.TestCase):
                 Mock(returncode=0, stdout='main\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
+                Mock(returncode=0, stdout='', stderr=''),  # refs/heads/main exists
                 Mock(returncode=0, stdout='0 3\n', stderr=''),
                 Mock(returncode=0, stdout='', stderr=''),
                 Mock(returncode=0, stdout='main\n', stderr=''),

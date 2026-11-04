@@ -19,7 +19,8 @@ class _AgentServiceStub:
     def __init__(self, mapping):
         self._mapping = dict(mapping)
 
-    def configured_destination_branch(self, repo_id):
+    def configured_destination_branch(self, repo_id, local_path=''):
+        self.asked_with = local_path
         return self._mapping.get(repo_id, '')
 
 
@@ -38,6 +39,9 @@ class ResolveDiffBaseTests(unittest.TestCase):
         self.assertEqual(result, 'develop')
         # Crucially: we never even called git. Configured value short-circuits.
         detect.assert_not_called()
+        # The clone is named, so a plan sub-task's clone is compared with its
+        # plan's branch (the branch it was cut from), not the repository's.
+        self.assertEqual(agent.asked_with, '/cwd')
 
     def test_falls_back_to_git_detection_when_no_config_value(self) -> None:
         # Unknown repo id (or no inventory entry) returns '' from

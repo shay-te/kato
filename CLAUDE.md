@@ -502,7 +502,8 @@ exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
     tab's edit / remove / revise → Approve (+ Run)
   → PlanTicker every 5s (stateless; reads everything from the saved plan):
       track each released step's task → once its task is DONE, poll its PRs (branch = task id,
-      state=all, destination = the plan's branch, CREATED AFTER the release) → MERGED → satisfied
+      state=all, into the MAIN task's branch or the repo destination, CREATED AFTER the release)
+      → MERGED → satisfied
       → a step whose every parent is satisfied → ready → released (local: create LOCAL-n
         "UNA-1234 · Task n: …" IN_PROGRESS + start the chat in the plan's start mode)
 ```
@@ -525,7 +526,26 @@ must come back exactly as it is, else 409 and nothing changes. On a shared track
 (`update_subtask`, YouTrack/Jira) AFTER the new tickets exist; a rewrite that fails keeps the edit and
 answers 503 naming the ticket (save again retries).
 **A dependent step starts only when every parent is merged AND its task is done**, and then
-clones the destination branch fresh — no stacked branches, no cloning from another workspace.
+clones fresh from the MAIN task's branch, where its parents merged — no stacked branches, no
+cloning from another workspace.
+**A sub-task merges into the main task's branch** (the task the plan was split from, by its
+`task_branch_name`), never the repository destination: the main task carries the whole plan there
+in one PR. ONE answer, `RepositoryService.destination_branch(clone)`: for a clone of a sub-task
+(`_task_id_of_clone`: the workspace folder above it) it is that branch ONCE THE CLONE SEES
+`origin/<branch>`; before that, the repo destination (where it will be cut from). Every reader of a
+destination gets it from there: branch prep (which no longer reads the clone's attribute first: it
+is copied from the inventory's configured destination), PR creation, the empty-PR and publishable
+checks, merge-destination, and the Changes tab / review loop (`configured_destination_branch(repo,
+local_path=<clone>)` → `destination_branch_of_clone`). Which task is a sub-task:
+`plan_queue/merge_target.py` — the queue (`source_of_step_task`, ANY plan state, so plans split
+before this exist are covered), then what `LocalStepLauncher` announced (a local step clones before
+the queue records its task), then a tracker sub-task's footer. **Nothing is pushed before the
+operator's push:** `create_pull_request` first calls `put_plan_merge_branch_on_remote`, which cuts a
+missing main branch from the repo's OWN destination (`_own_destination_branch`, the inventory's
+answer — never the clone's, which may name a stale or deleted plan branch) as the remote holds it,
+with an empty lease. The probes accept a PR into either branch (older plans merged into the
+destination); the history probe reads the main branch first. A live plan's source task cannot be
+renamed (its sub-tasks' PRs point at its branch). Open PRs created before this are NOT retargeted.
 Kato still never publishes: the step parks for push like any task; merging and moving it to
 done are the operator's. The merge verdict ignores PRs created before the step's release
 (`CLOCK_SKEW_SECONDS`) — branch names repeat (LOCAL ids restart after a store reset; the same

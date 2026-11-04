@@ -829,7 +829,9 @@ def _resolve_diff_base(repo_id: str, cwd: str, agent_service) -> str:
     if repo_id and agent_service is not None:
         lookup = getattr(getattr(agent_service, 'publish', agent_service), 'configured_destination_branch', None)
         if callable(lookup):
-            configured = (lookup(repo_id) or '').strip()
+            # ``cwd`` is the task's clone: a plan sub-task's is compared with
+            # its plan's branch, the branch it was cut from and merges into.
+            configured = (lookup(repo_id, local_path=cwd) or '').strip()
             if configured:
                 return configured
     return detect_default_branch(cwd)

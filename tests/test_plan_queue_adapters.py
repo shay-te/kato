@@ -97,11 +97,12 @@ class WordingTests(unittest.TestCase):
 
 
 class PullRequestProbeTests(unittest.TestCase):
-    def _service(self, found=None, error=None, destination='main'):
+    def _service(self, found=None, error=None, destination='main', merge_branches=None):
         service = SimpleNamespace(
             get_repository=lambda repository_id: SimpleNamespace(id=repository_id),
             destination_branch=lambda repository: destination,
             task_branch_name=lambda task_id: 'feature/x' if task_id == 'LOCAL-9' else task_id,
+            plan_merge_branch=lambda task_id: (merge_branches or {}).get(task_id, ''),
         )
 
         def states(repository, *, source_branch):
@@ -123,6 +124,26 @@ class PullRequestProbeTests(unittest.TestCase):
         facts = KatoPullRequestProbe(repository_service=service).pull_requests('T-1', 'api')
         self.assertEqual(facts, [PullRequestFact('merged', 'u1', 't1'), PullRequestFact('declined', 'u3', '')])
         self.assertEqual(service.asked, ('api', 'T-1'))
+
+    def test_a_plan_sub_task_counts_its_pull_requests_into_the_plans_branch(self) -> None:
+        # Its pull request goes into the branch of the task it was split from;
+        # one opened into the destination (a plan split before sub-tasks merged
+        # that way) still counts, a pull request into anything else does not.
+        found = [
+            {'state': 'merged', 'url': 'u1', 'created_at': 't1', 'destination_branch': 'UNA-1'},
+            {'state': 'open', 'url': 'u2', 'created_at': 't2', 'destination_branch': 'main'},
+            {'state': 'open', 'url': 'u3', 'created_at': 't3', 'destination_branch': 'release'},
+        ]
+        service = self._service(found, merge_branches={'UNA-2': 'UNA-1'})
+        probe = KatoPullRequestProbe(repository_service=service)
+        self.assertEqual([fact.url for fact in probe.pull_requests('UNA-2', 'api')], ['u1', 'u2'])
+        # Another task has no plan branch: only the destination counts.
+        self.assertEqual([fact.url for fact in probe.pull_requests('UNA-7', 'api')], ['u2'])
+        # By branch with the task named (the release notes): the same answer.
+        self.assertEqual(
+            [fact.url for fact in probe.pull_requests_of_branch('UNA-2', 'api', task_id='UNA-2')], ['u1', 'u2'],
+        )
+        self.assertEqual([fact.url for fact in probe.pull_requests_of_branch('UNA-2', 'api')], ['u2'])
 
     def test_a_task_with_a_named_branch_is_asked_for_by_that_branch(self) -> None:
         service = self._service([])
