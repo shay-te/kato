@@ -615,16 +615,21 @@ SETTINGS_SCHEMA: list[dict] = [
              'Slack error webhook URL',
              'Incoming webhook URL for a Slack channel. Kato posts '
              'task failure summaries here.', {}),
-            ('KATO_SLACK_DONE_CHANNEL', 'text',
+            # ``secret``: it is usually an Incoming Webhook URL, and that URL
+            # is the credential — kept masked on screen like the token.
+            ('KATO_SLACK_DONE_CHANNEL', 'secret',
              'Slack channel for finished tasks',
-             'The channel\'s link (in Slack: the channel\'s name → Copy link). When a '
-             'task is marked done in kato, its title and the links to its pull requests '
-             'are posted there. Needs the bot token below; empty = nothing is posted. '
-             'Applies to the next finished task, no restart.', {}),
+             'Simplest: the channel\'s Incoming Webhook URL (https://hooks.slack.com/services/…; '
+             'in Slack: your app → Incoming Webhooks → Add New Webhook) — nothing else is needed. '
+             'Or the channel\'s link (the channel\'s name → Copy link) plus the bot token below. '
+             'When you press Done on a task, its title and the links to its pull requests are '
+             'posted there, once per task, and the Done message says so. Empty = nothing is '
+             'posted. Applies to the next task, no restart.', {}),
             ('KATO_SLACK_BOT_TOKEN', 'secret',
              'Slack bot token',
-             'The bot token (xoxb-…) of a Slack app with the chat:write scope. Invite '
-             'the app to the channel above (/invite @your-app).', {}),
+             'Only with a channel link (not needed for a webhook URL): the bot token (xoxb-…) '
+             'of a Slack app with the chat:write scope, invited to the channel '
+             '(/invite @your-app).', {}),
         ],
     },
     {

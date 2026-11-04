@@ -372,7 +372,27 @@ def _start_post_boot_workers(app) -> None:
     _start_plan_queue(app)
     _start_workspace_trash_reaper(app)
     _start_permission_auto_resolver(app)
+    _start_restart_resume(app)
     _warm_up_repository_inventory(app)
+
+
+def _start_restart_resume(app) -> None:
+    """Resume the agents that were working when kato last stopped, then keep
+    that list current (``restart_resume``). Best-effort: a failure here never
+    stops the boot."""
+    service = getattr(app, 'service', None)
+    if service is None:
+        return
+    try:
+        from kato_core_lib.data_layers.service.restart_resume.wiring import start_restart_resume
+        app.running_agents_recorder = start_restart_resume(
+            session_manager=getattr(app, 'session_manager', None),
+            workspace_manager=getattr(app, 'workspace_manager', None),
+            comment_runs=service.comment_runs,
+            logger=app.logger,
+        )
+    except Exception:
+        app.logger.exception('could not start resuming the agents that were working')
 
 
 # How long the configured UI-first boot waits between failed connection-
@@ -1421,6 +1441,15 @@ def _register_shutdown_hook(app) -> None:
     shutting_down = threading.Event()
 
     def _cleanup():
+        # FIRST, while the agents still run: which of them were working, so
+        # the next start resumes them. Stopping them below would otherwise be
+        # recorded as "nothing was running".
+        recorder = getattr(app, 'running_agents_recorder', None)
+        if recorder is not None:
+            try:
+                recorder.record_final()
+            except Exception:
+                app.logger.exception('could not record the working agents')
         for attr in (
             'resume_prompt_watcher',
             'comment_run_watcher',

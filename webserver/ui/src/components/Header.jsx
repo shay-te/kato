@@ -1,5 +1,6 @@
 import Icon, { BusyIcon } from './Icon.jsx';
 import LidAwakeChip from './LidAwakeChip.jsx';
+import ShutdownButton from './ShutdownButton.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { cx } from '../utils/cx.js';
 
@@ -138,6 +139,7 @@ export default function Header({
       >
         <BusyIcon busy={refreshing} idle="refresh" />
       </button>
+      <ShutdownButton />
     </header>
   );
 }

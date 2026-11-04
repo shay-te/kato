@@ -913,6 +913,26 @@ export function discardPlanQueue(planId) {
 
 // ``action``: 'plan' (start it in Plan mode) | 'start' (implement right
 // away) | 'satisfy' | 'retry' | 'cancel' | 'check'.
+// Shut kato down: the agents working now (they continue on the next start),
+// then the stop itself — the same graceful path as Ctrl+C.
+export function fetchShutdownPreview() {
+  return fetchJson('/api/shutdown');
+}
+
+export function shutdownKato() {
+  return postEnvelope('/api/shutdown', {});
+}
+
+// The Docker containers a task's agent started in its folder: listed, and
+// stopped or removed ('stop' | 'remove') from the task's header.
+export function fetchTaskContainers(taskId) {
+  return fetchJson(`/api/sessions/${encodeURIComponent(taskId)}/containers`);
+}
+
+export function taskContainersAction(taskId, action) {
+  return postEnvelope(`/api/sessions/${encodeURIComponent(taskId)}/containers/${action}`, {});
+}
+
 // Count a tracker state as done from now on (Settings → General → States
 // that mean done): a plan card stuck in it moves on the next check.
 export function addPlanDoneState(state) {

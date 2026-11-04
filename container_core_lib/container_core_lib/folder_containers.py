@@ -95,10 +95,7 @@ class FolderContainers(object):
             return False
         paths = [labels.get(COMPOSE_WORKING_DIR, '')]
         paths += labels.get(COMPOSE_CONFIG_FILES, '').split(',')
-        paths += [
-            str(mount.get('Source') or '') for mount in raw.get('Mounts') or []
-            if isinstance(mount, dict) and mount.get('Type') == 'bind'
-        ]
+        paths += [str(mount.get('Source') or '') for mount in raw.get('Mounts') or [] if isinstance(mount, dict)]
         return any(is_inside(path, place) for path in paths if path.strip() for place in places)
 
 

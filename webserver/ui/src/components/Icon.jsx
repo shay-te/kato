@@ -85,6 +85,10 @@ const LINE_ICONS = {
   'notes': 'M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h6',
   // Three columns of cards: the plan board.
   'board': 'M4 4h4v16H4zM10 4h4v11h-4zM16 4h4v7h-4z',
+  // Power: the line through the top of a broken ring.
+  'power': 'M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0',
+  // A container: a box, its top and the edge down its middle.
+  'box': 'M21 8l-9-5-9 5v8l9 5 9-5V8zM3 8l9 5 9-5M12 13v8',
   // An arrow stepping down and in: a sub-task of another task.
   'subtask': 'M6 4v7a4 4 0 0 0 4 4h9M15 11l4 4-4 4',
   'bell': 'M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0',

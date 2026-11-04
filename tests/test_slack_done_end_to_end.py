@@ -25,6 +25,7 @@ from kato_core_lib.data_layers.service.release_note_links import ReleaseNoteLink
 from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
 from kato_core_lib.data_layers.service.release_note_writer import ReleaseNoteWriter
 from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
+from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer
 from kato_core_lib.helpers.slack_done_settings_utils import SlackDoneSettings
 from kato_webserver.app import _build_fallback_manager, create_app
@@ -65,6 +66,7 @@ class FinishAndForgetPostsToSlackTests(unittest.TestCase):
         self.settings = SlackDoneSettings(channel_link='https://acme.slack.com/archives/C0RELEASE1', token='xoxb-1')
         slack = SlackDoneAnnouncer(
             sources=sources, links=links, settings=lambda: self.settings,
+            posted=SlackPostedTasks(root / 'slack_posted.json'),
             client_for=lambda token: SlackClient(token, base_url=self.slack.url),
             background=lambda work: work(),
         )
@@ -93,8 +95,8 @@ class FinishAndForgetPostsToSlackTests(unittest.TestCase):
         self.assertEqual(request['body']['channel'], 'C0RELEASE1')
         self.assertEqual(request['body']['text'], '\n'.join([
             f'✅ *{self.task_id}* is done — Set a password button',
-            '• <https://git.example/backend/pull/7|backend>',
-            '• <https://git.example/client/pull/8|client>',
+            '• backend: <https://git.example/backend/pull/7>',
+            '• client: <https://git.example/client/pull/8>',
         ]))
         self.assertIn('A password button', self.notes.read_text(encoding='utf-8'))  # both were told
 

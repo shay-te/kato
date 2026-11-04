@@ -668,7 +668,7 @@ class KatoCoreLib(CoreLib):
             if self.workspace_manager is not None
             else None
         )
-        return AgentService(
+        service = AgentService(
             task_service=task_service,
             task_state_service=task_state_service,
             implementation_service=implementation_service,
@@ -715,6 +715,10 @@ class KatoCoreLib(CoreLib):
                 task_service, task_state_service, local_tasks,
             ),
         )
+        # The Done button (push, PR, In Review) posts the task to Slack too,
+        # and its toast says so.
+        service.publish.announce_finished = self.slack_done_announcer.announce
+        return service
 
 
     def _build_security_scanner_service(self, open_cfg):

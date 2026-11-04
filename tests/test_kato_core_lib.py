@@ -284,6 +284,8 @@ class KatoCoreLibTests(unittest.TestCase):
         self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer, app.task_containers])
         self.assertIsNotNone(app.release_notes_service)
         self.assertIsNotNone(app.slack_done_announcer)
+        # The Done button posts the task to Slack too, through the same announcer.
+        self.assertEqual(app.service.publish.announce_finished, app.slack_done_announcer.announce)
         # Both route local tasks to the SAME store, kept under ~/.kato
         # (here the tests' isolated home).
         local_tasks = mock_task_service_cls.call_args.args[2]

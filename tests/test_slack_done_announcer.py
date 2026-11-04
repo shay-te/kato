@@ -21,6 +21,7 @@ from slack_core_lib.slack_core_lib.tests.fakes import FakeSlack
 from kato_core_lib.data_layers.data.release_note_source import ReleaseNoteSource
 from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
 from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
+from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer, done_message
 from kato_core_lib.helpers.slack_done_settings_utils import (
     SLACK_DONE_CHANNEL_KEY,
@@ -57,9 +58,11 @@ class SlackDoneAnnouncerTests(unittest.TestCase):
         self.settings = SlackDoneSettings(channel_link=CHANNEL, token='xoxb-1')
         self.deferred: list = []
         self.logger = MagicMock()
+        self.posted = SlackPostedTasks(Path(tmp.name) / 'slack_posted.json')
         self.announcer = SlackDoneAnnouncer(
             sources=ReleaseNoteSources(workspace_manager=self.workspaces, task_service=MagicMock()),
             links=self.links,
+            posted=self.posted,
             settings=lambda: self.settings,
             client_for=lambda token: SlackClient(token, base_url=self.slack.url),
             background=self.deferred.append,
@@ -78,8 +81,8 @@ class SlackDoneAnnouncerTests(unittest.TestCase):
         self.assertEqual(request['body']['channel'], 'C0RELEASE1')
         self.assertEqual(request['body']['text'], '\n'.join([
             '✅ *UNA-1* is done — Fix the login bug',
-            '• <https://git.example/backend/pull/7|backend>',
-            '• <https://git.example/client/pull/8|client>',
+            '• backend: <https://git.example/backend/pull/7>',
+            '• client: <https://git.example/client/pull/8>',
         ]))
 
     def test_the_task_is_read_before_the_forget_flow_deletes_its_workspace(self) -> None:
@@ -99,7 +102,10 @@ class SlackDoneAnnouncerTests(unittest.TestCase):
         self._done()
         self.assertEqual(self.slack.requests, [])
         warnings = [call.args[2] for call in self.logger.warning.call_args_list]
-        self.assertEqual(warnings, ['the Slack token is missing', 'the Slack channel link is not a channel link'])
+        self.assertEqual(len(warnings), 2)
+        self.assertIn('needs the Slack app\'s bot token', warnings[0])
+        self.assertIn('Incoming Webhook URL instead', warnings[0])
+        self.assertIn('neither a channel link nor an Incoming Webhook URL', warnings[1])
 
     def test_a_slack_that_refuses_is_logged_in_words_and_never_fails_the_done(self) -> None:
         self.slack.answer = (200, {'ok': False, 'error': 'not_in_channel'})
@@ -124,9 +130,12 @@ class DoneMessageTests(unittest.TestCase):
     def test_one_pull_request_and_none(self) -> None:
         source = ReleaseNoteSource(task_id='UNA-2', title='Add retry')
         self.assertEqual(done_message(source, [('PR', 'https://x/pull/1')]),
-                         '✅ *UNA-2* is done — Add retry\n• <https://x/pull/1|pull request>')
+                         '✅ *UNA-2* is done — Add retry\n• <https://x/pull/1>')  # the whole link, shown
         self.assertEqual(done_message(ReleaseNoteSource(task_id='UNA-3'), []),
                          '✅ *UNA-3* is done\n_No pull request was found for it._')
+        # A repository's name is text like any other: it can never become a mention.
+        self.assertEqual(done_message(ReleaseNoteSource(task_id='UNA-4'), [('a<!channel>&b', 'https://x/pull/2')]),
+                         '✅ *UNA-4* is done\n• a&lt;!channel&gt;&amp;b: <https://x/pull/2>')
 
     def test_a_title_can_never_notify_the_channel(self) -> None:
         text = done_message(ReleaseNoteSource(task_id='UNA-4', title='Ping <!channel> & <@U1>'), [])
@@ -163,10 +172,83 @@ class SettingsTests(unittest.TestCase):
         from kato_webserver.app import _live_settings_keys
 
         fields = {field[0]: field[1] for section in SETTINGS_SCHEMA for field in section['fields']}
-        self.assertEqual(fields[SLACK_DONE_CHANNEL_KEY], 'text')
+        self.assertEqual(fields[SLACK_DONE_CHANNEL_KEY], 'secret')  # a webhook URL is a credential
         self.assertEqual(fields[SLACK_DONE_TOKEN_KEY], 'secret')  # never shown back
         self.assertLessEqual({SLACK_DONE_CHANNEL_KEY, SLACK_DONE_TOKEN_KEY}, _live_settings_keys())
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DoneButtonAnnouncesTests(SlackDoneAnnouncerTests):
+    """The Done button (push, PR, In Review) posts NOW and says what happened;
+    a webhook URL alone is enough; a task is posted once."""
+
+    HOOK = 'https://hooks.slack.com/services/T0001/B0002/sEcReTpart123'
+
+    def _webhook(self):
+        from slack_core_lib.slack_core_lib.client.slack_webhook import SlackWebhook
+        self.slack.answer = (200, b'ok')
+        self.announcer._webhook_for = lambda url: SlackWebhook(url, base_url=self.slack.url.rsplit('/api', 1)[0])
+        self.settings = SlackDoneSettings(channel_link=self.HOOK)
+
+    def test_a_webhook_url_alone_posts_and_done_says_so(self) -> None:
+        self._webhook()
+        self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'posted', 'error': ''})
+        [sent] = self.slack.requests
+        self.assertEqual(sent['path'], '/services/T0001/B0002/sEcReTpart123')
+        self.assertIn('*UNA-1* is done — Fix the login bug', sent['body']['text'])
+        self.assertIn('• backend: <https://git.example/backend/pull/7>', sent['body']['text'])
+
+    def test_a_task_is_posted_once_whichever_way_it_got_done(self) -> None:
+        self._webhook()
+        self.announcer.announce('UNA-1')
+        self.assertEqual(self.announcer.announce('una-1'), {'status': 'already_posted', 'error': ''})
+        self._done('UNA-1')  # the tracker's Done later: not again
+        self.assertEqual(len(self.slack.requests), 1)
+
+    def test_what_the_done_toast_is_told_when_it_was_not_posted(self) -> None:
+        self.settings = SlackDoneSettings()
+        self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'not_set_up', 'error': ''})
+        self.settings = SlackDoneSettings(channel_link=CHANNEL)
+        outcome = self.announcer.announce('UNA-1')
+        self.assertEqual(outcome['status'], 'failed')
+        self.assertIn('Incoming Webhook URL instead', outcome['error'])
+        self._webhook()
+        self.slack.answer = (404, b'no_service')
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'failed')
+        self.assertFalse(self.posted.has('UNA-1'))  # a failed post is tried again next time
+        self.slack.answer = (200, b'ok')
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
+
+    def test_nothing_unexpected_ever_escapes(self) -> None:
+        self._webhook()
+        self.links.result = None  # the PR lookup breaks
+        self.links.links = lambda source: (_ for _ in ()).throw(RuntimeError('provider down'))
+        self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'failed', 'error': 'provider down'})
+        self.announcer._settings = lambda: (_ for _ in ()).throw(RuntimeError('settings unreadable'))
+        self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'failed', 'error': 'settings unreadable'})
+        self.assertEqual(self.announcer.announce(''), {'status': 'failed', 'error': 'settings unreadable'})
+
+
+class SlackPostedTasksTests(unittest.TestCase):
+    def test_marked_once_case_blind_and_a_bad_file_is_empty(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / 'posted.json'
+        posted = SlackPostedTasks(path, clock=lambda: 7.0)
+        self.assertFalse(posted.has('UNA-1'))
+        posted.mark('UNA-1')
+        self.assertTrue(SlackPostedTasks(path).has(' una-1 '))
+        path.write_text('[1]')
+        self.assertFalse(posted.has('UNA-1'))
+        path.write_text('nope')
+        self.assertFalse(posted.has('UNA-1'))
+
+    def test_the_default_place_is_under_kato_home(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with unittest.mock.patch.dict(os.environ, {'KATO_SLACK_POSTED_PATH': str(Path(tmp.name) / 'p.json')}):
+            SlackPostedTasks().mark('UNA-2')
+        self.assertTrue((Path(tmp.name) / 'p.json').exists())

@@ -1549,6 +1549,8 @@ def create_app(
     register_lid_awake_routes(app)
     from kato_webserver.task_container_routes import register_task_container_routes
     register_task_container_routes(app)
+    from kato_webserver.shutdown_routes import register_shutdown_routes
+    register_shutdown_routes(app)
     from kato_webserver.release_notes_routes import register_release_notes_routes
     register_release_notes_routes(app)
     from kato_webserver.local_task_routes import register_local_task_routes

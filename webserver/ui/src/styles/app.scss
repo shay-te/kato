@@ -273,6 +273,9 @@ header:has(.permission-roster) .subtitle {
  * A distance rule cannot be made safe by lowering its specificity; it has to
  * stop reaching. ``HeaderButtonBaseCss.test.js`` now asserts that NO rule
  * styles a header's buttons by descent. */
+/* Shut down: red on hover, so it never reads as just another refresh. */
+.header-icon-btn.header-shutdown:hover:not(:disabled) { color: $C-RED-71; }
+
 .header-icon-btn {
   /* Bare glyph, circle on hover — same treatment as .session-action and the
    * files/changes toolbar buttons. Kept in step with them deliberately: a
@@ -12474,15 +12477,57 @@ button.settings-prompt-editor-head {
 .tab-subtasks.is-open { border-color: $C-CYAN-52-A40; color: $C-NEUTRAL-96; }
 .tab-subtasks.needs-attention { background: $C-ORANGE-50-A35; border-color: $C-ORANGE-50-A65; color: $C-NEUTRAL-96; }
 
-.tab-subtasks-backdrop {
+/* The Docker containers a task's agent started: a chip in the header's title
+ * area (only when there are any), green while one runs. */
+.task-containers-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: $SPACE-4;
+  height: 20px;
+  padding: 0 $SPACE-8;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  font-size: $TEXT-11_5;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-containers-chip:hover { border-color: $C-CYAN-52-A40; color: $C-NEUTRAL-96; }
+.task-containers-chip.is-running { border-color: $C-GREEN-67-A40; }
+.task-containers-row { cursor: default; }
+
+.task-containers-state {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: $RADIUS-CIRCLE;
+  background: $C-NEUTRAL-45;
+}
+
+.task-containers-state.is-running { background: $C-GREEN-52; }
+
+.task-containers-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: $SPACE-6;
+  padding: $SPACE-6 $SPACE-12 $SPACE-4;
+  border-top: 1px solid $C-NEUTRAL-100-A06;
+}
+
+/* A menu that opens under the control clicked (useAnchoredMenu +
+ * AnchoredMenu): portalled to the body and placed from the control's rect —
+ * a strip that scrolls sideways, or a header that truncates, would clip it. */
+.anchored-menu-backdrop {
   position: fixed;
   inset: 0;
   z-index: 29;
 }
 
-/* Portalled to the body and placed from the count's rect: the strip scrolls
- * sideways and would clip anything hanging below it. */
-.tab-subtasks-menu {
+.anchored-menu {
   position: fixed;
   z-index: 30;
   min-width: min(260px, calc(100vw - #{$SPACE-24}));
@@ -12496,7 +12541,7 @@ button.settings-prompt-editor-head {
   box-shadow: $SHADOW-24;
 }
 
-.tab-subtasks-item {
+.anchored-menu-item {
   display: flex;
   align-items: center;
   gap: $SPACE-8;
@@ -12511,11 +12556,11 @@ button.settings-prompt-editor-head {
   cursor: pointer;
 }
 
-.tab-subtasks-item:hover,
-.tab-subtasks-item:focus-visible { background: $C-NEUTRAL-100-A06; color: $C-NEUTRAL-96; }
-.tab-subtasks-id { flex-shrink: 0; font-size: $TEXT-11; color: $C-NEUTRAL-64; }
+.anchored-menu-item:hover,
+.anchored-menu-item:focus-visible { background: $C-NEUTRAL-100-A06; color: $C-NEUTRAL-96; }
+.anchored-menu-id { flex-shrink: 0; font-size: $TEXT-11; color: $C-NEUTRAL-64; }
 
-.tab-subtasks-name {
+.anchored-menu-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

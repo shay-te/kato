@@ -238,6 +238,27 @@ Pending approvals are in-memory: a kato restart drops them, and `approve_push`
 then 404s ("no pending publish for this task"). The branch and commits survive
 in the workspace, so the UI's Push button is the recovery path.
 
+### Shutdown and resume after a restart
+```
+header ⏻ Shut down → GET /api/shutdown (who is working) → confirm → POST /api/shutdown (202)
+   → 0.5s later signal.raise_signal(SIGINT): THE Ctrl+C handler, not a second path
+Ctrl+C / SIGTERM / that button → _cleanup: recorder.record_final() FIRST (working agents → disk,
+   recorder frozen) → watchers + service.shutdown() stop every agent → _exit_now
+SIGKILL / power cut: nothing runs — the recorder's last write (every 5s, on change) is what is left
+next boot → _start_post_boot_workers → _start_restart_resume: read ~/.kato/resume_agents.json
+   → AgentResumer: each remembered chat gets "Kato — resumed after a restart … continue" through
+     KatoChatChannel (the shared sender, per-task lock, --resume respawn) → then the recorder starts
+```
+`kato_core_lib/data_layers/service/restart_resume/` (one job per module). "Working" = a live chat mid-turn,
+or waiting for the operator's approval inside its turn (`running_agents.py`). The final record must come
+BEFORE the agents stop and freeze the recorder: stopping them otherwise records "nothing was running"
+(proven out of process: `tests/test_restart_resume_process.py`, real SIGINT, real SIGKILL, real HTTP button).
+Remembered agents not resumed yet stay in every write (`pending`), so stopping again during the boot keeps
+them. Not resumed: a deleted (forgotten) task, a workspace gone / `done` / `terminated`, a chat with no
+`agent_session_id`, one already running again (scan, queued comment). Only WORKING agents come back — an
+idle chat stays asleep until written to (lazy resume, unchanged). The route is under the CSRF guard like every
+other. The desktop app does not restart kato: after a shutdown, relaunch it.
+
 ### Lid-closed running (Settings → "Keep running with the lid closed")
 ```
 tick every 15s (LidAwakeService, lid_awake_core_lib; always started, even with the setting off)
@@ -348,16 +369,37 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
 - **ONE place announces done:** `move_task_to_done` = `_move_to_done` (subclasses override HOW, e.g. LOCAL tasks)
   + `_announce_done`. A failed move raises and announces nothing; a failing observer never fails the done. Do not
   add a second announcement elsewhere — the Done/Push button is NOT done (it moves to In Review). Its one
-  observer is `DoneAnnouncements` (`done_announcements.py`), which tells each on its own: the release notes and
-  **the Slack post** — add a new "on done" there, never a second hook.
-- **Slack on done** (`slack_done_announcer.py` + `slack_core_lib`, kato-free: channel id from a copied link,
-  `chat.postMessage` with a bot token, Slack's refusal codes said as what to do): Settings → Email & Slack,
-  `KATO_SLACK_DONE_CHANNEL` (the channel's link) + `KATO_SLACK_BOT_TOKEN` (xoxb-, `chat:write`, app invited),
-  read fresh (`slack_done_settings_utils.py`, live keys). Both empty = nothing sent. The task is read NOW (the
-  forget flow deletes the workspace next); its PRs (`ReleaseNoteLinks`, by branch — the same reading and links as
-  the release notes) are found and posted in the background. Everything from a ticket is escaped (`<!channel>` in a
-  title must never notify a channel). Failures are logged, never fail the done. Only kato's own done posts —
-  a ticket closed in the tracker (the done watcher) adds release notes but no Slack post.
+  observer is `DoneAnnouncements` (`done_announcements.py`), which tells each on its own: the release notes,
+  **the Slack post**, and the task's containers (stopped) — add a new "on done" there, never a second hook.
+  The ONE exception is the Slack post, which the Done button also makes (below): the team's "done" is the
+  button, and the post is kept to one per task either way.
+- **Slack on done** (`slack_done_announcer.py` + `slack_core_lib`, kato-free). ONE post per task
+  (`SlackPostedTasks`, `~/.kato/slack_posted_tasks.json`), from whichever comes first: the header's **Done**
+  button (`finish_task_planning_session` → `publish.announce_finished` = `announcer.announce`, run NOW so the
+  answer's `slack` {status: posted | already_posted | not_set_up | failed, error} reaches the Done toast:
+  "✓ posted to Slack", or "⚠ not posted to Slack: <why>" listed first and amber) — or the tracker's Done
+  (`DoneAnnouncements` → `task_done`, the task read NOW, posted in the background, skipped if Done already
+  posted it). The operator thinks "Done" means the button: wiring Slack only to `move_task_to_done` meant the
+  button never posted ("I marked the task done, no Slack"). Where it goes (Settings → Email & Slack, read fresh):
+  `KATO_SLACK_DONE_CHANNEL` holds an **Incoming Webhook URL** (`hooks.slack.com/services/…`, needs nothing
+  else — `SlackWebhook`; the URL is the credential, so the field is `secret` and an error never repeats it)
+  or a channel link + `KATO_SLACK_BOT_TOKEN` (xoxb-, `chat:write`, app invited — `SlackClient`). A half set-up
+  says what is missing. Its PRs (`ReleaseNoteLinks`, by branch) are the release notes' links, each shown as its
+  WHOLE link (`• backend: <url>`; a lone PR just `• <url>`) — a word like "pull request" hid where it went. Everything from a
+  ticket is escaped (`<!channel>` in a title must never notify a channel). A failed post is not marked posted:
+  the next Done tries again.
+- **The task's Docker containers are stopped on done** (`task_containers.py` + `container_core_lib`, kato-free).
+  An agent runs `docker compose up` / `docker run` like a developer and nothing stopped them: a finished task
+  kept its database and dev server running. A container belongs to a task when its Compose project (working dir
+  or compose file) is in the task folder, or it bind-mounts anything from it — no mark of kato's needed. Kato's
+  sandbox is left out (`SANDBOX_CONTAINER_LABEL`; it removes its own). Paths compare across Docker Desktop's
+  forms (`/run/desktop/mnt/host/c/…`, `/host_mnt/…`, WSL `/mnt/c/…`, a Windows path without case) and through a
+  link (the folder as given AND its realpath). Done = STOPPED (reversible, off the done path). Deleting the task
+  (the forget route, step 1b, after the session is terminated) = REMOVED with their anonymous volumes and — for a
+  Compose project with no container left anywhere — its networks and volumes; the answer's `containers` is
+  toasted. The header shows them (`TaskContainersChip`, title area, only when there are any; re-read on the
+  agent's status change, never polled) with Stop all / Remove all. NEVER on a turn ending or the agent stopping:
+  a dev server the operator still uses must not vanish. Proven on real Docker (compose stack + `docker run`).
 - **Tickets closed outside kato** are noticed as "left the live list" (NOT the workspace flip to `done` — in-review
   workspaces are always protected, so merged-then-closed never flips) and CONFIRMED with `get_issues_status`
   (YouTrack/Jira only; other trackers: only kato-marked done adds entries). First sweep only records; ≤5 per

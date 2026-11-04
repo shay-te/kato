@@ -214,6 +214,9 @@ class TaskPublishService(object):
         self._get_task_publisher = provider_for(task_publisher)
         self._get_workspace_manager = provider_for(workspace_manager)
         self._get_lesson_service = provider_for(lesson_service)
+        # ``task_id -> {status, error}``: tells the team the task is done (the
+        # Slack post), set by the host once its announcer exists. None = nobody.
+        self.announce_finished = None
         # The push-approval hold is SHARED with the host: the autonomous flow
         # parks a finished task there and the UI's approve button resumes it,
         # so both objects must see the same dict and the same lock.
@@ -1234,7 +1237,19 @@ class TaskPublishService(object):
             'pull_request': pr_result,
             'moved_to_review': moved_to_review,
             'move_error': move_error,
+            # What the team was told (the Slack post), for the Done toast.
+            'slack': self._announce_finished(normalized) if moved_to_review else None,
         }
+
+    def _announce_finished(self, task_id: str) -> dict | None:
+        announce = self.announce_finished
+        if announce is None:
+            return None
+        try:
+            return announce(task_id)
+        except Exception as exc:
+            self.logger.exception('could not tell anyone task %s is done', task_id)
+            return {'status': 'failed', 'error': str(exc) or exc.__class__.__name__}
 
     def _kick_lesson_extraction(
         self,

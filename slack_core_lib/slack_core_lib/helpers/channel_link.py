@@ -5,6 +5,10 @@ Slack's "Copy link" on a channel gives ``https://<team>.slack.com/archives/<id>`
 ``https://app.slack.com/client/<team id>/<id>``. Both carry the channel id, and
 so does the id on its own. ``#name`` is passed on as a name, which Slack accepts
 for a channel the app is in.
+
+An Incoming Webhook URL (``https://hooks.slack.com/services/T…/B…/…``) is a
+channel of its own: whatever is posted to it lands in the channel it was made
+for, with no app token at all.
 """
 
 from __future__ import annotations
@@ -30,3 +34,12 @@ def channel_from_link(text: object) -> str:
         return value
     named = _NAME.match(value.lower())
     return f'#{named.group(1)}' if named else ''
+
+
+_WEBHOOK = re.compile(r'^https://hooks\.slack(?:-gov)?\.com/services/[A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+$')
+
+
+def webhook_url(text: object) -> str:
+    """``text`` when it is a Slack Incoming Webhook URL ('' when it is not)."""
+    value = str(text or '').strip().rstrip('/')
+    return value if _WEBHOOK.match(value) else ''

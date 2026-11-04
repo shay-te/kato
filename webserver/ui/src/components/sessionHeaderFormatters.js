@@ -294,6 +294,9 @@ export function formatFinishResult(result, taskId = '') {
   } else {
     lines.push(`✗ ticket did NOT move to In Review: ${body.move_error || 'unknown reason — check kato logs'}`);
   }
+  // What the team was told. A post that failed is a problem: listed first.
+  const slack = slackLine(body.slack);
+  if (slack.problem) { lines.unshift(slack.text); } else if (slack.text) { lines.push(slack.text); }
   const problems = pushProblemCount(body.pushed || {})
     + (body.pull_request?.failed_repositories || []).length;
   const clean = body.finished && problems === 0;
@@ -301,9 +304,21 @@ export function formatFinishResult(result, taskId = '') {
   const trimmedTask = String(taskId || '').trim();
   return {
     title: trimmedTask ? `${baseTitle} (${trimmedTask})` : baseTitle,
-    kind: finishKind(body, clean),
+    // The work landed but the team was not told: amber, so it stays up.
+    kind: clean && slack.problem ? 'warning' : finishKind(body, clean),
     message: lines.join('\n'),
   };
+}
+
+// The Slack post the Done button made: nothing to say when Slack is not set up.
+function slackLine(slack) {
+  const status = slack?.status || '';
+  if (status === 'posted') { return { text: '✓ posted to Slack', problem: false }; }
+  if (status === 'already_posted') { return { text: '✓ already posted to Slack', problem: false }; }
+  if (status === 'failed') {
+    return { text: `⚠ not posted to Slack: ${slack.error || 'see the kato log'}`, problem: true };
+  }
+  return { text: '', problem: false };
 }
 
 // Green only when everything landed. Nothing reached the remote is red, and

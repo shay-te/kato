@@ -45,6 +45,7 @@ import ToastContainer from './components/ToastContainer.jsx';
 import { fetchScanStatus, forgetTaskWorkspace, triggerScan } from './api.js';
 import { waitForScanToFinish } from './utils/scanProgress.js';
 import { toast, toastResult } from './stores/toastStore.js';
+import { forgottenContainersToast } from './components/taskContainersText.js';
 import { deleteQueue } from './stores/deleteQueueStore.js';
 import { apiErrorMessage } from './utils/apiError.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
@@ -433,6 +434,10 @@ export default function App() {
         ? 'Ticket moved to Done. Workspace clone and Claude session removed.'
         : 'Workspace clone and Claude session removed.',
     });
+    // The Docker containers its agent started went with it; one Docker
+    // would not remove is said, never left to be found later.
+    const containers = forgottenContainersToast(taskId, result.body?.containers);
+    if (containers) { toastResult(containers); }
   }, [purgeForgottenTask, refresh]);
 
   // ----- bulk delete -----

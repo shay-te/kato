@@ -15,6 +15,7 @@ import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import PullRequestList from './PullRequestList.jsx';
 import RenameBranchButton from './RenameBranchButton.jsx';
+import TaskContainersChip from './TaskContainersChip.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { gitActionKey } from '../stores/gitActionStore.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
@@ -418,6 +419,9 @@ export default function SessionHeader({
               among the actions: the title truncates to make room, so the
               buttons never move when a loop starts or ends. */}
           <ReviewLoopChip loop={session.review_loop || null} taskId={session.task_id} />
+          {/* Re-read when the agent's status changes: a turn that ran
+              ``docker compose up`` shows its containers once it ends. */}
+          <TaskContainersChip taskId={session.task_id} refreshKey={agent.kind} />
         </div>
         <div className="session-header-actions">
           {/* No status chip here. It lives ON each agent tab now, beside the

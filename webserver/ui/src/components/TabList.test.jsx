@@ -909,7 +909,7 @@ describe('TabList — sub-tasks fold into their main task', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     fireEvent.click(count);
-    fireEvent.click(document.querySelector('.tab-subtasks-backdrop'));
+    fireEvent.click(document.querySelector('.anchored-menu-backdrop'));
     expect(screen.queryByRole('menu')).toBeNull();
   });
 

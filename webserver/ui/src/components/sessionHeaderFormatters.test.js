@@ -467,6 +467,24 @@ test('formatFinishResult: full happy path includes push, PR, and move-to-review 
   assert.match(out.message, /✓ ticket moved to In Review/);
 });
 
+test('formatFinishResult: says whether the team was told in Slack', () => {
+  const done = (slack) => formatFinishResult({
+    ok: true,
+    body: { finished: true, pushed: { pushed_repositories: ['client'] }, pull_request: {}, moved_to_review: true, slack },
+  }, 'UNA-1');
+  assert.match(done({ status: 'posted', error: '' }).message, /✓ ticket moved to In Review\n✓ posted to Slack$/);
+  assert.equal(done({ status: 'posted', error: '' }).kind, 'success');
+  assert.match(done({ status: 'already_posted', error: '' }).message, /✓ already posted to Slack$/);
+  assert.doesNotMatch(done({ status: 'not_set_up', error: '' }).message, /Slack/);
+  assert.doesNotMatch(done(null).message, /Slack/);
+  const failed = done({ status: 'failed', error: 'the Slack webhook is not valid any more' });
+  // A post that did not happen is a problem: first, and the toast is amber (sticky).
+  assert.match(failed.message, /^⚠ not posted to Slack: the Slack webhook is not valid any more\n/);
+  assert.equal(failed.kind, 'warning');
+  assert.equal(failed.title, 'Done — task finalised (UNA-1)');  // the work itself landed
+  assert.match(done({ status: 'failed' }).message, /not posted to Slack: see the kato log/);
+});
+
 test('formatFinishResult: title includes task id when supplied', () => {
   // The toast title used to be just "Done — task finalised" — when an
   // operator had several tabs mid-flow it was easy to lose track of

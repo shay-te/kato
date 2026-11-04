@@ -1636,6 +1636,37 @@ class FinishTaskPlanningSessionTests(unittest.TestCase):
         self.assertTrue(result['finished'])
         task_state.move_task_to_review.assert_called_once()
 
+    def _finish(self, service):
+        with patch.object(service.publish, 'push_task', return_value={'pushed_repositories': ['api']}), \
+             patch.object(service.publish, 'create_pull_request_for_task', return_value={}), \
+             patch.object(service.publish, '_kick_lesson_extraction'):
+            return service.publish.finish_task_planning_session('T1')
+
+    def test_done_tells_the_team_and_the_answer_says_what_happened(self) -> None:
+        service = AgentService(**_kwargs(task_state_service=MagicMock()))
+        self.assertIsNone(self._finish(service)['slack'])  # nobody wired to tell
+        told = []
+        service.publish.announce_finished = lambda task_id: told.append(task_id) or {'status': 'posted', 'error': ''}
+        self.assertEqual(self._finish(service)['slack'], {'status': 'posted', 'error': ''})
+        self.assertEqual(told, ['T1'])
+
+    def test_an_announcement_that_breaks_is_said_and_never_fails_the_done(self) -> None:
+        service = AgentService(**_kwargs(task_state_service=MagicMock()))
+        service.logger = MagicMock()
+        service.publish.announce_finished = MagicMock(side_effect=RuntimeError('boom'))
+        result = self._finish(service)
+        self.assertTrue(result['finished'])
+        self.assertEqual(result['slack'], {'status': 'failed', 'error': 'boom'})
+
+    def test_nothing_is_announced_when_the_ticket_did_not_move(self) -> None:
+        task_state = MagicMock()
+        task_state.move_task_to_review.side_effect = RuntimeError('move fail')
+        service = AgentService(**_kwargs(task_state_service=task_state))
+        service.logger = MagicMock()
+        service.publish.announce_finished = MagicMock()
+        self.assertIsNone(self._finish(service)['slack'])
+        service.publish.announce_finished.assert_not_called()
+
     def test_records_move_error_on_failure(self) -> None:
         task_state = MagicMock()
         task_state.move_task_to_review.side_effect = RuntimeError('move fail')
