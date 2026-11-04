@@ -13,15 +13,10 @@ What kato does to contain a misbehaving agent, what it doesn't, and what's on yo
   audit`, and a `.env`-file checker before the agent spawns. Real
   secrets / CVEs / dangerous patterns block the task with a ticket
   comment.
-- **Restricted Execution Protocol (REP)** — kato refuses to run
-  an agent against any repository the operator hasn't explicitly
-  approved. Approve them in kato's **Settings → Approvals** tab —
-  it lists every repo kato can find and which are approved. REP
-  is always on. There is no off switch. A repo is approved as
-  `trusted` unless you pick `restricted`, which also re-checks
-  its remote address and needs the Docker sandbox on and the
-  security scanner blocking MEDIUM findings for tasks kato picks
-  up by itself.
+- **Repository denylist and ignored folders** — kato never runs
+  an agent in a repository on the denylist, nor in one under an
+  ignored folder (Settings → Repositories). Every other repository
+  under the repository folder is one kato works in.
 
 Combined, these catch the most common breach patterns in
 small-team codebases — committed `.env` files, vulnerable deps,

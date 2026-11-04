@@ -141,6 +141,22 @@ class BitbucketClient(PullRequestClientBase):
             matches.append(self._normalize_pr(item))
         return matches
 
+    def decline_pull_request(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        normalized_pull_request_id = normalized_text(pull_request_id)
+        if not normalized_pull_request_id:
+            raise ValueError('bitbucket pull request id is required to decline the pull request')
+        response = self._post_with_retry(
+            f'/repositories/{repo_owner}/{repo_slug}/pullrequests/{normalized_pull_request_id}/decline',
+        )
+        # Detail-preserving: a refusal (already merged / declined) is a 400
+        # whose body is the only place Bitbucket says which.
+        self.raise_for_status_with_detail(response)
+
     def resolve_review_comment(
         self,
         repo_owner: str,

@@ -101,6 +101,23 @@ class GitLabClient(PullRequestClientBase):
             matches.append(self._normalize_pr(item))
         return matches
 
+    def decline_pull_request(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        """Close the merge request without merging it (GitLab's ``close``)."""
+        merge_request_id = normalized_text(pull_request_id)
+        if not merge_request_id:
+            raise ValueError('a GitLab merge request id is required to close it')
+        response = self._put_with_retry(
+            f'/projects/{self._project_path(repo_owner, repo_slug)}/merge_requests/{merge_request_id}',
+            json={'state_event': 'close'},
+        )
+        # Detail-preserving: GitLab's reason for refusing is in the body.
+        self.raise_for_status_with_detail(response)
+
     def resolve_review_comment(
         self,
         repo_owner: str,

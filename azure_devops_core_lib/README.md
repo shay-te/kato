@@ -3,7 +3,8 @@
 Azure DevOps (Azure Repos) provider implementation — the **pull-request
 client** that plugs into [`repository_core_lib`](../repository_core_lib/):
 create a pull request, find one by branch, list its review comments, reply,
-resolve the thread. Azure Boards (work items as tasks) is not provided.
+resolve the thread, abandon the pull request (close it without merging).
+Azure Boards (work items as tasks) is not provided.
 
 ## Public API
 

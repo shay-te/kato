@@ -218,14 +218,6 @@ export function updateSettings(payload) {
   return postEnvelope('/api/settings', payload || {});
 }
 
-// Repository approvals (Settings → Approvals).
-export function fetchRepositoryApprovals() {
-  return requestEnvelope('/api/repository-approvals');
-}
-
-export function updateRepositoryApprovals(payload) {
-  return postEnvelope('/api/repository-approvals', payload || {});
-}
 
 // Task providers — where tickets live + which kato polls
 // (KATO_ISSUE_PLATFORM). Has an active selector.

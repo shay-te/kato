@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+from requests import HTTPError
+
 from provider_client_base.provider_client_base.data.fields import PullRequestFields, ReviewCommentFields
 
 from gitlab_core_lib.gitlab_core_lib.client.gitlab_client import GitLabClient
@@ -467,6 +469,51 @@ class GitLabClientFindPullRequestsTests(unittest.TestCase):
 
         params = mock_get.call_args.kwargs['params']
         self.assertNotIn('source_branch', params)
+
+
+class GitLabClientDeclinePullRequestTests(unittest.TestCase):
+    def test_closes_the_merge_request_without_merging_it(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        response = mock_response(json_data={'iid': 17, 'state': 'closed'})
+
+        with patch.object(client, '_put', return_value=response) as mock_put:
+            client.decline_pull_request('group/subgroup', 'repo', ' 17 ')
+
+        response.raise_for_status.assert_called_once_with()
+        mock_put.assert_called_once_with(
+            '/projects/group%2Fsubgroup%2Frepo/merge_requests/17',
+            json={'state_event': 'close'},
+        )
+
+    def test_retries_on_timeout(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        response = mock_response(json_data={'iid': 17, 'state': 'closed'})
+
+        with patch.object(
+            client, '_put', side_effect=[ClientTimeout('timed out'), response],
+        ) as mock_put:
+            client.decline_pull_request('group/subgroup', 'repo', '17')
+
+        self.assertEqual(mock_put.call_count, 2)
+
+    def test_a_refusal_raises_with_gitlabs_reason(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        response = mock_response(json_data={'message': '403 Forbidden'}, status_code=403)
+        response.raise_for_status.side_effect = HTTPError('403 Client Error')
+
+        with patch.object(client, '_put', return_value=response):
+            with self.assertRaisesRegex(HTTPError, '403 Client Error: 403 Forbidden'):
+                client.decline_pull_request('group/subgroup', 'repo', '17')
+
+    def test_a_blank_id_is_refused_before_any_request(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+
+        with patch.object(client, '_put') as mock_put:
+            for blank in ('', '   ', None):
+                with self.assertRaisesRegex(ValueError, 'merge request id is required'):
+                    client.decline_pull_request('group/subgroup', 'repo', blank)
+
+        mock_put.assert_not_called()
 
 
 class GitLabClientResolveCommentTests(unittest.TestCase):

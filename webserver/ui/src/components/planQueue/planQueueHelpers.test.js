@@ -91,8 +91,19 @@ test('a card offers Plan and Start when ready, Count as done while waiting, only
     assert.deepEqual(actions(step('ready'), over), []);
   }
   assert.deepEqual(actions(step('failed'), 'running'), ['retry', 'satisfy']);  // still its way out
-  assert.deepEqual(actions(step('active'), 'running'), []);
+  assert.deepEqual(actions(step('active'), 'running'), []);  // no task yet: nothing to finish
   assert.match(cardActions(step('blocked', { task_id: 'T-9' }), 'running')[0].confirm, /Count T-9 as done\?/);
+});
+
+test('a started task offers the task\'s own Done — the same code as on the task', function () {
+  const actions = (s, planStatus) => cardActions(s, planStatus).map((a) => a.action);
+  for (const started of ['starting', 'active', 'in_review']) {
+    assert.deepEqual(actions(step(started, { task_id: 'T-9' }), 'running'), ['done']);
+    assert.deepEqual(actions(step(started, { task_id: 'T-9' }), 'paused'), ['done']);
+    assert.deepEqual(actions(step(started, { task_id: 'T-9' }), 'finished'), []);
+  }
+  assert.deepEqual(actions(step('awaiting_merge', { task_id: 'T-9' }), 'running'), []);  // already done
+  assert.match(cardActions(step('active', { task_id: 'T-9' }), 'running')[0].tip, /once that pull request is merged/);
 });
 
 test('a task handed over but not started says so; a reason the server gave wins', function () {

@@ -258,6 +258,36 @@ class BranchPreparationTests(_World):
         self.assertTrue((Path(clone.local_path) / 'on-plan.txt').is_file())
 
 
+class MainTaskFollowsItsMergesTests(_World):
+    """A sub-task merged into the main task's branch: the main task's own
+    clone pulls it (the Pull button's code), so its Changes show the work."""
+
+    def test_the_main_tasks_clone_gets_what_its_sub_task_merged(self) -> None:
+        from kato_core_lib.data_layers.service.plan_queue.main_task_follows import MainTaskFollowsMerges
+        # UNA-1's clone, on its branch, made before any sub-task merged.
+        _git(self.source, 'push', 'origin', 'main:UNA-1')
+        main = self._clone_for('UNA-1')
+        self.service.prepare_task_branches([main], {'api': 'UNA-1'})
+        path = Path(main.local_path)
+        self.assertEqual(_git(path, 'diff', '--name-only', 'origin/main...HEAD'), '')  # "Nothing changed yet"
+        # UNA-2's pull request is merged into UNA-1 on the remote.
+        _git(self.source, 'checkout', '-b', 'UNA-1', 'origin/UNA-1')
+        self._commit(self.source, 'step-one.txt', 'UNA-2 work\n', 'Merge UNA-2')
+        _git(self.source, 'push', 'origin', 'UNA-1')
+        _git(self.source, 'checkout', 'main')
+
+        pulled = []
+        follow = MainTaskFollowsMerges(
+            pull_task=lambda task_id: pulled.append(task_id) or self.service.pull_workspace_clone(main, 'UNA-1'),
+            logger=MagicMock(), run_later=lambda work: work(),
+        )
+        follow(SimpleNamespace(source_task_id='UNA-1'), SimpleNamespace(task_id='UNA-2', id='api'))
+
+        self.assertEqual(pulled, ['UNA-1'])
+        self.assertTrue((path / 'step-one.txt').is_file())
+        self.assertEqual(_git(path, 'diff', '--name-only', 'origin/main...HEAD'), 'step-one.txt')  # in its Changes
+
+
 class MergeButtonTests(_World):
     """The header's "merge the default branch": a sub-task merges its plan's branch."""
 

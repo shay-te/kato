@@ -393,6 +393,23 @@ class ProgressTests(unittest.TestCase):
         self.progress.observe(['PROJ-1'])
         self.assertEqual(len(self.tracker.status_reads), 2)
 
+    def test_a_task_just_moved_is_read_again_at_once(self) -> None:
+        # The operator pressed Done: the board must not wait out the minute.
+        self.tracker.issue('PROJ-1', state='In Progress')
+        self.assertEqual(self.progress.observe(['PROJ-1'])['PROJ-1'].phase, TaskPhase.IN_PROGRESS)
+        self.tracker.issues['PROJ-1']['state'] = 'Done'
+        self.progress.forget('PROJ-1')
+        self.progress.forget('PROJ-404')  # never read: nothing to drop
+        self.assertEqual(self.progress.observe(['PROJ-1'])['PROJ-1'].phase, TaskPhase.DONE)
+
+    def test_forgetting_goes_to_the_tracker_only_for_its_tasks(self) -> None:
+        tracker = mock.Mock()
+        routed = RoutedTaskProgress(local=mock.Mock(), tracker=tracker, is_local=lambda task_id: task_id.startswith('LOCAL'))
+        routed.forget('LOCAL-1')
+        routed.forget('PROJ-1')
+        tracker.forget.assert_called_once_with('PROJ-1')
+        RoutedTaskProgress(local=None, tracker=object(), is_local=lambda task_id: False).forget('PROJ-1')  # nothing to forget
+
     def test_no_tracker_or_no_tasks_is_unknown(self) -> None:
         self.assertEqual(self.progress.observe([]), {})
         self.services.tracker = None
@@ -629,6 +646,22 @@ class CommentClassificationTests(unittest.TestCase):
         self.assertTrue(is_agent_operational_comment(record))
         self.assertTrue(is_agent_operational_comment(COUNTED_DONE_COMMENT))
         self.assertEqual(active_execution_blocking_comment([{'body': COUNTED_DONE_COMMENT}]), '')
+
+
+
+class DoneNudgeTests(unittest.TestCase):
+    """A plan's sub-task reaching Done: its board reads it again now."""
+
+    def test_only_a_plan_step_is_nudged(self) -> None:
+        from kato_core_lib.data_layers.service.plan_queue.done_nudge import PlanQueueDoneNudge
+        queue = mock.Mock()
+        queue.source_of_step_task.side_effect = lambda task_id: 'UNA-1' if task_id == 'PROJ-2' else ''
+        nudge = PlanQueueDoneNudge(agent_service=SimpleNamespace(plan_queue=queue))
+        nudge.task_done('PROJ-2')
+        nudge.task_done('PROJ-9')
+        queue.task_changed.assert_called_once_with('PROJ-2')
+        PlanQueueDoneNudge(agent_service=SimpleNamespace(plan_queue=None)).task_done('PROJ-2')
+        PlanQueueDoneNudge(agent_service=None).task_done('PROJ-2')
 
 
 if __name__ == '__main__':

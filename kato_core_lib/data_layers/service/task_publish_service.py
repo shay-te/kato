@@ -1145,8 +1145,14 @@ class TaskPublishService(object):
             'failed_repositories': failed,
         }
 
-    def finish_task_planning_session(self, task_id: str) -> dict[str, object]:
+    def finish_task_planning_session(self, task_id: str, *, by_operator: bool = False) -> dict[str, object]:
         """Finalize a wait-planning chat task in one call.
+
+        ``by_operator``: the operator pressed Done (or a plan board card's
+        Done — the same call). A plan's sub-task then goes to the tracker's
+        DONE, not In Review: its board counts it finished once its pull
+        request is merged into the main task's branch, and the tasks after it
+        start then. The agent's ``<KATO_TASK_DONE>`` never closes a ticket.
 
         Equivalent to the operator clicking, in sequence: ``Push`` →
         ``Pull request`` → manually moving the ticket to In Review on
@@ -1168,6 +1174,7 @@ class TaskPublishService(object):
         push_result = self.push_task(normalized)
         pr_result = self.create_pull_request_for_task(normalized)
         moved_to_review = False
+        moved_to_done = False
         move_error = ''
         # False-success guard (mirrors task_publisher.py's NO_CHANGES
         # rule): push_task/create_pull_request_for_task never raise —
@@ -1209,11 +1216,17 @@ class TaskPublishService(object):
             )
         else:
             try:
-                self._task_state_service.move_task_to_review(normalized)
-                moved_to_review = True
+                if by_operator and self._is_plan_subtask(normalized):
+                    # The one move to done — every observer of "done" hears it
+                    # (release notes, Slack, containers, the plan board).
+                    self._task_state_service.move_task_to_done(normalized)
+                    moved_to_done = True
+                else:
+                    self._task_state_service.move_task_to_review(normalized)
+                    moved_to_review = True
                 self.logger.info(
-                    'finished planning session for task %s: moved to In Review',
-                    normalized,
+                    'finished planning session for task %s: moved to %s',
+                    normalized, 'Done' if moved_to_done else 'In Review',
                 )
             except Exception as exc:
                 move_error = str(exc) or exc.__class__.__name__
@@ -1230,16 +1243,26 @@ class TaskPublishService(object):
         # thread so the finish call's response time isn't tied to an
         # LLM round-trip; failures stay inside the worker.
         self._kick_lesson_extraction(normalized, push_result, pr_result)
+        finished = moved_to_review or moved_to_done
         return {
-            'finished': moved_to_review,
+            'finished': finished,
             'task_id': normalized,
             'pushed': push_result,
             'pull_request': pr_result,
             'moved_to_review': moved_to_review,
+            'moved_to_done': moved_to_done,
             'move_error': move_error,
             # What the team was told (the Slack post), for the Done toast.
-            'slack': self._announce_finished(normalized) if moved_to_review else None,
+            'slack': self._announce_finished(normalized) if finished else None,
         }
+
+    def _is_plan_subtask(self, task_id: str) -> bool:
+        """A task that runs one of a plan's steps (it merges into its main
+        task's branch)."""
+        try:
+            return bool(str(self._get_repository_service().plan_merge_branch(task_id) or '').strip())
+        except Exception:
+            return False
 
     def _announce_finished(self, task_id: str) -> dict | None:
         announce = self.announce_finished

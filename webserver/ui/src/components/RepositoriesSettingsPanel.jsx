@@ -11,16 +11,19 @@ import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
 import RestartBanner from './settings/RestartBanner.jsx';
+import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 
 // "Repositories" tab inside the SettingsDrawer. Operator-editable
 // REPOSITORY_ROOT_PATH — the folder kato walks for ``.git`` to
-// auto-discover repos.
+// auto-discover repos. Every repository it finds there is one kato works
+// in, except the ones the two fields below leave out (ignored folders, the
+// denylist).
 //
 // Saved to ``~/.kato/settings.json`` via POST /api/settings —
 // kato's only config file. The change is load-bearing at boot, so we
 // surface "restart required" prominently after every successful save.
 
-export default function RepositoriesSettingsPanel() {
+export default function RepositoriesSettingsPanel({ highlightKey = '' }) {
   const [meta, setMeta] = useState({ value: '', source: 'unset', settingsFilePath: '' });
   const [draft, setDraft] = useState('');
   const [browsing, setBrowsing] = useState(false);
@@ -132,6 +135,13 @@ export default function RepositoriesSettingsPanel() {
           />
 
           <RestartBanner show={savedAt} />
+
+          <SchemaFieldGroup
+            sectionId="general"
+            panel="repositories"
+            highlightKey={highlightKey}
+            description="Every repository under the folder above is one kato works in — except these."
+          />
         </>
       </SettingsPanelBody>
     </div>

@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import requests
 from provider_client_base.provider_client_base.data.fields import (
     PullRequestFields,
     PullRequestStates,
@@ -500,6 +501,63 @@ class GitHubClientTests(unittest.TestCase):
 
         self.assertEqual(result, [])
 
+    def test_decline_pull_request_patches_state_to_closed(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response(json_data={'number': 17, 'state': 'closed', 'merged_at': None})
+
+        with patch.object(client, '_patch', return_value=response) as mock_patch:
+            result = client.decline_pull_request('owner', 'repo', ' 17 ')
+
+        self.assertIsNone(result)
+        response.raise_for_status.assert_called_once_with()
+        mock_patch.assert_called_once_with(
+            '/repos/owner/repo/pulls/17',
+            json={'state': 'closed'},
+        )
+
+    def test_decline_pull_request_retries_on_timeout(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response()
+
+        with patch.object(
+            client,
+            '_patch',
+            side_effect=[ClientTimeout('connection reset'), response],
+        ) as mock_patch, patch(
+            'provider_client_base.provider_client_base.helpers.retry_utils.time.sleep',
+        ):
+            client.decline_pull_request('owner', 'repo', '17')
+
+        self.assertEqual(mock_patch.call_count, 2)
+        response.raise_for_status.assert_called_once_with()
+
+    def test_decline_pull_request_raises_with_detail_when_github_refuses(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        response = mock_response(
+            status_code=403,
+            json_data={'message': 'Resource not accessible by integration'},
+        )
+        response.raise_for_status.side_effect = requests.HTTPError('403 Client Error')
+
+        with patch.object(client, '_patch', return_value=response):
+            with self.assertRaisesRegex(
+                requests.HTTPError,
+                '403 Client Error: Resource not accessible by integration',
+            ):
+                client.decline_pull_request('owner', 'repo', '17')
+
+    def test_decline_pull_request_raises_for_blank_id_without_a_request(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+
+        for blank_id in ('', '   '):
+            with self.subTest(pull_request_id=blank_id):
+                with patch.object(client, '_patch') as mock_patch:
+                    with self.assertRaisesRegex(
+                        ValueError, 'GitHub pull request id is required',
+                    ):
+                        client.decline_pull_request('owner', 'repo', blank_id)
+                mock_patch.assert_not_called()
+
     def test_resolve_review_comment_uses_graphql_thread_resolution(self) -> None:
         client = GitHubClient('https://api.github.com', 'gh-token')
         comment = build_review_comment(
@@ -755,3 +813,110 @@ class GitHubClientDefensiveBranchTests(unittest.TestCase):
         url = client._graphql_url()
         self.assertTrue(url.endswith('/graphql'))
         self.assertIn('/custom/path', url)
+
+    @staticmethod
+    def _comment_page(database_id: int, *, has_next_page: bool, end_cursor):
+        return {'data': {'node': {'comments': {
+            'pageInfo': {'hasNextPage': has_next_page, 'endCursor': end_cursor},
+            'nodes': [{'databaseId': database_id, 'body': f'comment {database_id}'}],
+        }}}}
+
+    def test_fill_all_thread_comments_skips_non_dict_threads(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        done_thread = {
+            'id': 'thread-1',
+            'comments': {'pageInfo': {'hasNextPage': False}, 'nodes': []},
+        }
+        with patch.object(client, '_graphql_with_retry') as mock_gql:
+            client._fill_all_thread_comments(['not-a-thread', done_thread])
+        mock_gql.assert_not_called()
+
+    def test_fill_remaining_thread_comments_ignores_a_thread_without_a_comment_block(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        thread = {'id': 'thread-1', 'comments': None}
+        with patch.object(client, '_graphql_with_retry') as mock_gql:
+            client._fill_remaining_thread_comments(thread)
+        mock_gql.assert_not_called()
+        self.assertIsNone(thread['comments'])
+
+    def test_fill_remaining_thread_comments_needs_a_thread_id_and_a_cursor(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        for thread_id, cursor in (('', 'c1'), ('thread-1', None)):
+            with self.subTest(thread_id=thread_id, cursor=cursor):
+                thread = {
+                    'id': thread_id,
+                    'comments': {
+                        'pageInfo': {'hasNextPage': True, 'endCursor': cursor},
+                        'nodes': [{'databaseId': 1}],
+                    },
+                }
+                with patch.object(client, '_graphql_with_retry') as mock_gql:
+                    client._fill_remaining_thread_comments(thread)
+                mock_gql.assert_not_called()
+                self.assertEqual(thread['comments']['nodes'], [{'databaseId': 1}])
+
+    def test_fill_remaining_thread_comments_follows_every_follow_up_page(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        thread = {
+            'id': 'thread-1',
+            'comments': {
+                'pageInfo': {'hasNextPage': True, 'endCursor': 'c1'},
+                'nodes': [{'databaseId': 1}],
+            },
+        }
+        pages = [
+            self._comment_page(2, has_next_page=True, end_cursor='c2'),
+            self._comment_page(3, has_next_page=False, end_cursor=None),
+        ]
+        with patch.object(client, '_graphql_with_retry', side_effect=pages) as mock_gql:
+            client._fill_remaining_thread_comments(thread)
+        self.assertEqual(
+            [call.args[1]['cursor'] for call in mock_gql.call_args_list],
+            ['c1', 'c2'],
+        )
+        self.assertEqual(
+            [node['databaseId'] for node in thread['comments']['nodes']],
+            [1, 2, 3],
+        )
+
+    def test_fill_remaining_thread_comments_stops_when_a_page_has_no_cursor(self) -> None:
+        # ``hasNextPage`` with no ``endCursor`` cannot be followed: stop, keep
+        # what was read.
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        thread = {
+            'id': 'thread-1',
+            'comments': {
+                'pageInfo': {'hasNextPage': True, 'endCursor': 'c1'},
+                'nodes': [{'databaseId': 1}],
+            },
+        }
+        page = self._comment_page(2, has_next_page=True, end_cursor=None)
+        with patch.object(client, '_graphql_with_retry', return_value=page) as mock_gql:
+            client._fill_remaining_thread_comments(thread)
+        mock_gql.assert_called_once()
+        self.assertEqual(
+            [node['databaseId'] for node in thread['comments']['nodes']],
+            [1, 2],
+        )
+
+    def test_fill_remaining_thread_comments_stops_at_the_page_cap(self) -> None:
+        client = GitHubClient('https://api.github.com', 'gh-token')
+        client._MAX_THREAD_COMMENT_PAGES = 2
+        thread = {
+            'id': 'thread-1',
+            'comments': {
+                'pageInfo': {'hasNextPage': True, 'endCursor': 'c1'},
+                'nodes': [],
+            },
+        }
+        endless = [
+            self._comment_page(n, has_next_page=True, end_cursor=f'c{n + 1}')
+            for n in (1, 2, 3)
+        ]
+        with patch.object(client, '_graphql_with_retry', side_effect=endless) as mock_gql:
+            client._fill_remaining_thread_comments(thread)
+        self.assertEqual(mock_gql.call_count, 2)
+        self.assertEqual(
+            [node['databaseId'] for node in thread['comments']['nodes']],
+            [1, 2],
+        )

@@ -113,3 +113,19 @@ class PullRequestService(object):
             repo_slug=repo_slug,
             comment=comment,
         )
+
+    def decline_pull_request(
+        self,
+        repository_type: Platform,
+        *,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        """Close the pull request without merging it, on its host."""
+        client = self._factory.get(repository_type)
+        client.decline_pull_request(
+            repo_owner=repo_owner,
+            repo_slug=repo_slug,
+            pull_request_id=pull_request_id,
+        )

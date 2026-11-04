@@ -54,8 +54,7 @@ class TaskFailureHandlerTests(unittest.TestCase):
         # listed. Without these, the operator gets "kato can't pick a
         # repo" with no obvious next step.
         self.assertIn('kato:repo:<repository-id>', comment)
-        self.assertIn('Settings → Approvals', comment)
-        self.assertNotIn('approve-repo', comment)  # that command is gone
+        self.assertIn('repository picker in kato\'s New task', comment)
         self.task_state_service.move_task_to_open.assert_not_called()
         self.notification_service.notify_failure.assert_not_called()
 

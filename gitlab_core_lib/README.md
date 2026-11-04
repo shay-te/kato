@@ -3,7 +3,7 @@
 GitLab provider implementation. Plays two roles:
 
 - **Merge-request client** — plugs into
-  [`repository_core_lib`](../repository_core_lib/) for create-MR /
+  [`repository_core_lib`](../repository_core_lib/) for create-MR / close-MR /
   list-review-comments / reply / resolve-thread (kato treats GitLab
   MRs as PRs in the abstraction layer).
 - **Issues client** — plugs into

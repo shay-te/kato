@@ -23,7 +23,6 @@ from kato_core_lib.helpers.kato_tag_utils import (
 from kato_core_lib.helpers.late_binding import call_later, later
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
-from kato_core_lib.helpers.repository_approval_hint_utils import not_approved_text
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.helpers.push_approval_gate_utils import (
@@ -378,6 +377,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 session_manager=later(self, '_session_manager'),
                 task_service=later(self, '_task_service'),
                 task_state_service=later(self, '_task_state_service'),
+                pull_task=lambda task_id: self.publish.pull_task(task_id),
             )
             # A plan sub-task's question, asked in the chat its plan was split in.
             self._plan_questions = build_parent_questions(
@@ -473,6 +473,11 @@ class AgentService(MissionStepLoggerMixin, Service):
             ),
             logger=later(self, 'logger'),
         )
+
+    @property
+    def repository_service(self):
+        """Repositories: their git, branches and pull requests."""
+        return self._repository_service
 
     @property
     def task_states(self):
@@ -1187,8 +1192,8 @@ class AgentService(MissionStepLoggerMixin, Service):
         """Provision a workspace + clones for a task the operator picked.
 
         Drives the "+ Add task" flow on the left panel. Mirrors the
-        autonomous initial-task path's first three steps (resolve
-        repos → REP gate → workspace clones) so an operator-picked
+        autonomous initial-task path's first steps (resolve repos →
+        workspace clones) so an operator-picked
         task has the same on-disk shape as one kato discovered via
         the queue scan. Skips the agent spawn — the operator will
         type into the chat tab when they're ready.
@@ -1223,7 +1228,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 ),
             }
         # Resolve all task repos via the same path the autonomous
-        # flow uses; refuse the adoption when REP says no.
+        # flow uses.
         try:
             repositories = self._repository_service.resolve_task_repositories(
                 task_obj,
@@ -1233,35 +1238,6 @@ class AgentService(MissionStepLoggerMixin, Service):
                 'adopted': False, 'task_id': normalized,
                 'error': f'failed to resolve task repositories: {exc}',
             }
-        # REP gate. We don't have the failure-handler chain that
-        # the autonomous path uses (it posts a ticket comment),
-        # so we surface as a structured error and let the UI
-        # render the "approve repo first" message.
-        try:
-            from kato_core_lib.data_layers.service.repository_approval_service import (
-                RepositoryApprovalService,
-            )
-            # Same helper the autonomous preflight uses, so the operator's
-            # "+ Add task" and the scan loop can never disagree about which
-            # repositories REP refuses.
-            unapproved = RepositoryApprovalService().unapproved_repository_ids(
-                repositories,
-            )
-            if unapproved:
-                return {
-                    'adopted': False, 'task_id': normalized,
-                    'error': not_approved_text(unapproved),
-                    'unapproved_repositories': unapproved,
-                }
-        except Exception:
-            # Approval service blew up — log and proceed; the
-            # autonomous path's REP enforcement will catch it on
-            # the next scan if there's a real problem.
-            self.logger.exception(
-                'REP approval check crashed for adopt_task on %s; '
-                'skipping the gate',
-                normalized,
-            )
         # Provision clones via the same workspace_provisioner the
         # autonomous flow uses.
         from kato_core_lib.data_layers.service.workspace_provisioning_service import (

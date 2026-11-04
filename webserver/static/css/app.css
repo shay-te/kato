@@ -10366,7 +10366,7 @@ body.kato-resizing {
   margin: 8px 0 4px 0;
 }
 
-/* Settings drawer — repository approvals table + per-row controls. */
+/* Settings drawer tables (remembered permissions, Action Guard) + per-row controls. */
 .settings-drawer-approvals-table {
   width: 100%;
   border-collapse: collapse;
@@ -10390,80 +10390,11 @@ body.kato-resizing {
   vertical-align: top;
 }
 
-.settings-drawer-approvals-table tr.has-drift {
-  background: rgba(245, 158, 11, 0.1);
-}
-
 .settings-drawer-approval-id {
   font-weight: 600;
   color: #f5f5f7;
   font-size: 13px;
   word-break: break-all;
-}
-
-.settings-drawer-approval-url {
-  font: 11px/1.4 ui-monospace, monospace;
-  color: #737373;
-  margin-top: 2px;
-  word-break: break-all;
-}
-
-.settings-drawer-approval-drift {
-  margin-top: 6px;
-  padding: 6px 8px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.35);
-  border-radius: 4px;
-  color: #fde68a;
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.settings-drawer-approval-drift code {
-  background: rgba(0, 0, 0, 0.35);
-  padding: 1px 4px;
-  border-radius: 3px;
-}
-
-.settings-drawer-approval-toggle {
-  display: inline-flex;
-  cursor: pointer;
-}
-
-.settings-drawer-approval-toggle input[type=checkbox] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 36px;
-  height: 20px;
-  border-radius: 999px;
-  background: #2a2a2a;
-  border: 1px solid #2a2a2a;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.18s ease-out, border-color 0.18s ease-out;
-  margin: 0;
-}
-
-.settings-drawer-approval-toggle input[type=checkbox]::before {
-  content: "";
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #f5f5f7;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-  transition: transform 0.18s ease-out;
-}
-
-.settings-drawer-approval-toggle input[type=checkbox]:checked {
-  background: #34d399;
-  border-color: #34d399;
-}
-
-.settings-drawer-approval-toggle input[type=checkbox]:checked::before {
-  transform: translateX(16px);
 }
 
 .settings-drawer-source {
@@ -14023,18 +13954,7 @@ button.settings-prompt-editor-head {
   cursor: pointer;
 }
 
-.new-task-repo.is-unapproved label {
-  color: rgba(245, 245, 247, 0.42);
-  cursor: default;
-}
-
-.new-task-repo-note {
-  margin-left: auto;
-  font-size: 11px;
-  color: #f59e0b;
-}
-
-/* "Settings → Approvals" in a note: the way there, not a name to go and find. */
+/* "Settings → Repositories" in a note: the way there, not a name to go and find. */
 .new-task-repo-link {
   padding: 0;
   border: 0;
@@ -15085,7 +15005,27 @@ button.settings-prompt-editor-head {
   list-style: none;
 }
 
+/* A card's delete: a quiet trash in its corner, red on hover. */
+.plan-card-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  padding: 2px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: #737373;
+  cursor: pointer;
+}
+
+.plan-card-delete:hover:not(:disabled) {
+  color: #f87171;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .plan-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;

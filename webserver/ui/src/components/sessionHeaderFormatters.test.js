@@ -467,6 +467,16 @@ test('formatFinishResult: full happy path includes push, PR, and move-to-review 
   assert.match(out.message, /✓ ticket moved to In Review/);
 });
 
+test('formatFinishResult: a plan sub-task goes to Done and waits for its merge', () => {
+  const out = formatFinishResult({
+    ok: true,
+    body: { finished: true, pushed: { pushed_repositories: ['client'] }, pull_request: {}, moved_to_done: true },
+  });
+  assert.match(out.message, /✓ ticket moved to Done — its plan counts it done once its pull request is merged/);
+  assert.doesNotMatch(out.message, /In Review/);
+  assert.equal(out.kind, 'success');
+});
+
 test('formatFinishResult: says whether the team was told in Slack', () => {
   const done = (slack) => formatFinishResult({
     ok: true,

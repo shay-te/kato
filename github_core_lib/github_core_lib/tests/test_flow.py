@@ -14,7 +14,7 @@ pagination, and assembly logic runs:
 The library is exercised through its real public surface:
 ``GitHubIssuesClient`` (validate → list assigned issues → comment → label/
 move) and ``GitHubClient`` (open PR → list review comments → reply → resolve
-thread). All data is generic example owner/repo/user/issue content.
+thread → close without merging). All data is generic example owner/repo/user/issue content.
 """
 from __future__ import annotations
 
@@ -219,6 +219,7 @@ class F1_IssueLifecycle(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # F2 — Pull-request review flow A-Z: open PR → list comments → reply → resolve
+#      → close without merging
 # ---------------------------------------------------------------------------
 class F2_PullRequestReviewFlow(unittest.TestCase):
     """Full PR flow against the REST + GraphQL transports.
@@ -229,6 +230,8 @@ class F2_PullRequestReviewFlow(unittest.TestCase):
        and parses them into ReviewComment objects with inline metadata
     D. reply_to_review_comment POSTs a threaded REST reply
     E. resolve_review_comment fires the resolveReviewThread mutation
+    F. decline_pull_request PATCHes the PR closed (no merge); a lookup in
+       every state then reads it declined
     """
 
     def test_flow(self):
@@ -365,6 +368,46 @@ class F2_PullRequestReviewFlow(unittest.TestCase):
         self.assertEqual(
             mock_resolve.call_args.kwargs['json']['variables'],
             {'threadId': 'thread-1'},
+        )
+
+        # F — close the pull request without merging it, then find it again
+        # in every state: closed with no ``merged_at`` reads as declined.
+        decline_resp = mock_response(
+            json_data={'number': 42, 'state': 'closed', 'merged_at': None},
+        )
+        with patch.object(client, '_patch', return_value=decline_resp) as mock_decline:
+            client.decline_pull_request(OWNER, REPO, pr[PullRequestFields.ID])
+        decline_resp.raise_for_status.assert_called_once_with()
+        mock_decline.assert_called_once_with(
+            f'/repos/{OWNER}/{REPO}/pulls/42',
+            json={'state': 'closed'},
+        )
+
+        closed_resp = mock_response(
+            json_data=[
+                {
+                    'number': 42,
+                    PullRequestFields.TITLE: 'Add retry to uploader',
+                    'html_url': f'https://github.com/{OWNER}/{REPO}/pull/42',
+                    'state': 'closed',
+                    'merged_at': None,
+                    'head': {'ref': 'feature/101'},
+                    'base': {'ref': 'main'},
+                    'created_at': '2026-03-01T10:00:00Z',
+                }
+            ]
+        )
+        with patch.object(client, '_get', return_value=closed_resp) as mock_find:
+            found = client.find_pull_requests(
+                OWNER, REPO, source_branch='feature/101', state='all',
+            )
+        mock_find.assert_called_once_with(
+            f'/repos/{OWNER}/{REPO}/pulls',
+            params={'state': 'all', 'per_page': 100, 'head': f'{OWNER}:feature/101'},
+        )
+        self.assertEqual(
+            [(item[PullRequestFields.ID], item[PullRequestFields.STATE]) for item in found],
+            [('42', 'declined')],
         )
 
 

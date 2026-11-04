@@ -30,8 +30,7 @@ for (const name of [
   'ActionGuardSettingsPanel', 'ChatSettingsPanel',
   'ClaudePermissionsSettingsPanel', 'PromptsSettingsPanel',
   'GitProvidersSettingsPanel', 'NotificationsSettingsPanel',
-  'RepositoriesSettingsPanel', 'RepositoryApprovalsSettingsPanel',
-  'SchemaSettingsPanel', 'TaskProviderSettingsPanel',
+  'RepositoriesSettingsPanel', 'SchemaSettingsPanel', 'TaskProviderSettingsPanel',
 ]) {
   vi.doMock(`./${name}.jsx`, () => ({ default: () => null }));
 }
@@ -83,10 +82,15 @@ describe('SettingsDrawer — schema load', () => {
 });
 
 describe('SettingsDrawer — opened on a tab', () => {
-  test('a message that says "Settings → Approvals" opens it there', () => {
-    const { rerender } = render(<SettingsDrawer open={false} onClose={() => {}} initialTab="approvals" />);
-    rerender(<SettingsDrawer open onClose={() => {}} initialTab="approvals" />);
-    expect(screen.getByRole('tab', { name: 'Approvals' })).toHaveAttribute('aria-selected', 'true');
+  test('a message that names a tab opens it there', () => {
+    const { rerender } = render(<SettingsDrawer open={false} onClose={() => {}} initialTab="prompts" />);
+    rerender(<SettingsDrawer open onClose={() => {}} initialTab="prompts" />);
+    expect(screen.getByRole('tab', { name: 'Prompts' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('there is no Approvals tab: every repository under the folder is one kato works in', () => {
+    render(<SettingsDrawer open onClose={() => {}} />);
+    expect(screen.queryByRole('tab', { name: 'Approvals' })).toBeNull();
   });
 
   test('without one it opens where it was', () => {
@@ -268,7 +272,7 @@ describe('SettingsDrawer — tab tooltips', () => {
     render(<SettingsDrawer open onClose={() => {}} />);
     await waitFor(() => expect(_state.calls).toBe(1));
     for (const label of [
-      'Repositories', 'Approvals', 'Permissions', 'Action Guard', 'Prompts',
+      'Repositories', 'Permissions', 'Action Guard', 'Prompts',
       'Task provider', 'Git provider', 'Notifications', 'Chat',
     ]) {
       expect(tab(label).getAttribute('title'), label).toBeTruthy();

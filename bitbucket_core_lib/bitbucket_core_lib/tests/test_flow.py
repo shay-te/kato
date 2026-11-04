@@ -612,5 +612,61 @@ class F8_CreatePullRequestInvalidPayload(unittest.TestCase):
                 )
 
 
+# ---------------------------------------------------------------------------
+# F9 — Pull request declined: open -> decline -> every-state lookup
+# ---------------------------------------------------------------------------
+class F9_PullRequestDeclined(unittest.TestCase):
+    """A->C: open a PR, decline it (closed without merging), then find it
+    again in every state: it reads declined, never merged."""
+
+    def test_flow(self) -> None:
+        client = _pull_request_client(username=USERNAME)
+
+        # A) create_pull_request -> the PR to be declined.
+        create_resp = mock_response(json_data={
+            PullRequestFields.ID: 33,
+            PullRequestFields.TITLE: 'Try a different header layout',
+            'links': {'html': {'href': 'https://bitbucket.org/acme/widget/pull-requests/33'}},
+            'state': 'OPEN',
+        })
+        with patch.object(client, '_post', return_value=create_resp):
+            pull_request = client.create_pull_request(
+                title='Try a different header layout',
+                source_branch='feature/43',
+                repo_owner=WORKSPACE,
+                repo_slug=REPO_SLUG,
+            )
+
+        # B) decline_pull_request -> POST to the PR's decline endpoint, no body.
+        decline_resp = mock_response(json_data={PullRequestFields.ID: 33, 'state': 'DECLINED'})
+        with patch.object(client, '_post', return_value=decline_resp) as mock_decline:
+            client.decline_pull_request(
+                WORKSPACE, REPO_SLUG, pull_request[PullRequestFields.ID],
+            )
+        decline_resp.raise_for_status.assert_called_once()
+        mock_decline.assert_called_once_with(
+            '/repositories/acme/widget/pullrequests/33/decline',
+        )
+
+        # C) find_pull_requests in every state -> the PR reads declined.
+        every_state_resp = mock_response(json_data={
+            'values': [{
+                'id': 33,
+                PullRequestFields.TITLE: 'Try a different header layout',
+                'links': {'html': {'href': 'https://bitbucket.org/acme/widget/pull-requests/33'}},
+                'source': {'branch': {'name': 'feature/43'}},
+                'state': 'DECLINED',
+            }]
+        })
+        with patch.object(client, '_get', return_value=every_state_resp):
+            found = client.find_pull_requests(
+                WORKSPACE, REPO_SLUG, source_branch='feature/43', state='all',
+            )
+        self.assertEqual(
+            [(pr[PullRequestFields.ID], pr[PullRequestFields.STATE]) for pr in found],
+            [('33', 'declined')],
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

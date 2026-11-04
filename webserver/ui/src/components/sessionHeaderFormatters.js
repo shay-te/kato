@@ -289,7 +289,10 @@ export function formatFinishResult(result, taskId = '') {
   const pushLine = formatPushSummary(body.pushed || {}, { pushedSummary: 'with_ids' });
   lines.push(pushLine || `• push: ${body.pushed?.error || 'no action'}`);
   lines.push(formatPullRequestStepLine(body.pull_request || {}));
-  if (body.moved_to_review) {
+  if (body.moved_to_done) {
+    // A plan's sub-task: done on the tracker; its board waits for the merge.
+    lines.push('✓ ticket moved to Done — its plan counts it done once its pull request is merged');
+  } else if (body.moved_to_review) {
     lines.push('✓ ticket moved to In Review');
   } else {
     lines.push(`✗ ticket did NOT move to In Review: ${body.move_error || 'unknown reason — check kato logs'}`);

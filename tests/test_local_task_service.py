@@ -45,7 +45,6 @@ class _Harness(unittest.TestCase):
         self.service = LocalTaskService(
             task_service=self.tasks, repository_service=_Repositories(),
             workspace_manager=self.workspace, prepare_workspace=self._prepare,
-            approval_check=lambda repositories: [],
         )
 
     def _prepare(self, task):

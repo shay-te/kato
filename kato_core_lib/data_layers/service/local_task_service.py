@@ -3,9 +3,9 @@
 The operator fills the "New task" form (title, description, repositories, how
 to start). This service:
 
-1. checks everything BEFORE writing anything — the repositories exist and REP
-   has approved them (the same check "+ Add task" and the scan loop use) — so
-   a refused task leaves no record, no folder and no tab behind;
+1. checks everything BEFORE writing anything — the repositories exist and the
+   branch is usable — so a refused task leaves no record, no folder and no tab
+   behind;
 2. records it in the local task store as IN PROGRESS (the operator started it,
    as moving a ticket to In Progress does) and creates its workspace record,
    which is what makes its tab appear at once, still "provisioning";
@@ -33,7 +33,6 @@ from kato_core_lib.helpers.kato_tag_utils import (
     build_repository_tag,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
-from kato_core_lib.helpers.repository_approval_hint_utils import not_approved_text
 from local_task_core_lib.local_task_core_lib.data.local_task import LocalTaskState
 
 START_PLAN = 'plan'
@@ -67,10 +66,6 @@ def opening_message(start_mode: str) -> str:
 class LocalTaskRejected(ValueError):
     """The task was not created; ``str()`` says why, for the operator."""
 
-    def __init__(self, message: str, *, unapproved: Iterable[str] = ()) -> None:
-        super().__init__(message)
-        self.unapproved = list(unapproved)
-
 
 class LocalTaskService(object):
 
@@ -81,14 +76,12 @@ class LocalTaskService(object):
         repository_service,
         workspace_manager,
         prepare_workspace: Callable[[Task], object],
-        approval_check: Callable[[list], list[str]] | None = None,
         logger=None,
     ) -> None:
         self._task_service = task_service
         self._repository_service = repository_service
         self._workspace_manager = workspace_manager
         self._prepare_workspace = prepare_workspace
-        self._approval_check = approval_check or _unapproved_repository_ids
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     def create(
@@ -103,9 +96,6 @@ class LocalTaskService(object):
             raise LocalTaskRejected('pick at least one repository')
         tags = [build_repository_tag(repository_id) for repository_id in repository_ids]
         repositories = self._resolve(Task(summary=summary, description=description, tags=tags))
-        unapproved = self._approval_check(repositories)
-        if unapproved:
-            raise LocalTaskRejected(not_approved_text(unapproved), unapproved=unapproved)
         branch = str(branch or '').strip()
         if branch:
             self._refuse_unusable_branch(branch, repositories)
@@ -164,12 +154,3 @@ def _unique_ids(repository_ids: Iterable[str]) -> list[str]:
             seen.add(text.lower())
             kept.append(text)
     return kept
-
-
-def _unapproved_repository_ids(repositories: list) -> list[str]:
-    # The same check "+ Add task" and the autonomous preflight run, so the
-    # three can never disagree about which repositories REP refuses.
-    from kato_core_lib.data_layers.service.repository_approval_service import (
-        RepositoryApprovalService,
-    )
-    return RepositoryApprovalService().unapproved_repository_ids(repositories)

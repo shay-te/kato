@@ -70,8 +70,7 @@ def register_local_task_routes(
                 branch=str(body.get('branch') or ''),
             )
         except LocalTaskRejected as exc:
-            status = 403 if exc.unapproved else 400
-            return jsonify({'error': str(exc), 'unapproved_repositories': exc.unapproved}), status
+            return jsonify({'error': str(exc)}), 400
         task_id = str(task.id)
         starter.start(task_id, start_mode, model=str(body.get('model') or ''), effort=effort)
         return jsonify({

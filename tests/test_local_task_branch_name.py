@@ -115,7 +115,6 @@ class RealLocalTask(object):
             task_service=task_service, repository_service=self.repositories,
             workspace_manager=self.workspace,
             prepare_workspace=self.planning.resolve_planning_context,
-            approval_check=lambda repositories: [],
         )
         self.task_state = mock.MagicMock()
         self.publisher = TaskPublishService(

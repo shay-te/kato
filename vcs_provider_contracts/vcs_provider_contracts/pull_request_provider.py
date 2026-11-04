@@ -41,6 +41,17 @@ class PullRequestProvider(Protocol):
     ) -> list[PullRequest]:
         raise NotImplementedError
 
+    def decline_pull_request(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        """Close the pull request WITHOUT merging it — Bitbucket "decline",
+        GitHub / GitLab "close", Azure DevOps "abandon". Raises when the host
+        refuses; a pull request already closed or merged is the host's answer."""
+        raise NotImplementedError
+
     def reply_to_review_comment(
         self,
         repo_owner: str,

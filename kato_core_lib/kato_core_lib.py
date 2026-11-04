@@ -99,6 +99,7 @@ from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotes
 from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer
 from kato_core_lib.data_layers.service.task_containers import TaskContainers
+from kato_core_lib.data_layers.service.plan_queue.done_nudge import PlanQueueDoneNudge
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
@@ -547,9 +548,11 @@ class KatoCoreLib(CoreLib):
         self.slack_done_announcer = self._build_slack_done_announcer(task_service, repository_service)
         # The containers the task's agent started: stopped once it is done.
         self.task_containers = TaskContainers(workspace_manager=later(self, 'workspace_manager'))
+        # A plan's sub-task reaching Done moves its board card at once.
+        self.plan_queue_done_nudge = PlanQueueDoneNudge(agent_service=later(self, 'service'))
         self.done_announcements = DoneAnnouncements([
             later(self, 'release_notes_service'), later(self, 'slack_done_announcer'),
-            later(self, 'task_containers'),
+            later(self, 'task_containers'), later(self, 'plan_queue_done_nudge'),
         ])
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does
@@ -592,30 +595,6 @@ class KatoCoreLib(CoreLib):
         # block is missing so existing operator deployments keep
         # working without yaml edits.
         security_scanner_service = self._build_security_scanner_service(open_cfg)
-        # Restricted Execution Protocol gate. Default-on; opt-out via
-        # ``KATO_RESTRICTED_EXECUTION_PROTOCOL_ENABLED=false``. The
-        # service consults a per-operator JSON sidecar at
-        # ``~/.kato/approved-repositories.json`` so first-time agent
-        # runs against a previously-unseen repo require explicit
-        # approval in Settings → Approvals.
-        repository_approval_service = self._build_repository_approval_service(open_cfg)
-        # Posture supplier — captures the *current* global posture so
-        # the REP gate can refuse RESTRICTED-mode repos when the
-        # operator runs with weaker-than-required defaults. Read at
-        # gate-time (not boot-time) so an operator who restarts kato
-        # with safer settings doesn't have to also re-instantiate
-        # services to pick up the change.
-        claude_cfg_for_posture = getattr(open_cfg, 'claude', None)
-        bypass_at_boot = bool(
-            getattr(claude_cfg_for_posture, 'bypass_permissions', False)
-            if claude_cfg_for_posture is not None
-            else False
-        )
-        runtime_posture_supplier = self._build_runtime_posture_supplier(
-            security_scanner_service=security_scanner_service,
-            bypass_permissions=bypass_at_boot,
-            docker_mode_on=docker_mode_on,
-        )
         task_preflight_service = TaskPreflightService(
             task_model_access_validator=task_model_access_validator,
             task_service=task_service,
@@ -624,8 +603,6 @@ class KatoCoreLib(CoreLib):
             task_branch_publishability_validator=task_branch_publishability_validator,
             workspace_provisioner=workspace_provisioner,
             security_scanner_service=security_scanner_service,
-            repository_approval_service=repository_approval_service,
-            runtime_posture_supplier=runtime_posture_supplier,
         )
         task_failure_handler = TaskFailureHandler(
             task_service=task_service,
@@ -805,58 +782,6 @@ class KatoCoreLib(CoreLib):
         return SecurityScannerService(config)
 
     @staticmethod
-    def _build_runtime_posture_supplier(
-        *,
-        security_scanner_service,
-        bypass_permissions: bool,
-        docker_mode_on: bool,
-    ):
-        """Return a ``() -> RuntimePosture`` callable for the REP gate.
-
-        Snapshot of the boot-time posture knobs; the gate reads it
-        every task so a kato restart with stricter env vars takes
-        effect on the next scan tick.
-
-        ``security_scanner_service`` may be ``None`` in legacy
-        deployments — in that case the scanner-blocks-at-medium check
-        is treated as failing (the operator opted out of the scanner,
-        so we cannot guarantee MEDIUM-severity blocks).
-        """
-        from security_scanner_core_lib.security_scanner_core_lib.security_finding import Severity
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RuntimePosture,
-        )
-
-        def supplier() -> RuntimePosture:
-            scanner_blocks_at_medium = False
-            if security_scanner_service is not None:
-                config = getattr(security_scanner_service, '_config', None)
-                if config is not None:
-                    block_list = getattr(config, 'block_on_severity', ())
-                    scanner_blocks_at_medium = Severity.MEDIUM in block_list
-            return RuntimePosture(
-                bypass_permissions=bool(bypass_permissions),
-                docker_mode_on=bool(docker_mode_on),
-                scanner_blocks_at_medium=bool(scanner_blocks_at_medium),
-            )
-
-        return supplier
-
-    def _build_repository_approval_service(self, open_cfg):
-        """Construct the ``RepositoryApprovalService`` for REP.
-
-        REP is always on — there is no toggle. The only knob is
-        ``storage_path``, sourced from yaml or
-        ``KATO_APPROVED_REPOSITORIES_PATH`` (used by tests).
-        """
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-
-        rep_cfg = getattr(open_cfg, 'restricted_execution', None)
-        storage_path = getattr(rep_cfg, 'storage_path', None) if rep_cfg is not None else None
-        return RepositoryApprovalService(storage_path=storage_path or None)
-
     @staticmethod
     def _build_ticket_client(open_cfg: DictConfig, max_retries: int) -> tuple[object, DictConfig]:
         """The tracker client and its config block.

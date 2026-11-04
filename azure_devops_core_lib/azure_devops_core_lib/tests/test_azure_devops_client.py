@@ -221,6 +221,34 @@ class FindPullRequestsTests(unittest.TestCase):
         )
 
 
+class DeclinePullRequestTests(unittest.TestCase):
+
+    def test_abandoning_patches_the_status_and_nothing_else(self) -> None:
+        azure = client({('PATCH', PR_PATH): FakeResponse(pull_request(status='abandoned'))})
+        azure.decline_pull_request(OWNER, SLUG, ' 42 ')
+        self.assertEqual(azure.session.paths(), [PR_PATH])
+        call = azure.session.calls[0]
+        self.assertEqual(call['verb'], 'PATCH')
+        self.assertEqual(call['kwargs']['params'], {'api-version': '7.1'})
+        self.assertEqual(call['kwargs']['json'], {'status': 'abandoned'})
+
+    def test_a_refusal_says_why(self) -> None:
+        azure = client({('PATCH', PR_PATH): FakeResponse(
+            {'message': "TF401027: You need the Git 'PullRequestContribute' permission "
+                        'to perform this action.'},
+            status_code=403,
+        )})
+        with self.assertRaisesRegex(HTTPError, 'TF401027'):
+            azure.decline_pull_request(OWNER, SLUG, '42')
+
+    def test_a_blank_id_is_refused_before_any_request(self) -> None:
+        azure = client()
+        for blank in ('', '   ', None):
+            with self.assertRaisesRegex(ValueError, 'pull request id is required'):
+                azure.decline_pull_request(OWNER, SLUG, blank)
+        self.assertEqual(azure.session.calls, [])
+
+
 class ListCommentsTests(unittest.TestCase):
 
     def _listed(self, *threads, **routes) -> tuple[AzureDevOpsClient, list[ReviewComment]]:

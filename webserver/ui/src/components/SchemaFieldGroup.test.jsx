@@ -1,10 +1,10 @@
 /**
- * Repo-scope settings live on the Approvals tab, not in General.
+ * Repo-scope settings live on the Repositories tab, not in General.
  *
  * ``KATO_IGNORED_REPOSITORY_FOLDERS`` / ``KATO_REPOSITORY_DENYLIST`` decide
  * which repos kato may touch at all, so the schema tags them
- * ``panel: 'approvals'``. Two invariants matter and are pinned here:
- *   1. the tagged field renders on the Approvals tab, and
+ * ``panel: 'repositories'``. Two invariants matter and are pinned here:
+ *   1. the tagged field renders on the Repositories tab, beside the folder, and
  *   2. it renders EXACTLY ONCE — the generic section panel must skip it, or
  *      two independent drafts fight over the same key.
  */
@@ -21,12 +21,12 @@ const SECTIONS = [{
     {
       key: 'KATO_IGNORED_REPOSITORY_FOLDERS', type: 'text',
       label: 'Ignored repo folders', help: 'Comma-separated.',
-      value: 'node_modules', panel: 'approvals',
+      value: 'node_modules', panel: 'repositories',
     },
     {
       key: 'KATO_REPOSITORY_DENYLIST', type: 'text',
       label: 'Repository denylist', help: 'Never touch.',
-      value: '', panel: 'approvals',
+      value: '', panel: 'repositories',
     },
   ],
 }];
@@ -37,16 +37,15 @@ vi.mock('../api.js', () => ({
   })),
   updateAllSettings: vi.fn(() => Promise.resolve({ ok: true, body: {} })),
   fetchOpenRouterModels: vi.fn(() => Promise.resolve([])),
-  fetchRepositoryApprovals: vi.fn(() => Promise.resolve({
-    ok: true, body: { repositories: [], storage_path: '~/.kato/approvals.json' },
+  fetchSettings: vi.fn(() => Promise.resolve({
+    ok: true, body: { repository_root_path: { value: '~/dev', source: 'kato_settings' } },
   })),
-  updateRepositoryApprovals: vi.fn(() => Promise.resolve({ ok: true, body: {} })),
+  updateSettings: vi.fn(() => Promise.resolve({ ok: true, body: {} })),
 }));
 
 const SchemaFieldGroup = (await import('./settings/SchemaFieldGroup.jsx')).default;
 const SchemaSettingsPanel = (await import('./SchemaSettingsPanel.jsx')).default;
-const RepositoryApprovalsSettingsPanel =
-  (await import('./RepositoryApprovalsSettingsPanel.jsx')).default;
+const RepositoriesSettingsPanel = (await import('./RepositoriesSettingsPanel.jsx')).default;
 const { buildSettingsIndex, filterSettingsIndex } =
   await import('../utils/settingsSearch.js');
 
@@ -55,7 +54,7 @@ describe('SchemaFieldGroup', () => {
   afterEach(() => { cleanup(); });
 
   it('renders only the fields tagged for its panel', async () => {
-    render(<SchemaFieldGroup sectionId="general" panel="approvals" />);
+    render(<SchemaFieldGroup sectionId="general" panel="repositories" />);
     await screen.findByText('Ignored repo folders');
     expect(screen.getByText('Repository denylist')).toBeTruthy();
     expect(screen.queryByText('Max parallel tasks')).toBeNull();
@@ -64,7 +63,7 @@ describe('SchemaFieldGroup', () => {
   it('shows its title and description', async () => {
     render(
       <SchemaFieldGroup
-        sectionId="general" panel="approvals"
+        sectionId="general" panel="repositories"
         title="Repository scope" description="Applied before the table."
       />,
     );
@@ -82,7 +81,7 @@ describe('SchemaFieldGroup', () => {
   });
 
   it('seeds each field from its saved value', async () => {
-    render(<SchemaFieldGroup sectionId="general" panel="approvals" />);
+    render(<SchemaFieldGroup sectionId="general" panel="repositories" />);
     await screen.findByText('Ignored repo folders');
     const input = document.querySelector(
       '[data-field-key="KATO_IGNORED_REPOSITORY_FOLDERS"] input',
@@ -102,28 +101,28 @@ describe('the generic section panel skips lifted fields', () => {
   });
 });
 
-describe('the Approvals tab hosts the repo-scope fields', () => {
+describe('the Repositories tab hosts the repo-scope fields', () => {
   afterEach(() => { cleanup(); });
 
-  it('renders them under the approvals table', async () => {
-    render(<RepositoryApprovalsSettingsPanel />);
-    await screen.findByText('Repository scope');
-    expect(screen.getByText('Ignored repo folders')).toBeTruthy();
+  it('renders them under the repository folder', async () => {
+    render(<RepositoriesSettingsPanel />);
+    await screen.findByText('Ignored repo folders');
     expect(screen.getByText('Repository denylist')).toBeTruthy();
+    expect(screen.getByText(/Every repository under the folder above is one kato works in/)).toBeTruthy();
   });
 });
 
 describe('settings search follows the field to its bespoke tab', () => {
   const BESPOKE = [
     { id: 'repositories', label: 'Repositories' },
-    { id: 'approvals', label: 'Approvals' },
+    { id: 'prompts', label: 'Prompts' },
   ];
 
   it('routes a panel-tagged field to the tab that renders it', () => {
     const index = buildSettingsIndex(SECTIONS, BESPOKE);
     const [hit] = filterSettingsIndex(index, 'KATO_IGNORED_REPOSITORY_FOLDERS');
-    expect(hit.tabId).toBe('approvals');
-    expect(hit.section).toBe('Approvals');
+    expect(hit.tabId).toBe('repositories');
+    expect(hit.section).toBe('Repositories');
   });
 
   it('leaves untagged fields on their schema tab', () => {

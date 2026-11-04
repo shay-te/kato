@@ -267,6 +267,7 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
     C. list MR discussion notes -> ReviewComment objects (inline metadata)
     D. reply to the reviewer's note in its discussion thread
     E. resolve the discussion
+    F. close the merge request without merging it
     """
 
     MR_IID = '42'
@@ -281,6 +282,9 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
             f'/discussions/thread-1'
         )
         notes_in_thread = discussion_thread + '/notes'
+        merge_request_url = _url(
+            f'/projects/{ENCODED_PROJECT}/merge_requests/{self.MR_IID}'
+        )
 
         created_mr = {
             'iid': 42,
@@ -301,6 +305,8 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
                 return _response(json_data={'id': 7002})
             if verb == 'PUT' and url == discussion_thread:
                 return _response(json_data={'id': 'thread-1', 'resolved': True})
+            if verb == 'PUT' and url == merge_request_url:
+                return _response(json_data={'iid': 42, 'state': 'closed'})
             raise AssertionError(f'unexpected {verb} {url}')
 
         return router
@@ -388,11 +394,14 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
         # E. resolve the discussion.
         client.resolve_review_comment('acme', 'web-app', comment)
 
+        # F. close the merge request without merging it.
+        client.decline_pull_request('acme', 'web-app', pull_request[PullRequestFields.ID])
+
         # ---- assert the wire traffic ----
         calls = client.session.calls
         self.assertEqual(
             [c['verb'] for c in calls],
-            ['POST', 'GET', 'POST', 'PUT'],
+            ['POST', 'GET', 'POST', 'PUT', 'PUT'],
         )
 
         # B. create MR payload.
@@ -440,6 +449,14 @@ class F2_MergeRequestReviewLifecycle(unittest.TestCase):
                  f'/discussions/thread-1'),
         )
         self.assertEqual(resolve_call['kwargs']['json'], {'resolved': True})
+
+        # F. close PUT asked GitLab to close (not merge) the merge request.
+        close_call = calls[4]
+        self.assertEqual(
+            close_call['url'],
+            _url(f'/projects/{ENCODED_PROJECT}/merge_requests/{self.MR_IID}'),
+        )
+        self.assertEqual(close_call['kwargs']['json'], {'state_event': 'close'})
 
         # Bearer auth + timeout merged in by the real client throughout.
         for call in calls:

@@ -130,7 +130,10 @@ class TaskLauncher(Protocol):
 
 class TaskProgress(Protocol):
     def observe(self, task_ids: Sequence[str]) -> dict[str, TaskObservation]:
-        """Where each released task stands. A missing key means unknown."""
+        """Where each released task stands. A missing key means unknown.
+
+        A source that keeps what it read for a while may also offer
+        ``forget(task_id)``: ``PlanQueueService.task_changed`` calls it."""
 
 
 class PullRequestProbe(Protocol):

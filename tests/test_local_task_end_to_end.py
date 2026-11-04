@@ -25,9 +25,6 @@ from kato_core_lib.data_layers.service.local_task_routing import (
     LocalAwareTaskStateService,
 )
 from kato_core_lib.data_layers.service.local_task_service import LocalTaskService
-from kato_core_lib.data_layers.service.repository_approval_service import (
-    RepositoryApprovalService,
-)
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from kato_core_lib.data_layers.service.wait_planning_service import WaitPlanningService
 from local_task_core_lib.local_task_core_lib.data.local_task import LocalTaskState
@@ -115,13 +112,10 @@ class NewTaskEndToEndTests(unittest.TestCase):
             task_state_service=LocalAwareTaskStateService(config, access, self.store),
             workspace_manager=self.workspace,
         )
-        self.approvals = RepositoryApprovalService(root / 'approvals.json')
-        self.approvals.approve('api', str(remote), approved_by='operator')
         service = LocalTaskService(
             task_service=task_service, repository_service=repositories,
             workspace_manager=self.workspace,
             prepare_workspace=planning.resolve_planning_context,
-            approval_check=self.approvals.unapproved_repository_ids,
         )
 
         self.cli = FakeClaudeCli(root / 'cli')
@@ -240,13 +234,9 @@ class NewTaskEndToEndTests(unittest.TestCase):
         time.sleep(0.3)
         self.assertEqual(self.cli.chat_messages(), [])
 
-    def test_an_unapproved_repository_is_refused_and_nothing_is_left(self) -> None:
-        self.approvals.revoke('api')
-        response = self.create()
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.get_json()['unapproved_repositories'], ['api'])
-        self.assertEqual(self.store.list(), [])
-        self.assertFalse((self.workspaces / 'LOCAL-1').exists())
+    def test_every_repository_kato_found_is_one_it_works_in(self) -> None:
+        self.assertEqual(self.create().status_code, 202)
+        self.wait_for_clone('LOCAL-1')
 
     def test_what_the_form_got_wrong_is_said_plainly(self) -> None:
         cases = {

@@ -139,6 +139,37 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.queue._registry.mutate(plan_id, lambda plan: setattr(plan, 'mode', PlanMode.TRACKER))
         self.assertEqual(self.client.get(f'/api/plan-queues/{plan_id}').get_json()['unknown_states'], [])
 
+    def test_deleting_a_sub_task_declines_its_pull_requests_then_takes_it_out(self) -> None:
+        repos = Mock()
+        repos.task_branch_name.side_effect = lambda task_id: task_id
+        repos.get_repository.side_effect = lambda repo_id: SimpleNamespace(id=repo_id)
+        repos.decline_open_pull_requests.return_value = [{'id': '9', 'url': 'https://git/api/pull/9'}]
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(plan_queue=self.queue, repository_service=repos)
+        plan_id = self._proposed()
+        approved = self._post(f'/api/plan-queues/{plan_id}/approve').get_json()
+        task_id = approved['steps'][0]['task_id']
+
+        answer = self._post(f'/api/plan-queues/{plan_id}/steps/{approved["steps"][0]["id"]}/delete')
+        self.assertEqual(answer.status_code, 200, answer.get_json())
+        body = answer.get_json()
+        self.assertEqual(body['deleted']['task_id'], task_id)
+        self.assertEqual(body['deleted']['declined'][0], 'https://git/api/pull/9')
+        self.assertEqual(len(body['steps']), 1)
+
+    def test_a_pull_request_that_stays_open_keeps_the_sub_task(self) -> None:
+        repos = Mock()
+        repos.task_branch_name.side_effect = lambda task_id: task_id
+        repos.decline_open_pull_requests.side_effect = RuntimeError('403 Forbidden')
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(plan_queue=self.queue, repository_service=repos)
+        plan_id = self._proposed()
+        approved = self._post(f'/api/plan-queues/{plan_id}/approve').get_json()
+
+        answer = self._post(f'/api/plan-queues/{plan_id}/steps/{approved["steps"][0]["id"]}/delete')
+        self.assertEqual(answer.status_code, 502)
+        self.assertIn('403 Forbidden', answer.get_json()['error'])
+        self.assertEqual(len(self.queue.get(plan_id).steps), 2)  # still in the plan
+        self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/nope/delete').status_code, 404)
+
     def test_a_queue_that_cannot_answer_leaves_the_tab_list_alone(self) -> None:
         from kato_webserver.app import _plan_queue_summaries
         broken = SimpleNamespace(plan_queue=SimpleNamespace(live_by_source=Mock(side_effect=RuntimeError('x'))))

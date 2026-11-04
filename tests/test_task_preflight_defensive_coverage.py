@@ -176,118 +176,6 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         service, _ = _make_service(workspace_provisioner=provisioner)
         self.assertEqual(service._task_workspace_root([]), '')
 
-    def test_enforce_rep_refuses_unapproved_without_handler(self) -> None:
-        # Lines 348-353: no failure_handler → ``logger.error`` + return False.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = ['client']
-        service, repo = _make_service(repository_approval_service=approval)
-        service.logger = MagicMock()
-        ok = service._enforce_restricted_execution_protocol(self.task, [repo])
-        self.assertFalse(ok)
-        service.logger.error.assert_called_once()
-
-    def test_enforce_rep_posture_violation_without_handler(self) -> None:
-        # Lines 388-396: posture violation without handler → log + False.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = []
-        approval.restricted_mode_repository_ids.return_value = ['client']
-        posture_supplier = MagicMock(return_value=MagicMock())
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.'
-            'restricted_mode_posture_violations',
-            return_value=['docker-off'],
-        ):
-            service, repo = _make_service(
-                repository_approval_service=approval,
-                runtime_posture_supplier=posture_supplier,
-            )
-            service.logger = MagicMock()
-            ok = service._enforce_restricted_execution_protocol(
-                self.task, [repo],
-            )
-        self.assertFalse(ok)
-        service.logger.error.assert_called_once()
-
-    def test_enforce_rep_returns_true_when_no_approval_service(self) -> None:
-        # Line 334: approval service is None → True.
-        service, repo = _make_service(repository_approval_service=None)
-        self.assertTrue(
-            service._enforce_restricted_execution_protocol(self.task, [repo]),
-        )
-
-    def test_enforce_rep_returns_true_for_empty_repositories(self) -> None:
-        # Line 336: ``if not repositories: return True``.
-        approval = MagicMock()
-        service, _ = _make_service(repository_approval_service=approval)
-        self.assertTrue(
-            service._enforce_restricted_execution_protocol(self.task, []),
-        )
-
-    def test_enforce_rep_returns_true_when_posture_supplier_missing(
-        self,
-    ) -> None:
-        # Line 359: no posture supplier → skip posture gate.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = []
-        service, repo = _make_service(
-            repository_approval_service=approval,
-            runtime_posture_supplier=None,
-        )
-        self.assertTrue(
-            service._enforce_restricted_execution_protocol(self.task, [repo]),
-        )
-
-    def test_enforce_rep_returns_true_when_no_restricted_repos(self) -> None:
-        # Line 364: restricted_mode_repository_ids returns [] → True.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = []
-        approval.restricted_mode_repository_ids.return_value = []
-        posture_supplier = MagicMock()
-        service, repo = _make_service(
-            repository_approval_service=approval,
-            runtime_posture_supplier=posture_supplier,
-        )
-        self.assertTrue(
-            service._enforce_restricted_execution_protocol(self.task, [repo]),
-        )
-
-    def test_enforce_rep_fail_open_on_posture_supplier_exception(self) -> None:
-        # Lines 367-375: posture supplier crashes → fail-open (True).
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = []
-        approval.restricted_mode_repository_ids.return_value = ['client']
-        posture_supplier = MagicMock(side_effect=RuntimeError('posture read failed'))
-        service, repo = _make_service(
-            repository_approval_service=approval,
-            runtime_posture_supplier=posture_supplier,
-        )
-        service.logger = MagicMock()
-        # Fail-open by design — the approval gate above already refused
-        # unapproved repos, so this just allows degraded posture-check.
-        self.assertTrue(
-            service._enforce_restricted_execution_protocol(self.task, [repo]),
-        )
-        service.logger.exception.assert_called_once()
-
-    def test_enforce_rep_returns_true_when_no_violations(self) -> None:
-        # Line 378: no posture violations → True.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = []
-        approval.restricted_mode_repository_ids.return_value = ['client']
-        posture_supplier = MagicMock(return_value=MagicMock())
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.'
-            'restricted_mode_posture_violations',
-            return_value=[],
-        ):
-            service, repo = _make_service(
-                repository_approval_service=approval,
-                runtime_posture_supplier=posture_supplier,
-            )
-            self.assertTrue(
-                service._enforce_restricted_execution_protocol(self.task, [repo]),
-            )
-
     def test_security_scan_disabled_returns_true(self) -> None:
         # Lines 427-430: scanner not wired → True. ``enabled=False`` → True.
         service, repo = _make_service()
@@ -401,20 +289,6 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
             self.task, [repo], failure_handler=handler,
         )
         self.assertFalse(result)
-        handler.assert_called_once()
-
-    def test_prepare_task_start_returns_none_when_rep_refuses(self) -> None:
-        # Line 217: ``_enforce_restricted_execution_protocol`` returns False
-        # → ``return None``.
-        approval = MagicMock()
-        approval.unapproved_repository_ids.return_value = ['client']
-        service, _ = _make_service(repository_approval_service=approval)
-        handler = MagicMock()
-        result = service._prepare_task_start(
-            self.task,
-            repository_resolution_failure_handler=handler,
-        )
-        self.assertIsNone(result)
         handler.assert_called_once()
 
     def test_prepare_task_start_returns_none_when_security_blocks(self) -> None:

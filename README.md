@@ -31,7 +31,7 @@ Coding agents are powerful but scary: they run shell commands, touch credentials
 ### Approve everything from one popup — never window-hop again
 - **Central approval popup.** Every permission request — even from a backgrounded task — surfaces in one modal. No more hunting across windows for the prompt that's blocking work.
 - **Full control on every prompt.** See the exact command/tool and choose Allow, Allow-always, or Deny (with a reason the agent reads and adapts to).
-- **One screen to approve repositories** kato may touch — instead of trusting a config file you can't see.
+- **Point it at your folder and go.** Every repository under it is ready to work in. Ignored folders and a denylist keep it out of the ones you name.
 - **Nothing ships without you.** No auto-commit, no auto-push, no auto-resolve. Kato makes the change, runs the tests, and stops — you click **Done — Push** when it's ready.
 
 ### Security that's visible, not hand-wavy
@@ -149,7 +149,7 @@ Kato runs an autonomous agent on your code, your repos, and your credentials —
 
 **Before the agent runs**
 
-- 🚫 **Repository approval (Restricted Execution Protocol)** — kato refuses to act on any repo you haven't approved in **Settings → Approvals**, and never touches one on the **repository denylist**.
+- 🚫 **Repository denylist and ignored folders** — kato never touches a repository on the **denylist**, nor one under an **ignored folder** (Settings → Repositories).
 - 🔍 **Pre-execution security scanner** — `detect-secrets`, `bandit`, `safety`, `npm audit`, and a committed-`.env` checker run against the fresh clone; CRITICAL/HIGH findings block the task *before the agent sees the code*.
 - 🌿 **Isolated workspace per task** — a fresh clone under `~/.kato/workspaces/<ticket-id>/`; one task can't reach another's files.
 

@@ -1,11 +1,10 @@
 """Cross-process exclusive file locking — the canonical implementation.
 
-Four modules grew their own copy of this, in TWO shapes, and the shapes were
+Three modules grew their own copy of this, in TWO shapes, and the shapes were
 not equivalent:
 
     site                                     POSIX          Windows
     comment_store                            fcntl.flock    msvcrt.locking
-    repository_approval_service              fcntl.flock    msvcrt.locking
     hash_chain_log (audit chain)             fcntl.flock    NO-OP
     sandbox manager (audit chain + rate cap) fcntl.flock    NO-OP
 

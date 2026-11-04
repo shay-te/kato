@@ -119,6 +119,28 @@ class TickerTests(unittest.TestCase):
                          [RepoMergeState.MERGED, RepoMergeState.NONE])
         self.assertIn('T-1: merged', self.events)
 
+    def test_the_host_is_told_a_step_was_merged(self) -> None:
+        told = []
+        self.ticker._merged_listener = lambda plan, step: told.append((plan.source_task_id, step.id, step.status))
+        plan = self._awaiting()
+        self.assertEqual(told, [])
+        self.probe.set('T-1', 'api', PullRequestFact('merged', 'u-1', LATER))
+        self.ticker.tick()
+        self.assertEqual(told, [('SRC-1', 'a', StepStatus.SATISFIED)])
+        self.ticker.tick()  # once
+        self.assertEqual(len(told), 1)
+        self.assertEqual(self._step(plan, 'a').status, StepStatus.SATISFIED)
+
+    def test_a_listener_that_fails_never_stops_the_tick(self) -> None:
+        logger = mock.Mock()
+        self.ticker._logger = logger
+        self.ticker._merged_listener = mock.Mock(side_effect=RuntimeError('pull failed'))
+        plan = self._awaiting()
+        self.probe.set('T-1', 'api', PullRequestFact('merged', 'u-1', LATER))
+        self.ticker.tick()
+        self.assertEqual(self._step(plan, 'a').status, StepStatus.SATISFIED)
+        logger.exception.assert_called_once()
+
     def test_declined_fails_the_step_naming_the_request(self) -> None:
         plan = self._awaiting()
         self.probe.set('T-1', 'api', PullRequestFact('declined', 'u-1', LATER))

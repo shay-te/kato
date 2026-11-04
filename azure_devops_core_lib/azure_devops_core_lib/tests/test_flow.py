@@ -2,7 +2,7 @@
 
 Open a pull request for a branch → find it again by branch and title → read
 its review threads (a reviewer @-mentions the bot) → reply in the thread →
-resolve it. Only the ``requests.Session`` verbs are faked (fakes.py), so the
+resolve it → abandon the pull request (close it without merging). Only the ``requests.Session`` verbs are faked (fakes.py), so the
 asserted requests are exactly what would reach Azure DevOps.
 """
 
@@ -31,7 +31,7 @@ PR_PATH = f'{REPO_PATH}/pullrequests/42'
 
 class PullRequestLifecycleFlow(unittest.TestCase):
 
-    def test_open_find_read_reply_resolve(self) -> None:
+    def test_open_find_read_reply_resolve_abandon(self) -> None:
         reviewer = identity(REVIEWER_ID, 'rev@example.com', 'Rev')
         opened = pull_request(42, 'UNA-1 Fix login', reviewers=[reviewer])
         threads = {'value': [
@@ -55,6 +55,7 @@ class PullRequestLifecycleFlow(unittest.TestCase):
                 replies.append(kwargs['json']) or FakeResponse({'id': 3})
             ),
             ('PATCH', f'{PR_PATH}/threads/5'): FakeResponse({'status': 'fixed'}),
+            ('PATCH', PR_PATH): FakeResponse(pull_request(42, status='abandoned')),
         })
 
         # A. connect, B. open (onto the default branch).
@@ -80,6 +81,10 @@ class PullRequestLifecycleFlow(unittest.TestCase):
         self.assertEqual(replies, [{'content': 'Fixed in 1a2b3c.', 'parentCommentId': 1, 'commentType': 1}])
         self.assertEqual(getattr(asked, ReviewCommentFields.RESOLUTION_TARGET_ID), '5')
 
+        # G. abandon it: closed without merging.
+        azure.decline_pull_request(OWNER, SLUG, created['id'])
+        self.assertEqual(azure.session.calls[-1]['kwargs']['json'], {'status': 'abandoned'})
+
         self.assertEqual(
             [(call['verb'], call['path']) for call in azure.session.calls],
             [
@@ -90,6 +95,7 @@ class PullRequestLifecycleFlow(unittest.TestCase):
                 ('GET', f'{PR_PATH}/threads'),
                 ('POST', f'{PR_PATH}/threads/5/comments'),
                 ('PATCH', f'{PR_PATH}/threads/5'),
+                ('PATCH', PR_PATH),
             ],
         )
 

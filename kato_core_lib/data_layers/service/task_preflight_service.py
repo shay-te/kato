@@ -47,8 +47,6 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         task_branch_publishability_validator: TaskBranchPublishabilityValidator,
         workspace_provisioner: Callable[[Task, list], list] | None = None,
         security_scanner_service=None,
-        repository_approval_service=None,
-        runtime_posture_supplier: Callable[[], object] | None = None,
         logger=None,
         plan_step_gate: Callable[[Task], str] | None = None,
     ) -> None:
@@ -70,19 +68,6 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         # chain catches; ``MEDIUM``/``LOW`` findings are logged and
         # the task proceeds.
         self._security_scanner_service = security_scanner_service
-        # Restricted Execution Protocol gate. Refuses tasks that
-        # touch repos the operator hasn't explicitly approved. Runs
-        # right after repository resolution so unapproved repos never
-        # get cloned to the per-task workspace. There is no off
-        # switch — REP is a required gate, not an optional one.
-        self._repository_approval_service = repository_approval_service
-        # Optional ``() -> RuntimePosture`` callable. When wired, the
-        # REP gate also checks that RESTRICTED-mode approved repos
-        # never run with a weaker-than-required posture (docker-off,
-        # bypass-on, lenient scanner threshold). Called at gate time
-        # so flipping env vars and restarting kato takes effect on
-        # the next task without reinstantiating this service.
-        self._runtime_posture_supplier = runtime_posture_supplier
         self._active_blocking_comment_log_state: dict[str, str] = {}
         # ``task -> reason it must wait`` ('' = it may start): a plan's sub-task
         # assigned before its turn waits until what it waits for is merged and
@@ -217,16 +202,6 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         )
         if repositories is None:
             return None
-        # Restricted Execution Protocol — refuse the task before any
-        # workspace clone or agent spawn if the operator has not
-        # explicitly approved every repo this task touches. Failure
-        # handler posts the operator-facing comment + moves the
-        # ticket back to Open via the existing chain.
-        if not self._enforce_restricted_execution_protocol(
-            task, repositories,
-            failure_handler=repository_resolution_failure_handler,
-        ):
-            return None
         # Workspace mode: clone per-task isolated copies before any
         # ``prepare`` runs, so prepare/branch/push all operate on the
         # task's own checkout, not a shared local clone. No-op when
@@ -314,99 +289,6 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
                 f'refusing to spawn an agent on a partial workspace'
             )
         return provisioned
-
-    def _enforce_restricted_execution_protocol(
-        self,
-        task: Task,
-        repositories: list[object],
-        *,
-        failure_handler: Callable[[Task, Exception, PreparedTaskContext | None], None] | None = None,
-    ) -> bool:
-        """Refuse the task if any repository lacks an approval record.
-
-        Two-stage gate:
-
-        1. Refuse if any repo isn't approved (``RestrictedExecutionRefusal``).
-        2. If every repo IS approved, refuse if any RESTRICTED-mode
-           approval is paired with a weaker-than-required global
-           posture (``RestrictedModePostureViolation``). Operators
-           opt out per-repo by elevating to TRUSTED after review.
-
-        Returns ``True`` to proceed, ``False`` to abort. No-op when
-        the approval service is not wired or REP is globally
-        disabled.
-        """
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RestrictedExecutionRefusal,
-            RestrictedModePostureViolation,
-            restricted_mode_posture_violations,
-        )
-
-        if self._repository_approval_service is None:
-            return True
-        if not repositories:
-            return True
-        unapproved = self._repository_approval_service.unapproved_repository_ids(repositories)
-        if unapproved:
-            self._log_task_step(
-                task.id,
-                'restricted execution protocol: refusing task — '
-                'unapproved repository id(s): %s',
-                ', '.join(unapproved),
-            )
-            exc = RestrictedExecutionRefusal(unapproved)
-            if failure_handler is not None:
-                failure_handler(task, exc, None)
-            else:
-                self.logger.error(
-                    'restricted execution protocol refused task %s but no '
-                    'failure handler is wired; aborting silently',
-                    task.id,
-                )
-            return False
-
-        # Posture gate. Skipped when no supplier is wired (tests /
-        # legacy callers that don't care about runtime posture).
-        if self._runtime_posture_supplier is None:
-            return True
-        restricted_ids = self._repository_approval_service.restricted_mode_repository_ids(
-            repositories,
-        )
-        if not restricted_ids:
-            return True
-        try:
-            posture = self._runtime_posture_supplier()
-        except Exception:
-            self.logger.exception(
-                'failed to read runtime posture for task %s; '
-                'allowing task to proceed (REP posture gate is '
-                'fail-open by design — the approval gate above '
-                'already refused unapproved repos)',
-                task.id,
-            )
-            return True
-        violations = restricted_mode_posture_violations(posture)
-        if not violations:
-            return True
-        self._log_task_step(
-            task.id,
-            'restricted execution protocol: refusing task — '
-            'restricted-mode repo(s) %s cannot run under current '
-            'posture: %s',
-            ', '.join(restricted_ids),
-            '; '.join(violations),
-        )
-        exc = RestrictedModePostureViolation(restricted_ids, violations)
-        if failure_handler is not None:
-            failure_handler(task, exc, None)
-        else:
-            self.logger.error(
-                'restricted execution protocol refused task %s on '
-                'posture grounds but no failure handler is wired; '
-                'aborting silently',
-                task.id,
-            )
-        return False
 
     def _run_security_scan(
         self,

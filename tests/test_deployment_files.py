@@ -371,7 +371,6 @@ class DeploymentFilesTests(unittest.TestCase):
                 'KATO_SECURITY_TIMEOUT_SECRETS',
                 'KATO_SECURITY_TIMEOUT_DEPENDENCIES',
                 'KATO_SECURITY_TIMEOUT_CODE_PATTERNS',
-                'KATO_APPROVED_REPOSITORIES_PATH',
                 'KATO_OPERATOR_EMAIL',
                 'KATO_CLAUDE_TIMEOUT_SECONDS',
                 'KATO_CLAUDE_MODEL_SMOKE_TEST_ENABLED',

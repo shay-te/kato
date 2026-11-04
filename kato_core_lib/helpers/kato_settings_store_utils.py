@@ -3,8 +3,7 @@
 This is the source of truth for everything the planning-UI Settings
 drawer edits — repository root, task provider + its credentials, git
 host credentials. It lives in the user's home ``.kato`` directory
-(next to ``approved-repositories.json``, ``workspaces/``,
-``sessions/``) so it's per-operator, survives ``git clean``, and is
+(next to ``workspaces/`` and ``sessions/``) so it's per-operator, survives ``git clean``, and is
 shared across multiple kato checkouts.
 
 Precedence (resolved at boot by ``load_kato_settings_into_environ``):
@@ -48,9 +47,7 @@ def kato_settings_path() -> Path:
     """``~/.kato/settings.json`` (or ``$KATO_SETTINGS_FILE`` override).
 
     The env override exists for tests + for operators who keep their
-    ``.kato`` dir somewhere non-standard; it mirrors how
-    ``KATO_APPROVED_REPOSITORIES_PATH`` overrides the approvals
-    sidecar location.
+    ``.kato`` dir somewhere non-standard.
     """
     return kato_home_path('settings.json', env_key=_SETTINGS_PATH_ENV_KEY)
 

@@ -19,6 +19,7 @@ from kato_core_lib.data_layers.service.plan_queue.events import log_plan_event
 from kato_core_lib.data_layers.service.chat_question import ChatQuestion
 from kato_core_lib.data_layers.service.plan_queue.history_probe import GitHistoryProbe
 from kato_core_lib.data_layers.service.plan_queue.local_progress import LocalTaskProgress
+from kato_core_lib.data_layers.service.plan_queue.main_task_follows import MainTaskFollowsMerges
 from kato_core_lib.data_layers.service.plan_queue.ownership import KatoOwnership
 from kato_core_lib.data_layers.service.plan_queue.parent_question import ParentQuestions
 from kato_core_lib.data_layers.service.plan_queue.plan_record_on_tracker import (
@@ -72,6 +73,7 @@ def build_plan_queue_service(
     session_manager=None,
     task_service=None,
     task_state_service=None,
+    pull_task=None,
 ) -> PlanQueueService:
     """Collaborators may be ``later(...)`` markers, resolved per call."""
     get_logger = provider_for(logger)
@@ -120,6 +122,10 @@ def build_plan_queue_service(
         # starts in all of the main task's repositories, and the operator
         # narrows or widens one in the plan's editor.
         proposer_picks_repositories=False,
+        # A merged sub-task: the main task's own clones pull it (its Changes).
+        merged_listener=(
+            MainTaskFollowsMerges(pull_task=pull_task, logger=get_logger) if pull_task is not None else None
+        ),
         **shared,
     )
     if shared:

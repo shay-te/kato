@@ -147,6 +147,14 @@ class ReviewCommentLifecycleFlowTests(unittest.TestCase):
             comment=comment,
         )
 
+        # The work is abandoned: its pull request is declined on its host.
+        service.decline_pull_request(
+            Platform.BITBUCKET, repo_owner='workspace', repo_slug='repo', pull_request_id='42',
+        )
+        self.provider_client.decline_pull_request.assert_called_once_with(
+            repo_owner='workspace', repo_slug='repo', pull_request_id='42',
+        )
+
 
 class MultiPlatformRoutingFlowTests(unittest.TestCase):
     def setUp(self):

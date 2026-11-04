@@ -5,7 +5,6 @@ import {
   EMPTY_DRAFT,
   START_MODE,
   START_MODE_OPTIONS,
-  approvedIdSet,
   buildNewTaskTabModel,
   coerceDraft,
   draftPayload,
@@ -76,26 +75,15 @@ test('repositories toggle in and out', () => {
   assert.deepEqual(toggleRepository(['api', 'web'], 'api'), ['web']);
 });
 
-test('approvals: approved ids, lower-cased; unreadable means "unknown"', () => {
-  const approved = approvedIdSet({ repositories: [
-    { repository_id: 'API', approved: true }, { repository_id: 'web', approved: false },
-  ] });
-  assert.deepEqual([...approved], ['api']);
-  assert.equal(approvedIdSet(null), null);
-  assert.equal(approvedIdSet({ repositories: 'x' }), null);
-});
-
-test('choices are alphabetical, filtered, and marked selected / approved', () => {
+test('choices are alphabetical, filtered, and marked selected', () => {
   const inventory = [{ id: 'zeta' }, { id: 'Alpha' }, { id: 'beta' }];
-  const choices = repositoryChoices(inventory, new Set(['alpha']), { selected: ['beta'] });
-  assert.deepEqual(choices, [
-    { id: 'Alpha', selected: false, approved: true },
-    { id: 'beta', selected: true, approved: false },
-    { id: 'zeta', selected: false, approved: false },
+  assert.deepEqual(repositoryChoices(inventory, { selected: ['beta'] }), [
+    { id: 'Alpha', selected: false },
+    { id: 'beta', selected: true },
+    { id: 'zeta', selected: false },
   ]);
-  assert.deepEqual(repositoryChoices(inventory, null, { filter: ' ET ' }).map((c) => c.id), ['beta', 'zeta']);
-  assert.ok(repositoryChoices(inventory, null).every((c) => c.approved));
-  assert.deepEqual(repositoryChoices(null, null), []);
+  assert.deepEqual(repositoryChoices(inventory, { filter: ' ET ' }).map((c) => c.id), ['beta', 'zeta']);
+  assert.deepEqual(repositoryChoices(null), []);
 });
 
 test('the pickers resolve to a concrete value, never "default"', () => {

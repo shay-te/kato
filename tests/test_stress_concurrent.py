@@ -420,8 +420,8 @@ class DrainQueuedCommentsUnderConcurrentSubmissionTests(unittest.TestCase):
 class LocalCommentStoreCrossProcessTests(unittest.TestCase):
     """Cross-process safety for ``LocalCommentStore``.
 
-    Same bug class as ``RepositoryApprovalService`` had before the fix:
-    per-instance lock, no mtime invalidation, static ``.tmp`` rename.
+    The bug class: per-instance lock, no mtime invalidation, static ``.tmp``
+    rename.
     Two kato processes (or kato + the CLI) writing the same store
     could lose updates. Now fixed with class-level path-keyed locks,
     cross-process flock, mtime invalidation, and unique tmp filenames.
@@ -496,7 +496,6 @@ class LocalCommentStoreCrossProcessTests(unittest.TestCase):
     def test_long_lived_instance_sees_external_writes(self) -> None:
         """A cached store must drop its cache when another process writes.
 
-        Mirror of the RepositoryApprovalService stale-cache fix.
         Before mtime invalidation: an in-process store that had
         cached an empty list would never see a cross-process write.
         After fix: the next read picks it up.

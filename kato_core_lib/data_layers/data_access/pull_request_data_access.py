@@ -128,6 +128,15 @@ class PullRequestDataAccess(DataAccess):
             state=state,
         )
 
+    def decline_pull_request(self, pull_request_id: str) -> None:
+        """Close the pull request without merging it."""
+        pull_request_comment_rule_validator.validate_dict({PullRequestFields.ID: pull_request_id})
+        self._client.decline_pull_request(
+            self._repository_type,
+            **self._repository_kwargs(),
+            pull_request_id=pull_request_id,
+        )
+
     def resolve_review_comment(self, comment: ReviewComment) -> None:
         review_comment_resolution_rule_validator.validate_dict(
             {

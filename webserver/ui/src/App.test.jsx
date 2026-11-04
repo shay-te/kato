@@ -43,10 +43,6 @@ vi.mock('./api.js', () => ({
   updateTaskProvider: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   fetchGitProviders: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   updateGitProvider: vi.fn().mockResolvedValue({ ok: true, body: {} }),
-  fetchRepositoryApprovals: vi.fn().mockResolvedValue(
-    { ok: true, body: { repositories: [] } },
-  ),
-  updateRepositoryApprovals: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   // AgentVersionBanner re-attaches to any in-flight CLI upgrade on mount, so
   // the progress read fires even when nothing is upgrading.
   fetchAgentUpgradeStatus: vi.fn().mockResolvedValue(
@@ -241,7 +237,7 @@ vi.mock('./components/ToastContainer.jsx', () => ({
 
 import { useSessions } from './hooks/useSessions.js';
 import { useResizable } from './hooks/useResizable.js';
-import { createLocalTask, fetchRepositoryApprovals, forgetTaskWorkspace } from './api.js';
+import { createLocalTask, forgetTaskWorkspace } from './api.js';
 import { _resetNewTaskDraft } from './components/newTask/newTaskDraftStore.js';
 import { _resetLastActiveTask } from './utils/lastActiveTask.js';
 import App from './App.jsx';
@@ -1118,9 +1114,6 @@ describe('App — the "New task" draft in the centre strip', () => {
   });
 
   test('Create switches to the new task and the draft is gone', async () => {
-    fetchRepositoryApprovals.mockResolvedValueOnce(
-      { ok: true, body: { repositories: [{ repository_id: 'api', approved: true }] } },
-    );
     const refresh = vi.fn().mockResolvedValue(undefined);
     useSessions.mockReturnValue({ sessions: [{ task_id: 'LOCAL-1', status: 'provisioning' }], refresh });
     render(<App />);

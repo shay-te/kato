@@ -3098,137 +3098,6 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'error': 'no recognised settings in payload'}), 400
         return _validate_persist_and_respond(updates, app)
 
-    @app.get('/api/repository-approvals')
-    def list_repository_approvals():
-        """Return every discovered candidate + which are approved.
-
-        Used by the Settings drawer's "Repositories" approval panel.
-        Replaces the old command-line picker — discovery
-        is the same (inventory + checkout + workspace clones,
-        merged inventory-wins). The UI joins each candidate with
-        its approval record so the operator sees a single unified
-        list with the current mode.
-        """
-        try:
-            from kato_core_lib.data_layers.service.repository_approval_discovery_service import (
-                discover_all_repositories,
-            )
-            from kato_core_lib.data_layers.service.repository_approval_service import (
-                RepositoryApprovalService,
-            )
-        except ImportError as exc:     # pragma: no cover — kato_core_lib is always installed; fallback for embedded webserver use
-            return jsonify({'error': f'approvals not available: {exc}'}), 503
-        candidates = discover_all_repositories()
-        service = RepositoryApprovalService()
-        approvals = {
-            entry.repository_id.lower(): entry for entry in service.list_approvals()
-        }
-        out = []
-        for repo in candidates:
-            entry = approvals.get(repo.repository_id.lower())
-            out.append({
-                'repository_id': repo.repository_id,
-                'remote_url': repo.remote_url,
-                'source': repo.source,
-                'workspace_path': repo.workspace_path,
-                'approved': entry is not None,
-                'approval_mode': entry.approval_mode.value if entry else '',
-                'approved_remote_url': entry.remote_url if entry else '',
-                'approved_by': entry.approved_by if entry else '',
-                'remote_url_drift': bool(
-                    entry and entry.remote_url and entry.remote_url != repo.remote_url
-                ),
-            })
-        # Also surface "approved but no longer discovered" entries —
-        # the operator can still revoke them from the UI even if
-        # their workspace clone is gone.
-        discovered_ids = {repo.repository_id.lower() for repo in candidates}
-        for entry in service.list_approvals():
-            if entry.repository_id.lower() in discovered_ids:
-                continue
-            out.append({
-                'repository_id': entry.repository_id,
-                'remote_url': entry.remote_url,
-                'source': 'orphan',
-                'workspace_path': '',
-                'approved': True,
-                'approval_mode': entry.approval_mode.value,
-                'approved_remote_url': entry.remote_url,
-                'approved_by': entry.approved_by,
-                'remote_url_drift': False,
-            })
-        out.sort(key=lambda row: row['repository_id'].lower())
-        return jsonify({
-            'repositories': out,
-            'storage_path': str(service.storage_path),
-        })
-
-    @app.post('/api/repository-approvals')
-    def update_repository_approvals():
-        """Apply a batch of approve / revoke / mode-change operations.
-
-        Body shape::
-
-            {
-              "approve": [
-                {"repository_id": "client", "remote_url": "...", "mode": "trusted"}
-              ],
-              "revoke": ["other-repo"]
-            }
-
-        Empty arrays are tolerated. ``mode`` defaults to ``restricted``.
-        Returns the updated list so the UI can re-render without a
-        second GET.
-        """
-        try:
-            from kato_core_lib.data_layers.data.repository_approval import (
-                ApprovalMode,
-            )
-            from kato_core_lib.data_layers.service.repository_approval_service import (
-                RepositoryApprovalService,
-            )
-        except ImportError as exc:     # pragma: no cover — kato_core_lib is always installed; fallback for embedded webserver use
-            return jsonify({'error': f'approvals not available: {exc}'}), 503
-        payload = request.get_json(silent=True) or {}
-        approve_in = payload.get('approve') or []
-        revoke_in = payload.get('revoke') or []
-        if not isinstance(approve_in, list) or not isinstance(revoke_in, list):
-            return jsonify({'error': 'approve / revoke must be arrays'}), 400
-        service = RepositoryApprovalService()
-        applied = {'approved': [], 'revoked': []}
-        # Approve first so a rapid toggle (approve → revoke → approve)
-        # ends in the expected state when sent in one batch.
-        for item in approve_in:
-            if not isinstance(item, dict):
-                continue
-            repo_id = text_from_mapping(item, 'repository_id')
-            remote_url = text_from_mapping(item, 'remote_url')
-            # Trusted unless restricted is picked: restricted also needs the
-            # Docker sandbox and a stricter scanner, which a new install has
-            # neither of. A mode that is not a mode is still the safe one.
-            mode = str(item.get('mode') or 'trusted').strip().lower()
-            if not repo_id:
-                continue
-            try:
-                approval_mode = ApprovalMode.from_string(mode)
-            except Exception:
-                approval_mode = ApprovalMode.RESTRICTED
-            entry = service.approve(repo_id, remote_url, mode=approval_mode)
-            applied['approved'].append({
-                'repository_id': entry.repository_id,
-                'mode': entry.approval_mode.value,
-            })
-        for repo_id in revoke_in:
-            repo_id = str(repo_id or '').strip()
-            if not repo_id:
-                continue
-            if service.revoke(repo_id):
-                applied['revoked'].append(repo_id)
-        return jsonify({
-            'ok': True,
-            'applied': applied,
-        })
-
     @app.get('/logo.png')
     def logo():
         return _send_kato_png(not_found_message='logo not found')
@@ -4029,8 +3898,8 @@ def _register_http_routes(app: Flask) -> None:
     def adopt_task(task_id: str):
         """Pull a task into kato: provision a workspace + clones.
 
-        Mirrors the autonomous initial-task path's first three
-        steps (resolve repos → REP gate → workspace clones) so the
+        Mirrors the autonomous initial-task path's first steps
+        (resolve repos → workspace clones) so the
         adopted task lands with the same on-disk shape kato's queue
         scan would produce. No agent spawn — the operator types
         into the chat tab when ready.
@@ -4042,8 +3911,6 @@ def _register_http_routes(app: Flask) -> None:
         if result.get('error') and not result.get('adopted'):
             err = str(result.get('error', ''))
             status = 404 if 'not assigned' in err else 500
-            if 'restricted execution protocol' in err:
-                status = 403
             return jsonify(result), status
         return jsonify(result)
 
@@ -4155,7 +4022,9 @@ def _register_http_routes(app: Flask) -> None:
     def finish_task(task_id: str):
         """Operator-triggered "I'm done" — same flow Claude triggers via
         the ``<KATO_TASK_DONE>`` sentinel. Pushes pending changes, opens
-        a PR if none exists, and moves the ticket to In Review.
+        a PR if none exists, and moves the ticket to In Review — or, for a
+        plan's sub-task, to Done (``by_operator``: only the operator closes
+        a ticket). The header's Done and a plan board card's Done both call it.
         """
         finish, err = _resolve_agent_method(
             app, 'publish.finish_task_planning_session',
@@ -4163,7 +4032,7 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
-        result = finish(task_id) or {}
+        result = finish(task_id, by_operator=True) or {}
         if result.get('error') and not result.get('finished'):
             return jsonify(result), 500
         return jsonify(result)

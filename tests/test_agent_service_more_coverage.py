@@ -1650,6 +1650,45 @@ class FinishTaskPlanningSessionTests(unittest.TestCase):
         self.assertEqual(self._finish(service)['slack'], {'status': 'posted', 'error': ''})
         self.assertEqual(told, ['T1'])
 
+    def _finish_as(self, service, *, by_operator):
+        with patch.object(service.publish, 'push_task', return_value={'pushed_repositories': ['api']}), \
+             patch.object(service.publish, 'create_pull_request_for_task', return_value={}), \
+             patch.object(service.publish, '_kick_lesson_extraction'):
+            return service.publish.finish_task_planning_session('T1', by_operator=by_operator)
+
+    def test_the_operators_done_on_a_plan_sub_task_moves_it_to_done(self) -> None:
+        task_state = MagicMock()
+        repo = MagicMock()
+        repo.plan_merge_branch.return_value = 'UNA-1'  # T1 runs a step of UNA-1's plan
+        service = AgentService(**_kwargs(task_state_service=task_state, repository_service=repo))
+        result = self._finish_as(service, by_operator=True)
+        task_state.move_task_to_done.assert_called_once_with('T1')
+        task_state.move_task_to_review.assert_not_called()
+        self.assertEqual((result['finished'], result['moved_to_done'], result['moved_to_review']), (True, True, False))
+
+    def test_the_agents_done_marker_never_closes_a_ticket(self) -> None:
+        task_state = MagicMock()
+        repo = MagicMock()
+        repo.plan_merge_branch.return_value = 'UNA-1'
+        service = AgentService(**_kwargs(task_state_service=task_state, repository_service=repo))
+        result = self._finish_as(service, by_operator=False)
+        task_state.move_task_to_review.assert_called_once_with('T1')
+        task_state.move_task_to_done.assert_not_called()
+        self.assertFalse(result['moved_to_done'])
+
+    def test_any_other_task_still_goes_to_in_review(self) -> None:
+        for answer in ('', RuntimeError('cannot tell')):
+            task_state = MagicMock()
+            repo = MagicMock()
+            if isinstance(answer, Exception):
+                repo.plan_merge_branch.side_effect = answer
+            else:
+                repo.plan_merge_branch.return_value = answer
+            service = AgentService(**_kwargs(task_state_service=task_state, repository_service=repo))
+            self._finish_as(service, by_operator=True)
+            task_state.move_task_to_review.assert_called_once_with('T1')
+            task_state.move_task_to_done.assert_not_called()
+
     def test_an_announcement_that_breaks_is_said_and_never_fails_the_done(self) -> None:
         service = AgentService(**_kwargs(task_state_service=MagicMock()))
         service.logger = MagicMock()
@@ -2597,34 +2636,6 @@ class FinalEdgeCaseTests(unittest.TestCase):
         ]
         service = AgentService(**_kwargs(review_comment_service=review))
         self.assertEqual(service.comments._task_pull_request_id('T1', 'r1'), '17')
-
-    def test_adopt_task_swallows_approval_service_exception(self) -> None:
-        # Lines 1510-1518.
-        task = SimpleNamespace(id='T1', summary='x', description='', tags=[])
-        repo = MagicMock()
-        repo.resolve_task_repositories.return_value = [
-            SimpleNamespace(id='r1'),
-        ]
-        service = AgentService(**_kwargs(
-            workspace_manager=MagicMock(), repository_service=repo,
-        ))
-        service.logger = MagicMock()
-        with patch('kato_core_lib.data_layers.service.agent_service.'
-                   'find_assigned_or_review_task',
-                  return_value=task), \
-             patch(
-                 'kato_core_lib.data_layers.service.repository_approval_service.'
-                 'RepositoryApprovalService',
-                 side_effect=RuntimeError('approval boom'),
-             ), \
-             patch(
-                 'kato_core_lib.data_layers.service.workspace_provisioning_service.'
-                 'provision_task_workspace_clones',
-                 return_value=[SimpleNamespace(id='r1')],
-             ):
-            result = service.adopt_task('T1')
-        self.assertTrue(result['adopted'])
-        service.logger.exception.assert_called()
 
     def test_add_task_repository_swallows_repositories_property_exception(
         self,

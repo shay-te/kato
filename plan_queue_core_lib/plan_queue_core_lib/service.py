@@ -95,7 +95,11 @@ class PlanQueueService(object):
         history: HistoryProbe | None = None,
         conversation: SplitConversation | None = None,
         proposer_picks_repositories: bool = True,
+        merged_listener: Callable[[Plan, Step], None] | None = None,
     ) -> None:
+        # ``merged_listener(plan, step)``: a step's change request was just seen
+        # merged (into the plan's main branch) — e.g. the host updates the main
+        # task's own checkout.
         # False: the split's agent is not asked where each step works — every
         # step starts in all of the plan's repositories, and the operator
         # narrows or widens one in an edit.
@@ -115,11 +119,13 @@ class PlanQueueService(object):
             self._registry, proposer, wording, observer=observer, logger=self._logger, clock=clock,
             proposer_picks_repositories=proposer_picks_repositories,
         )
+        self._progress = progress
         self._ticker = PlanTicker(
             self._registry, progress=progress, probe=probe, launcher=self._launcher_for,
             clock=clock, observer=observer, logger=self._logger, ownership=ownership,
             publisher=publisher, record_source=record_source, history=history,
             conversation=conversation, proposer_picks_repositories=proposer_picks_repositories,
+            merged_listener=merged_listener,
         )
         self._thread = TickThread(
             self._ticker.tick, interval_seconds=tick_seconds,
@@ -190,6 +196,15 @@ class PlanQueueService(object):
         """The newest plan one of whose steps runs as ``task_id``."""
         matching = [plan for plan in self._registry.all() if plan.step_for_task(task_id) is not None]
         return matching[-1] if matching else None
+
+    def task_changed(self, task_id: str) -> None:
+        """The host knows a step's task just changed (the operator finished
+        it): what the progress source remembers of it is dropped, so the next
+        tick reads it again instead of waiting out its cache. A source with no
+        ``forget`` keeps nothing to drop."""
+        forget = getattr(self._progress, 'forget', None)
+        if callable(forget):
+            forget(str(task_id or '').strip())
 
     def source_of_step_task(self, task_id: str) -> str:
         """The task ``task_id``'s plan was split from, when ``task_id`` runs
@@ -681,6 +696,36 @@ class PlanQueueService(object):
 
         withdrawn = self._registry.mutate(plan_id, apply)
         self._withdraw(plan_id, withdrawn, 'the step was cancelled')
+        return self._registry.get(plan_id)
+
+    def remove_step(self, plan_id: str, step_id: str) -> Plan:
+        """Take a step out of the plan, whatever its state: the operator
+        deleted it. The tasks waiting on it wait for it no longer, and its
+        task is withdrawn (a shared ticket: noted, left unassigned — nothing
+        is deleted on the tracker). A plan keeps at least one step: stop the
+        plan instead."""
+        def apply(plan: Plan) -> str:
+            _require_driven_here(plan)
+            _require_in_flight(plan)
+            step = _step(plan, step_id)
+            if len(plan.steps) == 1:
+                raise PlanQueueError(
+                    f'{step.task_id or step_id} is the plan\'s last task — stop the plan instead',
+                    ErrorKind.CONFLICT,
+                )
+            plan.steps = [other for other in plan.steps if other.id != step_id]
+            for other in plan.steps:
+                other.depends_on = [dep for dep in other.depends_on if dep != step_id]
+                if other.status in (StepStatus.BLOCKED, StepStatus.READY):
+                    other.status = initial_status(plan, other)
+                    other.reason = blocked_reason(plan, other)
+            plan.touch_record()
+            return step.task_id
+
+        task_id = self._registry.mutate(plan_id, apply)
+        self._note(plan_id, f'{task_id or step_id}: deleted')
+        if task_id:
+            self._withdraw(plan_id, [task_id], 'the task was deleted from the plan')
         return self._registry.get(plan_id)
 
     def retry_step(self, plan_id: str, step_id: str) -> Plan:

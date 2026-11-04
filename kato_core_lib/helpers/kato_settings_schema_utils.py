@@ -208,18 +208,18 @@ SETTINGS_SCHEMA: list[dict] = [
              'Applies at once, no restart.', {}),
             # ``panel`` moves a field OUT of its section's generic tab and
             # into the named bespoke panel — these two decide which repos
-            # kato may touch at all, so they belong beside the per-repo
-            # approval table rather than in a general grab-bag.
+            # kato may touch at all, so they sit beside the repository
+            # folder they narrow, not in a general grab-bag.
             ('KATO_IGNORED_REPOSITORY_FOLDERS', 'text',
              'Ignored repo folders',
              'Comma-separated folder names excluded from auto-discovery. '
              'A task that references an ignored repo fails its repository '
              'scan — check the activity log for the repo name.',
-             {'panel': 'approvals'}),
+             {'panel': 'repositories'}),
             ('KATO_REPOSITORY_DENYLIST', 'text', 'Repository denylist',
              'Comma-separated repo ids kato must NEVER touch '
              '(secrets-vault, regulated-data, …). Boot-time refusal.',
-             {'panel': 'approvals'}),
+             {'panel': 'repositories'}),
             ('KATO_WEBSERVER_PORT', 'number', 'Webserver port',
              'Host port for the planning UI (Flask).', {}),
             ('KATO_TASK_PUBLISH_MAX_RETRIES', 'number',
@@ -278,7 +278,7 @@ SETTINGS_SCHEMA: list[dict] = [
              'How long a review-state workspace survives before '
              'cleanup. 0 = disable TTL cleanup.', {}),
             ('KATO_OPERATOR_EMAIL', 'text', 'Operator email',
-             'Recorded as approved_by on approvals. Audit only.', {}),
+             'Recorded as who answered, in the Action Guard audit log. Audit only.', {}),
             ('KATO_DEDUPE_READS', 'bool',
              'Skip re-reading unchanged files',
              'When the agent asks to read a file it already read in this '
@@ -306,10 +306,6 @@ SETTINGS_SCHEMA: list[dict] = [
              {'panel': 'prompts', 'max_length': STANDING_INSTRUCTIONS_MAX_CHARS,
               'placeholder': 'e.g. Write commit-ready code with tests. '
                              'Answer in English. Never touch the vendor/ folder.'}),
-            ('KATO_APPROVED_REPOSITORIES_PATH', 'text',
-             'Approvals sidecar path',
-             'Override the approvals JSON location. Empty = '
-             '~/.kato/approved-repositories.json.', {}),
         ],
     },
     {

@@ -21,10 +21,6 @@ vi.mock('../api.js', () => ({
     backends: [{ id: 'claude', ready: true, error: '', logged_in: true }],
   })),
   refreshAgentBackends: vi.fn(),
-  fetchRepositoryApprovals: vi.fn(async () => ({ ok: true, body: {
-    repositories: [{ repository_id: 'api', approved: false, approval_mode: '', remote_url: 'u', source: 'checkout' }],
-  } })),
-  updateRepositoryApprovals: vi.fn(async () => ({ ok: true, body: { applied: { approved: [], revoked: [] } } })),
 }));
 
 import {
@@ -91,13 +87,6 @@ async function pickClaudeAndGoToRepoStep() {
   await screen.findByText('Connect Claude agent');
   fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
   await screen.findByText('Where are your repositories?');
-}
-
-// The step after the repositories folder: which repositories the agent may
-// work in. Approving is optional here; Next goes on.
-async function passApproveStep() {
-  await screen.findByText('Which repositories may the agent work in?');
-  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 }
 
 async function pickSystemAndGoToDetails(choice, heading) {
@@ -573,18 +562,15 @@ describe('SetupWizard step 5 — repositories folder', () => {
     await pickClaudeAndGoToRepoStep();
   }
 
-  test('single input; save posts the path, then asks which repositories to approve', async () => {
+  test('single input; save posts the path, then finishes — every repository in it is usable', async () => {
     await goToRepoStep();
     const input = document.querySelector('.setup-wizard-input');
     fireEvent.change(input, { target: { value: '/Users/dev/Projects' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
 
-    // The repositories in that folder, to approve before the first task.
-    await screen.findByText('Which repositories may the agent work in?');
-    expect(await screen.findByText('api')).toBeInTheDocument();
-    expect(screen.queryByText('Repository scope')).toBeNull();  // not on a first run
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    // No step after the folder but Finish: the folder is the whole answer.
     await screen.findByText('Almost there');
+    expect(screen.queryByText(/approve/i)).toBeNull();
     expect(updateSettings).toHaveBeenCalledWith(
       { repository_root_path: '/Users/dev/Projects' },
     );
@@ -650,7 +636,6 @@ describe('SetupWizard step 4 — finish', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
-    await passApproveStep();
 
     await screen.findByText('Almost there');
     expect(
@@ -679,7 +664,6 @@ describe('SetupWizard step 4 — finish', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
-    await passApproveStep();
 
     // Not "all set" before kato has checked its connections: that can fail.
     await screen.findByText('Starting kato…');
@@ -738,7 +722,6 @@ describe('SetupWizard resilience', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
-    await passApproveStep();
 
     await screen.findByText('Start failed');
     expect(screen.queryByText('Starting kato…')).toBeNull();

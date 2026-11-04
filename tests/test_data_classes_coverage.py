@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import unittest
 
-from kato_core_lib.data_layers.data.repository_approval import ApprovalSidecar
 from kato_core_lib.data_layers.data.task import Task
 
 
@@ -50,44 +49,6 @@ class TaskDataClassTests(unittest.TestCase):
         self.assertNotEqual(task, 'PROJ-1')
         self.assertNotEqual(task, None)
         self.assertNotEqual(task, {'id': 'PROJ-1'})
-
-
-class ApprovalSidecarFromDictTests(unittest.TestCase):
-    """``ApprovalSidecar.from_dict`` defensive parsing (line 104).
-
-    The sidecar is loaded from a JSON file the operator (or a stale
-    git checkout) can edit by hand. ``from_dict`` must accept any
-    shape of payload without crashing — bad shapes degrade to "no
-    approvals", not exceptions."""
-
-    def test_non_list_approved_field_degrades_to_empty(self) -> None:
-        # Line 104: if ``approved`` isn't a list (operator typed a
-        # string), we set ``raw_entries = []`` so the parse continues.
-        sidecar = ApprovalSidecar.from_dict({
-            'version': 1,
-            'approved': 'not a list — operator mistake',
-        })
-        self.assertEqual(len(sidecar.approved), 0)
-
-    def test_none_payload_returns_empty_sidecar(self) -> None:
-        # ``payload = payload or {}`` — passing None must not crash.
-        sidecar = ApprovalSidecar.from_dict(None)
-        self.assertEqual(len(sidecar.approved), 0)
-
-    def test_dict_entries_without_repository_id_are_skipped(self) -> None:
-        # Entries missing repository_id (or having a non-dict shape)
-        # are filtered out of the comprehension — defensive parsing
-        # for hand-edited sidecars.
-        sidecar = ApprovalSidecar.from_dict({
-            'approved': [
-                {'repository_id': 'repo-a', 'sha': 'abc'},
-                {},                       # missing repository_id
-                {'repository_id': ''},    # empty repository_id
-                'not a dict',             # wrong shape
-            ],
-        })
-        self.assertEqual(len(sidecar.approved), 1)
-        self.assertEqual(sidecar.approved[0].repository_id, 'repo-a')
 
 
 if __name__ == '__main__':

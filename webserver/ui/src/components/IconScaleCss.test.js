@@ -25,7 +25,6 @@ const EXEMPT = [
   /kato-btn-spinner/,        // 1.05em — tracks its host button's font-size
   /chat-sticky-prompt-toggle/, // full-width row, not a button box
   /settings-drawer-toggle/,  // a switch control
-  /settings-drawer-approval-toggle/,
   /tabs-pane:not\(\.tabs-pane-top\)/, // legacy sidebar layout, never rendered
   // Text buttons: their font-size is a LABEL, not a glyph.
   // ``files-tab-filter-toggle`` is the search field's Match case / Exact

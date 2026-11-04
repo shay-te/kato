@@ -13,13 +13,6 @@ function fakeKato({ create = { status: 202, body: { task_id: 'LOCAL-1' } } } = {
     if (url === '/api/repositories') {
       return respond(200, { repositories: [{ id: 'web' }, { id: 'api' }, { id: 'billing' }] });
     }
-    if (url === '/api/repository-approvals') {
-      return respond(200, { repositories: [
-        { repository_id: 'api', approved: true },
-        { repository_id: 'web', approved: true },
-        { repository_id: 'billing', approved: false },
-      ] });
-    }
     if (url === '/api/models') {
       return respond(200, { models: [
         { id: 'sonnet', label: 'Sonnet 5.5' }, { id: 'opus', label: 'Opus 5.5', default: true },
@@ -79,22 +72,12 @@ describe('NewTaskPane', () => {
     expect(create).toBeEnabled();
   });
 
-  test('repositories are listed A→Z and an unapproved one cannot be picked', async () => {
+  test('every repository kato found is listed A→Z, and any can be picked', async () => {
     fakeKato();
     renderPane();
     const boxes = await screen.findAllByRole('checkbox');
-    expect(boxes.map((box) => box.closest('label').textContent)).toEqual([
-      'api', 'billingnot approved — approve it in Settings → Approvals', 'web',
-    ]);
-    expect(screen.getByRole('checkbox', { name: /billing/ })).toBeDisabled();
-  });
-
-  test('an unapproved repository links straight to Settings → Approvals', async () => {
-    fakeKato();
-    const onOpenSettings = vi.fn();
-    render(<NewTaskPane onCreated={vi.fn()} onHide={vi.fn()} onOpenSettings={onOpenSettings} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Settings → Approvals' }));
-    expect(onOpenSettings).toHaveBeenCalledWith('approvals');
+    expect(boxes.map((box) => box.closest('label').textContent)).toEqual(['api', 'billing', 'web']);
+    expect(boxes.every((box) => !box.disabled)).toBe(true);
   });
 
   test('no repositories at all says why, and where to set the folder', async () => {
@@ -163,7 +146,7 @@ describe('NewTaskPane', () => {
   });
 
   test('a refusal keeps the draft', async () => {
-    fakeKato({ create: { status: 403, body: { error: 'not approved' } } });
+    fakeKato({ create: { status: 400, body: { error: 'no repository matches billing' } } });
     const { onCreated } = renderPane();
     await fillIn();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });

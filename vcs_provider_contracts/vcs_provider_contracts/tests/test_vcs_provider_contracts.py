@@ -58,6 +58,9 @@ class ContractPullRequestProvider(object):
     ) -> list[PullRequest]:
         return [PullRequest(id='1', title=title_prefix)]
 
+    def decline_pull_request(self, repo_owner, repo_slug, pull_request_id):
+        return None
+
     def reply_to_review_comment(
         self,
         repo_owner: str,

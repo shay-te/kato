@@ -1033,17 +1033,6 @@ class TasksEndpointTests(unittest.TestCase):
         response = self._client(agent=agent).post('/api/tasks/T-1/adopt')
         self.assertEqual(response.status_code, 404)
 
-    def test_adopt_403_when_rep_gate_blocks(self):
-        # ``restricted execution protocol`` in the error means the
-        # REP gate refused — must be 403 so the UI shows the right
-        # explainer instead of generic "task not assigned".
-        agent = _agent(adopt_task=lambda t: {
-            'adopted': False,
-            'error': 'restricted execution protocol blocks this repository',
-        })
-        response = self._client(agent=agent).post('/api/tasks/T-1/adopt')
-        self.assertEqual(response.status_code, 403)
-
     def test_adopt_500_on_unknown_error(self):
         agent = _agent(adopt_task=lambda t: {
             'adopted': False, 'error': 'clone failed: io error',
@@ -1224,7 +1213,7 @@ class FinishAndForgetWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 501)
 
     def test_finish_returns_500_when_agent_reports_error(self):
-        agent = _agent(finish_task_planning_session=lambda t: {
+        agent = _agent(finish_task_planning_session=lambda t, **kw: {
             'finished': False, 'error': 'no live session',
         })
         app = create_app(session_manager=_FakeManager(), agent_service=agent)
@@ -1232,12 +1221,15 @@ class FinishAndForgetWorkspaceTests(unittest.TestCase):
         self.assertEqual(response.status_code, 500)
 
     def test_finish_success_returns_payload(self):
-        agent = _agent(finish_task_planning_session=lambda t: {
+        calls = []
+        agent = _agent(finish_task_planning_session=lambda t, **kw: calls.append((t, kw)) or {
             'finished': True, 'pull_request_url': 'https://example/pr/2',
         })
         app = create_app(session_manager=_FakeManager(), agent_service=agent)
         response = app.test_client().post('/api/sessions/T-1/finish')
         self.assertEqual(response.status_code, 200)
+        # The button is the operator's: only it may close a plan sub-task's ticket.
+        self.assertEqual(calls, [('T-1', {'by_operator': True})])
         payload = response.get_json()
         self.assertTrue(payload['finished'])
         self.assertEqual(payload['pull_request_url'], 'https://example/pr/2')

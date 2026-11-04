@@ -284,6 +284,14 @@ class PullRequestDataAccessTests(unittest.TestCase):
 
         client.find_pull_requests.assert_not_called()
 
+    def test_declines_a_pull_request_on_its_host(self) -> None:
+        data_access, client = self._lookup_data_access()
+        client.decline_pull_request = Mock()
+        data_access.decline_pull_request('17')
+        call = client.decline_pull_request.call_args
+        self.assertEqual(call.kwargs['pull_request_id'], '17')
+        self.assertEqual((call.kwargs['repo_owner'], call.kwargs['repo_slug']), ('workspace', 'repo'))
+
     def test_resolves_review_comment_via_client(self) -> None:
         config = types.SimpleNamespace(
             base_url="https://bitbucket.example",

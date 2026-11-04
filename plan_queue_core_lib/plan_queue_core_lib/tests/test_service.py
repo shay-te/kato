@@ -167,6 +167,51 @@ class ServiceTests(unittest.TestCase):
         self.service.edit(approved.plan_id, drafts, step_model='', effort='')  # the same: nothing to rewrite
         self.assertEqual(self.launcher.updated, [])
 
+    def test_a_deleted_step_leaves_the_plan_and_frees_what_waited_on_it(self) -> None:
+        approved = self._approved(run=True)
+        self.service.tick()  # api and docs are released; ui waits for api
+        approved = self.service.get(approved.plan_id)
+        api = approved.step('api')
+        self.assertEqual(approved.step('ui').depends_on, ['api'])
+        self.launcher.withdrawn.clear()
+        after = self.service.remove_step(approved.plan_id, 'api')
+        self.assertIsNone(after.step('api'))
+        self.assertEqual(after.step('ui').depends_on, [])
+        self.assertEqual(after.step('ui').status, StepStatus.READY)  # nothing to wait for now
+        self.assertEqual(self.launcher.withdrawn, [(api.task_id, 'the task was deleted from the plan')])
+        self.assertIn(f'{api.task_id}: deleted', self.events)
+
+    def test_deleting_a_step_with_no_task_withdraws_nothing(self) -> None:
+        approved = self._approved()
+        self.launcher.withdrawn.clear()
+        # a host that creates tasks at release: the step has no task yet
+        def no_task(plan):
+            plan.step('docs').task_id = ''
+        self.service._registry.mutate(approved.plan_id, no_task)
+        self.service.remove_step(approved.plan_id, 'docs')
+        self.assertEqual(self.launcher.withdrawn, [])
+
+    def test_the_last_step_or_another_hosts_plan_cannot_be_deleted(self) -> None:
+        approved = self._approved()
+        self.service.remove_step(approved.plan_id, 'docs')
+        self.service.remove_step(approved.plan_id, 'ui')
+        with self.assertRaises(PlanQueueError) as caught:
+            self.service.remove_step(approved.plan_id, 'api')
+        self.assertIn('stop the plan instead', str(caught.exception))
+        with self.assertRaises(PlanQueueError):
+            self.service.remove_step(approved.plan_id, 'nope')
+        proposed = self._proposed('SRC-9')
+        with self.assertRaises(PlanQueueError):
+            self.service.remove_step(proposed.plan_id, 'api')  # not approved yet: edit the proposal
+
+    def test_a_task_that_changed_is_forgotten_by_the_progress_source(self) -> None:
+        forgotten = []
+        self.progress.forget = forgotten.append
+        self.service.task_changed(' T-101 ')
+        self.assertEqual(forgotten, ['T-101'])
+        del self.progress.forget
+        self.service.task_changed('T-101')  # a source that keeps nothing: nothing to do
+
     def test_every_step_task_names_the_task_its_plan_was_split_from(self) -> None:
         self.assertEqual(self.service.step_task_sources(), {})
         self._proposed('SRC-2')  # steps with no task yet name nothing

@@ -94,15 +94,6 @@ class KatoCoreLibTests(unittest.TestCase):
             PullRequestFields.DESTINATION_BRANCH: 'main',
         }
 
-        # The Restricted Execution Protocol gate would refuse the
-        # synthetic test repos because they're not on any approval
-        # sidecar. These tests cover workflow routing, not REP, so
-        # patch the service to a stub that pretends every repo is
-        # already approved.
-        approval_service_stub = Mock()
-        approval_service_stub.unapproved_repository_ids.return_value = []
-        approval_service_stub.restricted_mode_repository_ids.return_value = []
-
         with patch(
             'kato_core_lib.kato_core_lib.EmailCoreLib'
         ) as mock_email_core_lib_cls, patch(
@@ -114,10 +105,6 @@ class KatoCoreLibTests(unittest.TestCase):
         ) as mock_kato_client_cls, patch(
             'kato_core_lib.kato_core_lib.RepositoryService',
             return_value=repository_service,
-        ), patch.object(
-            KatoCoreLib,
-            '_build_repository_approval_service',
-            return_value=approval_service_stub,
         ):
             app = KatoCoreLib(cfg)
 
@@ -242,8 +229,6 @@ class KatoCoreLibTests(unittest.TestCase):
             task_branch_publishability_validator=ANY,
             workspace_provisioner=ANY,
             security_scanner_service=ANY,
-            repository_approval_service=ANY,
-            runtime_posture_supplier=ANY,
         )
         mock_task_failure_handler_cls.assert_called_once_with(
             task_service=mock_task_service_cls.return_value,
@@ -281,7 +266,8 @@ class KatoCoreLibTests(unittest.TestCase):
         observer = mock_task_state_service_cls.call_args.kwargs['done_observer']
         self.assertIs(observer(), app.done_announcements)
         told = [get() for get in app.done_announcements._observers]
-        self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer, app.task_containers])
+        self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer, app.task_containers,
+                                app.plan_queue_done_nudge])
         self.assertIsNotNone(app.release_notes_service)
         self.assertIsNotNone(app.slack_done_announcer)
         # The Done button posts the task to Slack too, through the same announcer.

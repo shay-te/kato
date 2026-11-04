@@ -4,8 +4,8 @@ These fill the remaining uncovered lines/branches in ``app.py`` that the
 rest of the webserver suite leaves open: the model/effort discovery routes
 (including the exception->fallback paths), the multi-repo Files/Changes/file
 endpoints' skip-and-fallback branches, the SSE generator heartbeat/preflight
-paths, the pre_tool_use hook rationale walk, the repository-approvals routes,
-and a handful of small defensive branches.
+paths, the pre_tool_use hook rationale walk, and a handful of small
+defensive branches.
 
 Self-contained fakes only (no imports from sibling test modules) so this
 file never clashes with parallel edits to the existing suites. No network,
@@ -1130,112 +1130,6 @@ class FallbackManagerTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 
-class RepositoryApprovalsRoutesTests(unittest.TestCase):
-    def _client(self):
-        return create_app(session_manager=_Manager()).test_client()
-
-    def test_get_repository_approvals_lists_candidates_and_orphans(self):
-        candidate = SimpleNamespace(
-            repository_id='client', remote_url='https://x/client.git',
-            source='inventory', workspace_path='/ws/client',
-        )
-        approved_entry = SimpleNamespace(
-            repository_id='client',
-            remote_url='https://x/client.git',
-            approval_mode=SimpleNamespace(value='restricted'),
-            approved_by='op',
-        )
-        orphan_entry = SimpleNamespace(
-            repository_id='gone',
-            remote_url='https://x/gone.git',
-            approval_mode=SimpleNamespace(value='trusted'),
-            approved_by='op2',
-        )
-        service = MagicMock()
-        service.list_approvals.return_value = [approved_entry, orphan_entry]
-        service.storage_path = '/cfg/approvals.json'
-
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_discovery_service.discover_all_repositories',
-            return_value=[candidate],
-        ), patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
-            return_value=service,
-        ):
-            body = self._client().get('/api/repository-approvals').get_json()
-
-        ids = {row['repository_id'] for row in body['repositories']}
-        self.assertEqual(ids, {'client', 'gone'})
-        client_row = next(r for r in body['repositories'] if r['repository_id'] == 'client')
-        self.assertTrue(client_row['approved'])
-        gone_row = next(r for r in body['repositories'] if r['repository_id'] == 'gone')
-        self.assertEqual(gone_row['source'], 'orphan')
-        self.assertEqual(body['storage_path'], '/cfg/approvals.json')
-
-    def test_post_repository_approvals_applies_approve_and_revoke(self):
-        from kato_core_lib.data_layers.data.repository_approval import ApprovalMode
-
-        service = MagicMock()
-        service.approve.return_value = SimpleNamespace(
-            repository_id='client',
-            approval_mode=SimpleNamespace(value='trusted'),
-        )
-        service.revoke.return_value = True
-
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
-            return_value=service,
-        ):
-            body = self._client().post('/api/repository-approvals', json={
-                'approve': [
-                    {'repository_id': 'client', 'remote_url': 'u', 'mode': 'trusted'},
-                    'not-a-dict',
-                    {'repository_id': '', 'remote_url': 'u'},
-                    {'repository_id': 'weird', 'mode': 'bogus-mode'},
-                ],
-                'revoke': ['old-repo', '', None],
-            }).get_json()
-
-        self.assertTrue(body['ok'])
-        self.assertEqual(
-            [a['repository_id'] for a in body['applied']['approved']],
-            ['client', 'client'],  # 'weird' falls back to RESTRICTED, still applied
-        )
-        self.assertEqual(body['applied']['revoked'], ['old-repo'])
-        # The bogus mode resolved to RESTRICTED via the except branch.
-        modes_called = [c.kwargs.get('mode') for c in service.approve.call_args_list]
-        self.assertIn(ApprovalMode.RESTRICTED, modes_called)
-
-    def test_an_approval_with_no_mode_is_trusted(self):
-        # Restricted also needs the Docker sandbox and a stricter scanner, which
-        # a new install has neither of: as the default it refused every task
-        # kato picked up by itself.
-        from kato_core_lib.data_layers.data.repository_approval import ApprovalMode
-
-        service = MagicMock()
-        service.approve.return_value = SimpleNamespace(
-            repository_id='client', approval_mode=SimpleNamespace(value='trusted'),
-        )
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
-            return_value=service,
-        ):
-            self._client().post('/api/repository-approvals', json={
-                'approve': [{'repository_id': 'client', 'remote_url': 'u'}],
-            })
-        self.assertEqual(service.approve.call_args.kwargs['mode'], ApprovalMode.TRUSTED)
-
-    def test_post_repository_approvals_rejects_non_array_payload(self):
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
-        ):
-            response = self._client().post(
-                '/api/repository-approvals', json={'approve': 'oops'},
-            )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('arrays', response.get_json()['error'])
-
-
 # --------------------------------------------------------------------------
 # _send_kato_png: no cache-control header branch (693->695)
 # --------------------------------------------------------------------------
@@ -1465,21 +1359,6 @@ class FileVanishedTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 # post repo approvals: revoke entry that is not actually revoked (1349->1345)
 # --------------------------------------------------------------------------
-
-
-class RepoApprovalsRevokeMissTests(unittest.TestCase):
-    def test_revoke_returning_false_is_not_listed(self):
-        service = MagicMock()
-        service.revoke.return_value = False  # nothing to revoke
-        app = create_app(session_manager=_Manager())
-        with patch(
-            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
-            return_value=service,
-        ):
-            body = app.test_client().post('/api/repository-approvals', json={
-                'revoke': ['absent-repo'],
-            }).get_json()
-        self.assertEqual(body['applied']['revoked'], [])
 
 
 # --------------------------------------------------------------------------

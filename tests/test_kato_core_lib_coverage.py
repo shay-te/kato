@@ -122,48 +122,6 @@ class BuildSecurityScannerServiceTests(unittest.TestCase):
         self.assertEqual(timeouts_by_name.get('bandit'), 15)
 
 
-class BuildRuntimePostureSupplierTests(unittest.TestCase):
-    """Lines 446-452: the supplier closure inspects the live scanner
-    config to decide ``scanner_blocks_at_medium``."""
-
-    def test_supplier_reads_scanner_blocks_at_medium(self) -> None:
-        from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
-            Severity,
-        )
-        scanner = MagicMock()
-        scanner._config.block_on_severity = (Severity.MEDIUM, Severity.HIGH)
-        supplier = KatoCoreLib._build_runtime_posture_supplier(
-            security_scanner_service=scanner,
-            bypass_permissions=True,
-            docker_mode_on=False,
-        )
-        posture = supplier()
-        self.assertTrue(posture.bypass_permissions)
-        self.assertFalse(posture.docker_mode_on)
-        self.assertTrue(posture.scanner_blocks_at_medium)
-
-    def test_supplier_handles_missing_scanner(self) -> None:
-        supplier = KatoCoreLib._build_runtime_posture_supplier(
-            security_scanner_service=None,
-            bypass_permissions=False,
-            docker_mode_on=True,
-        )
-        posture = supplier()
-        self.assertFalse(posture.scanner_blocks_at_medium)
-        self.assertTrue(posture.docker_mode_on)
-
-    def test_supplier_handles_scanner_without_config(self) -> None:
-        """Covers branch 485->488: scanner present but ``_config`` is None."""
-        scanner = SimpleNamespace(_config=None)
-        supplier = KatoCoreLib._build_runtime_posture_supplier(
-            security_scanner_service=scanner,
-            bypass_permissions=False,
-            docker_mode_on=False,
-        )
-        posture = supplier()
-        self.assertFalse(posture.scanner_blocks_at_medium)
-
-
 class ResolveTicketPlatformConfigTests(unittest.TestCase):
     """Line 484: raises when no per-platform config block is present."""
 

@@ -131,7 +131,7 @@ Every core-lib must meet all of these (use `youtrack_core_lib` as the reference 
 
 1. **100% test coverage** — every service function, every permutation of inputs
 2. **Flow tests A-Z** — end-to-end flow tests inside the lib's own `tests/` folder (`test_flow.py`)
-3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket/azure devops), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once; see `repository_approval_discovery_service.py`'s `_read_origin_url`, fixed after an audit found it drifted).
+3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket/azure devops), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once, and an audit had to catch it).
 4. **No kato references — AT ALL, ENFORCED.** The string `kato` (any case, incl. `KATO_*` env names) must NOT appear ANYWHERE in a core-lib — not source, tests, comments, or field names. All `KATO_*` variables and the `kato` brand live ONLY in `kato_core_lib`; every other lib reads GENERIC names (`AGENT_IGNORED_REPOSITORY_FOLDERS`, `CLAUDE_SESSIONS_ROOT`, …) or takes values via constructor/params, and `kato_core_lib` bridges its `KATO_*` config to those (e.g. `_export_agent_env_from_kato_config()`, `from_config(..., state_dir=...)`, `workspace_refusal_guidance`). This regresses during feature work, so it is gated: **`python -m unittest tests.test_corelib_agnostic_gate`** (runs in `kato test`) — a ratchet that fails the build when a lib gains a kato ref. Fix the code; never raise a ceiling. Full rule: AGENTS.md → "Core-libs stay kato-free".
 5. **Tests live inside the lib** — at `<lib>/<lib>/tests/`, not in the top-level `tests/` folder
 6. **Check for leaked tests** — after building a lib, grep `kato_core_lib/` and `tests/` for any tests that belong inside the lib instead
@@ -563,6 +563,28 @@ exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
 a local step's chat opens in Plan mode; a shared sub-task gets `kato:wait-planning` AT CREATION
 (`TrackerStepLauncher.prepare`; a failed tag fails the create, never "runs unplanned"), so every kato's
 pickup opens it in Plan and it codes once its plan is approved in its chat. Unticked = `implement`.
+**Done on a sub-task is ONE code path** (`finish_task_planning_session(task, by_operator=True)`): the header's
+Done and a started board card's Done (`PlanBoard.finishStep` → the same `finishTask` API, the same toast) push,
+open its PR into the main task's branch, and — for a plan's sub-task (`_is_plan_subtask`: it has a
+`plan_merge_branch`) — move its ticket to the tracker's **Done** (not In Review) through `move_task_to_done`, so
+every "on done" observer hears it: release notes, Slack, containers, and `PlanQueueDoneNudge`, which makes the
+board read that task again at once (`PlanQueueService.task_changed` → the tracker reader's `forget`; it used to
+wait out the minute's cache). The card then shows "Waiting for merge" and is Done once its PR is merged — the
+tasks after it never start without its code. Only the operator closes a ticket: the agent's `<KATO_TASK_DONE>`
+calls the same function WITHOUT `by_operator` and still moves to In Review. A sub-task left in In Review used to
+sit there forever ("I click Done on a subtask, the board never moves").
+**Deleting a sub-task** (the card's trash, any state, plans this kato drives): `POST …/steps/<id>/delete` →
+`plan_queue/step_deletion.py` declines every OPEN pull request of its branch in each of its repositories
+(`RepositoryService.decline_open_pull_requests` → `PullRequestDataAccess` → `repository_core_lib` →
+`decline_pull_request` on the host: Bitbucket decline, GitHub/GitLab close, Azure DevOps abandon — the
+`PullRequestProvider` contract), and only when every decline worked takes the step out of the plan
+(`PlanQueueService.remove_step`: the tasks waiting on it stop waiting; a tracker ticket is withdrawn — noted,
+unassigned, never deleted; a plan keeps one step). A decline that failed answers 502 and changes nothing more.
+The board then deletes the task itself with the tab's ✕ call (`forgetTaskWorkspace`: folder, chat, containers).
+**The main task follows its merged sub-tasks:** when the ticker sees a step's pull request merged
+(`merged_listener`), `plan_queue/main_task_follows.py` runs the main task's Pull (`publish.pull_task`,
+fast-forward only; a dirty or diverged clone is left alone and logged) in the background — its clones were
+never pulled, so its Changes said "Nothing changed yet" while its branch held the whole plan's work.
 **Run starts every ready step; a card's Start starts ONE** (`start_step` → `PlanTicker.release_now`, any live
 plan, even approved/paused; only the driver; only a READY step). **"Done" is the provider's done state OR one
 listed in `KATO_DONE_STATES`** (`helpers/done_states_utils.py`, General settings, read fresh). The plan on
@@ -721,20 +743,18 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   Written from Atlassian's docs, not yet run against a live Jira.
 
 ### First run (what a new user meets)
-- **Approvals:** every message about an unapproved repository is built by
-  `helpers/repository_approval_hint_utils.py` ("Settings → Approvals"; JS: `constants/settingsTabs.js`) —
-  the old command-line picker is gone, and `tests/test_repository_approval_hint_utils.py` fails if anything
-  names its command again. New approvals default to **trusted** (panel + route): restricted also needs the Docker sandbox AND
-  the scanner blocking MEDIUM (no setting for that yet), so as the default it refused every task kato picked
-  up by itself. A stored approval with no mode is still restricted. New task's note links to the tab
-  (`SettingsDrawer initialTab`, `App.openSettings(tab)`).
+- **Repositories:** every repository under `REPOSITORY_ROOT_PATH` is one kato works in. There is NO per-repository
+  approval — it was removed entirely (2026-11-04) because it blocked every new user and annoyed every old one;
+  do not bring one back. The only ways to keep kato out of a repository are the two fields on Settings →
+  Repositories (`panel: 'repositories'`): `KATO_IGNORED_REPOSITORY_FOLDERS` (not discovered) and
+  `KATO_REPOSITORY_DENYLIST` (never touched). `SettingsDrawer initialTab` / `App.openSettings(tab)` open a tab
+  from a message elsewhere (New task's "no repositories found" → Repositories).
 - **Wizard:** the ticket step saves, then tests the connection (`POST /api/setup/test-tracker-connection` →
   `validation/tracker_connection_check.py`: kato's own validation in a CHILD process whose env is the saved
   settings — never mutate the server's env, setup mode snapshots/restores it) and shows the whole error on
   that step (Continue anyway allowed). The Claude step shows installed / signed in (`claude auth status` via
   `claude_core_lib/helpers/auth_status.py`, folded into the readiness probe as `logged_in`; None = cannot
-  tell, never "signed out"). After the folder step: "Approve repositories" (the Approvals panel,
-  `showScope={false}`; discovery reads the saved folder through `effective_config_env`). Finish says
+  tell, never "signed out"). The folder step is the last before Finish. Finish says
   "Starting kato…" — never "all set" before the connection check passes; once running, a one-time
   "Kato is running — next steps" toast (`useSetupFinishedNote`).
 - **A configured kato that cannot connect** sets `SETUP_KIND=cannot_connect` → the gate says so ("Kato
@@ -748,7 +768,7 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   → POST /api/local-tasks {summary, description, repositories, start_mode, model, effort}
     (webserver/kato_webserver/local_task_routes.py)
   → LocalTaskService.create (kato_core_lib/data_layers/service/local_task_service.py):
-      repos resolve + REP approval checked BEFORE anything is written → store LOCAL-<n>
+      repos resolve + branch name checked BEFORE anything is written → store LOCAL-<n>
       as IN_PROGRESS → workspace record (the tab appears at once, "provisioning")
   → mode / model / effort overrides set (the CLI bakes them at spawn) → 202 {task_id}
   → background: WaitPlanningService.resolve_planning_context (clone + branch — the same

@@ -49,7 +49,7 @@ _STATUS_BY_KIND = {
     ErrorKind.INVALID: 400,
     ErrorKind.UNAVAILABLE: 503,
 }
-_STEP_ACTIONS = ('start', 'plan', 'satisfy', 'retry', 'cancel', 'check')
+_STEP_ACTIONS = ('start', 'plan', 'satisfy', 'retry', 'cancel', 'check', 'delete')
 
 
 def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[str]]) -> None:
@@ -264,10 +264,33 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
     def discard_plan_queue(plan_id: str):
         return answer(lambda service: service.discard(plan_id))
 
+    def delete_step(plan_id: str, step_id: str):
+        """Delete a sub-task: its open pull requests declined, then the step
+        out of the plan (``plan_queue/step_deletion.py``). The board then
+        deletes the task itself (its folder, chat, containers) — the tab's ✕."""
+        from kato_core_lib.data_layers.service.plan_queue.step_deletion import PlanStepDeletion
+
+        def run(service):
+            agent = app.config.get('AGENT_SERVICE')
+            deletion = PlanStepDeletion(queue=service, repository_service=getattr(agent, 'repository_service', None))
+            return deletion.delete(plan_id, step_id)
+
+        service = queue()
+        if service is None:
+            return unavailable()
+        try:
+            outcome = run(service)
+        except PlanQueueError as exc:
+            return jsonify({'error': str(exc)}), _STATUS_BY_KIND.get(exc.kind, 409)
+        body, status = _deleted_answer(outcome)
+        return jsonify(body), status
+
     @app.post('/api/plan-queues/<plan_id>/steps/<step_id>/<action>')
     def plan_queue_step_action(plan_id: str, step_id: str, action: str):
         if action not in _STEP_ACTIONS:
             return jsonify({'error': f'unknown action {action!r}'}), 404
+        if action == 'delete':
+            return delete_step(plan_id, step_id)
         # A ready card's two ways to start ONE task: Plan (its agent plans
         # first, in Plan mode) or Start (it implements right away) — the
         # operator's pick for that task, whatever was chosen at Approve.
@@ -281,6 +304,15 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             'check': 'check_now',
         }
         return answer(lambda service: getattr(service, methods[action])(plan_id, step_id))
+
+
+def _deleted_answer(outcome: dict) -> tuple[dict, int]:
+    """The board's answer to a delete: the plan (when the step left it) and
+    what happened — its task, the pull requests declined, what stopped it."""
+    deleted = {key: outcome[key] for key in ('task_id', 'declined', 'problems')}
+    if outcome['plan'] is None:
+        return {'error': 'the task was not deleted: ' + '; '.join(outcome['problems']), 'deleted': deleted}, 502
+    return {**outcome['plan'].to_dict(), 'deleted': deleted}, 200
 
 
 def _drafts(value) -> tuple[list[StepDraft], str]:

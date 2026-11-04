@@ -99,28 +99,15 @@ export function toggleRepository(selected, repositoryId) {
     : [...selected, repositoryId];
 }
 
-// Ids REP has approved, lower-cased. ``null`` when the approvals could not be
-// read — then nothing is shown as blocked (the server still refuses an
-// unapproved repository, with a clear message).
-export function approvedIdSet(approvalsBody) {
-  const rows = approvalsBody?.repositories;
-  if (!Array.isArray(rows)) { return null; }
-  return new Set(rows.filter((row) => row.approved).map((row) => String(row.repository_id).toLowerCase()));
-}
-
 // The picker's rows: alphabetical, filtered by the search text, each marked
-// selected / approved.
-export function repositoryChoices(inventory, approved, { filter = '', selected = [] } = {}) {
+// selected.
+export function repositoryChoices(inventory, { filter = '', selected = [] } = {}) {
   const needle = filter.trim().toLowerCase();
   return (inventory || [])
     .map((repository) => String(repository.id))
     .filter((id) => !needle || id.toLowerCase().includes(needle))
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-    .map((id) => ({
-      id,
-      selected: selected.includes(id),
-      approved: approved === null || approved.has(id.toLowerCase()),
-    }));
+    .map((id) => ({ id, selected: selected.includes(id) }));
 }
 
 // The concrete model the picker shows: the operator's pick, else the

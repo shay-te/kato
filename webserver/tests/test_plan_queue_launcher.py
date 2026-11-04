@@ -57,7 +57,7 @@ class LocalStepLauncherTests(unittest.TestCase):
         self.assertEqual(self.starter.start.call_args.args[1], 'implement')
 
     def test_refusals(self) -> None:
-        self.local_tasks.create.side_effect = LocalTaskRejected('repo not approved', unapproved=['api'])
+        self.local_tasks.create.side_effect = LocalTaskRejected('no repository matches api')
         with self.assertRaises(LaunchRefused):
             self.launcher.release(_request(), '')
         with self.assertRaises(LaunchRefused):

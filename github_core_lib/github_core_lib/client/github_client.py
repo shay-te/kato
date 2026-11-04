@@ -186,6 +186,25 @@ mutation($threadId: ID!) {
             matches.append(self._normalize_pr(item))
         return matches
 
+    def decline_pull_request(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        # GitHub has no "decline": closing a pull request without merging it
+        # is a PATCH of its ``state`` to ``closed``.
+        pull_request_number = normalized_text(pull_request_id)
+        if not pull_request_number:
+            raise ValueError('GitHub pull request id is required to close the pull request')
+        response = self._patch_with_retry(
+            f'/repos/{repo_owner}/{repo_slug}/pulls/{pull_request_number}',
+            json={'state': 'closed'},
+        )
+        # Detail-preserving: GitHub puts the reason for a refusal (422, 403,
+        # 404) in the body's ``message``.
+        self.raise_for_status_with_detail(response)
+
     def resolve_review_comment(
         self,
         repo_owner: str,

@@ -6,7 +6,6 @@ import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
 import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
 import NotificationsSettingsPanel from './NotificationsSettingsPanel.jsx';
 import RepositoriesSettingsPanel from './RepositoriesSettingsPanel.jsx';
-import RepositoryApprovalsSettingsPanel from './RepositoryApprovalsSettingsPanel.jsx';
 import SchemaSettingsPanel from './SchemaSettingsPanel.jsx';
 import TaskProviderSettingsPanel from './TaskProviderSettingsPanel.jsx';
 import {
@@ -16,18 +15,16 @@ import {
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { cx } from '../utils/cx.js';
 import { buildSettingsIndex, filterSettingsIndex } from '../utils/settingsSearch.js';
-import { SETTINGS_TAB_APPROVALS, SETTINGS_TAB_REPOSITORIES } from '../constants/settingsTabs.js';
+import { SETTINGS_TAB_REPOSITORIES } from '../constants/settingsTabs.js';
 
 // Right-side drawer hosting every operator-editable setting under
-// tabs. Five tabs have bespoke logic (provider switchers, the
-// approvals table, repo-root path validation, notification
-// toggles); the rest are DATA-DRIVEN — one tab per section of the
+// tabs. A few tabs have bespoke logic (provider switchers,
+// repo-root path validation, notification toggles); the rest are DATA-DRIVEN — one tab per section of the
 // ``/api/all-settings`` schema, rendered by the generic
 // SchemaSettingsPanel. Adding a new env setting = one entry in
 // kato_settings_schema.py, no UI change.
 
 const TAB_REPOS = SETTINGS_TAB_REPOSITORIES;
-const TAB_APPROVALS = SETTINGS_TAB_APPROVALS;
 const TAB_PERMISSIONS = 'claude-permissions';
 const TAB_ACTION_GUARD = 'action-guard';
 const TAB_PROMPTS = 'prompts';
@@ -52,12 +49,6 @@ const BESPOKE_TABS = [
     label: 'Repositories',
     description: 'Which repositories kato works on, and the root path it '
       + 'scans to discover them.',
-  },
-  {
-    id: TAB_APPROVALS,
-    label: 'Approvals',
-    description: 'Which repositories the agent is allowed to touch, and the '
-      + 'scope granted to each.',
   },
   {
     id: TAB_PERMISSIONS,
@@ -109,8 +100,8 @@ export default function SettingsDrawer({
   open,
   onClose,
   notificationProps,
-  // Open on this tab ('' = where it was): a message elsewhere that says
-  // "approve it in Settings → Approvals" opens exactly there.
+  // Open on this tab ('' = where it was): a message elsewhere that names a
+  // place in Settings ("set the folder in Settings → Repositories") opens there.
   initialTab = '',
 }) {
   const [tab, setTab] = useState(initialTab || TAB_REPOS);
@@ -190,9 +181,7 @@ export default function SettingsDrawer({
 
   let panel;
   if (tab === TAB_REPOS) {
-    panel = <RepositoriesSettingsPanel />;
-  } else if (tab === TAB_APPROVALS) {
-    panel = <RepositoryApprovalsSettingsPanel highlightKey={highlightKey} />;
+    panel = <RepositoriesSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_PERMISSIONS) {
     panel = <ClaudePermissionsSettingsPanel open={open} />;
   } else if (tab === TAB_ACTION_GUARD) {

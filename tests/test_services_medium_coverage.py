@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -593,109 +592,6 @@ class WorkspaceRecoveryServiceTests(unittest.TestCase):
 
 
 # ============================================================================
-# RepositoryApprovalService — defensive paths
-# ============================================================================
-
-
-class RepositoryApprovalServiceTests(unittest.TestCase):
-    def test_default_storage_path_honours_env_override(self) -> None:
-        # Line 58.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            APPROVED_REPOSITORIES_PATH_ENV_KEY, default_storage_path,
-        )
-        with patch.dict(os.environ,
-                        {APPROVED_REPOSITORIES_PATH_ENV_KEY: '~/custom.json'}):
-            path = default_storage_path()
-        self.assertTrue(str(path).endswith('custom.json'))
-
-    def test_is_approved_returns_none_for_blank_id(self) -> None:
-        # Line 104.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            self.assertIsNone(service.is_approved(''))
-            self.assertIsNone(service.is_approved('   '))
-
-    def test_lookup_returns_none_for_blank_id(self) -> None:
-        # Line 114.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            self.assertIsNone(service.lookup(''))
-
-    def test_lookup_returns_none_when_not_in_sidecar(self) -> None:
-        # Line 119: loop completes without match → return None.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            self.assertIsNone(service.lookup('never-approved'))
-
-    def test_approve_raises_for_blank_repository_id(self) -> None:
-        # Line 142.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            with self.assertRaisesRegex(ValueError, 'repository_id must be non-empty'):
-                service.approve('', 'https://example.com/r.git')
-
-    def test_revoke_returns_false_for_blank_id(self) -> None:
-        # Line 171.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            self.assertFalse(service.revoke(''))
-
-    def test_unapproved_skips_blank_ids_in_input(self) -> None:
-        # Line 194: ``if not repo_id: continue``.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            result = service.unapproved_repository_ids([
-                SimpleNamespace(id=''),  # skipped
-                SimpleNamespace(id='unapproved-1'),
-            ])
-            self.assertEqual(result, ['unapproved-1'])
-
-    def test_restricted_mode_skips_blank_ids(self) -> None:
-        # Line 213: ``if not repo_id: continue``.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            service = RepositoryApprovalService(Path(td) / 'approvals.json')
-            result = service.restricted_mode_repository_ids([
-                SimpleNamespace(id=''),
-                SimpleNamespace(id='some-repo'),
-            ])
-            # Neither is approved; result is empty but no crash on blank id.
-            self.assertEqual(result, [])
-
-    def test_operator_identity_falls_back_to_username_then_unknown(self) -> None:
-        # Line 67-68: ``user or 'unknown'``.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            operator_identity,
-        )
-        # No KATO_OPERATOR_EMAIL, no USER, no USERNAME.
-        self.assertEqual(operator_identity(env={}), 'unknown')
-        # USER set → wins over default.
-        self.assertEqual(operator_identity(env={'USER': 'alice'}), 'alice')
-        # USERNAME (Windows) set → wins.
-        self.assertEqual(operator_identity(env={'USERNAME': 'bob'}), 'bob')
-
-
-# ============================================================================
 # RepositoryPublicationService — error paths
 # ============================================================================
 
@@ -1209,16 +1105,6 @@ class MediumServicesRemainingEdgeTests(unittest.TestCase):
         session.is_working = False
         result = runner._wait_for_terminal_event(session, task_id='T')
         self.assertIs(result, terminal)
-
-    def test_approval_service_storage_path_property(self) -> None:
-        # Line 94: @property accessor.
-        from kato_core_lib.data_layers.service.repository_approval_service import (
-            RepositoryApprovalService,
-        )
-        with tempfile.TemporaryDirectory() as td:
-            target = Path(td) / 'approvals.json'
-            service = RepositoryApprovalService(target)
-            self.assertEqual(service.storage_path, target)
 
     def test_publication_find_pull_requests_succeeds(self) -> None:
         # Line 119: success branch — api ready, delegates to data access.

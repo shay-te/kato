@@ -979,6 +979,20 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             state=PullRequestStates.ALL,
         )
 
+    def decline_open_pull_requests(self, repository, *, source_branch: str) -> list[dict[str, str]]:
+        """Decline every OPEN pull request ``source_branch`` has on
+        ``repository`` (the work was thrown away); returns those declined.
+        Raises — never answers [] — when the pull request API cannot be asked
+        or the host refuses, so a pull request left open is never reported as
+        handled."""
+        declined = []
+        for pull_request in self.pull_request_states(repository, source_branch=source_branch):
+            if str(pull_request.get('state') or '').lower() != PullRequestStates.OPEN:
+                continue
+            self._pull_request_data_access(repository).decline_pull_request(str(pull_request.get('id') or ''))
+            declined.append(pull_request)
+        return declined
+
     def _resolve_branch_state(self, repository, normalized_branch: str):
         """Shared preamble for the branch gates: validate + read HEAD.
 

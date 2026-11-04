@@ -125,8 +125,20 @@ export function cardActions(step, planStatus) {
       satisfy,
     ];
   }
+  // A started task: the same Done as on the task itself (push, its pull
+  // request, its ticket to Done) — one code path, wherever it is pressed.
+  if (LIVE_PLAN.includes(planStatus) && step.task_id && STARTED_STEPS.includes(step.status)) {
+    return [{
+      action: 'done',
+      label: 'Done',
+      tip: `Done on ${stepCode(step)}, as on the task itself: push, open its pull request, move its `
+        + 'ticket to Done. The card counts as done once that pull request is merged.',
+    }];
+  }
   return stuckActions(step);
 }
+
+const STARTED_STEPS = ['starting', 'active', 'in_review'];
 
 // What a card says under its title. A step that is ready to be handed over says
 // what it waits for: while the plan is PAUSED nothing is handed over — a restart

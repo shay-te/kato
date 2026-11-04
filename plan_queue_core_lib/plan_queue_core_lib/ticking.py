@@ -105,7 +105,11 @@ class PlanTicker(object):
         history: HistoryProbe | None = None,
         conversation: SplitConversation | None = None,
         proposer_picks_repositories: bool = True,
+        merged_listener: Callable[[Plan, Step], None] | None = None,
     ) -> None:
+        # Told when a step's change request is seen merged (the host brings
+        # the plan's main task up to date with it). A failure is logged.
+        self._merged_listener = merged_listener
         # A split read from the chat is the proposer's too.
         self._per_step_repositories = proposer_picks_repositories
         self._conversation = conversation
@@ -327,6 +331,8 @@ class PlanTicker(object):
             return outcome
 
         outcome = self._registry.mutate(plan_id, apply)
+        if outcome == 'merged':
+            self._tell_merged(plan_id, step.id)
         if outcome:
             self._note(plan_id, f'{step.task_id}: {outcome}')
 
@@ -474,6 +480,15 @@ class PlanTicker(object):
             return True
 
         self._registry.mutate(plan_id, published)
+
+    def _tell_merged(self, plan_id: str, step_id: str) -> None:
+        if self._merged_listener is None:
+            return
+        plan = self._registry.get(plan_id)
+        try:
+            self._merged_listener(plan, plan.step(step_id))
+        except Exception:
+            self._logger.exception('telling the host step %s of plan %s was merged failed', step_id, plan_id)
 
     def _note(self, plan_id: str, event: str) -> None:
         if self._observer is None:

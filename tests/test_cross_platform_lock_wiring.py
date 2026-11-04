@@ -24,13 +24,11 @@ from utils_core_lib.utils_core_lib import file_lock
 from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 
 from kato_core_lib.comment_core_lib import comment_store
-from kato_core_lib.data_layers.service import repository_approval_service
 from kato_core_lib.helpers import hash_chain_log
 from sandbox_core_lib.sandbox_core_lib import manager
 
 LOCK_CALL_SITES = (
     comment_store,
-    repository_approval_service,
     hash_chain_log,
     manager,
 )

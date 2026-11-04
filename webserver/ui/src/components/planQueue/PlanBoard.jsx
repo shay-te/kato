@@ -1,9 +1,13 @@
 import { useState } from 'react';
 import {
-  addPlanDoneState, controlPlanQueue, fetchPlanQueue, planQueueStepAction, takeOverPlanQueue,
+  addPlanDoneState, controlPlanQueue, fetchPlanQueue, finishTask, forgetTaskWorkspace, planQueueStepAction,
+  takeOverPlanQueue,
 } from '../../api.js';
+import { toastResult } from '../../stores/toastStore.js';
+import { formatFinishResult } from '../sessionHeaderFormatters.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
+import Icon from '../Icon.jsx';
 import {
   PLAN_STATUS_TEXT,
   boardColumns,
@@ -19,6 +23,7 @@ import {
   stepWorker,
 } from './planQueueHelpers.js';
 import { planAction } from './planQueueActions.js';
+import { deleteStepConfirm, deletedStepToast } from './planStepDeleteText.js';
 import PlanLiveEditor from './PlanLiveEditor.jsx';
 
 const CONTROL_LABELS = { run: 'Run', pause: 'Pause', stop: 'Stop' };
@@ -54,6 +59,30 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
       if (!added.ok) { return added; }
       return { ok: true, body: await fetchPlanQueue(plan.plan_id) };
     }, `Could not count “${state}” as done`);
+  }
+
+  // A started card's Done: THE task's Done (``finishTask``, the header's
+  // call) — its toast too — then the board is read again.
+  function finishStep(step) {
+    act(async () => {
+      toastResult(formatFinishResult(await finishTask(step.task_id), step.task_id));
+      return { ok: true, body: await fetchPlanQueue(plan.plan_id) };
+    }, `Could not finish ${stepCode(step)}`);
+  }
+
+  // Delete a sub-task: its pull requests declined and the step out of the
+  // plan (the server), then the task itself — folder, chat, containers —
+  // through the tab's own delete. Said in one toast, problems first.
+  function deleteStep(step) {
+    if (!window.confirm(deleteStepConfirm(step))) { return; }
+    act(async () => {
+      const result = await planQueueStepAction(plan.plan_id, step.id, 'delete');
+      if (!result.ok) { return result; }
+      const deleted = result.body?.deleted || {};
+      const forgot = deleted.task_id ? await forgetTaskWorkspace(deleted.task_id) : null;
+      toastResult(deletedStepToast(stepCode(step), deleted, forgot));
+      return result;
+    }, `Could not delete ${stepCode(step)}`);
   }
 
   function takeOver() {
@@ -118,10 +147,12 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
                     planStatus={plan.status}
                     busy={busy}
                     readOnly={followed}
+                    onDelete={followed || !canEditPlan(plan) ? null : () => deleteStep(step)}
                     unknownState={followed ? '' : unknownStateOf(step, plan)}
                     onCountStateDone={countStateDone}
                     onOpenTask={onOpenTask}
                     onAction={(entry) => {
+                      if (entry.action === 'done') { finishStep(step); return; }
                       if (entry.confirm && !window.confirm(entry.confirm)) { return; }
                       act(
                         () => planQueueStepAction(plan.plan_id, step.id, entry.action),
@@ -141,6 +172,7 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
 
 function PlanCard({
   step, planStatus, busy, readOnly, onOpenTask, onAction, unknownState = '', onCountStateDone = () => {},
+  onDelete = null,
 }) {
   const note = stepNote(step, planStatus);
   const worker = stepWorker(step);
@@ -155,6 +187,13 @@ function PlanCard({
           {step.task_id}
         </button>
       ) : <code className="plan-card-code">{stepCode(step)}</code>}
+      {onDelete ? (
+        <button type="button" className="plan-card-delete" disabled={busy} onClick={onDelete}
+          aria-label={`Delete ${stepCode(step)}`}
+          data-tooltip="Delete this task: decline its pull requests, take it out of the plan, delete its folder.">
+          <Icon name="trash" />
+        </button>
+      ) : null}
       <span className="plan-card-title">{step.title}</span>
       {taskState ? (
         <span className="plan-card-state" data-tooltip="Its ticket's state on the tracker">{taskState}</span>

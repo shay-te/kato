@@ -53,6 +53,11 @@ class TrackerTaskProgress(object):
             for task_id in task_ids if task_id in self._seen
         }
 
+    def forget(self, task_id: str) -> None:
+        """Read ``task_id`` from the tracker again on the next look (it was
+        just moved here — waiting out the minute would hide that)."""
+        self._seen.pop(task_id, None)
+
 
 class RoutedTaskProgress(object):
     """Each task to the adapter that owns it: local tasks to the local store,
@@ -70,6 +75,11 @@ class RoutedTaskProgress(object):
         if tracked:
             found.update(self._tracker.observe(tracked))
         return found
+
+    def forget(self, task_id: str) -> None:
+        forget = getattr(self._tracker, 'forget', None)
+        if callable(forget) and not self._is_local(task_id):
+            forget(task_id)
 
 
 def _observation(status, names: dict[str, str], record) -> TaskObservation:

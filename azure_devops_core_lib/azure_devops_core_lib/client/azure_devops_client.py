@@ -141,6 +141,23 @@ class AzureDevOpsClient(PullRequestClientBase):
             matches.append(self._normalize_pr(item))
         return matches
 
+    def decline_pull_request(
+        self,
+        repo_owner: str,
+        repo_slug: str,
+        pull_request_id: str,
+    ) -> None:
+        """Abandon the pull request: Azure's way to close one without merging."""
+        if not normalized_text(pull_request_id):
+            raise ValueError('an Azure DevOps pull request id is required to abandon it')
+        response = self._patch_with_retry(
+            self._pull_request_path(repo_owner, repo_slug, pull_request_id),
+            params=_API,
+            json={'status': 'abandoned'},
+        )
+        # Detail-preserving: a refusal is a TF code and one sentence.
+        self.raise_for_status_with_detail(response)
+
     def list_pull_request_comments(
         self,
         repo_owner: str,

@@ -165,34 +165,11 @@ class AdoptTaskTests(unittest.TestCase):
         self.assertFalse(result['adopted'])
         self.assertIn('failed to resolve', result['error'])
 
-    def test_returns_unapproved_when_rep_refuses(self) -> None:
-        task = SimpleNamespace(id='T1', summary='x', description='', tags=[])
-        repo = MagicMock()
-        repo.resolve_task_repositories.return_value = [
-            SimpleNamespace(id='unapproved-repo'),
-        ]
-        service = AgentService(**_kwargs(
-            workspace_manager=MagicMock(),
-            repository_service=repo,
-        ))
-        with patch('kato_core_lib.data_layers.service.agent_service.'
-                   'find_assigned_or_review_task',
-                  return_value=task), \
-             patch(
-                 'kato_core_lib.data_layers.service.repository_approval_service.'
-                 'RepositoryApprovalService',
-             ) as approval_cls:
-            instance = approval_cls.return_value
-            instance.unapproved_repository_ids.return_value = ['unapproved-repo']
-            result = service.adopt_task('T1')
-        self.assertFalse(result['adopted'])
-        self.assertIn('unapproved-repo', result['unapproved_repositories'])
-
     def test_provisioning_failure_returns_error(self) -> None:
         task = SimpleNamespace(id='T1', summary='x', description='', tags=[])
         repo = MagicMock()
         repo.resolve_task_repositories.return_value = [
-            SimpleNamespace(id='approved-repo'),
+            SimpleNamespace(id='api'),
         ]
         service = AgentService(**_kwargs(
             workspace_manager=MagicMock(),
@@ -201,16 +178,11 @@ class AdoptTaskTests(unittest.TestCase):
         with patch('kato_core_lib.data_layers.service.agent_service.'
                    'find_assigned_or_review_task',
                   return_value=task), \
-             patch(
-                 'kato_core_lib.data_layers.service.repository_approval_service.'
-                 'RepositoryApprovalService',
-             ) as approval_cls, \
              patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
                  side_effect=RuntimeError('provisioning fail'),
              ):
-            approval_cls.return_value.unapproved_repository_ids.return_value = []
             service.logger = MagicMock()
             result = service.adopt_task('T1')
         self.assertFalse(result['adopted'])
@@ -220,7 +192,7 @@ class AdoptTaskTests(unittest.TestCase):
         task = SimpleNamespace(id='T1', summary='x', description='', tags=[])
         repo = MagicMock()
         repo.resolve_task_repositories.return_value = [
-            SimpleNamespace(id='approved-repo'),
+            SimpleNamespace(id='api'),
         ]
         service = AgentService(**_kwargs(
             workspace_manager=MagicMock(),
@@ -230,18 +202,13 @@ class AdoptTaskTests(unittest.TestCase):
                    'find_assigned_or_review_task',
                   return_value=task), \
              patch(
-                 'kato_core_lib.data_layers.service.repository_approval_service.'
-                 'RepositoryApprovalService',
-             ) as approval_cls, \
-             patch(
                  'kato_core_lib.data_layers.service.workspace_provisioning_service.'
                  'provision_task_workspace_clones',
-                 return_value=[SimpleNamespace(id='approved-repo')],
+                 return_value=[SimpleNamespace(id='api')],
              ):
-            approval_cls.return_value.unapproved_repository_ids.return_value = []
             result = service.adopt_task('T1')
         self.assertTrue(result['adopted'])
-        self.assertEqual(result['cloned_repositories'], ['approved-repo'])
+        self.assertEqual(result['cloned_repositories'], ['api'])
 
 
 

@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import requests
 
 from bitbucket_core_lib.bitbucket_core_lib.client.bitbucket_client import (
     BITBUCKET_PAGE_LENGTH,
@@ -695,6 +696,66 @@ class BitbucketClientTests(unittest.TestCase):
 
         self.assertEqual(len(prs), 1)
         self.assertEqual(prs[0][PullRequestFields.ID], '1')
+
+    def test_decline_pull_request_posts_to_decline_endpoint(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(json_data={PullRequestFields.ID: 31, 'state': 'DECLINED'})
+
+        with patch.object(client, '_post', return_value=response) as mock_post:
+            result = client.decline_pull_request('workspace', 'repo', ' 31 ')
+
+        self.assertIsNone(result)
+        response.raise_for_status.assert_called_once_with()
+        mock_post.assert_called_once_with(
+            '/repositories/workspace/repo/pullrequests/31/decline',
+        )
+
+    def test_decline_pull_request_retries_on_transient_status_code(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        retry_response = mock_response(status_code=503)
+        success_response = mock_response()
+
+        with patch.object(
+            client,
+            '_post',
+            side_effect=[retry_response, success_response],
+        ) as mock_post, patch(
+            'provider_client_base.provider_client_base.helpers.retry_utils.time.sleep',
+        ):
+            client.decline_pull_request('workspace', 'repo', '31')
+
+        self.assertEqual(mock_post.call_count, 2)
+        success_response.raise_for_status.assert_called_once_with()
+
+    def test_decline_pull_request_raises_with_detail_when_bitbucket_refuses(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        response = mock_response(
+            status_code=400,
+            json_data={
+                'type': 'error',
+                'error': {'message': 'You can only decline open pull requests.'},
+            },
+        )
+        response.raise_for_status.side_effect = requests.HTTPError('400 Client Error')
+
+        with patch.object(client, '_post', return_value=response):
+            with self.assertRaisesRegex(
+                requests.HTTPError,
+                '400 Client Error: You can only decline open pull requests.',
+            ):
+                client.decline_pull_request('workspace', 'repo', '31')
+
+    def test_decline_pull_request_raises_for_blank_id_without_a_request(self) -> None:
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+
+        for blank_id in ('', '   '):
+            with self.subTest(pull_request_id=blank_id):
+                with patch.object(client, '_post') as mock_post:
+                    with self.assertRaisesRegex(
+                        ValueError, 'bitbucket pull request id is required',
+                    ):
+                        client.decline_pull_request('workspace', 'repo', blank_id)
+                mock_post.assert_not_called()
 
     def test_resolve_review_comment_posts_to_resolution_endpoint(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')

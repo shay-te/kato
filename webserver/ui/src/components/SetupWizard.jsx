@@ -24,7 +24,6 @@ import {
 } from '../utils/credentialSourceFields.js';
 import FolderBrowser from './FolderBrowser.jsx';
 import AgentCliStatus from './AgentCliStatus.jsx';
-import RepositoryApprovalsSettingsPanel from './RepositoryApprovalsSettingsPanel.jsx';
 import { toast } from '../stores/toastStore.js';
 import { NO_TRACKER, TICKET_SYSTEMS } from '../constants/ticketSystems.js';
 
@@ -145,7 +144,7 @@ const AGENT_KEYS = [
 
 const STEP_TITLES = [
   'Ticket system', 'Ticket details', 'AI agent', 'Agent details',
-  'Repositories', 'Approve', 'Finish',
+  'Repositories', 'Finish',
 ];
 
 export default function SetupWizard({ status, onRefreshStatus, onOpenFullSettings }) {
@@ -416,7 +415,7 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
     if (!ok) { return; }
     toast.show({ kind: 'success', title: 'Saved', message: 'Repositories folder set.' });
     await onRefreshStatus();
-    setStep(5);  // which of them the agent may work in
+    setStep(5);
   };
 
   const onSaveAgent = async () => {
@@ -537,15 +536,11 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       )}
 
       {step === 5 && (
-        <StepApproveRepositories onBack={() => setStep(4)} onNext={() => setStep(6)} />
-      )}
-
-      {step === 6 && (
         <StepFinish
           isConfigured={isConfigured}
           startFailed={Boolean(status?.setup_error)}
           missing={missing}
-          onBack={() => setStep(5)}
+          onBack={() => setStep(4)}
           onRecheck={onRefreshStatus}
           onOpenFullSettings={onOpenFullSettings}
         />
@@ -873,27 +868,6 @@ function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
         canSave={Boolean(repoRoot.trim())}
         saving={saving}
       />
-    </div>
-  );
-}
-
-// Kato works only in repositories approved here. Asked during setup: skipping
-// it left a new user's first task with every repository greyed out.
-function StepApproveRepositories({ onBack, onNext }) {
-  return (
-    <div className="setup-wizard-body">
-      <h3 className="setup-wizard-heading">Which repositories may the agent work in?</h3>
-      <p className="setup-wizard-lead">
-        Kato works only in repositories you approve. Tick the ones you want now and save —
-        you can change this any time in Settings → Approvals.
-      </p>
-      <RepositoryApprovalsSettingsPanel showScope={false} />
-      <div className="setup-wizard-actions">
-        <button type="button" className="setup-wizard-btn" onClick={onBack}>Back</button>
-        <button type="button" className="setup-wizard-btn setup-wizard-btn--primary" onClick={onNext}>
-          Next
-        </button>
-      </div>
     </div>
   );
 }

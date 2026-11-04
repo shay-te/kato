@@ -34,10 +34,14 @@ vi.mock('../../api.js', () => ({
   fetchModels: vi.fn(),
   fetchEffortLevels: vi.fn(),
   addPlanDoneState: vi.fn(),
+  finishTask: vi.fn(),
+  forgetTaskWorkspace: vi.fn(),
 }));
 
 import {
   addPlanDoneState,
+  finishTask,
+  forgetTaskWorkspace,
   approvePlanQueue,
   controlPlanQueue,
   discardPlanQueue,
@@ -680,8 +684,12 @@ describe('PlanQueueView — the board', () => {
     expect(actionsOf('declined')).toEqual(['Retry', 'Count as done']);
     expect(actionsOf('gone')).toEqual(['Retry', 'Count as done']);
     expect(actionsOf('nopr')).toEqual(['Count as done']);
-    for (const healthy of ['active', 'review', 'merging', 'done', 'dropped']) {
-      expect(actionsOf(healthy)).toEqual([]);
+    // A started task has the task's own Done; one already done, merging or
+    // dropped has nothing to press.
+    expect(actionsOf('active')).toEqual(['Done']);
+    expect(actionsOf('review')).toEqual(['Done']);
+    for (const settled of ['merging', 'done', 'dropped']) {
+      expect(actionsOf(settled)).toEqual([]);
     }
   });
 
@@ -854,6 +862,80 @@ describe('PlanQueueView — a task stuck in a state this kato does not name', ()
     render(<PlanQueueView taskId="UNA-1" />);
     await screen.findByRole('region', { name: 'In progress' });
     expect(screen.queryByText(/is not counted as done here/)).toBeNull();
+  });
+});
+
+describe('PlanQueueView — Done on a started card', () => {
+  const STARTED = plan({
+    status: 'running',
+    mode: 'tracker',
+    steps: [
+      step('api', { status: 'active', task_id: 'UNA-3376', released_at: 10 }),
+      step('ui', { depends_on: ['api'], task_id: 'UNA-3380' }),
+    ],
+  });
+
+  test('a started card\'s Done is the task\'s own Done, toast and all', async () => {
+    serve(STARTED);
+    finishTask.mockResolvedValue({ ok: true, body: {
+      finished: true, moved_to_done: true, pushed: { pushed_repositories: ['api'] }, pull_request: {},
+    } });
+    render(<PlanQueueView taskId="UNA-1" />);
+    const card = (await screen.findByText('UNA-3376')).closest('.plan-card');
+    fetchPlanQueue.mockClear();
+    fireEvent.click(within(card).getByRole('button', { name: 'Done' }));
+
+    await waitFor(() => expect(finishTask).toHaveBeenCalledWith('UNA-3376'));
+    await waitFor(() => expect(fetchPlanQueue).toHaveBeenCalledWith('p1'));  // the board is read again
+  });
+});
+
+describe('PlanQueueView — deleting a sub-task', () => {
+  const RUNNING = plan({
+    status: 'running',
+    steps: [
+      step('api', { status: 'active', task_id: 'UNA-3376', released_at: 10 }),
+      step('ui', { depends_on: ['api'], task_id: 'UNA-3380' }),
+    ],
+  });
+
+  test('asks, declines and takes it out on the server, then deletes the task itself', async () => {
+    serve(RUNNING);
+    planQueueStepAction.mockReturnValue(ok({
+      ...RUNNING, steps: [RUNNING.steps[1]],
+      deleted: { task_id: 'UNA-3376', declined: ['https://git/pull/7'], problems: [] },
+    }));
+    forgetTaskWorkspace.mockResolvedValue({ ok: true, body: { forgotten: true } });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete UNA-3376' }));
+    await waitFor(() => expect(forgetTaskWorkspace).toHaveBeenCalledWith('UNA-3376'));
+    expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'api', 'delete');
+    expect(confirm.mock.calls[0][0]).toMatch(/pull requests are declined/);
+    await waitFor(() => expect(screen.queryByText('UNA-3376')).toBeNull());  // gone from the board
+    confirm.mockRestore();
+  });
+
+  test('cancelled, nothing happens; a refusal deletes no folder', async () => {
+    serve(RUNNING);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    planQueueStepAction.mockReturnValue(Promise.resolve({ ok: false, status: 502, error: 'core-lib: 403' }));
+    render(<PlanQueueView taskId="UNA-1" />);
+    const remove = await screen.findByRole('button', { name: 'Delete UNA-3376' });
+    fireEvent.click(remove);
+    expect(planQueueStepAction).not.toHaveBeenCalled();
+    fireEvent.click(remove);
+    await waitFor(() => expect(planQueueStepAction).toHaveBeenCalled());
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
+  test('another kato\'s plan offers no delete', async () => {
+    serve(plan({ ...RUNNING, mode: 'followed', driver_user: 'dana' }));
+    render(<PlanQueueView taskId="UNA-1" />);
+    await screen.findByText('UNA-3376');
+    expect(screen.queryByRole('button', { name: /^Delete / })).toBeNull();
   });
 });
 
