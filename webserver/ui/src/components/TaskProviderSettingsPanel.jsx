@@ -1,4 +1,5 @@
 import { fetchTaskProviders, updateTaskProvider } from '../api.js';
+import { NO_TRACKER, TICKET_SYSTEMS } from '../constants/ticketSystems.js';
 import ProviderCredentialsPanel from './ProviderCredentialsPanel.jsx';
 
 // "Task provider" tab — where tickets live + which platform kato polls.
@@ -6,12 +7,8 @@ import ProviderCredentialsPanel from './ProviderCredentialsPanel.jsx';
 // is on because this tab also writes KATO_ISSUE_PLATFORM (the active
 // provider), unlike the git tab which only edits per-host creds.
 const PROVIDER_LABELS = {
-  youtrack: 'YouTrack',
-  jira: 'Jira',
-  github: 'GitHub Issues',
-  gitlab: 'GitLab Issues',
-  bitbucket: 'Bitbucket Issues',
-  local: 'No tracker (tasks created in kato)',
+  ...Object.fromEntries(TICKET_SYSTEMS.map((system) => [system.id, system.label])),
+  [NO_TRACKER]: 'No tracker (tasks created in kato)',
 };
 
 export default function TaskProviderSettingsPanel() {

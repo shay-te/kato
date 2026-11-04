@@ -1364,9 +1364,9 @@ def wrap_command(
         if exc.kind == 'missing':
             raise SandboxError(
                 f'sandbox image {image_tag} is missing from the local '
-                f'Docker cache: {exc}. Run ``make sandbox-build`` and '
-                'retry. (kato refuses to spawn without a JIT-pinned '
-                'image digest.)',
+                f'Docker cache: {exc}. Build it (the ``sandbox build`` '
+                'command) and retry. (kato refuses to spawn without a '
+                'JIT-pinned image digest.)',
             ) from exc
         raise SandboxError(
             f'cannot resolve sandbox image digest for {image_tag} '
@@ -2144,7 +2144,7 @@ def _image_digest_strict(image_tag: str) -> str:
             raise _DigestLookupError(
                 'missing',
                 f'image {image_tag} not present in local cache; '
-                'run ``make sandbox-build`` to (re)build it',
+                'build it (the ``sandbox build`` command)',
             )
         raise _DigestLookupError(
             'transient',
@@ -3292,8 +3292,8 @@ def stamp_auth_volume_manifest(
     because it is the legitimate path that mutates the volume.
 
     Idempotent and best-effort: a manifest-write failure is logged
-    at warning level but never aborts. Operators can re-run
-    ``make sandbox-login`` to refresh the manifest at any time.
+    at warning level but never aborts. Operators can run the
+    ``sandbox login`` command again to refresh the manifest.
     """
     cmd = [
         'docker', 'run',

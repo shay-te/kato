@@ -327,6 +327,13 @@ class ServiceTests(unittest.TestCase):
         self.service._prepare_one(plan.plan_id, 'docs', self.launcher)
         self.assertEqual(self.service.get(plan.plan_id).step('docs').task_id, '')
 
+    def test_a_card_can_start_one_task_in_another_mode_than_the_plan(self) -> None:
+        plan = self._approved(start_mode='plan')
+        self.service.start_step(plan.plan_id, 'api', start_mode='implement')
+        self.service.start_step(plan.plan_id, 'docs')
+        modes = {request.step_id: request.start_mode for request, _task in self.launcher.released}
+        self.assertEqual(modes, {'api': 'implement', 'docs': 'plan'})  # '' = the plan's
+
     def test_check_now(self) -> None:
         plan = self._approved(run=True)
         with self.assertRaises(PlanQueueError):

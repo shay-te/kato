@@ -419,7 +419,8 @@ class WrapCommandSecurityBranchesTests(unittest.TestCase):
                 wrap_command(['claude', '-p', 'x'], workspace_path='/ws')
         msg = str(ctx.exception)
         self.assertIn('missing from the local', msg)
-        self.assertIn('sandbox-build', msg)
+        # The command that builds it, as the CLI names it (no Makefile).
+        self.assertIn('the ``sandbox build`` command', msg)
 
     def test_refuses_when_digest_lookup_is_transient(self) -> None:
         # Lines 1148-1155: the transient branch — daemon busy or
@@ -947,14 +948,14 @@ class DigestLookupTests(unittest.TestCase):
 
     def test_strict_raises_missing_on_no_such_image_stderr(self) -> None:
         # Lines 1684-1691: stderr names "no such image" → missing.
-        # Operator runs ``make sandbox-build``.
+        # Operator runs the ``sandbox build`` command.
         with patch('subprocess.run', return_value=_ok(
             returncode=1, stderr='Error: No such image: kato/claude-sandbox:latest',
         )):
             with self.assertRaises(_DigestLookupError) as ctx:
                 _image_digest_strict('kato/claude-sandbox:latest')
         self.assertEqual(ctx.exception.kind, 'missing')
-        self.assertIn('sandbox-build', str(ctx.exception))
+        self.assertIn('the ``sandbox build`` command', str(ctx.exception))
 
     def test_strict_raises_missing_on_not_found_stderr(self) -> None:
         # Same branch, slightly different docker-version-dependent

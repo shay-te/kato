@@ -1,12 +1,16 @@
-"""Cross-platform mirror of the POSIX Makefile.
+"""``./kato`` (and ``kato.exe`` on Windows): runs kato's one CLI.
 
-Single source of truth for the ``make.exe`` binary. PyInstaller
-packages this file into a standalone Windows binary (see
-``build.py`` next to this file); operators on Windows then type
-``make <target>`` like macOS / Linux operators do.
+Every subcommand lives in ``kato_core_lib/cli.py``; this only finds a Python
+to run it with and starts it from the repository. There used to be a second
+list of commands here, and it drifted: ``doctor`` and the sandbox commands
+named modules that no longer existed, so ``./kato doctor`` — the first thing
+the README tells a new user to run — crashed.
 
-When kato adds a new Makefile target, edit ``_TARGETS`` below and
-rebuild ``make.exe`` (run ``python tools/make/build.py`` once).
+It has to work before a virtualenv exists (``bootstrap``, and ``up``, which
+bootstraps on first run) and when frozen into ``kato.exe`` by PyInstaller
+(``build.py`` next to this file), where ``sys.executable`` is the binary
+itself, not a Python. The CLI module imports nothing outside the standard
+library, so any Python 3.11+ can start it.
 """
 
 from __future__ import annotations
@@ -16,29 +20,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The dispatcher must work BEFORE the venv exists (``bootstrap``
-# subcommand) — that's why we resolve ``kato_core_lib`` via the
-# repo root rather than relying on it being on ``sys.path`` in a
-# regular install.
+# ``kato_core_lib`` is resolved from the repository, not an install: the
+# settings loader below runs before any virtualenv exists.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# This file lives at ``<repo>/tools/make/make.py``, so the repo root
-# is two parents up. PyInstaller-frozen builds use ``sys._MEIPASS``
-# /the executable's location for resources, but for *running*
-# subprocess commands we want the operator's actual cwd, which is
-# the kato repo root they invoked ``make.exe`` from.
+# This file lives at ``<repo>/tools/kato/kato.py``, so the repo root is two
+# parents up. A frozen ``kato.exe`` is run from inside the operator's kato
+# checkout, so there the current directory is the repository.
 _FILE_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _runtime_repo_root() -> Path:
-    """Where to run subprocess commands from.
-
-    When frozen into make.exe, the operator runs the binary from
-    inside their kato checkout — that's the cwd we want. When
-    running this script directly from the repo, ``_FILE_REPO_ROOT``
-    is correct because the script lives inside the repo. The CWD
-    fallback covers both.
-    """
+    """Where the CLI runs from: the checkout this file is in, or — frozen —
+    the checkout ``kato.exe`` was started in."""
     if getattr(sys, 'frozen', False):
         return Path.cwd()
     return _FILE_REPO_ROOT
@@ -48,121 +42,57 @@ _VENV_PYTHON_REL = Path('.venv') / ('Scripts' if os.name == 'nt' else 'bin') / (
     'python.exe' if os.name == 'nt' else 'python'
 )
 
+# Run with the system Python even when a virtualenv exists: ``bootstrap``
+# (re)creates that virtualenv.
+_SYSTEM_PYTHON_COMMANDS = frozenset({'bootstrap'})
+
+# The names these commands had before they joined the CLI.
+_ALIASES = {
+    'sandbox-build': ['sandbox', 'build'],
+    'sandbox-verify': ['sandbox', 'verify'],
+    'sandbox-login': ['sandbox', 'login'],
+}
+
+CLI_MODULE = 'kato_core_lib.cli'
+
 
 def _resolve_python(*, prefer_venv: bool, repo_root: Path) -> str:
-    """System ``python`` for bootstrap (venv doesn't exist yet);
-    venv python for everything else if the venv has been created.
-    """
+    """The virtualenv's Python when there is one (and it is wanted), else a
+    Python on PATH: a frozen ``kato.exe``'s ``sys.executable`` is not one."""
     if prefer_venv:
         candidate = repo_root / _VENV_PYTHON_REL
         if candidate.is_file():
             return str(candidate)
-    # Frozen ``make.exe`` doesn't have ``sys.executable`` pointing at
-    # a real Python — fall back to the OS-resolved ``python``.
     if getattr(sys, 'frozen', False):
         return 'python'
     return sys.executable if Path(sys.executable).name.lower().startswith('python') else 'python'
 
 
-# (description, prefer_venv, argv) per target. ``prefer_venv=False`` means
-# the target runs even before bootstrap (currently only ``bootstrap``
-# itself).
-_TARGETS: dict[str, tuple[str, bool, list[str]]] = {
-    'bootstrap': (
-        'Install Python deps + build the planning UI',
-        False,
-        ['scripts/bootstrap.py'],
-    ),
-    'doctor': (
-        'Validate full env config',
-        True,
-        ['-m', 'kato.validate_env', '--mode', 'all'],
-    ),
-    'test': (
-        'Run the unit-test suite (kato + every owned core-lib)',
-        True,
-        ['scripts/run_all_tests.py'],
-    ),
-    'up': (
-        'Start kato',
-        True,
-        ['scripts/run_local.py'],
-    ),
-    'sandbox-build': (
-        'Build the hardened Docker sandbox image',
-        True,
-        ['-c', 'from kato.sandbox.manager import build_image; build_image()'],
-    ),
-    'sandbox-verify': (
-        'End-to-end smoke test of the sandbox',
-        True,
-        ['-m', 'kato.sandbox.verify'],
-    ),
-    'sandbox-login': (
-        'Interactive Claude login inside the sandbox',
-        True,
-        [
-            '-c',
-            'from kato.sandbox.manager import ensure_image, login_command; '
-            'import subprocess, sys; ensure_image(); '
-            'sys.exit(subprocess.call(login_command()))',
-        ],
-    ),
-    # ``approve-repo`` is gone — repository approvals now live in
-    # the planning UI's Settings drawer (Approvals tab). The
-    # backend uses the same RepositoryApprovalService, so any
-    # ``~/.kato/approved-repositories.json`` written by the old CLI
-    # keeps working unchanged.
-    'history': (
-        'Show the most recent kato task activity (numbered list). '
-        'No flags — for fine-grained filtering, ``jq`` the audit '
-        'log JSONL directly.',
-        True,
-        ['scripts/audit_log_query.py'],
-    ),
-}
-
-
-def _print_usage(*, error: str = '') -> None:
-    if error:
-        print(f'{error}\n', file=sys.stderr)
-    print('Usage: kato <target> [args...]')
-    print()
-    print('Targets:')
-    width = max(len(name) for name in _TARGETS)
-    for name, (desc, _venv, _argv) in _TARGETS.items():
-        print(f'  {name.ljust(width)}  {desc}')
+def cli_command(argv: list[str], *, repo_root: Path) -> list[str]:
+    """The command that runs the CLI with ``argv``."""
+    args = list(argv)
+    if args and args[0] in _ALIASES:
+        args = _ALIASES[args[0]] + args[1:]
+    prefer_venv = not (args and args[0] in _SYSTEM_PYTHON_COMMANDS)
+    python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
+    return [python, '-m', CLI_MODULE, *args]
 
 
 def main(argv: list[str]) -> int:
-    if not argv or argv[0] in ('-h', '--help', 'help'):
-        _print_usage()
-        return 0
-    target = argv[0]
-    extra = argv[1:]
-    if target not in _TARGETS:
-        _print_usage(error=f'Unknown target: {target!r}')
-        return 1
-    _desc, prefer_venv, base_args = _TARGETS[target]
     repo_root = _runtime_repo_root()
-    # Load ``~/.kato/settings.json`` into the environment BEFORE we
-    # hand off to the subcommand, so child scripts that consult
-    # ``os.environ`` see the operator's saved config. Real shell env
-    # vars still win. settings.json is kato's ONLY config file —
-    # ``.env`` support was removed (the first-run wizard + Settings
-    # drawer replaced it).
+    # Load ``~/.kato/settings.json`` into the environment BEFORE handing off,
+    # so the subcommand sees the operator's saved config. Real shell env vars
+    # still win. settings.json is kato's ONLY config file.
     try:
         from kato_core_lib.helpers.kato_settings_store_utils import (
             load_kato_settings_into_environ,
         )
         load_kato_settings_into_environ()
     except Exception:
-        # Never let a settings.json problem block boot — validation
-        # inside the subcommand will report what's wrong.
+        # Never let a settings.json problem block boot — validation inside
+        # the subcommand reports what's wrong.
         pass
-    python = _resolve_python(prefer_venv=prefer_venv, repo_root=repo_root)
-    cmd = [python, *base_args, *extra]
-    return _run_child(cmd, cwd=str(repo_root))
+    return _run_child(cli_command(argv, repo_root=repo_root), cwd=str(repo_root))
 
 
 #: How long Ctrl+C waits for the child to finish its own graceful shutdown

@@ -77,7 +77,9 @@ def probe_backend(backend: str, *, binary: str = '', now=None) -> dict:
         if cached and (stamp - cached[0]) < PROBE_CACHE_SECONDS:
             return dict(cached[1])
 
-    result = {'id': key, 'label': backend_label(key), 'ready': False, 'error': ''}
+    # ``logged_in``: None when it cannot be told (or does not apply) — never
+    # read as signed out.
+    result = {'id': key, 'label': backend_label(key), 'ready': False, 'error': '', 'logged_in': None}
     try:
         client = _build_probe_client(key, binary)
         if client is None:
@@ -85,12 +87,23 @@ def probe_backend(backend: str, *, binary: str = '', now=None) -> dict:
         else:
             client.validate_connection()
             result['ready'] = True
+            result['logged_in'] = _logged_in(key, binary)
     except Exception as exc:  # noqa: BLE001 - reported, never raised
         result['error'] = str(exc).strip() or exc.__class__.__name__
 
     with _lock:
         _cache[key] = (stamp, dict(result))
     return result
+
+
+def _logged_in(backend: str, binary: str) -> bool | None:
+    """Whether an installed CLI is signed in: installed is not usable, and a
+    new user who never ran its login otherwise finds out at the first task.
+    Only Claude can say so cheaply."""
+    if backend != AgentBackend.CLAUDE.value:
+        return None
+    from claude_core_lib.claude_core_lib.helpers.auth_status import claude_login_status
+    return claude_login_status(binary or 'claude')['logged_in']
 
 
 def _configured_binary(backend: str) -> str:

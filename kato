@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Cross-platform entry point for kato (POSIX side).
 #
-# Mirrors what tools/kato/kato.py does, then hands off. Operators
-# type the same command on every platform:
+# Finds a Python 3.11+ and runs tools/kato/kato.py, which runs kato's one
+# CLI (kato_core_lib/cli.py). Operators type the same command everywhere:
 #
 #     ./kato up           (start kato)
-#     ./kato test         (run unit tests)
-#     ./kato sandbox-verify
+#     ./kato doctor       (check the configuration)
+#     ./kato test         (run every test suite)
 #
 # Windows operators use ``kato.exe`` instead, built once with
 # ``python tools\kato\build.py``. Both entry points dispatch to

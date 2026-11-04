@@ -129,10 +129,12 @@ class Services(object):
         self.comments: list[tuple[str, str]] = []
         self.moved_done: list[str] = []
         self.tags: list[tuple[str, str]] = []
+        self.removed_tags: list[tuple[str, str]] = []
         self.task_service = SimpleNamespace(
             subtask_tracker=lambda: self.tracker, bot_login=bot_login,
             add_comment=lambda issue_id, text: self.comments.append((issue_id, text)),
             add_tag=lambda issue_id, tag: self.tags.append((issue_id, tag)),
+            remove_tag=lambda issue_id, tag: self.removed_tags.append((issue_id, tag)),
         )
         self.task_state_service = SimpleNamespace(
             state_names=lambda: dict(STATES), move_task_to_done=self.moved_done.append,
@@ -228,6 +230,30 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(self.tracker.issues['PROJ-6']['assignee'], 'dana')
         with self.assertRaises(RuntimeError):
             self.launcher.release(request(), 'PROJ-404')
+
+    def test_the_cards_plan_or_start_sets_the_planning_tag_before_the_hand_over(self) -> None:
+        # The tag is what every kato's pickup reads: Plan adds it, Start takes
+        # it off — even when Approve chose the other way for the whole plan.
+        self.tracker.issue('PROJ-5')
+        self.launcher.release(request(start_mode='plan'), 'PROJ-5')
+        self.tracker.issue('PROJ-6')
+        self.launcher.release(request(start_mode='implement'), 'PROJ-6')
+        self.assertEqual(self.services.tags, [('PROJ-5', 'kato:wait-planning')])
+        self.assertEqual(self.services.removed_tags, [('PROJ-6', 'kato:wait-planning')])
+        # Someone already has it: their ticket, untouched.
+        self.tracker.issue('PROJ-7', assignee='dana')
+        self.launcher.release(request(start_mode='implement'), 'PROJ-7')
+        self.assertNotIn(('PROJ-7', 'kato:wait-planning'), self.services.removed_tags)
+
+    def test_a_tag_that_cannot_be_set_fails_the_hand_over(self) -> None:
+        def refuse(issue_id, tag):
+            raise RuntimeError('tracker down')
+
+        self.services.task_service.remove_tag = refuse
+        self.tracker.issue('PROJ-5')
+        with self.assertRaisesRegex(RuntimeError, 'tracker down'):
+            self.launcher.release(request(start_mode='implement'), 'PROJ-5')
+        self.assertEqual(self.tracker.assigned, [])  # never handed over in the wrong mode
 
     def test_a_configured_assignee_wins_over_the_token_user(self) -> None:
         self.services.task_service.bot_login = 'kato-bot'

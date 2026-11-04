@@ -79,3 +79,21 @@ test('the tooltip positioning base never out-ranks a component', () => {
   }
   assert.deepEqual(setsPosition, [':where([data-tooltip])']);
 });
+
+test('the plan view\'s bottom action bar opens its tooltips above, toward the inside', () => {
+  // Hung below, a tooltip overflowed the scrolling plan panel: a scrollbar
+  // appeared, moved the button out from under the mouse, the tooltip hid, the
+  // scrollbar went — and "Create N sub-tasks and start" could not be clicked.
+  const rule = (selector) => {
+    const at = css.indexOf(selector);
+    assert.ok(at >= 0, `no rule for ${selector}`);
+    return css.slice(at, css.indexOf('}', at));
+  };
+  const trailing = rule('.plan-proposal-actions [data-tooltip]:hover::after');
+  assert.match(trailing, /top:\s*auto/);
+  assert.match(trailing, /bottom:\s*calc\(100% \+ 8px\)/);
+  assert.match(trailing, /right:\s*0/);
+  const leading = rule('.plan-proposal-actions .plan-proposal-discard[data-tooltip]:hover::after');
+  assert.match(leading, /left:\s*0/);
+});
+

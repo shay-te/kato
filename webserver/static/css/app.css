@@ -751,6 +751,21 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   padding-bottom: 14px;
 }
 
+/* The empty strip's "Create your first task": the one thing a new user needs. */
+.tabs-empty-action {
+  padding: 2px 10px;
+  border: 1px solid #1d4ed8;
+  border-radius: 999px;
+  background: #1e3a8a;
+  color: #f5f5f7;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs-empty-action:not(:disabled):hover {
+  background: #1d4ed8;
+}
+
 .tabs-scroller {
   flex: 1;
   min-width: 0;
@@ -9251,6 +9266,46 @@ body.kato-resizing {
   transform: none;
 }
 
+/* The plan view's action bar is stuck to the BOTTOM of a scrolling panel.
+ * A tooltip hung below a button there overflowed the panel, which grew a
+ * scrollbar, which moved the button out from under the mouse, which hid the
+ * tooltip, which removed the scrollbar — the button could not be clicked.
+ * So every tooltip in that bar opens ABOVE and grows toward the inside: from
+ * the trailing buttons to the left, from the leading one to the right.
+ * A group rule, like the task header's, so a button added there is covered. */
+.plan-proposal-actions [data-tooltip]:hover::after,
+.plan-proposal-actions [data-tooltip]:focus-visible::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  transform: none;
+  max-width: 280px;
+}
+
+.plan-proposal-actions [data-tooltip]:hover::before,
+.plan-proposal-actions [data-tooltip]:focus-visible::before {
+  top: auto;
+  bottom: calc(100% + 2px);
+  left: auto;
+  right: 6px;
+  transform: none;
+  border-bottom-color: transparent;
+  border-top-color: #1f2937;
+}
+
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:hover::after,
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:focus-visible::after {
+  left: 0;
+  right: auto;
+}
+
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:hover::before,
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:focus-visible::before {
+  left: 6px;
+  right: auto;
+}
+
 /* Combo: above + end (e.g. for buttons near bottom-right corners). */
 [data-tooltip].tooltip-above.tooltip-end:hover::after,
 [data-tooltip].tooltip-above.tooltip-end:focus-visible::after {
@@ -11039,6 +11094,16 @@ button.settings-prompt-editor-head {
   overflow-wrap: anywhere;
 }
 
+/* The whole error, as written: line breaks kept, long ones scroll. */
+.setup-gate-error pre {
+  margin: 6px 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
 .setup-wizard {
   padding: 20px 24px 24px;
 }
@@ -11116,6 +11181,56 @@ button.settings-prompt-editor-head {
   margin: 0 0 12px;
   font-size: 13px;
   color: #fca5a5;
+}
+
+/* The agent CLI on this computer: installed? signed in? (setup wizard) */
+.agent-cli-status {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #c8c8cd;
+}
+
+.agent-cli-status p {
+  margin: 0 0 6px;
+}
+
+.agent-cli-status.is-missing,
+.agent-cli-status.is-signed-out {
+  color: #fca5a5;
+}
+
+.agent-cli-status pre {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: #c8c8cd;
+}
+
+/* The ticket system could not be reached: the tracker's own words, whole. */
+.setup-wizard-connection-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #fca5a5;
+}
+
+.setup-wizard-connection-error pre {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: #c8c8cd;
+}
+
+.setup-wizard-connection-error p {
+  margin: 0 0 8px;
+  color: #a3a3a3;
 }
 
 .setup-wizard-choices {
@@ -13771,6 +13886,17 @@ button.settings-prompt-editor-head {
   margin-left: auto;
   font-size: 11px;
   color: #f59e0b;
+}
+
+/* "Settings → Approvals" in a note: the way there, not a name to go and find. */
+.new-task-repo-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .new-task-repos-status,

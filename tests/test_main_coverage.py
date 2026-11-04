@@ -1481,6 +1481,20 @@ class UiFirstBootTests(unittest.TestCase):
         main_module._flag_boot_validation_error(app, 'bad token')
         self.assertEqual(flask_app.config['SETUP_ERROR'], 'bad token')
         self.assertTrue(flask_app.config['NEEDS_CONFIG'])
+        # Set up already: the screen says it cannot connect, not "welcome".
+        self.assertEqual(flask_app.config['SETUP_KIND'], main_module.SETUP_KIND_CANNOT_CONNECT)
+
+    def test_a_long_validation_error_reaches_the_ui_whole(self) -> None:
+        # The useful part (which host, what it answered) is often past the
+        # first few hundred characters; it used to be cut at 500.
+        message = 'startup dependency validation failed: ' + 'x' * 900 + ' 401 Unauthorized for https://yt'
+        app = self._app(validate=MagicMock(side_effect=RuntimeError(message)))
+        flask_app = SimpleNamespace(config={})
+        app.planning_flask_app = flask_app
+        main_module._finalize_configured_boot(
+            app, threading.Event(), sleep_fn=lambda _s: None, max_attempts=1,
+        )
+        self.assertEqual(flask_app.config['SETUP_ERROR'], message)
 
     def test_flag_boot_validation_error_noop_without_flask_app(self) -> None:
         app = SimpleNamespace(planning_flask_app=None)

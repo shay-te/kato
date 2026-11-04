@@ -8,7 +8,9 @@ lib's, and the host adds its own product guidance. The reply must end with one
 Two kinds of request: split a plan (``build_propose_prompt``), or map a split
 the operator already wrote as files (``build_files_prompt``) — one step per
 file, the file's text kept as its brief, so the agent only names each step and
-works out what it waits for and where it works.
+works out what it waits for and where it works. Without per-step repositories
+(``per_step_repositories=False``) every task works in all of the plan's
+repositories, so the request does not ask for them.
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ def build_propose_prompt(
     previous_steps: Sequence[StepDraft] = (),
     feedback: str = '',
     problem: str = '',
+    per_step_repositories: bool = True,
 ) -> str:
     """The proposer's instructions.
 
@@ -87,7 +90,7 @@ def build_propose_prompt(
         'The plan:',
         wrapped_plan,
         '',
-        'Repositories a task may work in: ' + ', '.join(repositories) + '.',
+        _repositories_line(repositories, per_step_repositories),
         '',
         'Rules:',
         f'- At most {MAX_STEPS} tasks. Prefer fewer, meaningful tasks over many tiny ones.',
@@ -97,11 +100,15 @@ def build_propose_prompt(
         f'the plan. Say what to change, where, and how to know it is done (at most '
         f'{MAX_BRIEF_CHARS} characters).',
         '- Ids: 1-24 lowercase letters, digits, "-" or "_", starting with a letter.',
-        '- "repositories" lists only repositories from the list above; leave it empty '
-        'to mean all of them.',
     ]
-    previous = [_draft_dict(draft) for draft in previous_steps]
-    return '\n'.join(parts + _closing(guidance, previous, feedback, problem, _FORMAT_EXAMPLE))
+    if per_step_repositories:
+        parts.append(
+            '- "repositories" lists only repositories from the list above; leave it empty '
+            'to mean all of them.',
+        )
+    previous = [_draft_dict(draft, per_step=per_step_repositories) for draft in previous_steps]
+    example = _example(_FORMAT_EXAMPLE, per_step_repositories)
+    return '\n'.join(parts + _closing(guidance, previous, feedback, problem, example))
 
 
 def build_files_prompt(
@@ -114,6 +121,7 @@ def build_files_prompt(
     previous_steps: Sequence[tuple[StepDraft, str]] = (),
     feedback: str = '',
     problem: str = '',
+    per_step_repositories: bool = True,
 ) -> str:
     """The instructions for mapping a split the operator already wrote.
 
@@ -133,7 +141,7 @@ def build_files_prompt(
         parts += ['', f'File {path}:', wrapped]
     parts += [
         '',
-        'Repositories a task may work in: ' + ', '.join(repositories) + '.',
+        _repositories_line(repositories, per_step_repositories),
         '',
         'For each file give:',
         '- "file": its path exactly as written above. Every file once, no other files.',
@@ -143,12 +151,33 @@ def build_files_prompt(
         '- "depends_on": the ids of the tasks it needs merged first, as the file (and the '
         'overview) says. Only tasks in this list; if it names something that is not one of '
         'these files, leave it out and say so in "notes".',
-        '- "repositories": the repositories from the list above whose code it changes '
-        '(from the paths it names); empty means all of them.',
-        '- No "brief": the file\'s text IS the brief, exactly as written.',
     ]
-    previous = [_draft_dict(draft, file=path) for draft, path in previous_steps]
-    return '\n'.join(parts + _closing(guidance, previous, feedback, problem, _FILES_EXAMPLE))
+    if per_step_repositories:
+        parts.append(
+            '- "repositories": the repositories from the list above whose code it changes '
+            '(from the paths it names); empty means all of them.',
+        )
+    parts.append('- No "brief": the file\'s text IS the brief, exactly as written.')
+    previous = [
+        _draft_dict(draft, file=path, per_step=per_step_repositories) for draft, path in previous_steps
+    ]
+    example = _example(_FILES_EXAMPLE, per_step_repositories)
+    return '\n'.join(parts + _closing(guidance, previous, feedback, problem, example))
+
+
+def _repositories_line(repositories: Sequence[str], per_step: bool) -> str:
+    names = ', '.join(repositories)
+    return f'Repositories a task may work in: {names}.' if per_step else (
+        f'Every task works in all of these repositories: {names}.'
+    )
+
+
+def _example(example: dict, per_step: bool) -> dict:
+    """The answer's shape; with no per-step repositories, no "repositories"."""
+    if per_step:
+        return example
+    steps = [{key: value for key, value in step.items() if key != 'repositories'} for step in example['steps']]
+    return {**example, 'steps': steps}
 
 
 def _closing(guidance: str, previous: list[dict], feedback: str, problem: str, example: dict) -> list[str]:
@@ -174,12 +203,13 @@ def _closing(guidance: str, previous: list[dict], feedback: str, problem: str, e
     ]
 
 
-def _draft_dict(draft: StepDraft, *, file: str = '') -> dict:
+def _draft_dict(draft: StepDraft, *, file: str = '', per_step: bool = True) -> dict:
     entry = {'id': draft.id, 'title': draft.title}
     if file:
         entry['file'] = file  # its brief is that file, not repeated here
     else:
         entry['brief'] = draft.brief
     entry['depends_on'] = list(draft.depends_on)
-    entry['repositories'] = list(draft.repositories)
+    if per_step:
+        entry['repositories'] = list(draft.repositories)
     return entry

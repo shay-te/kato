@@ -95,6 +95,24 @@ describe('SetupModeGate', () => {
     expect(screen.getByText(/retries automatically/)).toBeInTheDocument();
   });
 
+  test('a kato that is set up but cannot connect is not greeted as new', () => {
+    const error = 'startup dependency validation failed:\n- unable to validate youtrack: 401 Unauthorized';
+    render(
+      <SetupModeGate
+        status={{
+          setup_mode: true, needs_config: false, missing: [], setup_error: error,
+          setup_kind: 'cannot_connect',
+        }}
+        onRefreshStatus={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Kato can’t reach a service it needs')).toBeInTheDocument();
+    expect(screen.queryByText('Welcome to Kato')).toBeNull();
+    expect(screen.getByText('Could not connect:')).toBeInTheDocument();
+    // The whole message, line breaks and all.
+    expect(document.querySelector('.setup-gate-error pre').textContent).toBe(error);
+  });
+
   test('shows the welcome gate with the wizard when booted unconfigured', () => {
     render(
       <SetupModeGate

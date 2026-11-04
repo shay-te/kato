@@ -29,7 +29,7 @@ from typing import Callable
 
 from flask import Flask, jsonify, request
 
-from kato_core_lib.data_layers.service.local_task_service import START_MODES
+from kato_core_lib.data_layers.service.local_task_service import START_IMPLEMENT, START_MODES, START_PLAN
 from kato_core_lib.data_layers.service.plan_queue.step_footer import parse_footer
 from kato_core_lib.data_layers.service.plan_queue.split_folders import (
     SplitFolderError,
@@ -48,7 +48,7 @@ _STATUS_BY_KIND = {
     ErrorKind.INVALID: 400,
     ErrorKind.UNAVAILABLE: 503,
 }
-_STEP_ACTIONS = ('start', 'satisfy', 'retry', 'cancel', 'check')
+_STEP_ACTIONS = ('start', 'plan', 'satisfy', 'retry', 'cancel', 'check')
 
 
 def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[str]]) -> None:
@@ -219,8 +219,13 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
     def plan_queue_step_action(plan_id: str, step_id: str, action: str):
         if action not in _STEP_ACTIONS:
             return jsonify({'error': f'unknown action {action!r}'}), 404
+        # A ready card's two ways to start ONE task: Plan (its agent plans
+        # first, in Plan mode) or Start (it implements right away) — the
+        # operator's pick for that task, whatever was chosen at Approve.
+        starts = {'start': START_IMPLEMENT, 'plan': START_PLAN}
+        if action in starts:
+            return answer(lambda service: service.start_step(plan_id, step_id, start_mode=starts[action]))
         methods = {
-            'start': 'start_step',
             'satisfy': 'mark_satisfied',
             'retry': 'retry_step',
             'cancel': 'cancel_step',

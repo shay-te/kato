@@ -90,5 +90,45 @@ class WrapperOwnsItsChildTests(unittest.TestCase):
             )
 
 
+class OneCliTests(unittest.TestCase):
+    """``./kato`` runs ``kato_core_lib/cli.py`` — no list of its own to drift."""
+
+    def test_every_command_goes_to_the_one_cli(self) -> None:
+        from pathlib import Path
+        repo = Path('/repo-without-a-venv')
+        command = kato_cli.cli_command(['doctor', '--mode', 'all'], repo_root=repo)
+        self.assertEqual(command[1:], ['-m', 'kato_core_lib.cli', 'doctor', '--mode', 'all'])
+
+    def test_the_old_sandbox_names_still_work(self) -> None:
+        from pathlib import Path
+        command = kato_cli.cli_command(['sandbox-verify'], repo_root=Path('/r'))
+        self.assertEqual(command[-2:], ['sandbox', 'verify'])
+
+    def test_bootstrap_uses_the_system_python_and_the_rest_the_venv(self) -> None:
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            venv_python = repo / kato_cli._VENV_PYTHON_REL
+            venv_python.parent.mkdir(parents=True)
+            venv_python.write_text('')
+            self.assertEqual(kato_cli.cli_command(['up'], repo_root=repo)[0], str(venv_python))
+            self.assertNotEqual(kato_cli.cli_command(['bootstrap'], repo_root=repo)[0], str(venv_python))
+
+    def test_a_frozen_binary_runs_a_real_python(self) -> None:
+        from pathlib import Path
+        with patch.object(kato_cli.sys, 'frozen', True, create=True):
+            self.assertEqual(kato_cli.cli_command(['test'], repo_root=Path('/r'))[0], 'python')
+            with patch.object(kato_cli.Path, 'cwd', return_value=Path('/checkout')):
+                self.assertEqual(kato_cli._runtime_repo_root(), Path('/checkout'))
+
+    def test_main_runs_it_from_the_repository(self) -> None:
+        with patch.object(kato_cli, '_run_child', return_value=0) as run:
+            self.assertEqual(kato_cli.main(['doctor']), 0)
+        command, kwargs = run.call_args.args[0], run.call_args.kwargs
+        self.assertEqual(command[1:3], ['-m', 'kato_core_lib.cli'])
+        self.assertEqual(kwargs['cwd'], str(kato_cli._FILE_REPO_ROOT))
+
+
 if __name__ == '__main__':
     unittest.main()

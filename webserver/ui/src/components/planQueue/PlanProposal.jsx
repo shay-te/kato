@@ -29,9 +29,9 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
   const { steps, setSteps, open, setOpen } = drafts;
   const [feedback, setFeedback] = useState('');
   const [showNotes, setShowNotes] = useState(false);
-  // Repositories the operator added (from kato's inventory) — beside the
-  // task's own, for every task; saved with the edits.
-  const [added, setAdded] = useState([]);
+  // Repositories the operator added (from kato's inventory), kept by the
+  // drafts and saved with the edits.
+  const { added } = drafts;
   const [picking, setPicking] = useState(false);
   // Each released task opens in Plan mode and codes only once its plan is
   // approved in its chat. On by default: nothing runs that was not planned.
@@ -48,10 +48,7 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
   }
 
   function addRepositories(repos) {
-    const ids = repos.map((repo) => repo.id);
-    setAdded((current) => [...current, ...ids.filter((id) => !current.includes(id))]);
-    setSteps((current) => ids.reduce((steps, id) => withRepoEverywhere(steps, id, true), current));
-    setDirty(true);
+    drafts.addRepositories(repos.map((repo) => repo.id));
     setPicking(false);
   }
 

@@ -41,7 +41,9 @@ class ProposalWorker(object):
         observer: PlanObserver | None = None,
         logger: logging.Logger | None = None,
         clock=time.time,
+        proposer_picks_repositories: bool = True,
     ) -> None:
+        self._per_step_repositories = proposer_picks_repositories
         self._clock = clock
         self._registry = registry
         self._proposer = proposer
@@ -127,7 +129,10 @@ class ProposalWorker(object):
                 return None, ''
             self._registry.store.save_reply(plan.plan_id, reply or '')
             try:
-                return parse_task_split(reply, allowed_repositories=plan.repository_ids, files=files), ''
+                return parse_task_split(
+                    reply, allowed_repositories=plan.repository_ids, files=files,
+                    per_step_repositories=self._per_step_repositories,
+                ), ''
             except SplitProposalError as exc:
                 problem = str(exc)
         return None, f'the proposal could not be used: {problem}'
@@ -151,6 +156,7 @@ class ProposalWorker(object):
                 if feedback else (),
                 feedback=feedback,
                 problem=problem,
+                per_step_repositories=self._per_step_repositories,
             )
         return build_propose_prompt(
             plan_title=plan.title,
@@ -160,6 +166,7 @@ class ProposalWorker(object):
             previous_steps=_drafts(plan.steps) if feedback else (),
             feedback=feedback,
             problem=problem,
+            per_step_repositories=self._per_step_repositories,
         )
 
     def _record(self, started: Plan, proposal: SplitProposal | None, error: str) -> None:

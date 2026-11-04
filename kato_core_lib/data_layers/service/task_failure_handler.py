@@ -10,6 +10,7 @@ from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.helpers.error_handling_utils import run_best_effort
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
+from kato_core_lib.helpers.repository_approval_hint_utils import APPROVALS_LOCATION
 from kato_core_lib.helpers.task_comment_utils import add_task_comment
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
 
@@ -108,8 +109,8 @@ def repository_detection_comment(error: Exception) -> str:
         '`kato:repo:<repository-id>` (e.g. '
         '`kato:repo:ob-love-admin-client`). The id has to match a '
         '`repositories` entry in your kato config — if you are not '
-        'sure which ids exist, run `./kato approve-repo` on the '
-        'kato host; the picker lists every repo kato knows about.'
+        f'sure which ids exist, {APPROVALS_LOCATION} in kato lists '
+        'every repository kato knows about.'
     )
 
 

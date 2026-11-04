@@ -42,9 +42,8 @@ class ApprovalMode(str, Enum):
         for mode in cls:
             if mode.value == normalised:
                 return mode
-        # Unknown / blank → safer default. Operator can elevate later
-        # via the ``./kato approve-repo`` picker (answer "yes" to
-        # the trusted-mode question on apply).
+        # Unknown / blank → safer default. Operator can switch it to
+        # trusted in Settings → Approvals.
         return cls.RESTRICTED
 
 

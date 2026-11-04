@@ -121,18 +121,30 @@ describe('TabList', () => {
     expect(tabs[1]).not.toHaveClass('needs-attention');
   });
 
-  test('renders the empty-state copy when sessions is empty', () => {
-    render(<TabList sessions={[]} onSelect={() => {}} />);
-    expect(screen.getByText(/No tabs yet/)).toBeInTheDocument();
+  test('with no ticket system, the empty strip offers one thing: create the first task', () => {
+    const onNewTask = vi.fn();
+    render(<TabList sessions={[]} onSelect={() => {}} onNewTask={onNewTask} />);
+    expect(screen.getByText(/No tasks yet/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Create your first task' }));
+    expect(onNewTask).toHaveBeenCalledTimes(1);
+    // Nothing about a tracker this kato does not have.
+    expect(screen.queryByText('+ Add task')).toBeNull();
+    expect(screen.queryByText(/YouTrack|wait-planning/)).toBeNull();
+  });
+
+  test('with a ticket system, it is named, beside creating a task', () => {
+    render(<TabList sessions={[]} onSelect={() => {}} onNewTask={() => {}} trackerName="Jira" />);
+    expect(screen.getByRole('button', { name: 'Create your first task' })).toBeInTheDocument();
     // "+ Add task" appears as a strong inside the empty-state copy
-    // (separate from the header button). Use the empty-state id to
-    // disambiguate from the button's aria-label.
+    // (separate from the header button).
     expect(screen.getByText('+ Add task')).toBeInTheDocument();
+    expect(screen.getByText(/assigned Jira tickets/)).toBeInTheDocument();
   });
 
   test('renders the empty-state when sessions is undefined (defensive)', () => {
     render(<TabList sessions={undefined} onSelect={() => {}} />);
-    expect(screen.getByText(/No tabs yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No tasks yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create your first task' })).toBeDisabled();
   });
 
   test('New task button fires onNewTask', () => {
@@ -821,7 +833,7 @@ describe('TabList empty state tells the three cases apart', () => {
       <TabList sessions={[]} sessionsLoaded={false} katoReachable={false} onSelect={() => {}} />,
     );
     expect(screen.getByText(/Can’t reach kato/)).toBeInTheDocument();
-    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tasks yet/)).not.toBeInTheDocument();
     // The reassurance matters: this is the moment operators think data is gone.
     expect(screen.getByText(/workspaces are untouched/)).toBeInTheDocument();
   });
@@ -830,7 +842,7 @@ describe('TabList empty state tells the three cases apart', () => {
     render(
       <TabList sessions={[]} sessionsLoaded={false} katoReachable onSelect={() => {}} />,
     );
-    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tasks yet/)).not.toBeInTheDocument();
   });
 
   test('a fast first load never flashes a loading message', () => {
@@ -847,13 +859,13 @@ describe('TabList empty state tells the three cases apart', () => {
     );
     await vi.advanceTimersByTimeAsync(700);
     expect(await screen.findByText(/Loading your tasks/)).toBeInTheDocument();
-    expect(screen.queryByText(/No tabs yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No tasks yet/)).not.toBeInTheDocument();
   });
 
   test('a loaded, reachable, genuinely empty kato still onboards', () => {
     render(
       <TabList sessions={[]} sessionsLoaded katoReachable onSelect={() => {}} />,
     );
-    expect(screen.getByText(/No tabs yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No tasks yet/)).toBeInTheDocument();
   });
 });

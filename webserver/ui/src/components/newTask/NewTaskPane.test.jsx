@@ -84,9 +84,31 @@ describe('NewTaskPane', () => {
     renderPane();
     const boxes = await screen.findAllByRole('checkbox');
     expect(boxes.map((box) => box.closest('label').textContent)).toEqual([
-      'api', 'billingnot approved — Settings → Repositories', 'web',
+      'api', 'billingnot approved — approve it in Settings → Approvals', 'web',
     ]);
     expect(screen.getByRole('checkbox', { name: /billing/ })).toBeDisabled();
+  });
+
+  test('an unapproved repository links straight to Settings → Approvals', async () => {
+    fakeKato();
+    const onOpenSettings = vi.fn();
+    render(<NewTaskPane onCreated={vi.fn()} onHide={vi.fn()} onOpenSettings={onOpenSettings} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings → Approvals' }));
+    expect(onOpenSettings).toHaveBeenCalledWith('approvals');
+  });
+
+  test('no repositories at all says why, and where to set the folder', async () => {
+    fakeKato();
+    const fetchImpl = globalThis.fetch;
+    vi.stubGlobal('fetch', async (url, init) => (url === '/api/repositories'
+      ? { ok: true, status: 200, statusText: '', json: async () => ({ repositories: [] }) }
+      : fetchImpl(url, init)));
+    const onOpenSettings = vi.fn();
+    render(<NewTaskPane onCreated={vi.fn()} onHide={vi.fn()} onOpenSettings={onOpenSettings} />);
+    expect(await screen.findByText(/No repositories found yet/)).toBeInTheDocument();
+    expect(screen.queryByText('No repository matches.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings → Repositories' }));
+    expect(onOpenSettings).toHaveBeenCalledWith('repositories');
   });
 
   test('Create sends what the pickers show and opens the new task', async () => {

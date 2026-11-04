@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 
 from plan_queue_core_lib.plan_queue_core_lib.data.plan import (
     FailReason,
@@ -103,7 +104,10 @@ class PlanTicker(object):
         record_source: PlanRecordSource | None = None,
         history: HistoryProbe | None = None,
         conversation: SplitConversation | None = None,
+        proposer_picks_repositories: bool = True,
     ) -> None:
+        # A split read from the chat is the proposer's too.
+        self._per_step_repositories = proposer_picks_repositories
         self._conversation = conversation
         self._registry = registry
         self._progress = progress
@@ -161,7 +165,10 @@ class PlanTicker(object):
         proposal, problem = None, ''
         if SPLIT_OPEN in str(text or ''):
             try:
-                proposal = parse_task_split(text, allowed_repositories=plan.repository_ids, files=files_of(plan))
+                proposal = parse_task_split(
+                    text, allowed_repositories=plan.repository_ids, files=files_of(plan),
+                    per_step_repositories=self._per_step_repositories,
+                )
             except SplitProposalError as exc:
                 problem = str(exc)
 
@@ -366,9 +373,11 @@ class PlanTicker(object):
         me = self.identity()
         return bool(me) and me == plan.driver
 
-    def release_now(self, plan_id: str, step_id: str) -> None:
+    def release_now(self, plan_id: str, step_id: str, *, start_mode: str = '') -> None:
         """Hand ONE ready step over now, whatever the plan's status: its card's
-        Start. Run hands over every ready step; this one, even while paused."""
+        Start. Run hands over every ready step; this one, even while paused.
+        ``start_mode`` (when given) is how THIS task starts, instead of the
+        plan's — the operator picked it on the card."""
         plan = self._registry.get(plan_id)
         if not self._may_release(plan):
             raise PlanQueueError('only the host that drives this plan starts its tasks; take it over to start one here')
@@ -380,6 +389,8 @@ class PlanTicker(object):
         if step is None or not self._claim(plan_id, step, claimed_at, any_status=True):
             raise PlanQueueError(f'step {step_id} is not ready to start: it still waits for another task')
         request = build_request(self._registry.get(plan_id), step)
+        if start_mode:
+            request = replace(request, start_mode=start_mode)
         outcome = release_task(launcher, request, step.task_id)
         self._record_release(plan_id, step, claimed_at, outcome)
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchTaskProviders,
+  testTrackerConnection,
   updateTaskProvider,
   fetchSettings,
   updateSettings,
@@ -22,7 +23,10 @@ import {
   usesDiscoveredCredential,
 } from '../utils/credentialSourceFields.js';
 import FolderBrowser from './FolderBrowser.jsx';
+import AgentCliStatus from './AgentCliStatus.jsx';
+import RepositoryApprovalsSettingsPanel from './RepositoryApprovalsSettingsPanel.jsx';
 import { toast } from '../stores/toastStore.js';
+import { NO_TRACKER, TICKET_SYSTEMS } from '../constants/ticketSystems.js';
 
 // First-run setup wizard. One action per step (the operator asked for a
 // wizard, not the full settings drawer): pick the ticket system, then enter
@@ -31,20 +35,11 @@ import { toast } from '../stores/toastStore.js';
 // live config-status poll flips the wizard to "all set" the moment kato has
 // everything it needs — no terminal, no restart to satisfy the check.
 
-const TICKET_SYSTEMS = [
-  { id: 'youtrack', label: 'YouTrack', blurb: 'JetBrains YouTrack issues' },
-  { id: 'jira', label: 'Jira', blurb: 'Atlassian Jira issues' },
-  { id: 'github', label: 'GitHub Issues', blurb: 'Issues on GitHub' },
-  { id: 'gitlab', label: 'GitLab Issues', blurb: 'Issues on GitLab' },
-  { id: 'bitbucket', label: 'Bitbucket Issues', blurb: 'Issues on Bitbucket' },
-];
-
 // "Skip for now" on the ticket-system step: no tracker
-// (KATO_ISSUE_PLATFORM=local). Tasks are created in kato's own "New task" tab,
-// so a tracker is never something setup may insist on — there is nothing to
-// connect to, and the details step is skipped rather than shown empty. A
-// tracker can be connected later in Settings → Task provider.
-const NO_TRACKER = 'local';
+// (KATO_ISSUE_PLATFORM=local, ``NO_TRACKER``). Tasks are created in kato's own
+// "New task" tab, so a tracker is never something setup may insist on — there
+// is nothing to connect to, and the details step is skipped rather than shown
+// empty. A tracker can be connected later in Settings → Task provider.
 
 // The fields kato needs to poll each ticket system. Mirrors the backend's
 // required-key map (validate_env.REQUIRED_AGENT_KEYS_BY_PLATFORM) plus the
@@ -93,8 +88,10 @@ const AGENT_CHOICES = [
     blurb: 'Anthropic Claude Code CLI, running on this machine',
     required: [],
     optional: ['KATO_CLAUDE_MODEL'],
-    note: 'Requires the Claude Code CLI installed and logged in on this '
-      + 'machine (run `claude login` once in a terminal if you have not).',
+    note: 'Uses the Claude Code CLI on this computer, signed in to your '
+      + 'account — kato checks both below.',
+    // The CLI that does the work, checked on this step (installed? signed in?).
+    cli: { backend: 'claude', label: 'Claude Code', loginCommand: 'claude auth login' },
   },
   {
     id: 'openhands',
@@ -148,7 +145,7 @@ const AGENT_KEYS = [
 
 const STEP_TITLES = [
   'Ticket system', 'Ticket details', 'AI agent', 'Agent details',
-  'Repositories', 'Finish',
+  'Repositories', 'Approve', 'Finish',
 ];
 
 export default function SetupWizard({ status, onRefreshStatus, onOpenFullSettings }) {
@@ -161,6 +158,9 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
   const [agentDraft, setAgentDraft] = useState({});
   const [agentServer, setAgentServer] = useState({});
   const [saving, setSaving] = useState(false);
+  // Why the ticket system could not be reached with the details just saved
+  // ('' = not tested, or it answered). Shown on that step, in full.
+  const [connectionError, setConnectionError] = useState('');
   const [loadError, setLoadError] = useState('');
 
   // Load the current provider field values + repository root once. Secret
@@ -373,9 +373,25 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       active: platform, provider: platform, fields: payloadFields,
     }));
     if (!ok) { return; }
-    const label = TICKET_SYSTEMS.find((s) => s.id === platform)?.label || platform;
-    toast.show({ kind: 'success', title: 'Ticket system saved', message: `${label} connected.` });
+    // Saved is not connected: try it now, so a wrong token or address is said
+    // here, on the step that has the fields, and not after the whole wizard.
+    setSaving(true);
+    setConnectionError('');
+    const reached = await testTrackerConnection().finally(() => setSaving(false));
     await onRefreshStatus();
+    const label = TICKET_SYSTEMS.find((s) => s.id === platform)?.label || platform;
+    if (!reached.ok || !reached.body?.ok) {
+      setConnectionError(reached.body?.error || reached.error || `kato could not reach ${label}.`);
+      return;
+    }
+    toast.show({ kind: 'success', title: 'Ticket system connected', message: `kato reached ${label}.` });
+    setStep(2);
+  };
+
+  // Saved, but not reachable from here right now (a VPN, a proxy): the
+  // operator may still go on. kato checks again when setup finishes.
+  const onContinueUnreached = () => {
+    setConnectionError('');
     setStep(2);
   };
 
@@ -400,7 +416,7 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
     if (!ok) { return; }
     toast.show({ kind: 'success', title: 'Saved', message: 'Repositories folder set.' });
     await onRefreshStatus();
-    setStep(5);
+    setStep(5);  // which of them the agent may work in
   };
 
   const onSaveAgent = async () => {
@@ -479,8 +495,10 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
           onCredentialSource={(id) => setTicketDraft((current) => ({
             ...current, [credentialKeys.source]: id,
           }))}
-          onBack={() => setStep(0)}
+          onBack={() => { setConnectionError(''); setStep(0); }}
           onSave={onSaveTicket}
+          connectionError={connectionError}
+          onContinueUnreached={onContinueUnreached}
         />
       )}
 
@@ -519,11 +537,15 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
       )}
 
       {step === 5 && (
+        <StepApproveRepositories onBack={() => setStep(4)} onNext={() => setStep(6)} />
+      )}
+
+      {step === 6 && (
         <StepFinish
           isConfigured={isConfigured}
           startFailed={Boolean(status?.setup_error)}
           missing={missing}
-          onBack={() => setStep(4)}
+          onBack={() => setStep(5)}
           onRecheck={onRefreshStatus}
           onOpenFullSettings={onOpenFullSettings}
         />
@@ -533,7 +555,7 @@ export default function SetupWizard({ status, onRefreshStatus, onOpenFullSetting
 }
 
 // The Back / "Save & continue" footer shared by the two saving steps.
-function WizardSaveActions({ onBack, onSave, canSave, saving }) {
+function WizardSaveActions({ onBack, onSave, canSave, saving, savingLabel = 'Saving…' }) {
   return (
     <div className="setup-wizard-actions">
       <button type="button" className="setup-wizard-btn" onClick={onBack} disabled={saving}>
@@ -545,7 +567,7 @@ function WizardSaveActions({ onBack, onSave, canSave, saving }) {
         onClick={onSave}
         disabled={!canSave || saving}
       >
-        {saving ? 'Saving…' : 'Save & continue'}
+        {saving ? savingLabel : 'Save & continue'}
       </button>
     </div>
   );
@@ -653,6 +675,7 @@ function StepPickSystem({ platform, onPick, onNext, onSkip, saving, loadError })
 function StepTicketDetails({
   platform, displayedKeys, requiredKeys, draft, setDraft, serverHasValue,
   canSave, saving, credentialSource, onCredentialSource, onBack, onSave,
+  connectionError = '', onContinueUnreached,
 }) {
   const label = TICKET_SYSTEMS.find((s) => s.id === platform)?.label || platform;
   // The token guide is for people who have to MAKE a token. Once kato has
@@ -688,11 +711,22 @@ function StepTicketDetails({
         setDraft={setDraft}
         serverHasValue={serverHasValue}
       />
+      {connectionError ? (
+        <div className="setup-wizard-connection-error" role="alert">
+          <strong>kato could not reach {label} with these details.</strong>
+          <pre>{connectionError}</pre>
+          <p>Fix the fields above and save again — or continue, and kato tries again when setup finishes.</p>
+          <button type="button" className="setup-wizard-btn" onClick={onContinueUnreached}>
+            Continue anyway
+          </button>
+        </div>
+      ) : null}
       <WizardSaveActions
         onBack={onBack}
         onSave={onSave}
         canSave={canSave}
         saving={saving}
+        savingLabel="Checking…"
       />
     </div>
   );
@@ -764,6 +798,9 @@ function StepAgentDetails({
           || 'Enter the details kato needs to drive this agent — optional '
              + 'fields have sensible defaults.'}
       </p>
+      {agent.cli ? (
+        <AgentCliStatus backend={agent.cli.backend} label={agent.cli.label} loginCommand={agent.cli.loginCommand} />
+      ) : null}
       {guideIds.map((id, index) => (
         <CredentialGuide
           key={id}
@@ -840,17 +877,40 @@ function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
   );
 }
 
+// Kato works only in repositories approved here. Asked during setup: skipping
+// it left a new user's first task with every repository greyed out.
+function StepApproveRepositories({ onBack, onNext }) {
+  return (
+    <div className="setup-wizard-body">
+      <h3 className="setup-wizard-heading">Which repositories may the agent work in?</h3>
+      <p className="setup-wizard-lead">
+        Kato works only in repositories you approve. Tick the ones you want now and save —
+        you can change this any time in Settings → Approvals.
+      </p>
+      <RepositoryApprovalsSettingsPanel showScope={false} />
+      <div className="setup-wizard-actions">
+        <button type="button" className="setup-wizard-btn" onClick={onBack}>Back</button>
+        <button type="button" className="setup-wizard-btn setup-wizard-btn--primary" onClick={onNext}>
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function StepFinish({ isConfigured, startFailed, missing, onBack, onRecheck, onOpenFullSettings }) {
   return (
     <div className="setup-wizard-body">
       {isConfigured ? (
         <>
+          {/* Not "all set" yet: kato is still checking its connections, and
+              that check can fail. This screen closes itself once it passes. */}
           <h3 className="setup-wizard-heading setup-wizard-heading--ok">
-            You're all set 🎉
+            Starting kato…
           </h3>
           <p className="setup-wizard-lead">
-            Kato has everything it needs and is starting now — this screen
-            closes itself as soon as it's running. No restart needed.
+            Every setting is saved. Kato is checking that it can reach everything it needs —
+            this screen closes itself as soon as it&apos;s running. No restart needed.
           </p>
           <div className="setup-wizard-actions">
             <span />

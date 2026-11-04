@@ -41,6 +41,11 @@ from kato_core_lib.data_layers.service.repository_approval_service import (
     operator_identity,
     restricted_mode_posture_violations,
 )
+from kato_core_lib.helpers.repository_approval_hint_utils import (
+    RESTRICTED_NEEDS_BYPASS_OFF,
+    RESTRICTED_NEEDS_DOCKER,
+    RESTRICTED_NEEDS_SCANNER_MEDIUM,
+)
 
 
 def _make_service(tmpdir: Path) -> RepositoryApprovalService:
@@ -374,11 +379,12 @@ class PostureGateTests(unittest.TestCase):
             scanner_blocks_at_medium=False,
         )
         violations = restricted_mode_posture_violations(weak)
-        self.assertEqual(len(violations), 3)
-        joined = ' '.join(violations)
-        self.assertIn('KATO_CLAUDE_BYPASS_PERMISSIONS', joined)
-        self.assertIn('KATO_CLAUDE_DOCKER', joined)
-        self.assertIn('block_on_severity', joined)
+        # Each in words, with where to change it.
+        self.assertEqual(violations, [
+            RESTRICTED_NEEDS_BYPASS_OFF, RESTRICTED_NEEDS_DOCKER, RESTRICTED_NEEDS_SCANNER_MEDIUM,
+        ])
+        self.assertIn('Settings → Sandbox & permission bypass', RESTRICTED_NEEDS_DOCKER)
+        self.assertIn('block_on_severity', RESTRICTED_NEEDS_SCANNER_MEDIUM)
 
     def test_safe_posture_lets_restricted_repo_proceed(self) -> None:
         service = _make_service(self.tmpdir)
@@ -416,10 +422,9 @@ class PostureGateTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertIsInstance(captured['exc'], RestrictedModePostureViolation)
         self.assertEqual(captured['exc'].repository_ids, ['vendor'])
-        self.assertTrue(any(
-            'KATO_CLAUDE_BYPASS_PERMISSIONS' in v
-            for v in captured['exc'].violations
-        ))
+        self.assertIn(RESTRICTED_NEEDS_BYPASS_OFF, captured['exc'].violations)
+        # The refusal says how out: trusted, in Settings → Approvals.
+        self.assertIn('Switch it to trusted in Settings → Approvals', str(captured['exc']))
 
     def test_docker_off_refuses_restricted_repo(self) -> None:
         service = _make_service(self.tmpdir)
@@ -440,10 +445,7 @@ class PostureGateTests(unittest.TestCase):
         )
 
         self.assertFalse(result)
-        self.assertTrue(any(
-            'KATO_CLAUDE_DOCKER' in v
-            for v in captured['exc'].violations
-        ))
+        self.assertIn(RESTRICTED_NEEDS_DOCKER, captured['exc'].violations)
 
     def test_lenient_scanner_refuses_restricted_repo(self) -> None:
         service = _make_service(self.tmpdir)

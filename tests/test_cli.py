@@ -57,13 +57,18 @@ class SubcommandRoutingTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             cli.main(['doctor', '--mode', 'bogus'])
 
-    def test_test_runs_unittest_discover(self):
+    def test_test_runs_every_test_root(self):
+        # ``discover -s tests`` alone missed every core-lib's own suite.
         with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['test'])
-        self.assertEqual(
-            _call_argv(m),
-            ['VPY', '-m', 'unittest', 'discover', '-s', 'tests'],
-        )
+        argv = _call_argv(m)
+        self.assertEqual(argv[0], 'VPY')
+        self.assertTrue(argv[1].endswith('scripts/run_all_tests.py'))
+
+    def test_history_runs_the_audit_log_query(self):
+        with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
+            cli.main(['history'])
+        self.assertTrue(_call_argv(m)[1].endswith('scripts/audit_log_query.py'))
 
     def test_build_agent_server_tag_from_env(self):
         with mock.patch.dict('os.environ',
@@ -84,7 +89,7 @@ class SubcommandRoutingTests(unittest.TestCase):
         with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
             cli.main(['sandbox', 'verify'])
         self.assertEqual(_call_argv(m),
-                         ['VPY', '-m', 'kato_core_lib.sandbox.verify'])
+                         ['VPY', '-m', 'sandbox_core_lib.sandbox_core_lib.verify'])
 
     def test_sandbox_build_invokes_build_image(self):
         with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=0) as m:
@@ -121,6 +126,33 @@ class SubcommandRoutingTests(unittest.TestCase):
     def test_propagates_nonzero_exit_code(self):
         with mock.patch.object(cli, 'run_leaving_ctrl_c_to_child', return_value=3):
             self.assertEqual(cli.main(['up']), 3)
+
+
+class ModulesTheCommandsNameExistTests(unittest.TestCase):
+    """``doctor`` and the sandbox commands once named modules that had moved,
+    so they crashed on a new user's first run. Import what each one names."""
+
+    def test_every_named_module_and_function_exists(self):
+        import importlib
+
+        importlib.import_module('kato_core_lib.validate_env')
+        importlib.import_module('sandbox_core_lib.sandbox_core_lib.verify')
+        manager = importlib.import_module(cli._SANDBOX_MANAGER)
+        for name in ('build_image', 'ensure_image', 'login_command', 'stamp_auth_volume_manifest'):
+            self.assertTrue(callable(getattr(manager, name)), name)
+        for script in ('run_local.py', 'bootstrap.py', 'run_all_tests.py', 'audit_log_query.py'):
+            self.assertTrue((cli.SCRIPTS / script).is_file(), script)
+
+    def test_the_cli_starts_on_a_python_with_nothing_installed(self):
+        # ``./kato bootstrap`` runs it before the virtualenv exists.
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, '-I', '-S', '-c',
+             f'import sys; sys.path.insert(0, {str(cli.REPO_ROOT)!r}); '
+             'import kato_core_lib.cli as c; c.build_parser()'],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class ComposeDockerTests(unittest.TestCase):

@@ -5,11 +5,15 @@ Every former ``make <target>`` is now ``kato <subcommand>``::
     kato up                      # start kato locally (settings.json + run main)
     kato bootstrap               # one-time setup (venv + deps + UI bundle)
     kato doctor [--mode all|agent|openhands]
-    kato test                    # run the unittest suite
+    kato test                    # run every test root (scripts/run_all_tests.py)
     kato build-agent-server      # build the agent-server image
     kato sandbox build|login|verify
     kato compose-docker          # the containerized OpenHands compose flow
     kato lid-awake setup|remove|status  # keep running with the lid closed
+    kato history                 # the most recent task activity
+
+``./kato`` (and ``kato.exe`` on Windows) runs this same CLI, before a
+virtualenv exists too: it imports nothing outside the standard library.
 
 Subcommands delegate to the same cross-platform Python implementations
 the Makefile used (``scripts/*.py`` + ``kato_core_lib`` modules), so
@@ -75,7 +79,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_test(_args: argparse.Namespace) -> int:
-    return _run([_venv_python(), '-m', 'unittest', 'discover', '-s', 'tests'])
+    # Every test root, each lib's own included — ``discover -s tests``
+    # alone missed every core-lib's suite.
+    return _run([_venv_python(), str(SCRIPTS / 'run_all_tests.py')])
+
+
+def cmd_history(_args: argparse.Namespace) -> int:
+    return _run([_venv_python(), str(SCRIPTS / 'audit_log_query.py')])
 
 
 def cmd_build_agent_server(_args: argparse.Namespace) -> int:
@@ -84,17 +94,20 @@ def cmd_build_agent_server(_args: argparse.Namespace) -> int:
                  str(REPO_ROOT / 'docker' / 'agent-server')])
 
 
+_SANDBOX_MANAGER = 'sandbox_core_lib.sandbox_core_lib.manager'
+
+
 def cmd_sandbox(args: argparse.Namespace) -> int:
     py = _venv_python()
     if args.action == 'build':
         return _run([py, '-c',
-                     'from kato_core_lib.sandbox.manager import build_image; '
+                     f'from {_SANDBOX_MANAGER} import build_image; '
                      'build_image()'])
     if args.action == 'verify':
-        return _run([py, '-m', 'kato_core_lib.sandbox.verify'])
+        return _run([py, '-m', 'sandbox_core_lib.sandbox_core_lib.verify'])
     # login: seed the persistent kato-claude-config volume.
     return _run([py, '-c',
-                 'from kato_core_lib.sandbox.manager import ensure_image, '
+                 f'from {_SANDBOX_MANAGER} import ensure_image, '
                  'login_command, stamp_auth_volume_manifest; '
                  'import subprocess, sys; ensure_image(); '
                  'rc = subprocess.call(login_command()); '
@@ -193,7 +206,7 @@ def build_parser() -> argparse.ArgumentParser:
                         default='all')
     doctor.set_defaults(func=cmd_doctor)
 
-    sub.add_parser('test', help='run the unittest suite').set_defaults(func=cmd_test)
+    sub.add_parser('test', help='run every test suite (kato and each core-lib)').set_defaults(func=cmd_test)
     sub.add_parser('build-agent-server',
                    help='build the agent-server Docker image').set_defaults(func=cmd_build_agent_server)
 
@@ -207,6 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
     lid_awake = sub.add_parser('lid-awake', help='keep running with the lid closed')
     lid_awake.add_argument('action', choices=['setup', 'remove', 'status'])
     lid_awake.set_defaults(func=cmd_lid_awake)
+
+    sub.add_parser('history', help='the most recent task activity').set_defaults(func=cmd_history)
     return parser
 
 

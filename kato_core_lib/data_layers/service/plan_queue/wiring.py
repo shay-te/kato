@@ -116,6 +116,10 @@ def build_plan_queue_service(
         observer=lambda plan, event: log_plan_event(get_logger(), plan, event),
         can_propose=lambda task_id: split_refusal(task_id, workspace_manager=get_workspace_manager()),
         logger=get_logger(),
+        # The split's agent is not asked where each task works: every sub-task
+        # starts in all of the main task's repositories, and the operator
+        # narrows or widens one in the plan's editor.
+        proposer_picks_repositories=False,
         **shared,
     )
     if shared:

@@ -58,6 +58,8 @@ export default function TabList({
   onScanNow,
   scanPending,
   onVisibleOrderChange,
+  // The connected ticket system's name ('' = none: tasks are made in kato).
+  trackerName = '',
 }) {
   const scrollRef = useRef(null);
   const [scrollState, setScrollState] = useState({
@@ -451,12 +453,19 @@ export default function TabList({
   } else if (awaitingFirstLoad) {
     emptyStateMessage = showWaiting ? <>Loading your tasks…</> : null;
   } else {
+    // A new user's first screen: say how to get a first task, the way this
+    // kato can — a ticket system is named only when one is connected.
     emptyStateMessage = (
       <>
-        No tabs yet. Click <strong>+ Add task</strong> to pick one
-        of your assigned tasks, or tag a YouTrack task with{' '}
-        <code>kato:wait-planning</code> and let kato pick it up
-        autonomously.
+        No tasks yet.{' '}
+        <button type="button" className="tabs-empty-action" onClick={onNewTask}
+          disabled={typeof onNewTask !== 'function'}>
+          Create your first task
+        </button>
+        {' '}— describe the work and pick its repositories; kato plans it with you first.
+        {trackerName ? (
+          <> Or click <strong>+ Add task</strong> to pick one of your assigned {trackerName} tickets.</>
+        ) : null}
       </>
     );
   }

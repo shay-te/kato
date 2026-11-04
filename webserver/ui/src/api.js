@@ -218,7 +218,7 @@ export function updateSettings(payload) {
   return postEnvelope('/api/settings', payload || {});
 }
 
-// Repository approvals (used to live behind ``./kato approve-repo``).
+// Repository approvals (Settings → Approvals).
 export function fetchRepositoryApprovals() {
   return requestEnvelope('/api/repository-approvals');
 }
@@ -235,6 +235,12 @@ export function fetchTaskProviders() {
 
 export function updateTaskProvider(payload) {
   return postEnvelope('/api/task-providers', payload || {});
+}
+
+// Reach the ticket system with the settings saved right now: ``{ ok,
+// platform, error }``. kato's own validation query, run by the server.
+export function testTrackerConnection() {
+  return postEnvelope('/api/setup/test-tracker-connection', {});
 }
 
 // Credentials for `provider` that already exist on this machine (gh/glab
@@ -897,7 +903,8 @@ export function discardPlanQueue(planId) {
   return postEnvelope(planQueueUrl(planId), {}, 'DELETE');
 }
 
-// ``action``: 'start' | 'satisfy' | 'retry' | 'cancel' | 'check'.
+// ``action``: 'plan' (start it in Plan mode) | 'start' (implement right
+// away) | 'satisfy' | 'retry' | 'cancel' | 'check'.
 export function planQueueStepAction(planId, stepId, action) {
   return postEnvelope(planQueueUrl(planId, `/steps/${encodeURIComponent(stepId)}/${action}`), {});
 }

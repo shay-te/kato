@@ -59,8 +59,12 @@ class TaskRepositoryService(object):
         workspace_manager,
         session_manager=None,
         logger=None,
+        plan_queue=None,
     ) -> None:
         self._get_repository_service = provider_for(repository_service)
+        # A repository added to a plan's main task goes to every sub-task of
+        # it that has not started (``PlanQueueService.add_repositories``).
+        self._get_plan_queue = provider_for(plan_queue)
         self._get_task_service = provider_for(task_service)
         self._get_workspace_manager = provider_for(workspace_manager)
         self._get_session_manager = provider_for(session_manager)
@@ -265,6 +269,10 @@ class TaskRepositoryService(object):
         ticket_tags = self._mirror_tags_to_ticket(
             normalized_task_id, [str(entry['tag_name']) for entry in accepted],
         )
+        plan_update = (
+            self._share_with_plans(normalized_task_id, accepted_ids)
+            if sync_result.get('synced') else {'plans': [], 'error': ''}
+        )
         return {
             'added': bool(sync_result.get('synced')) or any(
                 entry['tag_added'] for entry in accepted
@@ -276,6 +284,7 @@ class TaskRepositoryService(object):
             ],
             'rejected': rejected,
             'sync': sync_result,
+            'plan_update': plan_update,
         }
 
     @staticmethod
@@ -291,6 +300,19 @@ class TaskRepositoryService(object):
                 seen.add(repository_id.lower())
                 unique.append(repository_id)
         return unique
+
+    def _share_with_plans(self, task_id: str, repository_ids: list[str]) -> dict[str, object]:
+        """The task is a plan's main task: its live plans take the new
+        repositories, and so does each sub-task not started yet. Best effort,
+        reported, never failing the add."""
+        queue = self._get_plan_queue()
+        if queue is None:
+            return {'plans': [], 'error': ''}
+        try:
+            return {'plans': list(queue.add_repositories(task_id, repository_ids)), 'error': ''}
+        except Exception as exc:
+            self.logger.exception('could not give the plans of %s its new repositories', task_id)
+            return {'plans': [], 'error': f'its plan\'s tasks were not given the repository: {exc}'}
 
     def _mirror_tags_to_ticket(self, task_id: str, tag_names: list[str]) -> list[dict[str, str]]:
         """``_mirror_tag_to_ticket`` for each tag, concurrently when there are several.

@@ -73,7 +73,6 @@ kato; pulling it out as a sibling would be premature.
 | `./kato configure` | Interactive `.env` generator. |
 | `./kato doctor` | Validate every config key the active mode needs. |
 | `./kato test` | Run the kato test suite + every owned core-lib's tests. |
-| `./kato approve-repo` | Repository approval picker (REP gate). |
 | `./kato history` | Recent autonomous-task activity. |
 
 See [`AGENTS.md`](../AGENTS.md) for contribution rules,

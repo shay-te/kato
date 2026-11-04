@@ -27,7 +27,7 @@ async function loadAgentChoices() {
 // column beside it. Everything typed is kept as a draft in this browser.
 // ``onHide`` only returns the centre to the file view; the draft stays in its
 // tab. Discarding it is the tab's close, which asks first.
-export default function NewTaskPane({ onCreated, onHide }) {
+export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }) {
   const draft = useNewTaskDraft();
   const [previewing, setPreviewing] = useState(false);
   const choices = usePickerData(loadAgentChoices, [], null).data;
@@ -104,6 +104,7 @@ export default function NewTaskPane({ onCreated, onHide }) {
           <NewTaskRepositories
             selected={draft.repositories}
             onChange={(repositories) => updateNewTaskDraft({ repositories })}
+            onOpenSettings={onOpenSettings}
           />
           <label className="new-task-section new-task-field">
             <span className="new-task-field-label">Branch name</span>

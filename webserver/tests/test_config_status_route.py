@@ -116,6 +116,22 @@ class ConfigStatusUnconfiguredTests(_Base):
         self.assertIn('YOUTRACK_API_TOKEN', joined)
         self.assertIn('OH_SECRET_KEY', joined)
 
+    def test_it_names_the_ticket_system_tasks_come_from(self) -> None:
+        # The empty task strip names it; unset still means YouTrack.
+        self.assertEqual(self._get_status()['issue_platform'], 'youtrack')
+        body = self._get_status(extra_env={'KATO_ISSUE_PLATFORM': ' Jira '})
+        self.assertEqual(body['issue_platform'], 'jira')
+        body = self._get_status(extra_env={'KATO_ISSUE_PLATFORM': 'local'})
+        self.assertEqual(body['issue_platform'], 'local')
+
+    def test_it_says_whether_this_is_a_first_run_or_a_lost_connection(self) -> None:
+        self.assertEqual(self._get_status(needs_config=True)['setup_kind'], 'first_run')
+        with patch.dict(os.environ, self._env()):
+            app = create_app(session_manager=_FakeManager(), needs_config=True)
+            app.config['SETUP_KIND'] = 'cannot_connect'
+            body = app.test_client().get('/api/config-status').get_json()
+        self.assertEqual(body['setup_kind'], 'cannot_connect')
+
     def test_setup_mode_reflects_boot_flag_true(self) -> None:
         # Booted unconfigured → the process is in setup mode.
         body = self._get_status(needs_config=True)
@@ -193,3 +209,17 @@ class ConfigStatusLayeredResolutionTests(_Base):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestTrackerConnectionRouteTests(_Base):
+    def test_it_checks_the_saved_settings_and_answers_as_the_check_does(self) -> None:
+        answer = {'ok': False, 'platform': 'jira', 'error': '401 Unauthorized'}
+        with patch.dict(os.environ, self._env({'KATO_ISSUE_PLATFORM': 'jira'})), patch(
+            'kato_core_lib.validation.tracker_connection_check.check_tracker_connection',
+            return_value=answer,
+        ) as run:
+            app = create_app(session_manager=_FakeManager(), needs_config=True)
+            response = app.test_client().post('/api/setup/test-tracker-connection')
+        self.assertEqual(response.get_json(), answer)
+        self.assertEqual(run.call_args.args[0]['KATO_ISSUE_PLATFORM'], 'jira')
+

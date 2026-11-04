@@ -10,7 +10,7 @@ kato up              # start kato locally (settings.json + run main)
 kato test            # run the unittest suite
 ```
 
-`kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker | lid-awake <setup|remove|status>`. There is no Makefile. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
+`kato` is the single operator entry point — `kato up | bootstrap | doctor | test | build-agent-server | sandbox <build|login|verify> | compose-docker | lid-awake <setup|remove|status> | history`. There is no Makefile. **ONE list of subcommands: `kato_core_lib/cli.py`.** `./kato` (and `kato.exe`, frozen from `tools/kato/kato.py`) only finds a Python and runs `-m kato_core_lib.cli` (old `sandbox-build` names are aliases): a second list there drifted until `./kato doctor` crashed on a missing module. `cli.py` must stay importable on a bare Python (stdlib only — `./kato bootstrap` runs it before a venv exists; a test runs it with `-I -S`). `kato test` = `scripts/run_all_tests.py`, every test root. `kato.exe` must be rebuilt on Windows after a `tools/kato/kato.py` change. The suite can also be run directly: `python -m unittest discover -s tests -p "test_*.py"`.
 
 **Zero failures AND zero errors expected — everywhere.** `openhands_core_lib` used to carry 94 pre-existing errors that this file told you to ignore; that suite now runs 257 tests clean, so an error there is a real regression, not background noise. Do not reinstate a blanket "ignore" for any lib.
 
@@ -548,6 +548,18 @@ answer — never the clone's, which may name a stale or deleted plan branch) as 
 with an empty lease. The probes accept a PR into either branch (older plans merged into the
 destination); the history probe reads the main branch first. A live plan's source task cannot be
 renamed (its sub-tasks' PRs point at its branch). Open PRs created before this are NOT retargeted.
+**Where a sub-task works: its own list, starting with all of the main task's.** The split's agent
+is NOT asked (`PlanQueueService(proposer_picks_repositories=False)`, kato's `plan_queue/wiring.py`):
+every step starts in all of the plan's `repository_ids`, and the operator ticks/unticks per task
+— and adds one kato knows ("+ Add repository" inside a task's "Works in", which also adds it to the
+plan) — in the proposal and in Edit tasks (only tasks not started). That list is the truth: a local
+step is created with it (its `kato:repo:` tags), a tracker sub-task carries it in its footer
+(rewritten by `launcher.update` when a waiting task is edited). A repository added to the MAIN task
+later ("+ Add repository" → `TaskRepositoryService._share_with_plans` → `PlanQueueService.add_repositories`)
+goes to the plan and every step NOT started (rewriting waiting tickets); a started one keeps what its
+agent was given. (Briefly this was "every sub-task always works in all of them, live"; the operator
+reversed it to per-task editing — do not bring back resolving a sub-task from its main task's
+workspace.)
 Kato still never publishes: the step parks for push like any task; merging and moving it to
 done are the operator's. The merge verdict ignores PRs created before the step's release
 (`CLOCK_SKEW_SECONDS`) — branch names repeat (LOCAL ids restart after a store reset; the same
@@ -625,6 +637,28 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   Jira search is `/rest/api/3/search/jql`, paged by `nextPageToken` (no `total`; a token handed back
   twice ends the walk) and always asks for `key` (the search answers with only the id otherwise).
   Written from Atlassian's docs, not yet run against a live Jira.
+
+### First run (what a new user meets)
+- **Approvals:** every message about an unapproved repository is built by
+  `helpers/repository_approval_hint_utils.py` ("Settings → Approvals"; JS: `constants/settingsTabs.js`) —
+  the old command-line picker is gone, and `tests/test_repository_approval_hint_utils.py` fails if anything
+  names its command again. New approvals default to **trusted** (panel + route): restricted also needs the Docker sandbox AND
+  the scanner blocking MEDIUM (no setting for that yet), so as the default it refused every task kato picked
+  up by itself. A stored approval with no mode is still restricted. New task's note links to the tab
+  (`SettingsDrawer initialTab`, `App.openSettings(tab)`).
+- **Wizard:** the ticket step saves, then tests the connection (`POST /api/setup/test-tracker-connection` →
+  `validation/tracker_connection_check.py`: kato's own validation in a CHILD process whose env is the saved
+  settings — never mutate the server's env, setup mode snapshots/restores it) and shows the whole error on
+  that step (Continue anyway allowed). The Claude step shows installed / signed in (`claude auth status` via
+  `claude_core_lib/helpers/auth_status.py`, folded into the readiness probe as `logged_in`; None = cannot
+  tell, never "signed out"). After the folder step: "Approve repositories" (the Approvals panel,
+  `showScope={false}`; discovery reads the saved folder through `effective_config_env`). Finish says
+  "Starting kato…" — never "all set" before the connection check passes; once running, a one-time
+  "Kato is running — next steps" toast (`useSetupFinishedNote`).
+- **A configured kato that cannot connect** sets `SETUP_KIND=cannot_connect` → the gate says so ("Kato
+  can't reach a service it needs"), not "Welcome". Setup errors are passed WHOLE (no `[:500]`), shown in `<pre>`.
+- **Empty task strip:** a "Create your first task" button; a tracker is named only when one is connected
+  (`/api/config-status` `issue_platform`, labels from `constants/ticketSystems.js`).
 
 ### New task (local tasks — no tracker)
 ```
@@ -747,8 +781,8 @@ overwrite one set by hand), and so does an install with no tracker. `supports_ta
 `WorkspaceService.create` preserves `tags` (it is called on every provisioning pass).
 
 **A plan sub-task's footer is where it starts; tags only add to it.** A sub-task always works in its
-footer's repositories (every kato can read the footer), and `kato:repo:` tags from the ticket AND from THIS
-kato join that set (`RepositoryInventoryService._with_tagged_repositories`). The footer used to win outright
+footer's repositories (every kato can read the footer; the list the operator left it in the plan — see Plan
+queue), and `kato:repo:` tags from the ticket AND from THIS kato join that set (`RepositoryInventoryService._with_tagged_repositories`). The footer used to win outright
 over the tracker's tags, so a repo tagged on the YouTrack sub-task was never cloned, and "+ Add repository"
 saved its tag, cloned nothing, and the toast said "repository was already cloned" (UNA-3272 + event-core-lib).
 Another kato may not see a tag or may name the repo differently, so a tag that matches nothing is left out

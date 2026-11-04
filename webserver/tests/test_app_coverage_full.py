@@ -1206,6 +1206,25 @@ class RepositoryApprovalsRoutesTests(unittest.TestCase):
         modes_called = [c.kwargs.get('mode') for c in service.approve.call_args_list]
         self.assertIn(ApprovalMode.RESTRICTED, modes_called)
 
+    def test_an_approval_with_no_mode_is_trusted(self):
+        # Restricted also needs the Docker sandbox and a stricter scanner, which
+        # a new install has neither of: as the default it refused every task
+        # kato picked up by itself.
+        from kato_core_lib.data_layers.data.repository_approval import ApprovalMode
+
+        service = MagicMock()
+        service.approve.return_value = SimpleNamespace(
+            repository_id='client', approval_mode=SimpleNamespace(value='trusted'),
+        )
+        with patch(
+            'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',
+            return_value=service,
+        ):
+            self._client().post('/api/repository-approvals', json={
+                'approve': [{'repository_id': 'client', 'remote_url': 'u'}],
+            })
+        self.assertEqual(service.approve.call_args.kwargs['mode'], ApprovalMode.TRUSTED)
+
     def test_post_repository_approvals_rejects_non_array_payload(self):
         with patch(
             'kato_core_lib.data_layers.service.repository_approval_service.RepositoryApprovalService',

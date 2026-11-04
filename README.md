@@ -149,7 +149,7 @@ Kato runs an autonomous agent on your code, your repos, and your credentials —
 
 **Before the agent runs**
 
-- 🚫 **Repository approval (Restricted Execution Protocol)** — kato refuses to act on any repo you haven't explicitly approved with `kato approve-repo`, and never touches one on the **repository denylist**.
+- 🚫 **Repository approval (Restricted Execution Protocol)** — kato refuses to act on any repo you haven't approved in **Settings → Approvals**, and never touches one on the **repository denylist**.
 - 🔍 **Pre-execution security scanner** — `detect-secrets`, `bandit`, `safety`, `npm audit`, and a committed-`.env` checker run against the fresh clone; CRITICAL/HIGH findings block the task *before the agent sees the code*.
 - 🌿 **Isolated workspace per task** — a fresh clone under `~/.kato/workspaces/<ticket-id>/`; one task can't reach another's files.
 

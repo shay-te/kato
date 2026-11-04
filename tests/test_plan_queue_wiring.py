@@ -79,6 +79,9 @@ class AgentServiceWiringTests(unittest.TestCase):
         service = _agent_service(self, local=True)
         self.assertIsInstance(service.plan_queue, PlanQueueService)
         self.assertIs(service.plan_queue, service.plan_queue)
+        # The split's agent does not pick repositories: every sub-task starts
+        # in all of the main task's, and the operator edits a sub-task's.
+        self.assertFalse(service.plan_queue._proposals._per_step_repositories)
         # A sub-task's question goes to its plan's chat: asks THIS queue which plan.
         self.assertIsInstance(service.plan_questions, ParentQuestions)
         self.assertEqual(service.plan_questions.parent_of('T-404'), '')
@@ -91,7 +94,7 @@ class AgentServiceWiringTests(unittest.TestCase):
     def test_the_merge_target_asks_this_queue_and_is_there_without_one(self) -> None:
         service = _agent_service(self, local=True)
         self.assertIsInstance(service.plan_merge_target, PlanMergeTarget)
-        self.assertEqual(service.plan_merge_target.source_of('T-404'), '')
+        self.assertEqual(service.plan_step_source.source_of('T-404'), '')
         self.assertEqual(service._live_plan_sources, set())
         service.plan_queue._registry.add(Plan.new('UNA-1', plan_markdown='x', repository_ids=['api'], now=1.0))
         self.assertEqual(service._live_plan_sources, {'una-1'})
@@ -158,7 +161,7 @@ class BootHookTests(unittest.TestCase):
         queue = self._queue()
         merge_target = Mock()
         app = SimpleNamespace(
-            service=SimpleNamespace(plan_queue=queue, plan_merge_target=merge_target),
+            service=SimpleNamespace(plan_queue=queue, plan_step_source=merge_target),
             planning_flask_app=SimpleNamespace(config={}), logger=logging.getLogger('test.pq.announce'),
         )
         main_module._start_plan_queue(app)

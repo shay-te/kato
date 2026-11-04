@@ -41,6 +41,7 @@ def parse_task_split(
     *,
     allowed_repositories: Iterable[str],
     files: Mapping[str, str] | None = None,
+    per_step_repositories: bool = True,
 ) -> SplitProposal:
     body = _strip_fence(_last_block(text or ''))
     try:
@@ -57,7 +58,9 @@ def parse_task_split(
         drafts = [_draft(item, index, brief=_file_text(item, index, files)) for index, item in items]
         sources = _require_every_file(payload['steps'], files)
     try:
-        steps = validate_split(drafts, allowed_repositories=allowed_repositories)
+        steps = validate_split(
+            drafts, allowed_repositories=allowed_repositories, per_step_repositories=per_step_repositories,
+        )
     except SplitValidationError as exc:
         raise SplitProposalError(str(exc)) from exc
     notes = payload.get('notes', '')

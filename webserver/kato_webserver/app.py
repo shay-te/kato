@@ -2750,17 +2750,34 @@ def _register_http_routes(app: Flask) -> None:
         )
         from kato_core_lib.validate_env import collect_config_errors
 
-        errors = collect_config_errors(mode='all', env=effective_config_env())
+        env = effective_config_env()
+        errors = collect_config_errors(mode='all', env=env)
         return jsonify({
             'setup_mode': bool(app.config.get('NEEDS_CONFIG')),
             'needs_config': bool(errors),
             'missing': errors,
+            # The ticket system tasks come from ('local' = none: tasks are
+            # made in kato), so the UI names the right one. Unset is YouTrack.
+            'issue_platform': str(env.get('KATO_ISSUE_PLATFORM') or 'youtrack').strip().lower(),
             # Why the last in-process start attempt failed ('' when none):
             # config can be COMPLETE yet still fail to start (bad token
             # fails connection validation). The wizard must show that
             # instead of "you're all set".
             'setup_error': str(app.config.get('SETUP_ERROR') or ''),
+            # 'first_run', or 'cannot_connect': set up already, and a service
+            # it needs could not be reached (the screen must not say "welcome").
+            'setup_kind': str(app.config.get('SETUP_KIND') or 'first_run'),
         })
+
+    @app.post('/api/setup/test-tracker-connection')
+    def test_tracker_connection():
+        """Reach the ticket system with the settings saved right now — the
+        setup wizard asks right after its ticket details are saved, so a wrong
+        token or address is said on that step, in full."""
+        from kato_core_lib.helpers.kato_settings_store_utils import effective_config_env
+        from kato_core_lib.validation.tracker_connection_check import check_tracker_connection
+
+        return jsonify(check_tracker_connection(effective_config_env()))
 
     @app.get('/api/fs/dirs')
     def list_directories():
@@ -3080,7 +3097,7 @@ def _register_http_routes(app: Flask) -> None:
         """Return every discovered candidate + which are approved.
 
         Used by the Settings drawer's "Repositories" approval panel.
-        Replaces the ``./kato approve-repo`` CLI picker — discovery
+        Replaces the old command-line picker — discovery
         is the same (inventory + checkout + workspace clones,
         merged inventory-wins). The UI joins each candidate with
         its approval record so the operator sees a single unified
@@ -3180,7 +3197,10 @@ def _register_http_routes(app: Flask) -> None:
                 continue
             repo_id = text_from_mapping(item, 'repository_id')
             remote_url = text_from_mapping(item, 'remote_url')
-            mode = str(item.get('mode') or 'restricted').strip().lower()
+            # Trusted unless restricted is picked: restricted also needs the
+            # Docker sandbox and a stricter scanner, which a new install has
+            # neither of. A mode that is not a mode is still the safe one.
+            mode = str(item.get('mode') or 'trusted').strip().lower()
             if not repo_id:
                 continue
             try:

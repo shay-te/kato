@@ -35,11 +35,14 @@ class StepDraft(object):
 
 def validate_split(
     drafts: Sequence[StepDraft], *, allowed_repositories: Iterable[str],
+    per_step_repositories: bool = True,
 ) -> list[StepDraft]:
     """The drafts, checked and normalised — or ``SplitValidationError``.
 
     Normalised: titles and briefs stripped, duplicate dependencies dropped, and
-    a step that names no repositories gets every allowed one.
+    a step that names no repositories gets every allowed one. Without
+    ``per_step_repositories`` every step works in every allowed repository,
+    whatever it names (a host whose tasks all share one set of repositories).
     """
     allowed = [str(repo) for repo in allowed_repositories if str(repo)]
     if not allowed:
@@ -61,7 +64,7 @@ def validate_split(
         if step_id in seen:
             raise SplitValidationError(f'step id {step_id!r} is used twice')
         seen.add(step_id)
-    normalised = [_normalised(draft, seen, allowed) for draft in drafts]
+    normalised = [_normalised(draft, seen, allowed, per_step_repositories) for draft in drafts]
     topological_order(normalised)  # raises on a cycle
     return normalised
 
@@ -103,7 +106,7 @@ def dependents_of(step_id: str, drafts: Sequence) -> set[str]:
     return waiting
 
 
-def _normalised(draft: StepDraft, ids: set[str], allowed: list[str]) -> StepDraft:
+def _normalised(draft: StepDraft, ids: set[str], allowed: list[str], per_step: bool) -> StepDraft:
     title = str(draft.title or '').strip()
     brief = str(draft.brief or '').strip()
     if not title:
@@ -127,7 +130,7 @@ def _normalised(draft: StepDraft, ids: set[str], allowed: list[str]) -> StepDraf
         if dep not in depends_on:
             depends_on.append(dep)
     repositories: list[str] = []
-    for repo in draft.repositories:
+    for repo in draft.repositories if per_step else ():
         if repo not in allowed:
             raise SplitValidationError(
                 f'step {draft.id!r} names repository {repo!r}, which is not one of '

@@ -219,10 +219,20 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(steps['api']['status'], 'starting')
         self.assertEqual(started.get_json()['status'], 'approved')
         self.assertEqual([request.step_id for request, _task in self.launcher.released], ['api'])
-        self.assertEqual(self.launcher.released[0][0].start_mode, 'plan')  # the task plans first
+        # Start is "implement right away" — the card's pick, whatever Approve chose.
+        self.assertEqual(self.launcher.released[0][0].start_mode, 'implement')
         refused = self._post(f'/api/plan-queues/{plan_id}/steps/ui/start')
         self.assertEqual(refused.status_code, 409)
         self.assertIn('still waits', refused.get_json()['error'])
+
+    def test_plan_starts_one_ready_task_in_plan_mode(self) -> None:
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'start_mode': 'implement'})
+        planned = self._post(f'/api/plan-queues/{plan_id}/steps/api/plan')
+        self.assertEqual(planned.status_code, 200, planned.get_json())
+        self.assertEqual(self.launcher.released[0][0].start_mode, 'plan')
+        refused = self._post(f'/api/plan-queues/{plan_id}/steps/ui/plan')
+        self.assertEqual(refused.status_code, 409)
 
     def test_an_approved_plan_s_waiting_task_is_edited_through_the_same_route(self) -> None:
         plan_id = self._proposed()

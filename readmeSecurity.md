@@ -15,12 +15,13 @@ What kato does to contain a misbehaving agent, what it doesn't, and what's on yo
   comment.
 - **Restricted Execution Protocol (REP)** — kato refuses to run
   an agent against any repository the operator hasn't explicitly
-  approved. Run `./kato approve-repo` to open the picker — it
-  shows every repo kato can find with `[x]` next to the ones
-  already approved; toggle indices, press Enter to apply. REP is
-  always on. There is no off switch. New repos start in
-  `restricted` mode; the operator elevates to `trusted` after
-  reviewing the first agent run.
+  approved. Approve them in kato's **Settings → Approvals** tab —
+  it lists every repo kato can find and which are approved. REP
+  is always on. There is no off switch. A repo is approved as
+  `trusted` unless you pick `restricted`, which also re-checks
+  its remote address and needs the Docker sandbox on and the
+  security scanner blocking MEDIUM findings for tasks kato picks
+  up by itself.
 
 Combined, these catch the most common breach patterns in
 small-team codebases — committed `.env` files, vulnerable deps,

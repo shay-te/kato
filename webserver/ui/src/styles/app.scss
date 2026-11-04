@@ -799,6 +799,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   padding-bottom: $SPACE-14;
 }
 
+/* The empty strip's "Create your first task": the one thing a new user needs. */
+.tabs-empty-action {
+  padding: $SPACE-2 $SPACE-10;
+  border: 1px solid $C-BLUE-48;
+  border-radius: $RADIUS-PILL;
+  background: $C-BLUE-33;
+  color: $C-NEUTRAL-96;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tabs-empty-action:not(:disabled):hover { background: $C-BLUE-48; }
+
 .tabs-scroller {
   flex: 1;
   min-width: 0;
@@ -9426,6 +9439,46 @@ $FILES-PANE-INSET: $SPACE-6;
   transform: none;
 }
 
+/* The plan view's action bar is stuck to the BOTTOM of a scrolling panel.
+ * A tooltip hung below a button there overflowed the panel, which grew a
+ * scrollbar, which moved the button out from under the mouse, which hid the
+ * tooltip, which removed the scrollbar — the button could not be clicked.
+ * So every tooltip in that bar opens ABOVE and grows toward the inside: from
+ * the trailing buttons to the left, from the leading one to the right.
+ * A group rule, like the task header's, so a button added there is covered. */
+.plan-proposal-actions [data-tooltip]:hover::after,
+.plan-proposal-actions [data-tooltip]:focus-visible::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  transform: none;
+  max-width: 280px;
+}
+
+.plan-proposal-actions [data-tooltip]:hover::before,
+.plan-proposal-actions [data-tooltip]:focus-visible::before {
+  top: auto;
+  bottom: calc(100% + 2px);
+  left: auto;
+  right: 6px;
+  transform: none;
+  border-bottom-color: transparent;
+  border-top-color: $C-CYAN-17;
+}
+
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:hover::after,
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:focus-visible::after {
+  left: 0;
+  right: auto;
+}
+
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:hover::before,
+.plan-proposal-actions .plan-proposal-discard[data-tooltip]:focus-visible::before {
+  left: 6px;
+  right: auto;
+}
+
 /* Combo: above + end (e.g. for buttons near bottom-right corners). */
 [data-tooltip].tooltip-above.tooltip-end:hover::after,
 [data-tooltip].tooltip-above.tooltip-end:focus-visible::after {
@@ -11229,6 +11282,16 @@ button.settings-prompt-editor-head {
   overflow-wrap: anywhere;
 }
 
+/* The whole error, as written: line breaks kept, long ones scroll. */
+.setup-gate-error pre {
+  margin: $SPACE-6 0;
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
 .setup-wizard {
   padding: $SPACE-20 $SPACE-24 $SPACE-24;
 }
@@ -11307,6 +11370,48 @@ button.settings-prompt-editor-head {
   font-size: $TEXT-13;
   color: $C-RED-82;
 }
+
+/* The agent CLI on this computer: installed? signed in? (setup wizard) */
+.agent-cli-status {
+  margin: 0 0 $SPACE-12;
+  padding: $SPACE-10 $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  font-size: $TEXT-13;
+  color: $C-NEUTRAL-79;
+}
+
+.agent-cli-status p { margin: 0 0 $SPACE-6; }
+.agent-cli-status.is-missing,
+.agent-cli-status.is-signed-out { color: $C-RED-82; }
+
+.agent-cli-status pre {
+  margin: $SPACE-6 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-79;
+}
+
+/* The ticket system could not be reached: the tracker's own words, whole. */
+.setup-wizard-connection-error {
+  margin: 0 0 $SPACE-12;
+  padding: $SPACE-10 $SPACE-12;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-8;
+  font-size: $TEXT-13;
+  color: $C-RED-82;
+}
+
+.setup-wizard-connection-error pre {
+  margin: $SPACE-6 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: $TEXT-12;
+  color: $C-NEUTRAL-79;
+}
+
+.setup-wizard-connection-error p { margin: 0 0 $SPACE-8; color: $C-NEUTRAL-64; }
 
 .setup-wizard-choices {
   display: flex;
@@ -13734,6 +13839,17 @@ button.settings-prompt-editor-head {
 
 .new-task-repo.is-unapproved label { color: $C-NEUTRAL-96-A42; cursor: default; }
 .new-task-repo-note { margin-left: auto; font-size: $TEXT-11; color: $C-ORANGE-50; }
+
+/* "Settings → Approvals" in a note: the way there, not a name to go and find. */
+.new-task-repo-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
 
 .new-task-repos-status,
 .new-task-problems {

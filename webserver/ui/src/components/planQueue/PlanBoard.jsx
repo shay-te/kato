@@ -161,7 +161,7 @@ function PlanCard({ step, planStatus, busy, readOnly, onOpenTask, onAction }) {
         <span className="plan-card-actions">
           {actions.map((entry) => (
             <button key={entry.action} type="button" className="plan-card-action" disabled={busy}
-              onClick={() => onAction(entry)}>
+              data-tooltip={entry.tip || undefined} onClick={() => onAction(entry)}>
               {entry.label}
             </button>
           ))}

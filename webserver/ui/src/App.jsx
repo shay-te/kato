@@ -53,6 +53,8 @@ import { useNotificationRouting } from './hooks/useNotificationRouting.js';
 import { useResizable } from './hooks/useResizable.js';
 import { useSafetyState } from './hooks/useSafetyState.js';
 import { useConfigStatus } from './hooks/useConfigStatus.js';
+import { useSetupFinishedNote } from './hooks/useSetupFinishedNote.js';
+import { ticketSystemLabel } from './constants/ticketSystems.js';
 import { useLidAwake } from './hooks/useLidAwake.js';
 import { refreshAgentVersion } from './hooks/useAgentVersion.js';
 import { refreshCatalogs } from './hooks/useCatalogRefresh.js';
@@ -589,6 +591,7 @@ export default function App() {
   // whole app with the setup wizard. ``refreshConfigStatus`` lets the wizard
   // re-check the moment it saves a setting.
   const { status: configStatus, refresh: refreshConfigStatus } = useConfigStatus();
+  useSetupFinishedNote(configStatus);
   const lidAwake = useLidAwake();
 
   // Track viewport width so the chat's max can leave the centre pane its
@@ -636,7 +639,13 @@ export default function App() {
   // Header and the drawer rendered next to the layout share a
   // single boolean — no prop-drilling, no context.
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  // The tab to open on ('' = wherever it was). Callers that pass an event
+  // (an ``onClick``) open it where it was.
+  const [settingsTab, setSettingsTab] = useState('');
+  const openSettings = useCallback((tab) => {
+    setSettingsTab(typeof tab === 'string' ? tab : '');
+    setSettingsOpen(true);
+  }, []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   // The Usage dialog is mounted only while open, so its transcript read
   // happens when the operator asks for it and never in the background.
@@ -1079,7 +1088,9 @@ export default function App() {
     // pane when a loop tab is active, otherwise the file/diff pane.
     let underStripPane = filePane;
     if (showingNewTask) {
-      underStripPane = <NewTaskPane onCreated={handleNewTaskCreated} onHide={hideNewTask} />;
+      underStripPane = (
+        <NewTaskPane onCreated={handleNewTaskCreated} onHide={hideNewTask} onOpenSettings={openSettings} />
+      );
     } else if (showingReviewLoop) {
       underStripPane = <ReviewLoopPane session={reviewLoopSession} onClose={handleCloseReviewLoopView} />;
     }
@@ -1142,6 +1153,7 @@ export default function App() {
           onScanNow={handleScanNow}
           scanPending={scanPending}
           onVisibleOrderChange={setVisibleTabOrder}
+          trackerName={ticketSystemLabel(configStatus?.issue_platform)}
         />
       }
       // New 3-column layout, left → right:
@@ -1224,6 +1236,7 @@ export default function App() {
       {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}
       <SettingsDrawer
         open={settingsOpen}
+        initialTab={settingsTab}
         onClose={closeSettings}
         notificationProps={{
           enabled: notifications.enabled,

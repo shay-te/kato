@@ -15,10 +15,18 @@ from unittest.mock import patch
 from kato_core_lib.helpers import agent_backend_readiness as readiness
 
 
+def _no_real_login_check(test: unittest.TestCase) -> None:
+    """These tests fake the CLI: never ask the machine's real one."""
+    stub = patch.object(readiness, '_logged_in', return_value=None)
+    stub.start()
+    test.addCleanup(stub.stop)
+
+
 class ProbeTests(unittest.TestCase):
     def setUp(self) -> None:
         readiness.reset_probe_cache()
         self.addCleanup(readiness.reset_probe_cache)
+        _no_real_login_check(self)
 
     def test_a_working_cli_reports_ready(self) -> None:
         with patch.object(readiness, '_build_probe_client') as build:
@@ -59,6 +67,21 @@ class ProbeTests(unittest.TestCase):
         result = readiness.probe_backend('nope')
         self.assertFalse(result['ready'])
         self.assertIn('unknown agent backend', result['error'])
+
+    def test_an_installed_claude_says_whether_it_is_signed_in(self) -> None:
+        readiness._logged_in.return_value = False
+        with patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.return_value = None
+            result = readiness.probe_backend('claude', binary='/opt/claude')
+        self.assertEqual((result['ready'], result['logged_in']), (True, False))
+        readiness._logged_in.assert_called_once_with('claude', '/opt/claude')
+
+    def test_a_cli_that_is_not_installed_is_not_asked(self) -> None:
+        with patch.object(readiness, '_build_probe_client') as build:
+            build.return_value.validate_connection.side_effect = RuntimeError('not found')
+            result = readiness.probe_backend('claude')
+        self.assertIsNone(result['logged_in'])
+        readiness._logged_in.assert_not_called()
 
     def test_the_result_is_cached(self) -> None:
         with patch.object(readiness, '_build_probe_client') as build:
@@ -126,6 +149,7 @@ class BackendsEndpointTests(unittest.TestCase):
         from kato_webserver.app import create_app, _build_fallback_manager
         readiness.reset_probe_cache()
         self.addCleanup(readiness.reset_probe_cache)
+        _no_real_login_check(self)
         self._tmp = tempfile.TemporaryDirectory(prefix='kato-backends-')
         self.addCleanup(self._tmp.cleanup)
         app = create_app(
@@ -155,6 +179,8 @@ class BackendsEndpointTests(unittest.TestCase):
                 {
                     'id', 'label', 'ready', 'error', 'wired',
                     'chat_available',
+                    # Signed in (Claude), or None when it cannot be told.
+                    'logged_in',
                     # Whether this backend keeps conversations on THIS
                     # machine, so the UI can hide the adopt control for one
                     # that does not (OpenHands runs sessions server-side, so
@@ -271,3 +297,16 @@ class ConfiguredBinaryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LoginQuestionTests(unittest.TestCase):
+    def test_only_claude_is_asked_and_with_its_configured_binary(self) -> None:
+        self.assertIsNone(readiness._logged_in('codex', 'codex'))
+        with patch(
+            'claude_core_lib.claude_core_lib.helpers.auth_status.claude_login_status',
+            return_value={'logged_in': True, 'method': 'claude.ai'},
+        ) as status:
+            self.assertTrue(readiness._logged_in('claude', '/opt/claude'))
+            self.assertTrue(readiness._logged_in('claude', ''))
+        self.assertEqual([c.args[0] for c in status.call_args_list], ['/opt/claude', 'claude'])
+

@@ -176,7 +176,7 @@ function SplitStart({ folders, busy, onPropose, intro = '' }) {
           <span className="plan-queue-note">
             {folder.files} files, one task each, kept exactly as written
             {folder.context ? ` (${folder.context} is read for the order)` : ''}.
-            An agent only works out which task waits for which, and the repositories.
+            An agent only works out which task waits for which.
           </span>
         </div>
       ))}

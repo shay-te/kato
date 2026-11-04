@@ -596,7 +596,7 @@ describe('PlanQueueView — the board', () => {
 
     const actionsOf = (id) => [...container.querySelectorAll(`[data-step="${id}"] .plan-card-action`)]
       .map((button) => button.textContent);
-    expect(actionsOf('ready')).toEqual(['Start', 'Count as done']);
+    expect(actionsOf('ready')).toEqual(['Plan', 'Start', 'Count as done']);
     expect(actionsOf('blocked')).toEqual(['Count as done']);
     expect(actionsOf('declined')).toEqual(['Retry', 'Count as done']);
     expect(actionsOf('gone')).toEqual(['Retry', 'Count as done']);
@@ -606,7 +606,7 @@ describe('PlanQueueView — the board', () => {
     }
   });
 
-  test('Start hands over that one task', async () => {
+  test('Start hands over that one task, to implement right away', async () => {
     serve(BOARD);
     planQueueStepAction.mockReturnValue(ok(BOARD));
     render(<PlanQueueView taskId="UNA-1" />);
@@ -614,6 +614,18 @@ describe('PlanQueueView — the board', () => {
     fireEvent.click((await column('Waiting')).getByRole('button', { name: 'Start' }));
 
     await waitFor(() => expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'ready', 'start'));
+  });
+
+  test('Plan hands over that one task, to plan first', async () => {
+    serve(BOARD);
+    planQueueStepAction.mockReturnValue(ok(BOARD));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    const plan = (await column('Waiting')).getByRole('button', { name: 'Plan' });
+    expect(plan).toHaveAttribute('data-tooltip', expect.stringMatching(/in Plan mode/));
+    fireEvent.click(plan);
+
+    await waitFor(() => expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'ready', 'plan'));
   });
 
   test('counting a waiting task as done asks first, and does nothing when declined', async () => {
@@ -872,6 +884,33 @@ describe('PlanQueueView — changing an approved plan', () => {
     const sent = editPlanQueueSteps.mock.calls[0][1];
     expect(sent.map((draft) => draft.id)).toEqual(['a', 'b', 'd', 't04']);
     expect(sent[3]).toMatchObject({ title: 'Write the guide', depends_on: [], repositories: ['api', 'web'] });
+  });
+
+  test('a waiting task\'s repositories are changed: one taken out, one kato knows added', async () => {
+    serve(LIVE);
+    editPlanQueueSteps.mockReturnValue(ok(LIVE));
+    fetchInventoryRepositories.mockResolvedValue({ ok: true, body: { repositories: [
+      { id: 'api', repo_slug: 'api' }, { id: 'web', repo_slug: 'web' }, { id: 'core-lib', repo_slug: 'core-lib' },
+    ] } });
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open b' }));
+    const repos = within(screen.getByRole('group', { name: 'b repositories' }));
+    fireEvent.click(repos.getByRole('button', { name: 'api' }));  // b worked in api only: out
+    fireEvent.click(repos.getByRole('button', { name: 'Add a repository to b' }));
+    fireEvent.click(await screen.findByText('core-lib', { selector: '.adopt-session-cwd' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to this task' }));
+    expect(within(screen.getByRole('group', { name: 'b repositories' }))
+      .getByRole('button', { name: 'core-lib' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const [, sent, added] = editPlanQueueSteps.mock.calls[0];
+    const byId = Object.fromEntries(sent.map((draft) => [draft.id, draft.repositories]));
+    expect(byId.b).toEqual(['core-lib']);
+    expect(byId.c).toEqual(['api']);  // only the task it was added to
+    expect(added).toEqual(['core-lib']);  // and the plan now knows it
   });
 
   test('Cancel goes back to the board without saving', async () => {

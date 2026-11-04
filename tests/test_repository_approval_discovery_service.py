@@ -241,6 +241,21 @@ class PathResolverTests(unittest.TestCase):
         with patch.dict(os.environ, {'REPOSITORY_ROOT_PATH': '/src'}):
             self.assertEqual(mod._resolve_repository_root(), Path('/src'))
 
+    def test_the_folder_saved_in_settings_is_used_before_kato_loads_it(self) -> None:
+        # Setup mode: the wizard saved the folder and asks which repositories
+        # in it to approve, before settings.json was loaded into the env.
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Path(tmp) / 'settings.json'
+            settings.write_text(json.dumps({'REPOSITORY_ROOT_PATH': '/saved/projects'}))
+            with patch.dict(os.environ, {'KATO_SETTINGS_FILE': str(settings)}):
+                os.environ.pop('REPOSITORY_ROOT_PATH', None)
+                self.assertEqual(mod._resolve_repository_root(), Path('/saved/projects'))
+                # The shell still wins.
+                os.environ['REPOSITORY_ROOT_PATH'] = '/shell'
+                self.assertEqual(mod._resolve_repository_root(), Path('/shell'))
+
 
 class KatoConfigPathTests(unittest.TestCase):
     def setUp(self) -> None:

@@ -23,6 +23,7 @@ from kato_core_lib.helpers.kato_tag_utils import (
 from kato_core_lib.helpers.late_binding import call_later, later
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.mission_logging_utils import MissionStepLoggerMixin
+from kato_core_lib.helpers.repository_approval_hint_utils import not_approved_text
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.helpers.push_approval_gate_utils import (
@@ -385,14 +386,18 @@ class AgentService(MissionStepLoggerMixin, Service):
                 session_manager=later(self, '_session_manager'),
                 workspace_manager=later(self, '_workspace_manager'),
             )
-        # Where a plan's sub-task merges: the branch of the task it was split
+        # A plan's sub-task merges into the branch of the task it was split
         # from. Built even without a queue: a tracker sub-task's footer says
         # which plan it belongs to.
         from kato_core_lib.data_layers.service.plan_queue.merge_target import PlanMergeTarget
-        self._plan_merge_target = PlanMergeTarget(
+        from kato_core_lib.data_layers.service.plan_queue.step_source import PlanStepSource
+        self._plan_step_source = PlanStepSource(
             queue=later(self, '_plan_queue_service'),
-            repository_service=later(self, '_repository_service'),
             workspace_manager=later(self, '_workspace_manager'),
+        )
+        self._plan_merge_target = PlanMergeTarget(
+            step_source=self._plan_step_source,
+            repository_service=later(self, '_repository_service'),
         )
 
         # Comments (operator diff comments + provider PR review comments) are
@@ -431,6 +436,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             workspace_manager=later(self, '_workspace_manager'),
             session_manager=later(self, '_session_manager'),
             logger=later(self, 'logger'),
+            plan_queue=later(self, '_plan_queue_service'),
         )
 
         from kato_core_lib.data_layers.service.task_branch_rename_service import (
@@ -496,6 +502,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         adapters behind it).
         """
         return self._plan_queue_service
+
+    @property
+    def plan_step_source(self):
+        """Which task a plan's sub-task was split from (``plan_queue/step_source.py``)."""
+        return self._plan_step_source
 
     @property
     def plan_merge_target(self):
@@ -1234,12 +1245,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             if unapproved:
                 return {
                     'adopted': False, 'task_id': normalized,
-                    'error': (
-                        f'restricted execution protocol: refusing — '
-                        f'no approval on record for repository id(s) '
-                        f'{", ".join(unapproved)}. Run '
-                        f'``kato approve-repo`` and retry.'
-                    ),
+                    'error': not_approved_text(unapproved),
                     'unapproved_repositories': unapproved,
                 }
         except Exception:

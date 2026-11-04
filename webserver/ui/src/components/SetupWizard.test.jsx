@@ -10,17 +10,27 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('../api.js', () => ({
   fetchTaskProviders: vi.fn(),
   updateTaskProvider: vi.fn(),
+  testTrackerConnection: vi.fn(),
   fetchSettings: vi.fn(),
   updateSettings: vi.fn(),
   fetchAllSettings: vi.fn(),
   updateAllSettings: vi.fn(),
   fetchDirectoryListing: vi.fn(),
   fetchCredentialSources: vi.fn(),
+  fetchAgentBackends: vi.fn(async () => ({
+    backends: [{ id: 'claude', ready: true, error: '', logged_in: true }],
+  })),
+  refreshAgentBackends: vi.fn(),
+  fetchRepositoryApprovals: vi.fn(async () => ({ ok: true, body: {
+    repositories: [{ repository_id: 'api', approved: false, approval_mode: '', remote_url: 'u', source: 'checkout' }],
+  } })),
+  updateRepositoryApprovals: vi.fn(async () => ({ ok: true, body: { applied: { approved: [], revoked: [] } } })),
 }));
 
 import {
   fetchTaskProviders,
   updateTaskProvider,
+  testTrackerConnection,
   fetchSettings,
   updateSettings,
   fetchAllSettings,
@@ -54,6 +64,9 @@ beforeEach(() => {
   updateSettings.mockReset();
   fetchTaskProviders.mockResolvedValue(providersBody());
   updateTaskProvider.mockResolvedValue({ ok: true, body: {} });
+  // Reached by default; the tests about a wrong token say otherwise.
+  testTrackerConnection.mockReset();
+  testTrackerConnection.mockResolvedValue({ ok: true, body: { ok: true, platform: 'jira', error: '' } });
   fetchSettings.mockResolvedValue({
     ok: true,
     body: { repository_root_path: { value: '' } },
@@ -78,6 +91,13 @@ async function pickClaudeAndGoToRepoStep() {
   await screen.findByText('Connect Claude agent');
   fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
   await screen.findByText('Where are your repositories?');
+}
+
+// The step after the repositories folder: which repositories the agent may
+// work in. Approving is optional here; Next goes on.
+async function passApproveStep() {
+  await screen.findByText('Which repositories may the agent work in?');
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 }
 
 async function pickSystemAndGoToDetails(choice, heading) {
@@ -325,6 +345,35 @@ describe('SetupWizard step 2 — ticket system details', () => {
     expect(Object.keys(payload.fields)).toContain('JIRA_API_TOKEN');
   });
 
+  test('a ticket system kato cannot reach is said on this step, in full', async () => {
+    const error = 'unable to validate jira: 401 Client Error: Unauthorized for url: https://x.atlassian.net/rest/api/3/search/jql';
+    testTrackerConnection.mockResolvedValue({ ok: true, body: { ok: false, platform: 'jira', error } });
+    await pickJiraAndGoToDetails();
+    fillAllJiraFields(document.body);
+    fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('kato could not reach Jira with these details.');
+    expect(alert.querySelector('pre').textContent).toBe(error);  // whole, not cut
+    expect(screen.queryByText('Which AI agent does the work?')).toBeNull();  // still here
+
+    // Fixed and saved again: reached, on to the agent.
+    testTrackerConnection.mockResolvedValue({ ok: true, body: { ok: true, platform: 'jira', error: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    await screen.findByText('Which AI agent does the work?');
+    expect(testTrackerConnection).toHaveBeenCalledTimes(2);
+  });
+
+  test('not reachable from here right now: the operator may still go on', async () => {
+    testTrackerConnection.mockResolvedValue({ ok: false, error: 'request timed out' });
+    await pickJiraAndGoToDetails();
+    fillAllJiraFields(document.body);
+    fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    expect((await screen.findByRole('alert')).querySelector('pre').textContent).toBe('request timed out');
+    fireEvent.click(screen.getByRole('button', { name: 'Continue anyway' }));
+    await screen.findByText('Which AI agent does the work?');
+  });
+
   test('a failed save keeps the operator on the details step', async () => {
     updateTaskProvider.mockResolvedValue({ ok: false, body: { error: 'nope' } });
     await pickJiraAndGoToDetails();
@@ -435,9 +484,10 @@ describe('SetupWizard AI agent steps — every boot-mandatory key is asked here'
     fireEvent.click(screen.getByRole('radio', { name: /Claude agent/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Connect Claude agent');
-    // The CLI note explains the one non-env prerequisite (the credential
-    // guide below it repeats the command, hence getAllByText).
-    expect(screen.getAllByText(/claude login/).length).toBeGreaterThan(0);
+    // The one non-env prerequisite is checked right here: installed, and
+    // signed in (the credential guide names the command too).
+    expect(await screen.findByText('✓ Claude Code is installed and signed in.')).toBeInTheDocument();
+    expect(screen.getAllByText(/claude auth login/).length).toBeGreaterThan(0);
     const save = screen.getByRole('button', { name: 'Save & continue' });
     expect(save).not.toBeDisabled();
     fireEvent.click(save);
@@ -523,12 +573,17 @@ describe('SetupWizard step 5 — repositories folder', () => {
     await pickClaudeAndGoToRepoStep();
   }
 
-  test('single input; save posts the path and advances to Finish', async () => {
+  test('single input; save posts the path, then asks which repositories to approve', async () => {
     await goToRepoStep();
     const input = document.querySelector('.setup-wizard-input');
     fireEvent.change(input, { target: { value: '/Users/dev/Projects' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
 
+    // The repositories in that folder, to approve before the first task.
+    await screen.findByText('Which repositories may the agent work in?');
+    expect(await screen.findByText('api')).toBeInTheDocument();
+    expect(screen.queryByText('Repository scope')).toBeNull();  // not on a first run
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await screen.findByText('Almost there');
     expect(updateSettings).toHaveBeenCalledWith(
       { repository_root_path: '/Users/dev/Projects' },
@@ -595,6 +650,7 @@ describe('SetupWizard step 4 — finish', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    await passApproveStep();
 
     await screen.findByText('Almost there');
     expect(
@@ -623,10 +679,13 @@ describe('SetupWizard step 4 — finish', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    await passApproveStep();
 
-    await screen.findByText(/You're all set/);
+    // Not "all set" before kato has checked its connections: that can fail.
+    await screen.findByText('Starting kato…');
+    expect(screen.queryByText(/all set/)).toBeNull();
     // Terminal-free apply: no restart instructions, kato starts in-process.
-    expect(screen.getByText(/starting now/)).toBeInTheDocument();
+    expect(screen.getByText(/closes itself as soon as it/)).toBeInTheDocument();
     expect(screen.getByText(/No restart needed/)).toBeInTheDocument();
   });
 });
@@ -679,9 +738,10 @@ describe('SetupWizard resilience', () => {
       target: { value: '/p' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save & continue' }));
+    await passApproveStep();
 
     await screen.findByText('Start failed');
-    expect(screen.queryByText(/You're all set/)).toBeNull();
+    expect(screen.queryByText('Starting kato…')).toBeNull();
     expect(screen.getByText(/kato retries automatically/)).toBeInTheDocument();
   });
 });

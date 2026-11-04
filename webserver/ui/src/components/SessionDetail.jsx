@@ -505,7 +505,7 @@ export default function SessionDetail({
           ? createPortal(<SessionHeaderPlaceholder />, headerSlot)
           : <SessionHeaderPlaceholder />}
         <section id="session-placeholder" className="placeholder">
-          Select a tab to chat with the bound Claude session.
+          Select a task tab to chat with its agent.
         </section>
       </PanelCard>
     );

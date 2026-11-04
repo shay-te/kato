@@ -154,7 +154,7 @@ export const CREDENTIAL_GUIDES = {
     location: 'Your terminal — the CLI stores the credentials, kato never sees them',
     steps: [
       'Install the Claude Code CLI on this machine if you have not already.',
-      'Run `claude login` once in a terminal and finish the browser sign-in (a Claude Pro/Max subscription covers it).',
+      'Run `claude auth login` once in a terminal and finish the browser sign-in (a Claude Pro/Max subscription covers it).',
       'Alternatively, set an ANTHROPIC_API_KEY from the Anthropic Console if you pay per token instead.',
       'Check it worked: `claude --version` should print a version.',
     ],

@@ -16,7 +16,7 @@ from __future__ import annotations
 from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
 
 from kato_core_lib.data_layers.data.fields import TaskTags
-from kato_core_lib.data_layers.service.local_task_service import START_PLAN
+from kato_core_lib.data_layers.service.local_task_service import START_IMPLEMENT, START_PLAN
 from kato_core_lib.data_layers.service.plan_queue.step_footer import subtask_description, subtask_summary
 from kato_core_lib.helpers.agent_comment_classification import (
     PLAN_STEP_COMMENT_PREFIX,
@@ -62,10 +62,24 @@ class TrackerStepLauncher(object):
             raise RuntimeError(f'{task_id} is no longer on the tracker')
         if status.assignee:
             return task_id  # someone has it: theirs, never assigned over
+        self._hold_for_planning(task_id, request.start_mode)
         if self._pickup_blocked(tracker, task_id):
             self._get_task_service().add_comment(task_id, RELEASED_AGAIN_COMMENT)
         tracker.assign_issue(task_id, self.assignee())
         return task_id
+
+    def _hold_for_planning(self, task_id: str, start_mode: str) -> None:
+        """Opens in Plan exactly when its start mode says so: the tag every
+        kato's pickup reads. Set again here, before it is handed over, because
+        the card's Plan / Start picks the mode for that one task — after the tag
+        was set at creation. Adding a tag it has, or removing one it lacks,
+        changes nothing. A failure fails the hand-over: the task never starts
+        in a mode the operator did not pick."""
+        service = self._get_task_service()
+        if start_mode == START_PLAN:
+            service.add_tag(task_id, TaskTags.WAIT_PLANNING)
+        elif start_mode == START_IMPLEMENT:
+            service.remove_tag(task_id, TaskTags.WAIT_PLANNING)
 
     def update(self, request: LaunchRequest, task_id: str) -> None:
         """An edited step's sub-task, rewritten: its title and its description

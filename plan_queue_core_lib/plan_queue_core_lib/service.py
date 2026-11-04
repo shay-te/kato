@@ -47,7 +47,7 @@ from plan_queue_core_lib.plan_queue_core_lib.launching import (
     prepare_task,
     withdraw_task,
 )
-from plan_queue_core_lib.plan_queue_core_lib.live_edit import LiveEdit, apply_live_edit, tasks_to_rewrite
+from plan_queue_core_lib.plan_queue_core_lib.live_edit import LiveEdit, apply_live_edit, can_change, tasks_to_rewrite
 from plan_queue_core_lib.plan_queue_core_lib.ports import (
     HistoryProbe,
     Ownership,
@@ -94,7 +94,11 @@ class PlanQueueService(object):
         record_source: PlanRecordSource | None = None,
         history: HistoryProbe | None = None,
         conversation: SplitConversation | None = None,
+        proposer_picks_repositories: bool = True,
     ) -> None:
+        # False: the split's agent is not asked where each step works — every
+        # step starts in all of the plan's repositories, and the operator
+        # narrows or widens one in an edit.
         # ``source_task_id -> refusal reason``, '' when the host can propose.
         self._can_propose = can_propose
         self._clock = clock
@@ -109,12 +113,13 @@ class PlanQueueService(object):
         self._registry = PlanRegistry(store, clock=clock)
         self._proposals = ProposalWorker(
             self._registry, proposer, wording, observer=observer, logger=self._logger, clock=clock,
+            proposer_picks_repositories=proposer_picks_repositories,
         )
         self._ticker = PlanTicker(
             self._registry, progress=progress, probe=probe, launcher=self._launcher_for,
             clock=clock, observer=observer, logger=self._logger, ownership=ownership,
             publisher=publisher, record_source=record_source, history=history,
-            conversation=conversation,
+            conversation=conversation, proposer_picks_repositories=proposer_picks_repositories,
         )
         self._thread = TickThread(
             self._ticker.tick, interval_seconds=tick_seconds,
@@ -362,6 +367,7 @@ class PlanQueueService(object):
         _require_driven_here(plan)
         allowed = _merged(plan.repository_ids, repositories)
         try:
+            # The operator's own lists: each step works where the edit says.
             steps = validate_split(list(drafts), allowed_repositories=allowed)
         except SplitValidationError as exc:
             raise PlanQueueError(str(exc), ErrorKind.INVALID) from exc
@@ -393,8 +399,8 @@ class PlanQueueService(object):
         def apply(live: Plan) -> LiveEdit:
             _require_driven_here(live)
             _require_in_flight(live)
-            change = apply_live_edit(live, steps)
             live.repository_ids = _merged(live.repository_ids, repositories)
+            change = apply_live_edit(live, steps)
             if title is not None and title.strip():
                 live.title = title.strip()
             return change
@@ -409,8 +415,15 @@ class PlanQueueService(object):
             self._prepare_one(plan_id, step_id, launcher)
         if change.added:
             self._registry.mutate(plan_id, lambda live: live.touch_record())
+        self._rewrite_waiting_tasks(plan_id, change.before, launcher)
+        return self._registry.get(plan_id)
+
+    def _rewrite_waiting_tasks(self, plan_id: str, before: dict, launcher: TaskLauncher) -> None:
+        """Every waiting step's task that would now read differently is
+        rewritten (a host whose tasks exist before their turn). Raises when
+        one could not be: saving again retries."""
         problems = []
-        for step, request in tasks_to_rewrite(self._registry.get(plan_id), change.before):
+        for step, request in tasks_to_rewrite(self._registry.get(plan_id), before):
             try:
                 launcher.update(request, step.task_id)
             except Exception as exc:
@@ -422,9 +435,44 @@ class PlanQueueService(object):
                 f'{"; ".join(problems)}. Save again to retry.',
                 ErrorKind.UNAVAILABLE,
             )
-        return self._registry.get(plan_id)
 
     # ----- approving and running -----
+
+    def add_repositories(self, source_task_id: str, repository_ids: Sequence[str]) -> list[str]:
+        """The task plans were split from now works in more repositories:
+        each live plan from it driven here takes them, and so does every step
+        that has not started (a started one keeps what its agent was given).
+        Waiting tasks that already exist are rewritten to match. Returns the
+        ids of the plans that changed."""
+        key = str(source_task_id or '').strip().lower()
+        changed: list[str] = []
+        for plan in self._registry.all():
+            if plan.status.is_terminal or plan.mode == PlanMode.FOLLOWED:
+                continue
+            if not key or plan.source_task_id.strip().lower() != key:
+                continue
+
+            def apply(live: Plan) -> tuple[list[str], dict]:
+                before_ids = list(live.repository_ids)
+                live.repository_ids = _merged(live.repository_ids, repository_ids)
+                added = [repo for repo in live.repository_ids if repo not in before_ids]
+                waiting = [step for step in live.steps if can_change(step)]
+                before = {step.id: build_request(live, step) for step in waiting if step.task_id}
+                if added:
+                    for step in waiting:
+                        step.repositories = _merged(step.repositories, added)
+                    live.touch_record()
+                return added, before
+
+            added, before = self._registry.mutate(plan.plan_id, apply)
+            if not added:
+                continue
+            changed.append(plan.plan_id)
+            self._note(plan.plan_id, 'now works in ' + ', '.join(added))
+            launcher = self._launcher_for(self._registry.get(plan.plan_id))
+            if launcher is not None and launcher.creates_at_approval:
+                self._rewrite_waiting_tasks(plan.plan_id, before, launcher)
+        return changed
 
     def can_share(self, plan_id: str) -> bool:
         """Could this plan's steps live on a shared tracker (the host says)?"""
@@ -653,14 +701,15 @@ class PlanQueueService(object):
             self._registry.mutate(plan_id, lambda live: live.touch_record())
         return self._registry.get(plan_id)
 
-    def start_step(self, plan_id: str, step_id: str) -> Plan:
+    def start_step(self, plan_id: str, step_id: str, *, start_mode: str = '') -> Plan:
         """Hand one ready step over now (its card's Start), even while the plan
-        is approved or paused: Run hands over every ready step, this just one."""
+        is approved or paused: Run hands over every ready step, this just one.
+        ``start_mode``: how this one task starts ('' = the plan's)."""
         plan = self._registry.get(plan_id)
         _require_driven_here(plan)
         _require_in_flight(plan)
         self._require_launcher(plan.mode)
-        self._ticker.release_now(plan_id, step_id)
+        self._ticker.release_now(plan_id, step_id, start_mode=start_mode)
         return self._registry.get(plan_id)
 
     def check_now(self, plan_id: str, step_id: str) -> Plan:

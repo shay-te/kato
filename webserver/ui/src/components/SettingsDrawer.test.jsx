@@ -82,6 +82,19 @@ describe('SettingsDrawer — schema load', () => {
   });
 });
 
+describe('SettingsDrawer — opened on a tab', () => {
+  test('a message that says "Settings → Approvals" opens it there', () => {
+    const { rerender } = render(<SettingsDrawer open={false} onClose={() => {}} initialTab="approvals" />);
+    rerender(<SettingsDrawer open onClose={() => {}} initialTab="approvals" />);
+    expect(screen.getByRole('tab', { name: 'Approvals' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('without one it opens where it was', () => {
+    render(<SettingsDrawer open onClose={() => {}} />);
+    expect(screen.getByRole('tab', { name: 'Repositories' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
 describe('SettingsDrawer — the search index after a save', () => {
   async function openAndSearch(term) {
     render(<SettingsDrawer open onClose={() => {}} />);

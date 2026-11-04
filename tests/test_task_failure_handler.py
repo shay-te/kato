@@ -50,11 +50,12 @@ class TaskFailureHandlerTests(unittest.TestCase):
         comment = self.task_service.add_comment.call_args.args[1]
         self.assertIn('could not detect which repository', comment)
         # Comment must walk the operator through the actual fix:
-        # the ``kato:repo:<id>`` tag format and the picker that
-        # lists the legal ids. Without these, the operator gets
-        # "kato can't pick a repo" with no obvious next step.
+        # the ``kato:repo:<id>`` tag format and where the legal ids are
+        # listed. Without these, the operator gets "kato can't pick a
+        # repo" with no obvious next step.
         self.assertIn('kato:repo:<repository-id>', comment)
-        self.assertIn('./kato approve-repo', comment)
+        self.assertIn('Settings → Approvals', comment)
+        self.assertNotIn('approve-repo', comment)  # that command is gone
         self.task_state_service.move_task_to_open.assert_not_called()
         self.notification_service.notify_failure.assert_not_called()
 

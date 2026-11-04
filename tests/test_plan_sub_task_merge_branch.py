@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 from workspace_core_lib.workspace_core_lib import WorkspaceCoreLib
 
 from kato_core_lib.data_layers.service.plan_queue.merge_target import PlanMergeTarget
+from kato_core_lib.data_layers.service.plan_queue.step_source import PlanStepSource
 from kato_core_lib.data_layers.service.plan_queue.step_footer import subtask_description
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
@@ -76,7 +77,8 @@ class _World(unittest.TestCase):
         )
         self.queue = _Queue({'UNA-2': 'UNA-1', 'UNA-3': 'UNA-1'})
         self.merge_target = PlanMergeTarget(
-            queue=self.queue, repository_service=self.service, workspace_manager=self.workspaces,
+            step_source=PlanStepSource(queue=self.queue, workspace_manager=self.workspaces),
+            repository_service=self.service,
         )
         self.service.attach_plan_merge_target(self.merge_target.branch_for)
 
@@ -322,26 +324,25 @@ class MergeTargetTests(unittest.TestCase):
         self.repository_service = SimpleNamespace(
             task_branch_name=lambda task_id: {'UNA-5': 'feature/five'}.get(task_id, task_id),
         )
-        self.target = PlanMergeTarget(
-            queue=self.queue, repository_service=self.repository_service, workspace_manager=self.workspaces,
-        )
+        self.source = PlanStepSource(queue=self.queue, workspace_manager=self.workspaces)
+        self.target = PlanMergeTarget(step_source=self.source, repository_service=self.repository_service)
 
     def test_the_queue_answers_first(self) -> None:
         self.queue.sources['una-2'] = 'UNA-5'
-        self.assertEqual(self.target.source_of('UNA-2'), 'UNA-5')
+        self.assertEqual(self.source.source_of('UNA-2'), 'UNA-5')
         self.assertEqual(self.target.branch_for('UNA-2'), 'feature/five')
 
     def test_a_local_step_announced_before_the_queue_records_it(self) -> None:
-        self.target.announce('LOCAL-4', 'UNA-1')
+        self.source.announce('LOCAL-4', 'UNA-1')
         self.assertEqual(self.target.branch_for('local-4'), 'UNA-1')
         # Once the queue knows the task, the announcement is dropped.
         self.queue.sources['local-4'] = 'UNA-1'
         self.assertEqual(self.target.branch_for('LOCAL-4'), 'UNA-1')
         self.queue.sources.clear()
         self.assertEqual(self.target.branch_for('LOCAL-4'), '')
-        self.target.announce('', 'UNA-1')
-        self.target.announce('LOCAL-6', '')
-        self.assertEqual(self.target.source_of('LOCAL-6'), '')
+        self.source.announce('', 'UNA-1')
+        self.source.announce('LOCAL-6', '')
+        self.assertEqual(self.source.source_of('LOCAL-6'), '')
 
     def test_a_tracker_sub_task_of_a_plan_not_followed_here_reads_its_footer(self) -> None:
         request = LaunchRequest(
@@ -359,6 +360,7 @@ class MergeTargetTests(unittest.TestCase):
     def test_a_task_is_never_merged_into_itself(self) -> None:
         self.queue.sources['una-1'] = 'UNA-1'
         self.assertEqual(self.target.branch_for('UNA-1'), '')
+        self.assertEqual(self.source.source_of('UNA-1'), '')  # never its own source
         # A sub-task given its main task's branch name would merge into itself.
         self.queue.sources['una-6'] = 'UNA-5'
         self.repository_service.task_branch_name = lambda task_id: 'feature/five'
@@ -366,9 +368,10 @@ class MergeTargetTests(unittest.TestCase):
         self.assertEqual(self.target.branch_for(''), '')
 
     def test_without_a_queue_or_workspaces_only_announcements_count(self) -> None:
-        target = PlanMergeTarget(queue=None, repository_service=self.repository_service, workspace_manager=None)
+        source = PlanStepSource(queue=None, workspace_manager=None)
+        target = PlanMergeTarget(step_source=source, repository_service=self.repository_service)
         self.assertEqual(target.branch_for('UNA-2'), '')
-        target.announce('UNA-2', 'UNA-1')
+        source.announce('UNA-2', 'UNA-1')
         self.assertEqual(target.branch_for('UNA-2'), 'UNA-1')
 
 

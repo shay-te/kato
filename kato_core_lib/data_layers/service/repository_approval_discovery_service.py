@@ -10,8 +10,7 @@ on disk has a rewritten origin):
   clone yet show up here, so the operator can pre-approve before
   the first task.
 * **checkout** — ``<REPOSITORY_ROOT_PATH>/<repo>/`` clones the
-  operator already pushed/pulled outside kato. Same source the CLI
-  ``approve-repo`` picker walked.
+  operator already pushed/pulled outside kato.
 * **workspace** — ``<KATO_WORKSPACES_ROOT>/<task>/<repo>/`` per-task
   clones kato itself made. Useful for revoking access to repos kato
   touched on previous tasks.
@@ -219,7 +218,15 @@ def _resolve_workspaces_root() -> Path:
 
 
 def _resolve_repository_root() -> Path | None:
-    configured = os.environ.get('REPOSITORY_ROOT_PATH', '').strip()
+    """The repositories folder as saved (shell env first, then settings.json).
+
+    Not the process env alone: in setup mode the wizard saves the folder and
+    then asks which repositories in it to approve — before kato has started,
+    so before settings.json was loaded into the environment.
+    """
+    from kato_core_lib.helpers.kato_settings_store_utils import effective_config_env
+
+    configured = str(effective_config_env().get('REPOSITORY_ROOT_PATH', '') or '').strip()
     if not configured:
         return None
     return Path(configured).expanduser()

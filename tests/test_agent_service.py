@@ -782,7 +782,7 @@ class AgentServiceTests(unittest.TestCase):
         # The fix instruction: tag with ``kato:repo:<id>`` and use
         # the picker to find the legal ids.
         self.assertIn('kato:repo:<repository-id>', comment_body)
-        self.assertIn('./kato approve-repo', comment_body)
+        self.assertIn('Settings → Approvals', comment_body)
         self.email_core_lib.send.assert_not_called()
 
     def test_process_assigned_task_reports_generic_pre_start_failures_without_reopening(self) -> None:

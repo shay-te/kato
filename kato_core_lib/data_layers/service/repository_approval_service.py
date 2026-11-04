@@ -46,6 +46,13 @@ from kato_core_lib.data_layers.data.repository_approval import (
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.repository_approval_hint_utils import (
+    RESTRICTED_NEEDS_BYPASS_OFF,
+    RESTRICTED_NEEDS_DOCKER,
+    RESTRICTED_NEEDS_SCANNER_MEDIUM,
+    not_approved_text,
+    restricted_mode_refusal_text,
+)
 from utils_core_lib.utils_core_lib.file_lock import exclusive_file_lock
 from utils_core_lib.utils_core_lib.file_snapshot import (
     FileSignature,
@@ -158,8 +165,8 @@ class RepositoryApprovalService(Service):
         Re-approving the same id with the same mode and remote_url is
         a no-op (the existing record stays). Re-approving with a
         different mode upgrades / downgrades. Re-approving with a
-        different remote_url updates the URL — the operator running
-        ``approve-repo`` is asserting they trust the current remote.
+        different remote_url updates the URL — the operator approving
+        it is asserting they trust the current remote.
         """
         normalised_id = normalized_lower_text(repository_id)
         if not normalised_id:
@@ -313,18 +320,8 @@ class RestrictedExecutionRefusal(RuntimeError):
 
     def __init__(self, repository_ids: list[str]) -> None:
         self.repository_ids = list(repository_ids)
-        joined = ', '.join(self.repository_ids) or '<none>'
         super().__init__(
-            f'restricted execution protocol refused task: '
-            f'no approval on record for repository id(s) {joined}.\n'
-            f'\n'
-            f'**How to fix:** run `./kato approve-repo` on the host '
-            f'where kato runs. The picker shows every repo it can '
-            f'find (kato config + workspaces + your '
-            f'`REPOSITORY_ROOT_PATH` checkouts) with `[x]` next to '
-            f'the ones already approved. Type the index of '
-            f'`{joined}` to toggle it on, press Enter to apply, '
-            f'then re-run this task.'
+            f'kato refused this task: {not_approved_text(self.repository_ids)}'
         )
 
 
@@ -345,9 +342,8 @@ class RestrictedModePostureViolation(RuntimeError):
     1. Strengthen the global posture (set ``KATO_CLAUDE_DOCKER=true``
        / unset ``KATO_CLAUDE_BYPASS_PERMISSIONS`` / tighten the
        scanner block list) and restart kato.
-    2. Elevate the repo to ``trusted`` mode after reviewing the first
-       agent run — re-run ``./kato approve-repo``, toggle the repo,
-       and answer "yes" to the trusted-mode question on apply.
+    2. Switch the repo to ``trusted`` in Settings → Approvals after
+       reviewing the first agent run.
 
     Either way, no RESTRICTED-mode repo ever runs under the lax
     posture, which matches the plan's security promise without
@@ -361,21 +357,9 @@ class RestrictedModePostureViolation(RuntimeError):
     ) -> None:
         self.repository_ids = list(repository_ids)
         self.violations = list(violations)
-        ids_text = ', '.join(self.repository_ids) or '<none>'
-        violations_text = '; '.join(self.violations) or 'unknown violation'
         super().__init__(
-            f'restricted execution protocol refused task: repository id(s) '
-            f'{ids_text} are RESTRICTED-mode approved, but the global kato '
-            f'posture violates restricted-mode requirements: '
-            f'{violations_text}.\n'
-            f'\n'
-            f'**How to fix:** either tighten the global posture and '
-            f'restart kato (set `KATO_CLAUDE_DOCKER=true`, unset '
-            f'`KATO_CLAUDE_BYPASS_PERMISSIONS`, tighten the scanner '
-            f'block list — whichever the violation above names), '
-            f'OR elevate the repo(s) to trusted mode by re-running '
-            f'`./kato approve-repo` and answering "yes" to the '
-            f'trusted-mode question on apply.'
+            'kato refused this task: '
+            + restricted_mode_refusal_text(self.repository_ids, self.violations)
         )
 
 
@@ -401,16 +385,9 @@ def restricted_mode_posture_violations(posture: RuntimePosture) -> list[str]:
     """
     violations: list[str] = []
     if posture.bypass_permissions:
-        violations.append(
-            'KATO_CLAUDE_BYPASS_PERMISSIONS=true (restricted mode requires false)'
-        )
+        violations.append(RESTRICTED_NEEDS_BYPASS_OFF)
     if not posture.docker_mode_on:
-        violations.append(
-            'KATO_CLAUDE_DOCKER is not enabled (restricted mode requires docker on)'
-        )
+        violations.append(RESTRICTED_NEEDS_DOCKER)
     if not posture.scanner_blocks_at_medium:
-        violations.append(
-            'security scanner block_on_severity does not include MEDIUM '
-            '(restricted mode requires the stricter threshold)'
-        )
+        violations.append(RESTRICTED_NEEDS_SCANNER_MEDIUM)
     return violations

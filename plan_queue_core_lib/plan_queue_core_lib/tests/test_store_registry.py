@@ -91,6 +91,18 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(caught.exception.kind, ErrorKind.NOT_FOUND)
         self.assertIs(self.registry.store, self.store)
 
+    def test_a_steps_task_is_found_in_the_newest_plan_whatever_the_order_added(self) -> None:
+        from plan_queue_core_lib.plan_queue_core_lib.data.plan import Step
+
+        def with_step(plan, task_id):
+            plan.steps = [Step(id='api', title='t', brief='b', task_id=task_id)]
+            return plan
+
+        self.registry.add(with_step(_plan(now=5.0, source='NEW-1'), 'UNA-7'))
+        self.registry.add(with_step(_plan(now=1.0, source='OLD-1'), 'UNA-7'))  # older, added later
+        self.assertEqual(self.registry.source_of_task('una-7'), 'NEW-1')
+        self.assertEqual(self.registry.source_of_task('UNA-8'), '')
+
     def test_loads_what_the_store_holds(self) -> None:
         plan = self.registry.add(_plan())
         again = PlanRegistry(self.store, clock=self.clock)

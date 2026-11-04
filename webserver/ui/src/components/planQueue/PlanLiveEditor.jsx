@@ -17,7 +17,9 @@ export default function PlanLiveEditor({ plan, onPlan, onClose }) {
     .filter((step) => !canChangeStep(step))
     .map((step) => [step.id, `${LOCKED_AS[step.status] || 'started'} — ${step.task_id || step.id} stays as it is`]));
   const drafts = useStepDrafts(() => plan.steps.map(asDraft));
-  const { steps, setSteps, setOpen } = drafts;
+  const { steps, setSteps, setOpen, added } = drafts;
+  // The plan's repositories, and any the operator added to a task here.
+  const repositories = [...new Set([...plan.repository_ids, ...added])];
   const rounds = stepRounds(steps);
   const [busy, run] = useBusyAction(async (work) => work());
 
@@ -31,7 +33,9 @@ export default function PlanLiveEditor({ plan, onPlan, onClose }) {
   }
 
   const save = () => run(async () => {
-    const body = await planAction(() => editPlanQueueSteps(plan.plan_id, steps), 'The plan was not changed');
+    const body = await planAction(
+      () => editPlanQueueSteps(plan.plan_id, steps, added), 'The plan was not changed',
+    );
     if (body?.plan_id) {
       onPlan(body);
       onClose();
@@ -44,7 +48,7 @@ export default function PlanLiveEditor({ plan, onPlan, onClose }) {
         Change the tasks that have not started. Started ones stay as they are.
         {plan.mode === 'tracker' ? ' Their tickets are rewritten to match when you save.' : ''}
       </p>
-      <StepList drafts={drafts} rounds={rounds} repositories={plan.repository_ids}
+      <StepList drafts={drafts} rounds={rounds} repositories={repositories}
         lockedText={(step) => locked.get(step.id) || ''} />
       <div className="plan-proposal-actions">
         <button type="button" className="plan-action plan-proposal-discard" disabled={busy} onClick={add}

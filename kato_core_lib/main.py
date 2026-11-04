@@ -418,7 +418,7 @@ def _finalize_configured_boot(
                 'showing the error — retrying in %ss: %s',
                 _CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS, message,
             )
-            _flag_boot_validation_error(app, message[:500])
+            _flag_boot_validation_error(app, message)
             try:
                 sleep_fn(_CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS)
             except (KeyboardInterrupt, SystemExit):
@@ -436,6 +436,11 @@ def _finalize_configured_boot(
     app.logger.info('kato is fully started — autonomous scanning enabled')
 
 
+# What the UI's setup screen is for: a first run (the default), or a kato that
+# is set up but could not reach a service it needs.
+SETUP_KIND_CANNOT_CONNECT = 'cannot_connect'
+
+
 def _flag_boot_validation_error(app, message: str) -> None:
     """Surface a configured-boot validation failure in the planning UI.
 
@@ -450,6 +455,9 @@ def _flag_boot_validation_error(app, message: str) -> None:
         return
     flask_app.config['SETUP_ERROR'] = message
     flask_app.config['NEEDS_CONFIG'] = True
+    # Set up already — only a connection failed. The UI says that, and does
+    # not greet the operator as a first-time user.
+    flask_app.config['SETUP_KIND'] = SETUP_KIND_CANNOT_CONNECT
 
 
 # How often the setup-mode wait loop re-checks the layered config. Short
@@ -538,7 +546,7 @@ def _wait_until_configured_then_finish_setup(
             _restore_environ(env_snapshot)
             last_failed_fingerprint = fingerprint
             app.logger.error('%s', gate_refusal)
-            _set_webserver_setup_error(app, gate_refusal[:500])
+            _set_webserver_setup_error(app, gate_refusal)
             continue
         try:
             app.complete_setup()
@@ -576,8 +584,10 @@ def _wait_until_configured_then_finish_setup(
             # would keep saying "you're all set" while the terminal alone
             # knows the start failed. Validation messages name hosts /
             # projects, never secret values.
+            # Whole: the useful part (which host, what it answered) is often
+            # past the first few hundred characters.
             _set_webserver_setup_error(app, (
-                f'{str(exc)[:500]} — kato retries automatically after you '
+                f'{exc} — kato retries automatically after you '
                 'save a change (and periodically). If the failing value was '
                 'already set when kato started (shell env), restart '
                 'kato to apply the new one.'
@@ -731,6 +741,7 @@ def _mark_webserver_configured(app) -> None:
         )
     # A stale error from an earlier failed attempt must not outlive success.
     flask_app.config['SETUP_ERROR'] = ''
+    flask_app.config['SETUP_KIND'] = ''
     # The agent-CLI probe is cached for the process lifetime, and in setup
     # mode it ran BEFORE the operator supplied the backend settings — so it
     # cached "claude not found on PATH". Leaving it would greet a freshly
@@ -1563,10 +1574,10 @@ def _start_plan_queue(app) -> None:
         flask_app = getattr(app, 'planning_flask_app', None)
         if flask_app is not None:
             from kato_webserver.plan_queue_launcher import LocalStepLauncher
-            merge_target = getattr(app.service, 'plan_merge_target', None)
+            step_source = getattr(app.service, 'plan_step_source', None)
             queue.bind_launcher(LocalStepLauncher(
                 flask_app,
-                announce_task=merge_target.announce if merge_target is not None else None,
+                announce_task=step_source.announce if step_source is not None else None,
             ))
         queue.start()
     except Exception:

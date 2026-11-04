@@ -33,6 +33,7 @@ from kato_core_lib.helpers.kato_tag_utils import (
     build_repository_tag,
 )
 from kato_core_lib.helpers.logging_utils import configure_logger
+from kato_core_lib.helpers.repository_approval_hint_utils import not_approved_text
 from local_task_core_lib.local_task_core_lib.data.local_task import LocalTaskState
 
 START_PLAN = 'plan'
@@ -104,11 +105,7 @@ class LocalTaskService(object):
         repositories = self._resolve(Task(summary=summary, description=description, tags=tags))
         unapproved = self._approval_check(repositories)
         if unapproved:
-            raise LocalTaskRejected(
-                'these repositories are not approved for agent work yet: '
-                f'{", ".join(unapproved)}. Approve them in Settings → Repositories.',
-                unapproved=unapproved,
-            )
+            raise LocalTaskRejected(not_approved_text(unapproved), unapproved=unapproved)
         branch = str(branch or '').strip()
         if branch:
             self._refuse_unusable_branch(branch, repositories)

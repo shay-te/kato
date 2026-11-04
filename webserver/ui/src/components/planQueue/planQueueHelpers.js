@@ -95,7 +95,10 @@ export function newStepId(steps) {
 }
 
 // What a card offers. A ready task can be started on its own (one at a time,
-// even while the plan is paused or not yet running), and a task still waiting
+// even while the plan is paused or not yet running) — Plan: its agent plans
+// first and codes once the plan is approved in its chat; Start: it implements
+// right away. Either is the operator's pick for that task, whatever was chosen
+// at Approve. A task still waiting
 // can be counted as done when its work was merged some other way — which also
 // frees the tasks waiting for it. Anything else: only a way out when stuck.
 export function cardActions(step, planStatus) {
@@ -106,7 +109,21 @@ export function cardActions(step, planStatus) {
       confirm: `Count ${stepCode(step)} as done? Its ticket moves to done, and the tasks `
         + 'waiting for it may start. Use it when its work was already merged some other way.',
     };
-    return step.status === 'ready' ? [{ action: 'start', label: 'Start' }, satisfy] : [satisfy];
+    if (step.status !== 'ready') { return [satisfy]; }
+    return [
+      {
+        action: 'plan',
+        label: 'Plan',
+        tip: `Start ${stepCode(step)} in Plan mode: its agent plans first, and codes once you `
+          + 'approve the plan in its chat.',
+      },
+      {
+        action: 'start',
+        label: 'Start',
+        tip: `Start ${stepCode(step)} now: its agent implements right away, with no plan to approve first.`,
+      },
+      satisfy,
+    ];
   }
   return stuckActions(step);
 }

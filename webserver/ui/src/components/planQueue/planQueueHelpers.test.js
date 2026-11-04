@@ -78,10 +78,10 @@ test('only a stuck card offers anything', function () {
   assert.equal(isStuck(step('awaiting_merge', { reason: 'waiting for the merge' })), false);
 });
 
-test('a card offers Start when ready, Count as done while waiting, only in a live plan', function () {
+test('a card offers Plan and Start when ready, Count as done while waiting, only in a live plan', function () {
   const actions = (s, planStatus) => cardActions(s, planStatus).map((a) => a.action);
   for (const live of ['approved', 'running', 'paused']) {
-    assert.deepEqual(actions(step('ready'), live), ['start', 'satisfy']);
+    assert.deepEqual(actions(step('ready'), live), ['plan', 'start', 'satisfy']);
     assert.deepEqual(actions(step('blocked'), live), ['satisfy']);
   }
   for (const over of ['proposed', 'finished', 'cancelled']) {
@@ -276,6 +276,13 @@ test('rounds: the order the queue runs the steps in', () => {
   assert.equal(stepRounds(null).size, 0);
 });
 
+test('Plan and Start say how the task will start', function () {
+  const [plan, start] = cardActions(step('ready', { task_id: 'UNA-3380' }), 'running');
+  assert.equal(plan.label, 'Plan');
+  assert.match(plan.tip, /Start UNA-3380 in Plan mode: its agent plans first/);
+  assert.equal(start.label, 'Start');
+  assert.match(start.tip, /implements right away, with no plan to approve first/);
+});
 
 test('every task works in a repository — or some, or none', () => {
   const steps = [

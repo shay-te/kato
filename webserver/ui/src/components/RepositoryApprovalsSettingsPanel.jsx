@@ -10,8 +10,8 @@ import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
 import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 
-// "Repository approvals" tab — the UI replacement for the old
-// ``./kato approve-repo`` CLI picker. Lists every candidate kato
+// "Repository approvals" tab — where repositories are approved (an old
+// command-line picker used to do it). Lists every candidate kato
 // discovers (inventory + checkout + workspace clones), shows which
 // are approved + their mode, and lets the operator toggle approve /
 // revoke + restricted ↔ trusted in batch.
@@ -23,7 +23,18 @@ import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 const MODE_RESTRICTED = 'restricted';
 const MODE_TRUSTED = 'trusted';
 
-export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) {
+// A repository approved now is trusted unless the operator picks restricted:
+// restricted also needs the Docker sandbox and a stricter scanner, which a new
+// install has neither of, so it refused every task kato picked up by itself.
+// An approval saved with no mode was stored as restricted, and still is.
+function modeOf(row) {
+  if (row && row.approval_mode) { return row.approval_mode; }
+  return row && row.approved ? MODE_RESTRICTED : MODE_TRUSTED;
+}
+
+// ``showScope``: the ignore list and denylist below the table. The setup
+// wizard leaves them out — a first run only needs to tick repositories.
+export default function RepositoryApprovalsSettingsPanel({ highlightKey = '', showScope = true }) {
   const [meta, setMeta] = useState({ rows: [], storagePath: '' });
   // Per-row pending edits keyed by repository_id. Each value is
   // ``{ approved: bool, mode: 'restricted' | 'trusted' }``. We
@@ -45,7 +56,7 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
     if (e) { return e; }
     return {
       approved: !!row.approved,
-      mode: row.approval_mode || MODE_RESTRICTED,
+      mode: modeOf(row),
     };
   }
 
@@ -60,7 +71,7 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
     const e = edits[row.repository_id];
     if (!e) { return false; }
     if ((!!e.approved) !== !!row.approved) { return true; }
-    if (e.approved && e.mode !== (row.approval_mode || MODE_RESTRICTED)) {
+    if (e.approved && e.mode !== modeOf(row)) {
       return true;
     }
     return false;
@@ -82,7 +93,7 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
         });
       } else if (wasApproved && !isApproved) {
         revoke.push(row.repository_id);
-      } else if (wasApproved && isApproved && e.mode !== row.approval_mode) {
+      } else if (wasApproved && isApproved && e.mode !== modeOf(row)) {
         approve.push({
           repository_id: row.repository_id,
           remote_url: row.remote_url || row.approved_remote_url,
@@ -118,10 +129,12 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
     <div className="settings-drawer-panel">
       <SettingsPanelHead title="Repository approvals">
         <p>
-          Kato refuses tasks on repos that aren't on this list. Toggle
-          to approve, pick <strong>restricted</strong> (re-check the
-          remote URL at runtime) or <strong>trusted</strong> (skip the
-          recheck). Stored in <code>{meta.storagePath || '~/.kato/approved-repositories.json'}</code>.
+          Kato works only in repositories approved here. Toggle one to approve it.
+          <strong> trusted</strong> (the default): its tasks run.
+          <strong> restricted</strong>: kato also re-checks its remote address, and runs a task it picks
+          up by itself only with the Docker sandbox on (Settings → Sandbox &amp; permission bypass) and
+          the security scanner blocking MEDIUM findings. Stored in{' '}
+          <code>{meta.storagePath || '~/.kato/approved-repositories.json'}</code>.
         </p>
       </SettingsPanelHead>
 
@@ -129,11 +142,8 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
         <>
           {meta.rows.length === 0 ? (
             <p className="settings-drawer-message">
-              No repositories discovered yet. Set
-              <code> REPOSITORY_ROOT_PATH </code>
-              in the Repositories tab, or configure the
-              <code> repositories: </code>
-              block in your kato config.
+              No repositories found yet. Set the folder that holds your repositories in the
+              Repositories tab.
             </p>
           ) : (
             <table className="settings-drawer-approvals-table">
@@ -221,17 +231,19 @@ export default function RepositoryApprovalsSettingsPanel({ highlightKey = '' }) 
               tab: the ignore list decides what appears in the table above,
               and the denylist is a hard refusal — both are approval
               decisions, so they belong on this tab. */}
-          <SchemaFieldGroup
-            sectionId="general"
-            panel="approvals"
-            highlightKey={highlightKey}
-            title="Repository scope"
-            description={
-              'Applied before the table above: ignored folders never reach '
-              + 'auto-discovery, and denylisted ids are refused at boot even '
-              + 'if approved. Both need a kato restart.'
-            }
-          />
+          {showScope ? (
+            <SchemaFieldGroup
+              sectionId="general"
+              panel="approvals"
+              highlightKey={highlightKey}
+              title="Repository scope"
+              description={
+                'Applied before the table above: ignored folders never reach '
+                + 'auto-discovery, and denylisted ids are refused at boot even '
+                + 'if approved. Both need a kato restart.'
+              }
+            />
+          ) : null}
         </>
       </SettingsPanelBody>
     </div>
@@ -248,6 +260,6 @@ function rowStateFor(currentEdits, rows, repoId) {
   const row = rows.find((r) => r.repository_id === repoId);
   return {
     approved: !!(row && row.approved),
-    mode: (row && row.approval_mode) || MODE_RESTRICTED,
+    mode: modeOf(row),
   };
 }
