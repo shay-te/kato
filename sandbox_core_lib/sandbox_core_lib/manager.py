@@ -96,6 +96,10 @@ _PASS_THROUGH_ENV = (
 # actually built by us, not a same-named image from another source.
 _IMAGE_IDENTITY_LABEL = 'org.kato.sandbox'
 _IMAGE_IDENTITY_VALUE = 'true'
+#: Every sandbox container carries this label too (``--label <it>=true``), so a
+#: host listing the containers over a task's folder can leave them alone: the
+#: sandbox removes its own (``--rm``, the watchdog, the orphan reaper).
+SANDBOX_CONTAINER_LABEL = _IMAGE_IDENTITY_LABEL
 
 # Ownership labels for the orphan reaper, DERIVED from the identity
 # label's namespace rather than written out again (this lib is meant to

@@ -68,6 +68,7 @@ include = [
   "lid_awake_core_lib*",
   "google_docs_core_lib*",
   "slack_core_lib*",
+  "container_core_lib*",
   "workspace_core_lib*",
   "utils_core_lib*",
 ]

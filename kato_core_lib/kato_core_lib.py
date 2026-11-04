@@ -98,6 +98,7 @@ from kato_core_lib.data_layers.service.release_notes_google_sync import ReleaseN
 from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
 from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer
+from kato_core_lib.data_layers.service.task_containers import TaskContainers
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
@@ -544,8 +545,11 @@ class KatoCoreLib(CoreLib):
         )
         # A task reaching Done is told to each of these, on its own.
         self.slack_done_announcer = self._build_slack_done_announcer(task_service, repository_service)
+        # The containers the task's agent started: stopped once it is done.
+        self.task_containers = TaskContainers(workspace_manager=later(self, 'workspace_manager'))
         self.done_announcements = DoneAnnouncements([
             later(self, 'release_notes_service'), later(self, 'slack_done_announcer'),
+            later(self, 'task_containers'),
         ])
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does

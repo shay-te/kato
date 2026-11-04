@@ -281,7 +281,7 @@ class KatoCoreLibTests(unittest.TestCase):
         observer = mock_task_state_service_cls.call_args.kwargs['done_observer']
         self.assertIs(observer(), app.done_announcements)
         told = [get() for get in app.done_announcements._observers]
-        self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer])
+        self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer, app.task_containers])
         self.assertIsNotNone(app.release_notes_service)
         self.assertIsNotNone(app.slack_done_announcer)
         # Both route local tasks to the SAME store, kept under ~/.kato

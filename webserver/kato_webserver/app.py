@@ -1547,6 +1547,8 @@ def create_app(
     register_usage_routes(app)
     from kato_webserver.lid_awake_routes import register_lid_awake_routes
     register_lid_awake_routes(app)
+    from kato_webserver.task_container_routes import register_task_container_routes
+    register_task_container_routes(app)
     from kato_webserver.release_notes_routes import register_release_notes_routes
     register_release_notes_routes(app)
     from kato_webserver.local_task_routes import register_local_task_routes
@@ -4292,6 +4294,11 @@ def _register_http_routes(app: Flask) -> None:
                 # snapshot too would count the same tokens twice.
                 if usage_snapshot is not None:
                     keep_deleted_task_usage(app, usage_snapshot)
+        # 1b. The containers its agent started in the task folder: removed with
+        #     the folder they ran from (and on Windows a running container's
+        #     mount can hold the files the delete below needs). Never blocks
+        #     the delete; what failed is reported with its answer.
+        containers = _remove_task_containers(app, task_id)
         # Record the operator's intent FIRST so the platform poll (the
         # review-comment scan, which discovers in-review tasks from YouTrack/
         # Bitbucket — not from local records) doesn't resurrect this task on the
@@ -4358,12 +4365,28 @@ def _register_http_routes(app: Flask) -> None:
                 'moved_to_done': mark_done,
                 'task_id': task_id,
                 'error': '; '.join(errors),
+                'containers': containers,
             }), 500
         return jsonify({
             'forgotten': True,
             'moved_to_done': mark_done,
             'task_id': task_id,
+            'containers': containers,
         })
+
+
+def _remove_task_containers(app: Flask, task_id: str) -> dict:
+    """The task's containers removed, as the delete reports them. A Docker
+    that cannot be asked has nothing of the task to remove: not a problem."""
+    from kato_webserver.task_container_routes import task_containers_of
+    containers = task_containers_of(app)
+    try:
+        if not containers.of_task(task_id)['containers']:
+            return {'containers': [], 'networks': [], 'volumes': [], 'problems': [], 'ok': True}
+        return containers.remove(task_id).to_dict()
+    except Exception as exc:
+        app.logger.exception('could not remove the containers of deleted task %s', task_id)
+        return {'containers': [], 'networks': [], 'volumes': [], 'problems': [str(exc)], 'ok': False}
 
 
 # ----- live status feed (SSE) -----
