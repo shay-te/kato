@@ -275,11 +275,15 @@ class KatoCoreLibTests(unittest.TestCase):
             ANY,
             done_observer=ANY,
         )
-        # Every route to done is announced to the release notes, looked up
-        # when it happens (the service is built after the state service).
+        # Every route to done is announced to the release notes AND the Slack
+        # post, each on its own, looked up when it happens (both are built
+        # after the state service).
         observer = mock_task_state_service_cls.call_args.kwargs['done_observer']
-        self.assertIs(observer(), app.release_notes_service)
+        self.assertIs(observer(), app.done_announcements)
+        told = [get() for get in app.done_announcements._observers]
+        self.assertEqual(told, [app.release_notes_service, app.slack_done_announcer])
         self.assertIsNotNone(app.release_notes_service)
+        self.assertIsNotNone(app.slack_done_announcer)
         # Both route local tasks to the SAME store, kept under ~/.kato
         # (here the tests' isolated home).
         local_tasks = mock_task_service_cls.call_args.args[2]

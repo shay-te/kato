@@ -12450,6 +12450,78 @@ button.settings-prompt-editor-head {
   display: none;
 }
 
+/* The count of a split plan's sub-tasks, folded into their main task's tab
+ * (utils/subtaskTabs.js); a click lists them. Orange when one is waiting for
+ * you, like the tab of a task that is. */
+.tab-subtasks {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: $SPACE-2;
+  height: 18px;
+  padding: 0 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-PILL;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  font-size: $TEXT-11;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.tab-subtasks:hover,
+.tab-subtasks.is-open { border-color: $C-CYAN-52-A40; color: $C-NEUTRAL-96; }
+.tab-subtasks.needs-attention { background: $C-ORANGE-50-A35; border-color: $C-ORANGE-50-A65; color: $C-NEUTRAL-96; }
+
+.tab-subtasks-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+
+/* Portalled to the body and placed from the count's rect: the strip scrolls
+ * sideways and would clip anything hanging below it. */
+.tab-subtasks-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: min(260px, calc(100vw - #{$SPACE-24}));
+  max-width: min(460px, calc(100vw - #{$SPACE-24}));
+  max-height: 360px;
+  overflow-y: auto;
+  padding: $SPACE-4 0;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-4;
+  box-shadow: $SHADOW-24;
+}
+
+.tab-subtasks-item {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
+  width: 100%;
+  padding: $SPACE-6 $SPACE-12;
+  background: none;
+  border: 0;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  font-size: $TEXT-12;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tab-subtasks-item:hover,
+.tab-subtasks-item:focus-visible { background: $C-NEUTRAL-100-A06; color: $C-NEUTRAL-96; }
+.tab-subtasks-id { flex-shrink: 0; font-size: $TEXT-11; color: $C-NEUTRAL-64; }
+
+.tab-subtasks-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tab-label-subtask {
   display: inline-flex;
   align-items: center;
@@ -14332,7 +14404,7 @@ button.settings-prompt-editor-head {
 
 .plan-step-head {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: $SPACE-10;
   width: 100%;
@@ -14379,16 +14451,54 @@ button.settings-prompt-editor-head {
 }
 
 .plan-step-waits { white-space: nowrap; font-size: $TEXT-11_5; color: $C-NEUTRAL-64; }
-.plan-step-repos { display: inline-flex; gap: $SPACE-4; }
 
-.plan-step-repo {
-  padding: 0 $SPACE-6;
-  background: $C-NEUTRAL-16;
-  border-radius: $RADIUS-PILL;
-  font-size: $TEXT-11;
-  color: $C-NEUTRAL-79;
-  white-space: nowrap;
+/* Where a task works and the model it runs on: always on its row, under the
+ * title (indented to the title's start), never behind the open. */
+.plan-step-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: $SPACE-4 $SPACE-12;
+  padding: 0 $SPACE-12 $SPACE-8 42px;
+  font-size: $TEXT-11_5;
+  color: $C-NEUTRAL-64;
 }
+
+.plan-step-setup.is-locked { justify-content: flex-start; gap: 0; color: $C-NEUTRAL-45; }
+
+.plan-step-setup-repos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: $SPACE-4;
+  min-width: 0;
+}
+
+.plan-chip-add { padding: $SPACE-1 $SPACE-6; color: $C-NEUTRAL-64; }
+.plan-chip-add:hover { color: $C-NEUTRAL-96; }
+
+.plan-step-setup-model {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-6;
+}
+
+.plan-step-setup-label { color: $C-NEUTRAL-45; }
+
+.plan-step-setup-model select,
+.plan-every-task select {
+  padding: $SPACE-1 $SPACE-6;
+  background: $C-NEUTRAL-16;
+  border: 1px solid $C-NEUTRAL-100-A06;
+  border-radius: $RADIUS-4;
+  color: $C-NEUTRAL-79;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* A task on its own model, not the plan's: marked, so it is seen at a glance. */
+.plan-step-setup-model.is-own select { border-color: $C-CYAN-52-A40; color: $C-NEUTRAL-96; }
 
 .plan-step-body {
   display: flex;
@@ -14489,15 +14599,38 @@ button.settings-prompt-editor-head {
 
 .plan-chip-count { font-size: $TEXT-11; color: $C-NEUTRAL-64; font-variant-numeric: tabular-nums; }
 
-/* One repository for every task at once — above the list. */
-.plan-proposal-repos {
+/* "Every task": what the tasks share — repositories, model, effort — above
+ * the list. The title on the left, one row per setting beside it. */
+.plan-every-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: $SPACE-6 $SPACE-12;
+  padding: $SPACE-8 $SPACE-12;
+  background: $C-NEUTRAL-04;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-6;
+  font-size: $TEXT-11_5;
+  color: $C-NEUTRAL-64;
+}
+
+.plan-every-task-title {
+  grid-row: span 2;
+  align-self: start;
+  padding-top: $SPACE-2;
+  font-weight: 600;
+  color: $C-NEUTRAL-79;
+}
+
+.plan-every-task-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: $SPACE-4 $SPACE-6;
-  font-size: $TEXT-11_5;
-  color: $C-NEUTRAL-64;
+  grid-column: 2;
 }
+
+.plan-every-task-label { min-width: 56px; color: $C-NEUTRAL-45; }
 
 .plan-proposal-revise {
   display: flex;
@@ -14646,6 +14779,17 @@ button.settings-prompt-editor-head {
 }
 
 /* Once the step has a task, its code opens it. */
+/* A started task in a tracker state this kato does not name: why the card
+ * never moves, and the one click that fixes it. */
+.plan-card-unknown-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: $SPACE-4;
+  font-size: $TEXT-11_5;
+  color: $C-ORANGE-50;
+}
+
 button.plan-card-code {
   padding: 0;
   background: none;

@@ -31,13 +31,19 @@ vi.mock('../../api.js', () => ({
   takeOverPlanQueue: vi.fn(),
   fetchSharedPlanQueue: vi.fn(),
   fetchInventoryRepositories: vi.fn(),
+  fetchModels: vi.fn(),
+  fetchEffortLevels: vi.fn(),
+  addPlanDoneState: vi.fn(),
 }));
 
 import {
+  addPlanDoneState,
   approvePlanQueue,
   controlPlanQueue,
   discardPlanQueue,
   editPlanQueueSteps,
+  fetchEffortLevels,
+  fetchModels,
   fetchPlanQueue,
   fetchInventoryRepositories,
   fetchPlanQueueSplitFolders,
@@ -107,6 +113,11 @@ beforeEach(() => {
   fetchPlanQueue.mockResolvedValue(plan());
   fetchPlanQueueSplitFolders.mockResolvedValue({ folders: [] });
   fetchSharedPlanQueue.mockRejectedValue(new Error('404'));  // no plan on the tracker
+  // What a task can run on: sonnet is the configured default.
+  fetchModels.mockResolvedValue({ models: [
+    { id: 'sonnet', label: 'Sonnet 5.5', default: true }, { id: 'opus', label: 'Opus 5.5' },
+  ] });
+  fetchEffortLevels.mockResolvedValue({ levels: ['low', 'medium', 'high'], default: 'medium' });
 });
 
 describe('PlanQueueButton', () => {
@@ -350,10 +361,78 @@ describe('PlanQueueView — the proposal', () => {
     const [, saved] = editPlanQueueSteps.mock.calls[0];
     expect(saved[0]).toEqual({
       id: 'api', title: 'The endpoint', brief: 'The whole brief of api.\nSecond line.',
-      depends_on: [], repositories: ['api'],
+      depends_on: [], repositories: ['api'], model: '',
     });
     expect(editPlanQueueSteps.mock.invocationCallOrder[0])
       .toBeLessThan(approvePlanQueue.mock.invocationCallOrder[0]);
+  });
+
+  test('each task shows where it works and its model on its row, without opening it', async () => {
+    serve(plan());
+    editPlanQueueSteps.mockReturnValue(ok(plan()));
+    approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    const model = await screen.findByLabelText('Model of ui');
+    expect(screen.queryByLabelText('Title of ui')).toBeNull();  // the row is closed
+    expect(model).toHaveValue('sonnet');  // the plan's: the configured default, by name
+    expect(within(screen.getByRole('group', { name: 'ui repositories' }))
+      .getByRole('button', { name: 'web' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.change(model, { target: { value: 'opus' } });
+    expect(model.closest('label')).toHaveClass('is-own');
+    fireEvent.click(within(screen.getByRole('group', { name: 'api repositories' })).getByRole('button', { name: 'web' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalled());
+    const [, saved] = editPlanQueueSteps.mock.calls[0];
+    expect(saved.map((draft) => [draft.id, draft.model, draft.repositories])).toEqual([
+      ['api', '', ['api', 'web']], ['ui', 'opus', ['web']],
+    ]);
+  });
+
+  test('picking the plan\'s model again makes a task follow the plan', async () => {
+    serve(plan({ steps: [step('api', { model: 'opus' })] }));
+    editPlanQueueSteps.mockReturnValue(ok(plan()));
+    approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    const model = await screen.findByLabelText('Model of api');
+    expect(model).toHaveValue('opus');
+    fireEvent.change(model, { target: { value: 'sonnet' } });
+    expect(model.closest('label')).not.toHaveClass('is-own');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalled());
+    expect(editPlanQueueSteps.mock.calls[0][1][0].model).toBe('');
+  });
+
+  test('"Every task runs on" is saved and sent with the approval', async () => {
+    serve(plan());
+    editPlanQueueSteps.mockReturnValue(ok(plan()));
+    approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    fireEvent.change(await screen.findByLabelText('Model every task runs on'), { target: { value: 'opus' } });
+    fireEvent.change(screen.getByLabelText('Effort every task runs at'), { target: { value: 'high' } });
+    expect(screen.getByLabelText('Model of api')).toHaveValue('opus');  // the rows follow the plan
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalled());
+    expect(editPlanQueueSteps.mock.calls[0][3]).toEqual({ model: 'opus', effort: 'high' });
+    expect(approvePlanQueue.mock.calls[0][1]).toMatchObject({ model: 'opus', effort: 'high' });
+  });
+
+  test('an untouched approval keeps the plan\'s own model, shown by name even when no longer offered', async () => {
+    serve(plan({ step_model: 'haiku', effort: 'low' }));
+    approvePlanQueue.mockReturnValue(ok(plan({ status: 'approved' })));
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    expect(await screen.findByLabelText('Model every task runs on')).toHaveValue('haiku');
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() => expect(approvePlanQueue).toHaveBeenCalled());
+    expect(approvePlanQueue.mock.calls[0][1]).toMatchObject({ model: 'haiku', effort: 'low' });
+    expect(editPlanQueueSteps).not.toHaveBeenCalled();
   });
 
   test('Approve without edits saves nothing and does not run', async () => {
@@ -732,6 +811,52 @@ describe('PlanQueueView — the board', () => {
   });
 });
 
+describe('PlanQueueView — a task stuck in a state this kato does not name', () => {
+  // UNA-3376 sat in "Waiting Deploy": read as still to do, so the board never
+  // moved and the tasks after it never started.
+  const STUCK = plan({
+    status: 'running',
+    mode: 'tracker',
+    unknown_states: ['Waiting Deploy'],
+    steps: [
+      step('api', { status: 'starting', task_id: 'UNA-3376', task_state: 'Waiting Deploy', released_at: 10 }),
+      step('ui', { depends_on: ['api'], task_id: 'UNA-3380', task_state: 'Open' }),
+    ],
+  });
+
+  test('the card says why it does not move, and one click counts the state as done', async () => {
+    serve(STUCK);
+    addPlanDoneState.mockResolvedValue({ ok: true, body: { done_states: ['Waiting Deploy'] } });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    expect(await screen.findByText(/“Waiting Deploy” is not counted as done here/)).toBeInTheDocument();
+    expect(screen.getAllByText(/is not counted as done here/)).toHaveLength(1);  // not on the waiting card
+    fetchPlanQueue.mockResolvedValue({ ...STUCK, unknown_states: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Count “Waiting Deploy” as done' }));
+
+    await waitFor(() => expect(addPlanDoneState).toHaveBeenCalledWith('Waiting Deploy'));
+    expect(confirm.mock.calls[0][0]).toMatch(/States that mean done/);
+    await waitFor(() => expect(screen.queryByText(/is not counted as done here/)).toBeNull());
+    confirm.mockRestore();
+  });
+
+  test('cancelled, nothing is saved; another kato\'s plan shows no fix', async () => {
+    serve(STUCK);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const { unmount } = render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Count “Waiting Deploy” as done' }));
+    expect(addPlanDoneState).not.toHaveBeenCalled();
+    confirm.mockRestore();
+    unmount();
+
+    serve({ ...STUCK, mode: 'followed', driver_user: 'dana' });
+    render(<PlanQueueView taskId="UNA-1" />);
+    await screen.findByRole('region', { name: 'In progress' });
+    expect(screen.queryByText(/is not counted as done here/)).toBeNull();
+  });
+});
+
 describe('PlanQueueView — a plan shared on the tracker', () => {
   test('creating sub-tasks is spelled out and always the operator\'s choice', async () => {
     serve(plan({ can_share: true, source_task_id: 'UNA-1' }));
@@ -895,8 +1020,7 @@ describe('PlanQueueView — changing an approved plan', () => {
     render(<PlanQueueView taskId="UNA-1" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open b' }));
-    const repos = within(screen.getByRole('group', { name: 'b repositories' }));
+    const repos = within(screen.getByRole('group', { name: 'b repositories' }));  // on the row, closed
     fireEvent.click(repos.getByRole('button', { name: 'api' }));  // b worked in api only: out
     fireEvent.click(repos.getByRole('button', { name: 'Add a repository to b' }));
     fireEvent.click(await screen.findByText('core-lib', { selector: '.adopt-session-cwd' }));
@@ -911,6 +1035,54 @@ describe('PlanQueueView — changing an approved plan', () => {
     expect(byId.b).toEqual(['core-lib']);
     expect(byId.c).toEqual(['api']);  // only the task it was added to
     expect(added).toEqual(['core-lib']);  // and the plan now knows it
+  });
+
+  test('"Every task" changes only the tasks not started, and the model is saved', async () => {
+    // d (done) works in web; none of the tasks that can change do.
+    const shown = plan({ ...LIVE, steps: LIVE.steps.map((entry) => (entry.id === 'd' ? { ...entry, repositories: ['web'] } : entry)) });
+    serve(shown);
+    editPlanQueueSteps.mockReturnValue(ok(shown));
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    const web = within(screen.getByRole('group', { name: 'Every task works in' })).getByRole('button', { name: 'web' });
+    expect(web).toHaveAttribute('aria-pressed', 'false');  // counted over the tasks that can change
+    fireEvent.click(web);
+    expect(web).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.change(await screen.findByLabelText('Model every task runs on'), { target: { value: 'opus' } });
+    expect(screen.queryByLabelText('Model of a')).toBeNull();  // started: no picker
+    expect(screen.getByLabelText('Model of b')).toHaveValue('opus');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const [, sent, , how] = editPlanQueueSteps.mock.calls[0];
+    expect(Object.fromEntries(sent.map((draft) => [draft.id, draft.repositories]))).toEqual({
+      a: ['api'], b: ['api', 'web'], c: ['api', 'web'], d: ['web'],
+    });
+    expect(how).toEqual({ model: 'opus' });
+  });
+
+  test('a repository added to every task skips the started ones', async () => {
+    serve(LIVE);
+    editPlanQueueSteps.mockReturnValue(ok(LIVE));
+    fetchInventoryRepositories.mockResolvedValue({ ok: true, body: { repositories: [
+      { id: 'api', repo_slug: 'api' }, { id: 'web', repo_slug: 'web' }, { id: 'core-lib', repo_slug: 'core-lib' },
+    ] } });
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit tasks' }));
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Every task works in' }))
+      .getByRole('button', { name: /Add repository/ }));
+    fireEvent.click(await screen.findByText('core-lib', { selector: '.adopt-session-cwd' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to every task' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(editPlanQueueSteps).toHaveBeenCalled());
+    const [, sent, added] = editPlanQueueSteps.mock.calls[0];
+    expect(Object.fromEntries(sent.map((draft) => [draft.id, draft.repositories]))).toEqual({
+      a: ['api'], b: ['api', 'core-lib'], c: ['api', 'core-lib'], d: ['api'],
+    });
+    expect(added).toEqual(['core-lib']);
   });
 
   test('Cancel goes back to the board without saving', async () => {

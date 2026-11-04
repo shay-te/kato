@@ -220,6 +220,7 @@ def _drafts(steps: list[Step]) -> tuple[StepDraft, ...]:
         StepDraft(
             id=step.id, title=step.title, brief=step.brief,
             depends_on=tuple(step.depends_on), repositories=tuple(step.repositories),
+            model=step.model,
         )
         for step in steps
     )
@@ -229,5 +230,5 @@ def _step(draft: StepDraft, source_file: str = '') -> Step:
     return Step(
         id=draft.id, title=draft.title, brief=draft.brief,
         depends_on=list(draft.depends_on), repositories=list(draft.repositories),
-        source_file=source_file,
+        model=draft.model, source_file=source_file,
     )

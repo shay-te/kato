@@ -615,6 +615,16 @@ SETTINGS_SCHEMA: list[dict] = [
              'Slack error webhook URL',
              'Incoming webhook URL for a Slack channel. Kato posts '
              'task failure summaries here.', {}),
+            ('KATO_SLACK_DONE_CHANNEL', 'text',
+             'Slack channel for finished tasks',
+             'The channel\'s link (in Slack: the channel\'s name → Copy link). When a '
+             'task is marked done in kato, its title and the links to its pull requests '
+             'are posted there. Needs the bot token below; empty = nothing is posted. '
+             'Applies to the next finished task, no restart.', {}),
+            ('KATO_SLACK_BOT_TOKEN', 'secret',
+             'Slack bot token',
+             'The bot token (xoxb-…) of a Slack app with the chat:write scope. Invite '
+             'the app to the channel above (/invite @your-app).', {}),
         ],
     },
     {

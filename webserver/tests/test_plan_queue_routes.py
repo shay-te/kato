@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanStatus, StepStatus
+from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanMode, PlanStatus, StepStatus
 from plan_queue_core_lib.plan_queue_core_lib.service import PlanQueueService
 from plan_queue_core_lib.plan_queue_core_lib.store import PlanQueueStore
 from plan_queue_core_lib.plan_queue_core_lib.tests.fakes import (
@@ -90,6 +90,55 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.client.delete(f'/api/plan-queues/{plan_id}')
         self.assertIsNone(entry()['plan_queue'])  # gone with the plan
 
+    def test_the_tab_list_names_each_sub_tasks_main_task(self) -> None:
+        plan_id = self._proposed()
+        approved = self._post(f'/api/plan-queues/{plan_id}/approve').get_json()
+        step_tasks = [step['task_id'] for step in approved['steps']]
+        self.assertEqual(len(step_tasks), 2)
+        for task_id in step_tasks:
+            self.workspaces.create(task_id=task_id, task_summary='a step', repository_ids=['api'])
+        tabs = {tab['task_id']: tab for tab in self.client.get('/api/sessions').get_json()}
+        self.assertEqual({task_id: tabs[task_id]['plan_parent'] for task_id in step_tasks},
+                         dict.fromkeys(step_tasks, 'T-1'))
+        self.assertEqual(tabs['T-1']['plan_parent'], '')  # the main task is no one's sub-task
+
+    def test_a_card_stuck_in_a_state_this_kato_does_not_name_says_so_and_can_count_it_done(self) -> None:
+        # UNA-3376 sat in "Waiting Deploy": not a workflow word here, so it read
+        # as "still to do" and the tasks after it never started.
+        settings = self.root / 'settings.json'
+        env = patch.dict(os.environ, {'KATO_SETTINGS_FILE': str(settings), 'KATO_DONE_STATES': ''})
+        env.start()
+        self.addCleanup(env.stop)
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(
+            plan_queue=self.queue,
+            task_states=SimpleNamespace(known_state_names=lambda: frozenset({'open', 'in progress', 'pull request', 'done'})),
+        )
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'run': True})
+        self.queue.tick()
+
+        def live(plan):
+            plan.mode = PlanMode.TRACKER
+            for step, state in zip(plan.steps, ('Waiting Deploy', 'Open')):
+                step.task_state = state
+        self.queue._registry.mutate(plan_id, live)
+        board = lambda: self.client.get(f'/api/plan-queues/{plan_id}').get_json()
+        self.assertEqual(board()['unknown_states'], ['Waiting Deploy'])
+
+        added = self._post('/api/plan-queues/done-states', {'state': 'Waiting Deploy'})
+        self.assertEqual(added.get_json(), {'done_states': ['Waiting Deploy']})
+        self.assertEqual(board()['unknown_states'], [])
+        self.assertEqual(self._post('/api/plan-queues/done-states', {'state': 'a, b'}).status_code, 400)
+        self.assertEqual(self._post('/api/plan-queues/done-states', {'state': 7}).status_code, 400)
+
+    def test_a_local_plan_or_a_kato_without_a_workflow_names_no_unknown_state(self) -> None:
+        plan_id = self._proposed()
+        self.assertEqual(self.client.get(f'/api/plan-queues/{plan_id}').get_json()['unknown_states'], [])
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(plan_queue=self.queue, task_states=SimpleNamespace(
+            known_state_names=Mock(side_effect=RuntimeError('no config'))))
+        self.queue._registry.mutate(plan_id, lambda plan: setattr(plan, 'mode', PlanMode.TRACKER))
+        self.assertEqual(self.client.get(f'/api/plan-queues/{plan_id}').get_json()['unknown_states'], [])
+
     def test_a_queue_that_cannot_answer_leaves_the_tab_list_alone(self) -> None:
         from kato_webserver.app import _plan_queue_summaries
         broken = SimpleNamespace(plan_queue=SimpleNamespace(live_by_source=Mock(side_effect=RuntimeError('x'))))
@@ -97,6 +146,11 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(_plan_queue_summaries(SimpleNamespace(plan_queue=None)), {})
         odd = SimpleNamespace(plan_queue=SimpleNamespace(live_by_source=lambda: ['not', 'a', 'map']))
         self.assertEqual(_plan_queue_summaries(odd), {})
+        from kato_webserver.app import _plan_parents
+        self.assertEqual(_plan_parents(SimpleNamespace(plan_queue=SimpleNamespace(
+            step_task_sources=Mock(side_effect=RuntimeError('x'))))), {})
+        self.assertEqual(_plan_parents(SimpleNamespace(plan_queue=None)), {})
+        self.assertEqual(_plan_parents(SimpleNamespace(plan_queue=SimpleNamespace(step_task_sources=lambda: []))), {})
 
     # ----- propose -----
 
@@ -209,6 +263,38 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ui/cancel').status_code, 200)
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ghost/cancel').status_code, 404)
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ui/explode').status_code, 404)
+
+    def test_an_edit_can_set_the_model_and_effort_tasks_run_on(self) -> None:
+        plan_id = self._proposed()
+        steps = [
+            {'id': step.id, 'title': step.title, 'brief': step.brief,
+             'depends_on': step.depends_on, 'repositories': step.repositories}
+            for step in self.queue.get(plan_id).steps
+        ]
+        put = lambda body: self.client.put(f'/api/plan-queues/{plan_id}/steps', json={'steps': steps, **body})
+        self.assertEqual(put({'model': 'sonnet', 'effort': 'high'}).status_code, 200)
+        self.assertEqual((self.queue.get(plan_id).step_model, self.queue.get(plan_id).effort), ('sonnet', 'high'))
+        put({})  # not sent: kept
+        self.assertEqual(self.queue.get(plan_id).step_model, 'sonnet')
+        self.assertEqual(put({'model': 'rm -rf /'}).status_code, 400)
+        self.assertEqual(put({'effort': 'ludicrous'}).status_code, 400)
+
+    def test_each_task_can_pick_its_own_model(self) -> None:
+        plan_id = self._proposed()
+        steps = [
+            {'id': step.id, 'title': step.title, 'brief': step.brief, 'depends_on': step.depends_on,
+             'repositories': step.repositories, 'model': 'opus' if index == 0 else ''}
+            for index, step in enumerate(self.queue.get(plan_id).steps)
+        ]
+        put = lambda body: self.client.put(f'/api/plan-queues/{plan_id}/steps', json=body)
+        answered = put({'steps': steps})
+        self.assertEqual(answered.status_code, 200, answered.get_json())
+        self.assertEqual([step['model'] for step in answered.get_json()['steps']],
+                         ['opus'] + [''] * (len(steps) - 1))
+        steps[0]['model'] = '$(reboot)'
+        refused = put({'steps': steps})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('step 1: model must be a model id', refused.get_json()['error'])
 
     def test_start_hands_over_one_ready_step_before_run(self) -> None:
         plan_id = self._proposed()

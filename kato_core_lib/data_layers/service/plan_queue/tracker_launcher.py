@@ -22,6 +22,7 @@ from kato_core_lib.helpers.agent_comment_classification import (
     PLAN_STEP_COMMENT_PREFIX,
     active_execution_blocking_comment,
 )
+from kato_core_lib.helpers.kato_tag_utils import is_model_tag, model_tag
 from kato_core_lib.helpers.late_binding import provider_for
 
 #: ``kato: retry approved`` clears an earlier "started working" comment, which
@@ -44,6 +45,7 @@ class TrackerStepLauncher(object):
         return self._get_task_service().subtask_tracker() is not None
 
     def prepare(self, request: LaunchRequest) -> str:
+        _require_taggable_model(request)  # before a ticket exists
         tracker = self._tracker()
         found = tracker.find_subtask(request.source_task_id, request.marker)
         task_id = found or tracker.create_subtask(  # a retried create finds the first
@@ -53,6 +55,7 @@ class TrackerStepLauncher(object):
         )
         if request.start_mode == START_PLAN:
             self._get_task_service().add_tag(task_id, TaskTags.WAIT_PLANNING)
+        self._run_on_model(task_id, request.model)
         return task_id
 
     def release(self, request: LaunchRequest, task_id: str) -> str:
@@ -83,12 +86,31 @@ class TrackerStepLauncher(object):
 
     def update(self, request: LaunchRequest, task_id: str) -> None:
         """An edited step's sub-task, rewritten: its title and its description
-        with the footer (what it waits for, where it works)."""
+        with the footer (what it waits for, where it works), and the model it
+        runs on."""
+        _require_taggable_model(request)
         self._tracker().update_subtask(
             task_id,
             subtask_summary(request),
             subtask_description(request, self._repository_labels(request.repositories)),
         )
+        self._run_on_model(task_id, request.model)
+
+    def _run_on_model(self, task_id: str, model: str) -> None:
+        """The ticket's ``kato:model:`` tag says the plan's model — the tag every
+        kato's pickup reads — and no other model tag is left on it. No model:
+        no model tag (the configured default runs)."""
+        service = self._get_task_service()
+        wanted = model_tag(model)
+        try:
+            current = list(getattr(service.get_task(task_id), 'tags', None) or [])
+        except Exception:
+            current = []  # a new ticket, or one that cannot be read: nothing to take off
+        for tag in current:
+            if is_model_tag(tag) and tag != wanted:
+                service.remove_tag(task_id, tag)
+        if wanted and wanted not in current:
+            service.add_tag(task_id, wanted)
 
     def withdraw(self, task_id: str, reason: str) -> None:
         tracker = self._tracker()
@@ -140,3 +162,13 @@ class TrackerStepLauncher(object):
                 repository = None
             labels.append(str(getattr(repository, 'repo_slug', '') or repository_id))
         return labels
+
+
+def _require_taggable_model(request: LaunchRequest) -> None:
+    """A model the ticket cannot carry is refused, never dropped: the task
+    would quietly run on the configured default instead of the one picked."""
+    if request.model and not model_tag(request.model):
+        raise ValueError(
+            f'{request.model!r} cannot be written on a ticket as a kato:model tag, so another kato would '
+            'not know it. Pick fable, opus, sonnet or haiku for this task (or leave it on the default).',
+        )

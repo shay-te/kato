@@ -197,6 +197,11 @@ class PlanQueueService(object):
         stays part of its plan after the plan is done or stopped."""
         return self._registry.source_of_task(task_id)
 
+    def step_task_sources(self) -> dict[str, str]:
+        """Every step's task (lower-case) -> the task its plan was split from:
+        ``source_of_step_task`` for all of them at once."""
+        return self._registry.step_task_sources()
+
     def waiting_for(self, task_id: str) -> list[str] | None:
         """What the step running as ``task_id`` still waits for (its parents'
         task ids, or step ids for parents with no task yet) — [] when it may
@@ -354,7 +359,7 @@ class PlanQueueService(object):
 
     def edit(
         self, plan_id: str, drafts: Sequence[StepDraft], *, title: str | None = None,
-        repositories: Sequence[str] = (),
+        repositories: Sequence[str] = (), step_model: str | None = None, effort: str | None = None,
     ) -> Plan:
         """The operator's edit of a split, checked by the same validator.
 
@@ -372,16 +377,19 @@ class PlanQueueService(object):
         except SplitValidationError as exc:
             raise PlanQueueError(str(exc), ErrorKind.INVALID) from exc
         if plan.status.has_steps_in_flight:
-            return self._edit_live(plan_id, steps, title=title, repositories=repositories)
+            return self._edit_live(
+                plan_id, steps, title=title, repositories=repositories, step_model=step_model, effort=effort,
+            )
 
         def apply(live: Plan) -> None:
             _require(live, PlanStatus.PROPOSED)
+            _set_how_tasks_run(live, step_model, effort)
             live.repository_ids = _merged(live.repository_ids, repositories)
             sources = {step.id: step.source_file for step in live.steps}
             live.steps = [
                 Step(id=d.id, title=d.title, brief=d.brief,
                      depends_on=list(d.depends_on), repositories=list(d.repositories),
-                     source_file=sources.get(d.id, ''))
+                     model=d.model, source_file=sources.get(d.id, ''))
                 for d in steps
             ]
             if title is not None and title.strip():
@@ -392,6 +400,7 @@ class PlanQueueService(object):
 
     def _edit_live(
         self, plan_id: str, steps: list[StepDraft], *, title: str | None, repositories: Sequence[str],
+        step_model: str | None = None, effort: str | None = None,
     ) -> Plan:
         """An approved plan changed where nothing has started, then its tasks
         brought in line: taken-out ones withdrawn, new ones created (parents
@@ -401,6 +410,10 @@ class PlanQueueService(object):
             _require_in_flight(live)
             live.repository_ids = _merged(live.repository_ids, repositories)
             change = apply_live_edit(live, steps)
+            # After the edit took its "before": a waiting task whose model
+            # changed reads differently, so it is rewritten too.
+            if _set_how_tasks_run(live, step_model, effort):
+                live.touch_record()
             if title is not None and title.strip():
                 live.title = title.strip()
             return change
@@ -821,6 +834,19 @@ def _require(plan: Plan, *statuses: PlanStatus) -> None:
     if plan.status not in statuses:
         allowed = ' or '.join(status.value for status in statuses)
         raise PlanQueueError(f'the plan is {plan.status.value}; this needs it {allowed}')
+
+
+def _set_how_tasks_run(plan: Plan, step_model: str | None, effort: str | None) -> bool:
+    """The model and effort tasks not started yet run on (None = unchanged,
+    '' = the host's default). True when either changed."""
+    changed = False
+    if step_model is not None and step_model.strip() != plan.step_model:
+        plan.step_model = step_model.strip()
+        changed = True
+    if effort is not None and effort.strip() != plan.effort:
+        plan.effort = effort.strip()
+        changed = True
+    return changed
 
 
 def _merged(repositories: Sequence[str], more: Sequence[str]) -> list[str]:

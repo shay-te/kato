@@ -1,9 +1,8 @@
 import { useState } from 'react';
 import { cx } from '../../utils/cx.js';
-import { createLocalTask, fetchEffortLevels, fetchModels } from '../../api.js';
+import { createLocalTask } from '../../api.js';
+import { useAgentChoices } from '../../hooks/useAgentChoices.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
-import { usePickerData } from '../../hooks/usePickerData.js';
-import { loadCatalog } from '../../stores/catalogStore.js';
 import { toast, toastResult } from '../../stores/toastStore.js';
 import Icon, { BusyIcon } from '../Icon.jsx';
 import MarkdownContent from '../MarkdownContent.jsx';
@@ -13,15 +12,6 @@ import NewTaskStartMode from './NewTaskStartMode.jsx';
 import { discardNewTaskDraft, updateNewTaskDraft, useNewTaskDraft } from './newTaskDraftStore.js';
 import { draftPayload, draftProblems, effectiveEffort, effectiveModel } from './newTaskHelpers.js';
 
-// The same cached catalogues the chat composer's pickers read.
-async function loadAgentChoices() {
-  const [models, effort] = await Promise.all([
-    loadCatalog('models', fetchModels),
-    loadCatalog('levels', fetchEffortLevels),
-  ]);
-  return { models: models?.models || [], effort: effort || { levels: [], default: '' } };
-}
-
 // "New task": a task written here, in kato — no tracker. The description
 // takes the whole height (it can be a full spec); the settings sit in a narrow
 // column beside it. Everything typed is kept as a draft in this browser.
@@ -30,11 +20,11 @@ async function loadAgentChoices() {
 export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }) {
   const draft = useNewTaskDraft();
   const [previewing, setPreviewing] = useState(false);
-  const choices = usePickerData(loadAgentChoices, [], null).data;
-  const models = choices?.models || [];
-  const levels = choices?.effort?.levels || [];
+  const choices = useAgentChoices();
+  const { models } = choices;
+  const levels = choices.effort.levels;
   const model = effectiveModel(draft.model, models);
-  const effort = effectiveEffort(draft.effort, choices?.effort);
+  const effort = effectiveEffort(draft.effort, choices.effort);
   const problems = draftProblems(draft);
   const [creating, create] = useBusyAction(async () => {
     const result = await createLocalTask(draftPayload(draft, { model, effort }));

@@ -2335,11 +2335,25 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
 
     def _prepare_task_branch(self, repository, branch_name: str):
         self._validate_local_path(repository)
+        # A plan sub-task is cut from its plan's branch, and ``destination_branch``
+        # reads only what the clone already has. Fetched FIRST: a clone made
+        # before that branch reached the remote (or before the work it waits
+        # for was merged into it) was cut from master and missed that work —
+        # the fetch inside ``_prepare_workspace_for_branch`` came too late to
+        # change the answer.
+        self._fetch_plan_merge_branch(repository)
         # Asked every time, not read off the attribute: a plan sub-task's clone
         # is cut from its plan's branch, which the attribute (copied from the
         # inventory's configured destination) does not know.
         destination_branch = self.destination_branch(repository)
         setattr(repository, 'destination_branch', destination_branch)
+        task_id = _task_id_of_clone(repository)
+        if self.plan_merge_branch(task_id):
+            # Said in the log for every sub-task: which branch it starts from
+            # is the first thing to check when its agent misses earlier work.
+            self.logger.info(
+                'task %s: %s starts from %s', task_id, text_from_attr(repository, 'id'), destination_branch,
+            )
         self._prepare_workspace_for_branch(
             repository.local_path,
             destination_branch,

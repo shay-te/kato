@@ -96,6 +96,8 @@ from kato_core_lib.data_layers.service.release_note_writer import ReleaseNoteWri
 from kato_core_lib.data_layers.service.release_notes_done_watcher import ReleaseNotesDoneWatcher
 from kato_core_lib.data_layers.service.release_notes_google_sync import ReleaseNotesGoogleSync
 from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
+from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
+from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
@@ -514,7 +516,7 @@ class KatoCoreLib(CoreLib):
         task_state_service = LocalAwareTaskStateService(
             ticket_cfg, task_data_access, local_tasks,
             # Every route to done announces itself here — the release notes.
-            done_observer=later(self, 'release_notes_service'),
+            done_observer=later(self, 'done_announcements'),
         )
         if self.planning_session_runner is not None:
             # A fresh chat's first turn names the ticket's screenshots too.
@@ -540,6 +542,11 @@ class KatoCoreLib(CoreLib):
         self.release_notes_service = self._build_release_notes_service(
             open_cfg, task_service, repository_service,
         )
+        # A task reaching Done is told to each of these, on its own.
+        self.slack_done_announcer = self._build_slack_done_announcer(task_service, repository_service)
+        self.done_announcements = DoneAnnouncements([
+            later(self, 'release_notes_service'), later(self, 'slack_done_announcer'),
+        ])
         notification_service = self._build_notification_service(open_cfg)
         # Persist processed-review-comment marks to ~/.kato so a restart does
         # not re-work every still-open PR comment (they're left unresolved for
@@ -970,6 +977,20 @@ class KatoCoreLib(CoreLib):
                 ).pull_requests_of_branch,
             ),
             after_write=google_sync.request,
+        )
+
+    def _build_slack_done_announcer(self, task_service, repository_service) -> SlackDoneAnnouncer:
+        """A finished task, posted to the Slack channel set in Settings with its
+        pull requests — read and found the same way as for the release notes."""
+        return SlackDoneAnnouncer(
+            sources=ReleaseNoteSources(
+                workspace_manager=later(self, 'workspace_manager'), task_service=task_service,
+            ),
+            links=ReleaseNoteLinks(
+                pull_requests=KatoPullRequestProbe(
+                    repository_service=repository_service,
+                ).pull_requests_of_branch,
+            ),
         )
 
     def _build_release_notes_watcher(self, task_service, task_state_service, local_tasks):

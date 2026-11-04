@@ -148,6 +148,78 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(plan.model, 'opus')  # the proposer's model is kept apart
         self.assertIn('created T-101 for step api', self.events)
 
+    def test_the_model_and_effort_tasks_run_on_can_be_changed_in_an_edit(self) -> None:
+        plan = self._proposed()
+        drafts = [StepDraft(id=s.id, title=s.title, brief=s.brief, depends_on=tuple(s.depends_on),
+                            repositories=tuple(s.repositories)) for s in plan.steps]
+        edited = self.service.edit(plan.plan_id, drafts, step_model='sonnet', effort='high')
+        self.assertEqual((edited.step_model, edited.effort), ('sonnet', 'high'))
+        kept = self.service.edit(plan.plan_id, drafts)  # not sent: unchanged
+        self.assertEqual((kept.step_model, kept.effort), ('sonnet', 'high'))
+        # Approved: the waiting tasks already created are rewritten to the new model.
+        approved = self.service.approve(plan.plan_id, model='sonnet', effort='high')
+        self.launcher.updated.clear()
+        live = self.service.edit(approved.plan_id, drafts, step_model='', effort='')
+        self.assertEqual((live.step_model, live.effort), ('', ''))
+        self.assertEqual({request.step_id for request, _task in self.launcher.updated}, {'api', 'ui', 'docs'})
+        self.assertTrue(all(request.model == '' for request, _task in self.launcher.updated))
+        self.launcher.updated.clear()
+        self.service.edit(approved.plan_id, drafts, step_model='', effort='')  # the same: nothing to rewrite
+        self.assertEqual(self.launcher.updated, [])
+
+    def test_every_step_task_names_the_task_its_plan_was_split_from(self) -> None:
+        self.assertEqual(self.service.step_task_sources(), {})
+        self._proposed('SRC-2')  # steps with no task yet name nothing
+        self.assertEqual(self.service.step_task_sources(), {})
+        approved = self._approved()
+        tasks = {step.task_id.lower() for step in approved.steps}
+        self.assertEqual(self.service.step_task_sources(), dict.fromkeys(tasks, 'SRC-1'))
+        # A task handed back and made again keeps its old id there too.
+        def again(plan):
+            plan.steps[0].previous_task_ids = ['T-OLD']
+        self.service._registry.mutate(approved.plan_id, again)
+        self.assertEqual(self.service.step_task_sources()['t-old'], 'SRC-1')
+
+    def test_a_task_can_run_on_its_own_model(self) -> None:
+        plan = self._proposed()
+        drafts = [StepDraft(id=s.id, title=s.title, brief=s.brief, depends_on=tuple(s.depends_on),
+                            repositories=tuple(s.repositories), model=' opus ' if s.id == 'ui' else '')
+                  for s in plan.steps]
+        edited = self.service.edit(plan.plan_id, drafts, step_model='sonnet')
+        self.assertEqual({s.id: s.model for s in edited.steps}, {'api': '', 'ui': 'opus', 'docs': ''})
+        approved = self.service.approve(plan.plan_id, model='sonnet')
+        # Its own pick wins; the rest run on the plan's.
+        self.assertEqual({request.step_id: request.model for request in self.launcher.prepared},
+                         {'api': 'sonnet', 'ui': 'opus', 'docs': 'sonnet'})
+        # Changing one waiting task's model rewrites that task only.
+        self.launcher.updated.clear()
+        drafts = [StepDraft(id=s.id, title=s.title, brief=s.brief, depends_on=tuple(s.depends_on),
+                            repositories=tuple(s.repositories), model='haiku' if s.id == 'docs' else s.model)
+                  for s in approved.steps]
+        live = self.service.edit(approved.plan_id, drafts)
+        self.assertEqual(live.step('docs').model, 'haiku')
+        self.assertEqual([(request.step_id, request.model) for request, _task in self.launcher.updated],
+                         [('docs', 'haiku')])
+
+    def test_a_started_tasks_model_cannot_change(self) -> None:
+        approved = self._approved(run=True)
+        self.service.tick()  # api and docs are released
+        approved = self.service.get(approved.plan_id)
+        started = next(step for step in approved.steps if step.status.is_released)
+        drafts = [StepDraft(id=s.id, title=s.title, brief=s.brief, depends_on=tuple(s.depends_on),
+                            repositories=tuple(s.repositories), model='opus' if s.id == started.id else s.model)
+                  for s in approved.steps]
+        with self.assertRaises(PlanQueueError) as caught:
+            self.service.edit(approved.plan_id, drafts)
+        self.assertEqual(caught.exception.kind, ErrorKind.CONFLICT)
+
+    def test_a_model_name_over_the_limit_is_refused(self) -> None:
+        plan = self._proposed()
+        drafts = [StepDraft(id=s.id, title=s.title, brief=s.brief, model='m' * 101) for s in plan.steps]
+        with self.assertRaises(PlanQueueError) as caught:
+            self.service.edit(plan.plan_id, drafts)
+        self.assertIn('model over 100 characters', str(caught.exception))
+
     def test_approve_and_run(self) -> None:
         plan = self._approved(run=True)
         self.assertEqual(plan.status, PlanStatus.RUNNING)

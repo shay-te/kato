@@ -125,6 +125,24 @@ def model_from_tag(tag: object) -> str:
     return f'claude-{family}-{int(major)}' + (f'-{minor}' if minor else '')
 
 
+_PINNED_MODEL_RE = re.compile(r'^claude-([a-z]+)-(\d{1,3})(?:-(\d{1,2}))?$')
+
+
+def model_tag(model: object) -> str:
+    """The ``kato:model:`` tag that selects ``model`` — :func:`model_from_tag`
+    backwards — or ``''`` when no tag can say it (another provider's model, a
+    context-size suffix). ``sonnet`` -> ``kato:model:sonnet``;
+    ``claude-sonnet-5-5`` -> ``kato:model:sonnet:5.5``."""
+    text = normalized_text(model).lower()
+    if text in MODEL_FAMILIES:
+        return build_model_tag(text)
+    match = _PINNED_MODEL_RE.match(text)
+    if match is None or match.group(1) not in MODEL_FAMILIES:
+        return ''
+    major, minor = match.group(2), match.group(3)
+    return build_model_tag(match.group(1), f'{int(major)}.{int(minor)}' if minor else str(int(major)))
+
+
 # Written as digits on purpose: ``\d`` also takes other scripts' digits, and the
 # length keeps ``int`` away from a tag of thousands of them.
 _REVIEW_ROUNDS_RE = re.compile(r'[0-9]{1,3}')

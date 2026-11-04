@@ -12261,6 +12261,94 @@ button.settings-prompt-editor-head {
   display: none;
 }
 
+/* The count of a split plan's sub-tasks, folded into their main task's tab
+ * (utils/subtaskTabs.js); a click lists them. Orange when one is waiting for
+ * you, like the tab of a task that is. */
+.tab-subtasks {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+  padding: 0 6px;
+  background: #2a2a2a;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  color: #c8c8cd;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.tab-subtasks:hover,
+.tab-subtasks.is-open {
+  border-color: rgba(10, 132, 255, 0.4);
+  color: #f5f5f7;
+}
+
+.tab-subtasks.needs-attention {
+  background: rgba(245, 158, 11, 0.35);
+  border-color: rgba(245, 158, 11, 0.65);
+  color: #f5f5f7;
+}
+
+.tab-subtasks-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+}
+
+/* Portalled to the body and placed from the count's rect: the strip scrolls
+ * sideways and would clip anything hanging below it. */
+.tab-subtasks-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: min(260px, 100vw - 24px);
+  max-width: min(460px, 100vw - 24px);
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 0;
+  background: #2a2a2a;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
+}
+
+.tab-subtasks-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: 0;
+  color: #c8c8cd;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tab-subtasks-item:hover,
+.tab-subtasks-item:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+}
+
+.tab-subtasks-id {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #a3a3a3;
+}
+
+.tab-subtasks-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tab-label-subtask {
   display: inline-flex;
   align-items: center;
@@ -14542,7 +14630,7 @@ button.settings-prompt-editor-head {
 
 .plan-step-head {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -14606,18 +14694,67 @@ button.settings-prompt-editor-head {
   color: #a3a3a3;
 }
 
-.plan-step-repos {
-  display: inline-flex;
-  gap: 4px;
+/* Where a task works and the model it runs on: always on its row, under the
+ * title (indented to the title's start), never behind the open. */
+.plan-step-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 0 12px 8px 42px;
+  font-size: 11.5px;
+  color: #a3a3a3;
 }
 
-.plan-step-repo {
-  padding: 0 6px;
+.plan-step-setup.is-locked {
+  justify-content: flex-start;
+  gap: 0;
+  color: #737373;
+}
+
+.plan-step-setup-repos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.plan-chip-add {
+  padding: 1px 6px;
+  color: #a3a3a3;
+}
+
+.plan-chip-add:hover {
+  color: #f5f5f7;
+}
+
+.plan-step-setup-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.plan-step-setup-label {
+  color: #737373;
+}
+
+.plan-step-setup-model select,
+.plan-every-task select {
+  padding: 1px 6px;
   background: #2a2a2a;
-  border-radius: 999px;
-  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
   color: #c8c8cd;
-  white-space: nowrap;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* A task on its own model, not the plan's: marked, so it is seen at a glance. */
+.plan-step-setup-model.is-own select {
+  border-color: rgba(10, 132, 255, 0.4);
+  color: #f5f5f7;
 }
 
 .plan-step-body {
@@ -14730,14 +14867,40 @@ button.settings-prompt-editor-head {
   font-variant-numeric: tabular-nums;
 }
 
-/* One repository for every task at once — above the list. */
-.plan-proposal-repos {
+/* "Every task": what the tasks share — repositories, model, effort — above
+ * the list. The title on the left, one row per setting beside it. */
+.plan-every-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  background: #0a0a0a;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: #a3a3a3;
+}
+
+.plan-every-task-title {
+  grid-row: span 2;
+  align-self: start;
+  padding-top: 2px;
+  font-weight: 600;
+  color: #c8c8cd;
+}
+
+.plan-every-task-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px 6px;
-  font-size: 11.5px;
-  color: #a3a3a3;
+  grid-column: 2;
+}
+
+.plan-every-task-label {
+  min-width: 56px;
+  color: #737373;
 }
 
 .plan-proposal-revise {
@@ -14907,6 +15070,17 @@ button.settings-prompt-editor-head {
 }
 
 /* Once the step has a task, its code opens it. */
+/* A started task in a tracker state this kato does not name: why the card
+ * never moves, and the one click that fixes it. */
+.plan-card-unknown-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 11.5px;
+  color: #f59e0b;
+}
+
 button.plan-card-code {
   padding: 0;
   background: none;

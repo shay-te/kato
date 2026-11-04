@@ -3,13 +3,16 @@ import { cx } from '../../utils/cx.js';
 import Icon from '../Icon.jsx';
 import MarkdownContent from '../MarkdownContent.jsx';
 import RepositoryPickerModal from '../RepositoryPickerModal.jsx';
+import { modelOptions, toggleRepoEverywhere } from './planQueueHelpers.js';
 
 // A split's tasks as rows to scan and edit — the proposal's editor, and the
 // board's once the plan is approved (where a started task is locked).
 
 // The drafts an editor holds, and the edits both editors make the same way.
 // ``onEdit`` runs after each change (the proposal marks itself unsaved).
-export function useStepDrafts(initial, onEdit = () => {}) {
+// ``mayChange(step)``: a change made to every task skips the ones it refuses
+// (a started task on the board stays exactly as it is).
+export function useStepDrafts(initial, onEdit = () => {}, mayChange = () => true) {
   const [steps, setSteps] = useState(initial);
   const [open, setOpen] = useState(() => new Set());
   // Repositories the operator added from kato's inventory, beyond the plan's
@@ -34,10 +37,16 @@ export function useStepDrafts(initial, onEdit = () => {}) {
   function addRepositories(ids, index = -1) {
     setAdded((current) => [...current, ...ids.filter((id) => !current.includes(id))]);
     setSteps((current) => current.map((step, at) => {
-      if (index >= 0 && at !== index) { return step; }
+      if (index >= 0 ? at !== index : !mayChange(step)) { return step; }
       const missing = ids.filter((id) => !step.repositories.includes(id));
       return missing.length ? { ...step, repositories: [...step.repositories, ...missing] } : step;
     }));
+    onEdit();
+  }
+
+  // ``repo`` into every task that may change, or out of all of them.
+  function toggleEverywhere(repo) {
+    setSteps((current) => toggleRepoEverywhere(current, repo, mayChange));
     onEdit();
   }
 
@@ -49,12 +58,14 @@ export function useStepDrafts(initial, onEdit = () => {}) {
     });
   }
 
-  return { steps, setSteps, open, setOpen, change, remove, toggle, added, addRepositories };
+  return { steps, setSteps, open, setOpen, change, remove, toggle, added, addRepositories, toggleEverywhere, mayChange };
 }
 
 // Every task of a split, one row each. ``drafts`` is ``useStepDrafts``'s
 // result; ``lockedText(step)`` names why a task may not change ('' = it may).
-export function StepList({ drafts, rounds, repositories, lockedText = () => '' }) {
+// ``models``: what a task can run on; ``planModel``: what it runs on unless it
+// picks its own.
+export function StepList({ drafts, rounds, repositories, models = [], planModel = '', lockedText = () => '' }) {
   const { steps, open, toggle, change, remove } = drafts;
   return (
     <ol className="plan-proposal-steps">
@@ -67,6 +78,8 @@ export function StepList({ drafts, rounds, repositories, lockedText = () => '' }
           onToggle={() => toggle(step.id)}
           others={steps.filter((other) => other.id !== step.id).map((other) => other.id)}
           repositories={repositories}
+          models={models}
+          planModel={planModel}
           onChange={(patch) => change(index, patch)}
           onAddRepositories={(ids) => drafts.addRepositories(ids, index)}
           onRemove={!lockedText(step) && steps.length > 1 ? () => remove(index) : null}
@@ -77,10 +90,12 @@ export function StepList({ drafts, rounds, repositories, lockedText = () => '' }
   );
 }
 
-// One task: a row to scan, that opens to edit. ``locked``: a task that has
-// started — shown as it is (its agent already has its brief), never edited.
+// One task: a row to scan, that opens to edit. Where it works and the model
+// it runs on are on the row itself, never behind the open. ``locked``: a task
+// that has started — shown as it is (its agent already has its brief).
 export function StepRow({
-  step, round, open, onToggle, others, repositories, onChange, onRemove, onAddRepositories, locked = '',
+  step, round, open, onToggle, others, repositories, models = [], planModel = '', onChange, onRemove,
+  onAddRepositories, locked = '',
 }) {
   const waits = step.depends_on.length ? `waits for ${step.depends_on.join(', ')}` : 'starts right away';
   return (
@@ -94,26 +109,22 @@ export function StepRow({
         <code className="plan-step-id">{step.id}</code>
         <span className="plan-step-title">{step.title || 'Untitled'}</span>
         <span className="plan-step-waits">{locked || waits}</span>
-        <span className="plan-step-repos">
-          {step.repositories.map((repo) => <span key={repo} className="plan-step-repo">{repo}</span>)}
-        </span>
         <Icon name={open ? 'chevron-up' : 'chevron-down'} />
       </button>
+      <StepSetup step={step} repositories={repositories} models={models} planModel={planModel}
+        locked={Boolean(locked)} onChange={onChange} onAddRepositories={onAddRepositories} />
       {open && locked ? (
         <div className="plan-step-body"><div className="plan-step-brief-text"><MarkdownContent>{step.brief}</MarkdownContent></div></div>
       ) : null}
       {open && !locked ? (
-        <StepEditor step={step} others={others} repositories={repositories} onChange={onChange}
-          onRemove={onRemove} onAddRepositories={onAddRepositories} />
+        <StepEditor step={step} others={others} onChange={onChange} onRemove={onRemove} />
       ) : null}
     </li>
   );
 }
 
-function StepEditor({ step, others, repositories, onChange, onRemove, onAddRepositories }) {
+function StepEditor({ step, others, onChange, onRemove }) {
   const [editing, setEditing] = useState(false);
-  const [picking, setPicking] = useState(false);
-  const toggle = (list, value) => (list.includes(value) ? list.filter((entry) => entry !== value) : [...list, value]);
   const addable = others.filter((id) => !step.depends_on.includes(id));
   return (
     <div className="plan-step-body">
@@ -157,29 +168,75 @@ function StepEditor({ step, others, repositories, onChange, onRemove, onAddRepos
           </select>
         ) : null}
       </div>
-      {/* Where this task works: tick or untick the plan's repositories, or
-          add one kato knows that the plan does not have yet. */}
-      <div className="plan-step-field" role="group" aria-label={`${step.id} repositories`}>
-        <span className="plan-step-field-label">Works in</span>
-        {repositories.map((repo) => (
-          <button key={repo} type="button" aria-pressed={step.repositories.includes(repo)}
-            className={cx('plan-chip', step.repositories.includes(repo) && 'is-on')}
-            onClick={() => onChange({ repositories: toggle(step.repositories, repo) })}>
-            {repo}
-          </button>
-        ))}
-        <button type="button" className="plan-action plan-step-add-repo" onClick={() => setPicking(true)}
+      {onRemove ? (
+        <button type="button" className="plan-action is-danger plan-step-remove" onClick={onRemove}
+          aria-label={`Remove ${step.id}`} data-tooltip="Leave this task out of the split">
+          <Icon name="trash" /> Remove this task
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+// Where one task works and the model it runs on — on its row, one click away.
+// A repository chip ticks it in or out; ``+`` adds one kato knows that the
+// plan does not have yet. The model shows what WILL run: the task's own pick,
+// else the plan's; picking the plan's again makes it follow the plan.
+function StepSetup({ step, repositories, models, planModel, locked, onChange, onAddRepositories }) {
+  const [picking, setPicking] = useState(false);
+  const model = step.model || planModel;
+  if (locked) {
+    return (
+      <div className="plan-step-setup is-locked">
+        <span>works in {step.repositories.join(', ') || '—'}</span>
+        {step.model ? <span> · runs on {step.model}</span> : null}
+      </div>
+    );
+  }
+  const toggle = (repo) => onChange({
+    repositories: step.repositories.includes(repo)
+      ? step.repositories.filter((entry) => entry !== repo)
+      : [...step.repositories, repo],
+  });
+  const own = Boolean(step.model) && step.model !== planModel;
+  return (
+    <div className="plan-step-setup">
+      <div className="plan-step-setup-repos" role="group" aria-label={`${step.id} repositories`}>
+        {repositories.map((repo) => {
+          const on = step.repositories.includes(repo);
+          return (
+            <button key={repo} type="button" aria-pressed={on} className={cx('plan-chip', on && 'is-on')}
+              data-tooltip={on ? `${step.id} works in ${repo}. Click to take it out.` : `Click to add ${repo} to ${step.id}.`}
+              onClick={() => toggle(repo)}>
+              {repo}
+            </button>
+          );
+        })}
+        <button type="button" className="plan-chip plan-chip-add" onClick={() => setPicking(true)}
           aria-label={`Add a repository to ${step.id}`}
-          data-tooltip="Pick another repository under your repository folder for this task.">
-          <Icon name="plus" /> Add repository
+          data-tooltip="Add another repository kato knows to this task.">
+          <Icon name="plus" />
         </button>
       </div>
+      {model ? (
+        <label className={cx('plan-step-setup-model', own && 'is-own')}
+          data-tooltip={own ? `${step.id}'s own model. Pick ${planModel} to follow the plan again.`
+            : 'The model this task runs on. Pick another for this task only.'}>
+          <span className="plan-step-setup-label">model</span>
+          <select aria-label={`Model of ${step.id}`} value={model}
+            onChange={(event) => onChange({ model: event.target.value === planModel ? '' : event.target.value })}>
+            {modelOptions(models, model).map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       {picking ? (
         <RepositoryPickerModal
           ariaLabel={`Add a repository to ${step.id}`}
           title={<>Add a repository to {step.id}</>}
           helpText="Pick one or more of the repositories kato knows under your repository folder. This task
-            will work in them too; tick them in another task if it needs them as well."
+            will work in them too; tick them on another task if it needs them as well."
           alreadyAttachedIds={new Set(step.repositories)}
           allAttachedText="This task already works in every repository kato knows."
           confirmLabel="Add to this task"
@@ -187,12 +244,6 @@ function StepEditor({ step, others, repositories, onChange, onRemove, onAddRepos
           onPick={(repos) => { onAddRepositories(repos.map((repo) => repo.id)); setPicking(false); }}
           onClose={() => setPicking(false)}
         />
-      ) : null}
-      {onRemove ? (
-        <button type="button" className="plan-action is-danger plan-step-remove" onClick={onRemove}
-          aria-label={`Remove ${step.id}`} data-tooltip="Leave this task out of the split">
-          <Icon name="trash" /> Remove this task
-        </button>
       ) : null}
     </div>
   );
@@ -205,5 +256,6 @@ export function asDraft(step) {
     brief: step.brief,
     depends_on: [...(step.depends_on || [])],
     repositories: [...(step.repositories || [])],
+    model: step.model || '',
   };
 }

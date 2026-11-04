@@ -2,6 +2,8 @@ import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
+import { foldSubtaskTabs } from '../utils/subtaskTabs.js';
+import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
@@ -149,6 +151,27 @@ export default function TabList({
     () => orderByPinned(sessions, pinnedIds, tabOrder),
     [sessions, pinnedIds, tabOrder],
   );
+  // A split plan's sub-tasks fold into their main task's tab (the open one
+  // shows beside it; a pinned one keeps its place) — see utils/subtaskTabs.js.
+  const { visible: visibleSessions, subtasksOf } = useMemo(
+    () => foldSubtaskTabs(orderedSessions, {
+      activeTaskId, keep: (session) => pinnedIds.includes(session.task_id),
+    }),
+    [orderedSessions, activeTaskId, pinnedIds],
+  );
+  // What each main task's sub-task menu shows: status inputs + the name.
+  const subtaskEntries = useMemo(() => {
+    const entries = new Map();
+    for (const [parentId, children] of subtasksOf) {
+      entries.set(parentId, children.map((child) => ({
+        session: child,
+        liveStatus: agentStatuses[child.task_id] || null,
+        needsAttention: !!attentionTaskIds && attentionTaskIds.has(child.task_id),
+        name: withoutSubtaskPrefix(tabNameFor(tabNames, child.task_id, child.task_summary)),
+      })));
+    }
+    return entries;
+  }, [subtasksOf, agentStatuses, attentionTaskIds, tabNames]);
 
   // The strip's VISIBLE order, reported upward.
   //
@@ -162,7 +185,7 @@ export default function TabList({
   // order are THIS component's state, and a second copy of the sort would
   // be a second thing to keep in step. Keyed on the joined ids so the
   // effect fires only when the order genuinely changes.
-  const visibleOrderKey = orderedSessions.map((s) => s.task_id).join('\n');
+  const visibleOrderKey = visibleSessions.map((s) => s.task_id).join('\n');
   useEffect(() => {
     if (typeof onVisibleOrderChange === 'function') {
       onVisibleOrderChange(visibleOrderKey ? visibleOrderKey.split('\n') : []);
@@ -359,7 +382,7 @@ export default function TabList({
     ? orderedSessions.find((s) => s.task_id === drag.id) || null
     : null;
 
-  const tabs = orderedSessions.map((session) => {
+  const tabs = visibleSessions.map((session) => {
     const isActive = session.task_id === activeTaskId;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
     const liveStatus = agentStatuses[session.task_id] || null;
@@ -376,6 +399,7 @@ export default function TabList({
         onTogglePin={handleTogglePin}
         displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
         onRename={handleRename}
+        subtasks={subtaskEntries.get(session.task_id) || null}
         dragging={drag.id === session.task_id}
         dropTarget={drag.over === session.task_id && drag.id !== session.task_id}
         canDrop={canDropOn(

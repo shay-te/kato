@@ -54,6 +54,7 @@ _MAX_KATO_LINES = {
     'repository_core_lib': 0,
     'review_loop_core_lib': 0,
     'security_scanner_core_lib': 0,
+    'slack_core_lib': 0,
     'task_core_lib': 0,
     'vcs_provider_contracts': 0,
     'workspace_core_lib': 0,

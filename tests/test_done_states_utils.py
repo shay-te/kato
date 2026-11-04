@@ -54,5 +54,44 @@ class DoneStatesTests(unittest.TestCase):
         self.assertIn('within a minute', _apply_live_settings(app, {DONE_STATES_KEY: 'Waiting Deploy'}))
 
 
+
+class AddDoneStateTests(unittest.TestCase):
+    """The board's "count it as done": a state added to the setting, saved."""
+
+    def setUp(self) -> None:
+        import json, tempfile
+        from pathlib import Path
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name) / 'settings.json'
+        self.read = lambda: json.loads(self.path.read_text())
+        patcher = mock.patch.dict('os.environ', {'KATO_SETTINGS_FILE': str(self.path), DONE_STATES_KEY: ''})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_state_is_added_once_as_written(self) -> None:
+        from kato_core_lib.helpers.done_states_utils import add_done_state
+        self.assertEqual(add_done_state(' Waiting Deploy '), ['Waiting Deploy'])
+        self.assertEqual(add_done_state('waiting deploy'), ['Waiting Deploy'])  # already there
+        self.assertEqual(add_done_state('Released'), ['Waiting Deploy', 'Released'])
+        self.assertEqual(self.read()[DONE_STATES_KEY], 'Waiting Deploy, Released')
+        self.assertTrue(is_done_state('Released', 'Done'))  # at once, no restart
+
+    def test_a_state_that_cannot_be_listed_is_refused(self) -> None:
+        from kato_core_lib.helpers.done_states_utils import add_done_state
+        for bad in ('', '   ', 'Done, Closed', 'x' * 81, None):
+            with self.assertRaises(ValueError):
+                add_done_state(bad)
+        self.assertFalse(self.path.exists())  # nothing was written
+
+    def test_states_no_workflow_word_names(self) -> None:
+        from kato_core_lib.helpers.done_states_utils import add_done_state, unrecognized_states
+        known = {'open', 'in progress', 'pull request', 'done'}
+        states = ['Waiting Deploy', 'In Progress', 'waiting deploy', '', None, 'Pull Request', 'QA']
+        self.assertEqual(unrecognized_states(states, known), ['Waiting Deploy', 'QA'])
+        add_done_state('QA')
+        self.assertEqual(unrecognized_states(states, known), ['Waiting Deploy'])
+
+
 if __name__ == '__main__':
     unittest.main()

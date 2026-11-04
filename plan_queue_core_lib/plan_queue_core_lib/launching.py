@@ -42,7 +42,7 @@ def build_request(plan: Plan, step: Step) -> LaunchRequest:
         source_task_id=plan.source_task_id,
         plan_title=plan.title,
         start_mode=plan.start_mode,
-        model=plan.step_model,
+        model=step.model or plan.step_model,
         effort=plan.effort,
         waits_for=waits_for,
     )

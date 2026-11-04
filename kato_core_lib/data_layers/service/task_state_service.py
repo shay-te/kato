@@ -84,6 +84,14 @@ class TaskStateService(Service):
             'done': self._configured_state_value('done'),
         }
 
+    def known_state_names(self) -> frozenset[str]:
+        """Every state the configured workflow names (lower-cased): the open
+        states, In Progress, In Review and Done."""
+        names = [self._configured_open_state(), *self._configured_issue_states(), *(
+            self._configured_state_value(key) for key in ('progress', 'review', 'done')
+        )]
+        return frozenset(name.strip().lower() for name in names if name and name.strip())
+
     def move_task_to_open(self, issue_id: str) -> None:
         self._task_data_access.move_task_to_state(
             issue_id,

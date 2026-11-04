@@ -220,6 +220,15 @@ class TrackerAccessTests(unittest.TestCase):
         names = TaskStateService(config, Mock()).state_names()
         self.assertEqual(names, {'field': 'State', 'progress': 'In Progress', 'review': 'To Verify', 'done': 'Fixed'})
 
+    def test_every_state_the_workflow_names(self) -> None:
+        config = OmegaConf.create({
+            'issue_states': 'Open, Reopened', 'review_state': 'Pull Request', 'done_state': '',
+        })
+        self.assertEqual(
+            TaskStateService(config, Mock()).known_state_names(),
+            frozenset({'open', 'reopened', 'in progress', 'pull request', 'done'}),  # blank done = "Done"
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

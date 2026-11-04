@@ -5,14 +5,15 @@ import {
   editPlanQueueSteps,
   revisePlanQueue,
 } from '../../api.js';
+import { useAgentChoices } from '../../hooks/useAgentChoices.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
 import Icon from '../Icon.jsx';
 import MarkdownContent from '../MarkdownContent.jsx';
-import RepositoryPickerModal from '../RepositoryPickerModal.jsx';
 import { planAction } from './planQueueActions.js';
 import { StepList, asDraft, useStepDrafts } from './PlanStepRows.jsx';
-import { repoCoverage, roundsSummary, stepRounds, withRepoEverywhere } from './planQueueHelpers.js';
+import PlanTaskSettings, { useHowTasksRun } from './PlanTaskSettings.jsx';
+import { roundsSummary, stepRounds } from './planQueueHelpers.js';
 
 // The proposed split, for the operator to approve — like a plan in plan mode.
 //
@@ -26,32 +27,25 @@ import { repoCoverage, roundsSummary, stepRounds, withRepoEverywhere } from './p
 export default function PlanProposal({ plan, onPlan, onDiscarded }) {
   const [dirty, setDirty] = useState(false);
   const drafts = useStepDrafts(() => plan.steps.map(asDraft), () => setDirty(true));
-  const { steps, setSteps, open, setOpen } = drafts;
+  const { steps, open, setOpen } = drafts;
   const [feedback, setFeedback] = useState('');
   const [showNotes, setShowNotes] = useState(false);
   // Repositories the operator added (from kato's inventory), kept by the
   // drafts and saved with the edits.
   const { added } = drafts;
-  const [picking, setPicking] = useState(false);
+  // The model and effort the tasks run on — the plan's, or the operator's pick.
+  const choices = useAgentChoices();
+  const how = useHowTasksRun(plan, choices);
   // Each released task opens in Plan mode and codes only once its plan is
   // approved in its chat. On by default: nothing runs that was not planned.
   const [planFirst, setPlanFirst] = useState(true);
   const repositories = [...new Set([...plan.repository_ids, ...added])];
   const rounds = stepRounds(steps);
 
-  // One repository for every task at once — e.g. a shared core library each
-  // of them builds on. Anywhere it is missing, it is added; when every task
-  // has it already, it comes out of all of them.
-  function everyTask(repo) {
-    setSteps((current) => withRepoEverywhere(current, repo, repoCoverage(current, repo).state !== 'all'));
+  function pickHow(patch) {
+    how.pick(patch);
     setDirty(true);
   }
-
-  function addRepositories(repos) {
-    drafts.addRepositories(repos.map((repo) => repo.id));
-    setPicking(false);
-  }
-
 
   const allOpen = steps.length > 0 && steps.every((step) => open.has(step.id));
   const toggleAll = () => setOpen(allOpen ? new Set() : new Set(steps.map((step) => step.id)));
@@ -60,7 +54,7 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
 
   async function saveEdits() {
     const body = await planAction(
-      () => editPlanQueueSteps(plan.plan_id, steps, added), 'The changes were not saved',
+      () => editPlanQueueSteps(plan.plan_id, steps, added, how.changes), 'The changes were not saved',
     );
     if (body?.plan_id) { setDirty(false); onPlan(body); }
     return body;
@@ -71,7 +65,11 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
   const approve = (startNow, shared = false) => run(async () => {
     if (dirty && !(await saveEdits())) { return; }
     const body = await planAction(
-      () => approvePlanQueue(plan.plan_id, { run: startNow, shared, planFirst }), 'The split was not approved',
+      () => approvePlanQueue(plan.plan_id, {
+        run: startNow, shared, planFirst,
+        // Approve sets them: the operator's pick, else what the plan holds.
+        model: how.changes.model ?? plan.step_model, effort: how.changes.effort ?? plan.effort,
+      }), 'The split was not approved',
     );
     if (body?.plan_id) { onPlan(body); }
   });
@@ -102,24 +100,10 @@ export default function PlanProposal({ plan, onPlan, onDiscarded }) {
       {plan.notes ? (
         <AgentNotes notes={plan.notes} open={showNotes} onToggle={() => setShowNotes((value) => !value)} />
       ) : null}
-      <EveryTaskRepositories steps={steps} repositories={repositories} onToggle={everyTask}
-        onAdd={() => setPicking(true)} />
-      {picking ? (
-        <RepositoryPickerModal
-          ariaLabel="Add a repository to every task"
-          title={<>Add a repository to every task of {plan.source_task_id}</>}
-          helpText="Pick one or more of the repositories kato knows under your repository folder. Every task of
-            this split will work in them too — handy for shared libraries they all build on. You can still take
-            one out of a single task by opening that task."
-          alreadyAttachedIds={new Set(repositories)}
-          allAttachedText="Every repository kato knows is already in this split."
-          confirmLabel="Add to every task"
-          busyLabel="Adding…"
-          onPick={addRepositories}
-          onClose={() => setPicking(false)}
-        />
-      ) : null}
-      <StepList drafts={drafts} rounds={rounds} repositories={repositories} />
+      <PlanTaskSettings drafts={drafts} repositories={repositories} sourceTaskId={plan.source_task_id}
+        choices={choices} model={how.model} effort={how.effort} onPick={pickHow} />
+      <StepList drafts={drafts} rounds={rounds} repositories={repositories} models={choices.models}
+        planModel={how.model} />
       <div className="plan-proposal-revise">
         <textarea
           aria-label="What should change"
@@ -220,34 +204,5 @@ function AgentNotes({ notes, open, onToggle }) {
       </button>
       {open ? <div className="plan-proposal-notes-body"><MarkdownContent>{notes}</MarkdownContent></div> : null}
     </section>
-  );
-}
-
-// "Every task works in": each of the plan's repositories, filled when every
-// task works there, half when some do (with how many), empty when none do.
-function EveryTaskRepositories({ steps, repositories, onToggle, onAdd }) {
-  return (
-    <div className="plan-proposal-repos" role="group" aria-label="Every task works in">
-      <span className="plan-step-field-label">Every task works in</span>
-      {repositories.map((repo) => {
-        const { state, count } = repoCoverage(steps, repo);
-        const pressed = { all: 'true', some: 'mixed', none: 'false' }[state];
-        const tip = state === 'all'
-          ? `Every task works in ${repo}. Click to take it out of all of them.`
-          : `Click to add ${repo} to every task${state === 'some' ? ` (${count} of ${steps.length} have it now)` : ''}.`;
-        return (
-          <button key={repo} type="button" aria-pressed={pressed} data-tooltip={tip}
-            className={cx('plan-chip', state === 'all' && 'is-on', state === 'some' && 'is-partial')}
-            onClick={() => onToggle(repo)}>
-            {repo}
-            {state === 'some' ? <span className="plan-chip-count">{count}/{steps.length}</span> : null}
-          </button>
-        );
-      })}
-      <button type="button" className="plan-action plan-proposal-add-repo" onClick={onAdd}
-        data-tooltip="Pick another repository under your repository folder — every task will work in it too.">
-        <Icon name="plus" /> Add repository
-      </button>
-    </div>
   );
 }

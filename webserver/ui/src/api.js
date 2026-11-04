@@ -870,17 +870,25 @@ export function retryPlanQueueProposal(planId) {
 
 // ``repositories``: ones the operator added for the plan's tasks (e.g. a shared
 // library every task builds on) — allowed from now on, beside the task's own.
-export function editPlanQueueSteps(planId, steps, repositories = []) {
-  return postEnvelope(planQueueUrl(planId, '/steps'), { steps, repositories }, 'PUT');
+// ``how``: ``{model, effort}`` the plan's tasks run on — only the keys given are
+// sent; one left out keeps what the plan has. Each step may carry its own
+// ``model`` ('' = the plan's).
+export function editPlanQueueSteps(planId, steps, repositories = [], how = {}) {
+  const changed = Object.fromEntries(['model', 'effort']
+    .filter((key) => typeof how[key] === 'string').map((key) => [key, how[key]]));
+  return postEnvelope(planQueueUrl(planId, '/steps'), { steps, repositories, ...changed }, 'PUT');
 }
 
 // ``shared`` true puts the steps on the tracker as sub-tasks of the plan's
 // ticket; false keeps them kato's own tasks. Always stated — creating tickets is
 // the operator's explicit choice, never a default. ``planFirst``: each task
-// opens in Plan mode and codes only once its plan is approved.
-export function approvePlanQueue(planId, { run = false, shared = false, planFirst = false } = {}) {
+// opens in Plan mode and codes only once its plan is approved. ``model`` /
+// ``effort``: what the tasks run on ('' = the configured default).
+export function approvePlanQueue(planId, {
+  run = false, shared = false, planFirst = false, model = '', effort = '',
+} = {}) {
   return postEnvelope(planQueueUrl(planId, '/approve'), {
-    run, shared, start_mode: planFirst ? 'plan' : 'implement',
+    run, shared, start_mode: planFirst ? 'plan' : 'implement', model, effort,
   });
 }
 
@@ -905,6 +913,12 @@ export function discardPlanQueue(planId) {
 
 // ``action``: 'plan' (start it in Plan mode) | 'start' (implement right
 // away) | 'satisfy' | 'retry' | 'cancel' | 'check'.
+// Count a tracker state as done from now on (Settings → General → States
+// that mean done): a plan card stuck in it moves on the next check.
+export function addPlanDoneState(state) {
+  return postEnvelope('/api/plan-queues/done-states', { state });
+}
+
 export function planQueueStepAction(planId, stepId, action) {
   return postEnvelope(planQueueUrl(planId, `/steps/${encodeURIComponent(stepId)}/${action}`), {});
 }

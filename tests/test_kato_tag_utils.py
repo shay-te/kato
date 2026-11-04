@@ -234,3 +234,26 @@ class TaskBranchTests(unittest.TestCase):
         self.assertEqual(task_branch(' LOCAL-1 ', ['kato:repo:api']), 'LOCAL-1')
         self.assertEqual(task_branch('LOCAL-1', []), 'LOCAL-1')
         self.assertEqual(task_branch('LOCAL-1', None), 'LOCAL-1')
+
+
+class ModelTagTests(unittest.TestCase):
+    """``model_tag``: the tag that selects a model — ``model_from_tag`` backwards."""
+
+    def test_aliases_and_pinned_ids_round_trip(self) -> None:
+        from kato_core_lib.helpers.kato_tag_utils import model_from_tag, model_tag
+        cases = {
+            'sonnet': 'kato:model:sonnet',
+            ' Opus ': 'kato:model:opus',
+            'claude-sonnet-5-5': 'kato:model:sonnet:5.5',
+            'claude-opus-5': 'kato:model:opus:5',
+            'claude-fable-5-1': 'kato:model:fable:5.1',
+        }
+        for model, tag in cases.items():
+            self.assertEqual(model_tag(model), tag)
+            self.assertEqual(model_from_tag(tag), model.strip().lower())
+
+    def test_a_model_no_tag_can_say_gets_none(self) -> None:
+        from kato_core_lib.helpers.kato_tag_utils import model_tag
+        for model in ('', None, 'claude-opus-5-5[1m]', 'gpt-4', 'claude-mystery-5', 'openrouter/x'):
+            self.assertEqual(model_tag(model), '', model)
+

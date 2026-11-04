@@ -213,6 +213,36 @@ class BranchPreparationTests(_World):
         self.assertTrue((path / 'step-one.txt').is_file())
         self.assertEqual(clone.destination_branch, 'UNA-1')
 
+    def test_a_clone_made_before_the_plan_branch_existed_still_starts_from_it(self) -> None:
+        # UNA-3's clone was made while UNA-1 was not on the remote; UNA-2's work
+        # was merged into UNA-1 after. Deciding the base before fetching cut
+        # UNA-3 from main, and its agent never saw UNA-2's work.
+        clone = self._clone_for('UNA-3')
+        _git(self.source, 'checkout', '-b', 'UNA-1')
+        self._commit(self.source, 'step-one.txt', 'UNA-2 work\n', 'UNA-2 step one')
+        _git(self.source, 'push', 'origin', 'UNA-1')
+        _git(self.source, 'checkout', 'main')
+
+        with self.assertLogs(self.service.logger, level='INFO') as logs:
+            self.service.prepare_task_branches([clone], {'api': 'UNA-3'})
+
+        self.assertEqual(clone.destination_branch, 'UNA-1')
+        self.assertTrue((Path(clone.local_path) / 'step-one.txt').is_file())
+        self.assertIn('task UNA-3: api starts from UNA-1', '\n'.join(logs.output))
+
+    def test_a_stale_copy_of_the_plan_branch_is_refreshed_before_cutting(self) -> None:
+        # The clone saw UNA-1 early; more work was merged into it since.
+        _git(self.source, 'push', 'origin', 'main:UNA-1')
+        clone = self._clone_for('UNA-3')
+        _git(self.source, 'checkout', '-b', 'UNA-1', 'origin/UNA-1')
+        self._commit(self.source, 'later.txt', 'merged later\n', 'UNA-2 merged later')
+        _git(self.source, 'push', 'origin', 'UNA-1')
+        _git(self.source, 'checkout', 'main')
+
+        self.service.prepare_task_branches([clone], {'api': 'UNA-3'})
+
+        self.assertTrue((Path(clone.local_path) / 'later.txt').is_file())
+
     def test_the_configured_destination_does_not_hide_the_plan_branch(self) -> None:
         # The clone is a copy of the inventory entry, which carries its
         # configured destination: branch preparation must still ask.

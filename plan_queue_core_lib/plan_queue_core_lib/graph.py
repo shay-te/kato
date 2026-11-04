@@ -15,6 +15,7 @@ from dataclasses import dataclass
 MAX_STEPS = 25
 MAX_TITLE_CHARS = 200
 MAX_BRIEF_CHARS = 8000
+MAX_MODEL_CHARS = 100
 _STEP_ID = re.compile(r'^[a-z][a-z0-9_-]{0,23}$')
 
 
@@ -31,6 +32,7 @@ class StepDraft(object):
     brief: str
     depends_on: tuple[str, ...] = ()
     repositories: tuple[str, ...] = ()
+    model: str = ''              # the model its task runs on ('' = the plan's)
 
 
 def validate_split(
@@ -39,7 +41,7 @@ def validate_split(
 ) -> list[StepDraft]:
     """The drafts, checked and normalised — or ``SplitValidationError``.
 
-    Normalised: titles and briefs stripped, duplicate dependencies dropped, and
+    Normalised: titles, briefs and models stripped, duplicate dependencies dropped, and
     a step that names no repositories gets every allowed one. Without
     ``per_step_repositories`` every step works in every allowed repository,
     whatever it names (a host whose tasks all share one set of repositories).
@@ -138,10 +140,14 @@ def _normalised(draft: StepDraft, ids: set[str], allowed: list[str], per_step: b
             )
         if repo not in repositories:
             repositories.append(repo)
+    model = str(draft.model or '').strip()
+    if len(model) > MAX_MODEL_CHARS:
+        raise SplitValidationError(f'step {draft.id!r} names a model over {MAX_MODEL_CHARS} characters')
     return StepDraft(
         id=draft.id,
         title=title,
         brief=brief,
         depends_on=tuple(depends_on),
         repositories=tuple(repositories or allowed),
+        model=model,
     )

@@ -2,8 +2,8 @@
 
 A task that started keeps its step exactly as it is: its agent was told that
 brief, and someone may be working from its ticket. Everything still waiting may
-change: its text, what it waits for, where it works. A task may be added, or
-taken out. The same validator as a proposal checks the whole result first.
+change: its text, what it waits for, where it works, the model it runs on. A
+task may be added, or taken out. The same validator as a proposal checks the whole result first.
 
 Where the steps' tasks were created up front (a shared tracker), a waiting step
 already has its task: an edit rewrites it, a new step gets one, and a step taken
@@ -64,6 +64,7 @@ def apply_live_edit(plan: Plan, drafts: Sequence[StepDraft]) -> LiveEdit:
             step.brief = draft.brief
             step.depends_on = list(draft.depends_on)
             step.repositories = list(draft.repositories)
+            step.model = draft.model
         steps.append(step)
     plan.steps = steps
     for step in plan.steps:
@@ -89,6 +90,6 @@ def tasks_to_rewrite(plan: Plan, before: dict[str, LaunchRequest]) -> list[tuple
 
 
 def _differs(step: Step, draft: StepDraft) -> bool:
-    return (step.title, step.brief, list(step.depends_on), list(step.repositories)) != (
-        draft.title, draft.brief, list(draft.depends_on), list(draft.repositories)
+    return (step.title, step.brief, list(step.depends_on), list(step.repositories), step.model) != (
+        draft.title, draft.brief, list(draft.depends_on), list(draft.repositories), draft.model
     )

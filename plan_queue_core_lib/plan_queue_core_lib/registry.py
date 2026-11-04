@@ -73,6 +73,20 @@ class PlanRegistry(object):
                     newest = plan
             return newest.source_task_id if newest is not None else ''
 
+    def step_task_sources(self) -> dict[str, str]:
+        """``task id (lower-case) -> the task its plan was split from``, for
+        every task a plan's step runs or ran as — any plan state; the newest
+        plan wins. One pass, for a list a host polls every few seconds."""
+        with self._lock:
+            found: dict[str, str] = {}
+            for plan in sorted(self._plans.values(), key=lambda entry: entry.created_at):
+                for step in plan.steps:
+                    for task_id in (step.task_id, *step.previous_task_ids):
+                        key = str(task_id or '').strip().lower()
+                        if key:
+                            found[key] = plan.source_task_id
+            return found
+
     def mutate(self, plan_id: str, change: Callable[[Plan], T]) -> T:
         """Apply ``change`` to the live plan and save it if it changed.
 

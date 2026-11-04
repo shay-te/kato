@@ -155,6 +155,7 @@ class Step(object):
     brief: str
     depends_on: list[str] = field(default_factory=list)
     repositories: list[str] = field(default_factory=list)
+    model: str = ''              # the model its task runs on ('' = the plan's ``step_model``)
     status: StepStatus = StepStatus.BLOCKED
     reason_code: str = ''        # a FailReason value while FAILED
     reason: str = ''             # human wording: why it waits or failed
@@ -186,6 +187,7 @@ class Step(object):
             'brief': self.brief,
             'depends_on': list(self.depends_on),
             'repositories': list(self.repositories),
+            'model': self.model,
             'status': self.status.value,
             'reason_code': self.reason_code,
             'reason': self.reason,
@@ -210,6 +212,7 @@ class Step(object):
             brief=str(data.get('brief', '') or ''),
             depends_on=_strings(data.get('depends_on')),
             repositories=_strings(data.get('repositories')),
+            model=str(data.get('model', '') or ''),
             status=_enum(StepStatus, data.get('status'), StepStatus.BLOCKED),
             reason_code=str(data.get('reason_code', '') or ''),
             reason=str(data.get('reason', '') or ''),

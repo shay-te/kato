@@ -255,6 +255,45 @@ class LauncherTests(unittest.TestCase):
             self.launcher.release(request(start_mode='implement'), 'PROJ-5')
         self.assertEqual(self.tracker.assigned, [])  # never handed over in the wrong mode
 
+    def test_a_sub_task_runs_on_the_plans_model_through_its_tag(self) -> None:
+        # Created: the tag is added. Rewritten to another model: the old tag goes.
+        def request_with(model):
+            return LaunchRequest(**{**request().__dict__, 'model': model})
+        self.services.task_service.get_task = lambda issue_id: SimpleNamespace(tags=list(self.ticket_tags))
+        self.ticket_tags = []
+        task_id = self.launcher.prepare(request_with('sonnet'))
+        self.assertIn((task_id, 'kato:model:sonnet'), self.services.tags)
+        self.ticket_tags = ['kato:model:sonnet', 'kato:repo:web']
+        self.launcher.update(request_with('claude-opus-5-5'), task_id)
+        self.assertIn((task_id, 'kato:model:opus:5.5'), self.services.tags)
+        self.assertEqual(self.services.removed_tags, [(task_id, 'kato:model:sonnet')])
+        # Back to the default: no model tag at all.
+        self.ticket_tags = ['kato:model:opus:5.5']
+        self.launcher.update(request_with(''), task_id)
+        self.assertIn((task_id, 'kato:model:opus:5.5'), self.services.removed_tags)
+
+    def test_a_ticket_whose_tags_cannot_be_read_still_gets_the_model(self) -> None:
+        def unreadable(issue_id):
+            raise RuntimeError('tracker down')
+        self.services.task_service.get_task = unreadable
+        task_id = self.launcher.prepare(LaunchRequest(**{**request().__dict__, 'model': 'haiku'}))
+        self.assertIn((task_id, 'kato:model:haiku'), self.services.tags)
+
+    def test_a_model_no_ticket_tag_can_carry_is_refused_not_dropped(self) -> None:
+        # A Codex model name has no kato:model tag: the ticket would quietly run
+        # on the default. Refused before a ticket is created or rewritten.
+        before = dict(self.tracker.issues)
+        codex = LaunchRequest(**{**request().__dict__, 'model': 'gpt-5-codex'})
+        with self.assertRaises(ValueError) as caught:
+            self.launcher.prepare(codex)
+        self.assertIn('cannot be written on a ticket', str(caught.exception))
+        self.assertEqual(self.tracker.issues, before)
+        task_id = self.launcher.prepare(request())
+        description = self.tracker.issues[task_id]['description']
+        with self.assertRaises(ValueError):
+            self.launcher.update(LaunchRequest(**{**codex.__dict__, 'title': 'rewritten'}), task_id)
+        self.assertEqual(self.tracker.issues[task_id]['description'], description)
+
     def test_a_configured_assignee_wins_over_the_token_user(self) -> None:
         self.services.task_service.bot_login = 'kato-bot'
         self.assertEqual(self.launcher.assignee(), 'kato-bot')

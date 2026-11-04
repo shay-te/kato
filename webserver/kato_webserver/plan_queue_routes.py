@@ -36,6 +36,7 @@ from kato_core_lib.data_layers.service.plan_queue.split_folders import (
     find_split_folders,
     read_split_folder,
 )
+from kato_core_lib.helpers.done_states_utils import add_done_state, unrecognized_states
 from kato_core_lib.helpers.plan_writer import read_task_plan
 from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
 from kato_webserver.model_request_utils import requested_model
@@ -70,7 +71,28 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             return jsonify({'error': str(exc)}), _STATUS_BY_KIND.get(exc.kind, 409)
         if result is None:
             return jsonify({'ok': True}), status
-        return jsonify(result.to_dict()), status
+        return jsonify(with_board_facts(result)), status
+
+    def with_board_facts(plan) -> dict:
+        """The plan as the board shows it: ``unknown_states`` — tracker
+        states its started tasks sit in that this kato's workflow does not
+        name, so a card stuck in one can say why (and offer to count it as
+        done)."""
+        payload = plan.to_dict()
+        if 'steps' not in payload:
+            return payload
+        payload['unknown_states'] = []
+        task_states = getattr(app.config.get('AGENT_SERVICE'), 'task_states', None)
+        if getattr(plan, 'mode', '') == 'local' or task_states is None:
+            return payload
+        try:
+            known = task_states.known_state_names()
+        except Exception:
+            return payload
+        payload['unknown_states'] = unrecognized_states(
+            (step.task_state for step in plan.steps if step.status.is_released), known,
+        )
+        return payload
 
     @app.get('/api/plan-queues')
     def list_plan_queues():
@@ -85,11 +107,25 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         if service is None:
             return unavailable()
         try:
-            payload = service.get(plan_id).to_dict()
+            payload = with_board_facts(service.get(plan_id))
             payload['can_share'] = service.can_share(plan_id)
         except PlanQueueError as exc:
             return jsonify({'error': str(exc)}), _STATUS_BY_KIND.get(exc.kind, 409)
         return jsonify(payload)
+
+    @app.post('/api/plan-queues/done-states')
+    def add_plan_done_state():
+        """Count a tracker state as done from now on (Settings → General →
+        States that mean done): a board stuck on a ticket in "Waiting Deploy"
+        moves on its next tick, no restart."""
+        body = request.get_json(silent=True) or {}
+        try:
+            listed = add_done_state(body.get('state') if isinstance(body.get('state'), str) else '')
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except OSError as exc:
+            return jsonify({'error': f'the setting could not be saved: {exc}'}), 500
+        return jsonify({'done_states': listed})
 
     @app.get('/api/sessions/<task_id>/plan-queue/shared')
     def shared_plan_queue(task_id: str):
@@ -174,7 +210,20 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         repositories = body.get('repositories') or []
         if not isinstance(repositories, list) or not all(isinstance(repo, str) for repo in repositories):
             return jsonify({'error': '"repositories" must be a list of repository names'}), 400
-        return answer(lambda service: service.edit(plan_id, drafts, title=title, repositories=repositories))
+        # The model and effort the plan's tasks run on — only when sent ('' =
+        # the configured default): an edit that leaves them out keeps them.
+        step_model = effort = None
+        if 'model' in body:
+            step_model, problem = requested_model(body)
+            if problem:
+                return jsonify({'error': problem}), 400
+        if 'effort' in body:
+            effort = str(body.get('effort') or '').strip().lower()
+            if effort and effort not in effort_levels():
+                return jsonify({'error': f'unknown effort {effort!r}'}), 400
+        return answer(lambda service: service.edit(
+            plan_id, drafts, title=title, repositories=repositories, step_model=step_model, effort=effort,
+        ))
 
     @app.post('/api/plan-queues/<plan_id>/approve')
     def approve_plan_queue(plan_id: str):
@@ -249,8 +298,13 @@ def _drafts(value) -> tuple[list[StepDraft], str]:
         if not all(isinstance(entries, list) and all(isinstance(entry, str) for entry in entries)
                    for entries in lists.values()):
             return [], f'step {index} has a "depends_on" or "repositories" that is not a list of text'
+        # The model this one task runs on ('' = the plan's).
+        model, problem = requested_model(item)
+        if problem:
+            return [], f'step {index}: {problem}'
         drafts.append(StepDraft(
             id=texts['id'].strip(), title=texts['title'], brief=texts['brief'],
             depends_on=tuple(lists['depends_on']), repositories=tuple(lists['repositories']),
+            model=model,
         ))
     return drafts, ''

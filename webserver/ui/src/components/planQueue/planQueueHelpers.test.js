@@ -19,6 +19,7 @@ import {
   columnOf,
   headerActions,
   isStuck,
+  modelOptions,
   planSummaryFor,
   prChips,
   repoCoverage,
@@ -31,6 +32,8 @@ import {
   stepTaskState,
   stepWorker,
   stuckActions,
+  toggleRepoEverywhere,
+  unknownStateOf,
   withRepoEverywhere,
 } from './planQueueHelpers.js';
 import { planQueueChanges, planQueueView } from './planQueueViewStore.js';
@@ -282,6 +285,44 @@ test('Plan and Start say how the task will start', function () {
   assert.match(plan.tip, /Start UNA-3380 in Plan mode: its agent plans first/);
   assert.equal(start.label, 'Start');
   assert.match(start.tip, /implements right away, with no plan to approve first/);
+});
+
+test('a model picker offers every model, plus a picked one no longer offered', () => {
+  const models = [{ id: 'sonnet', label: 'Sonnet 5.5', default: true }, { id: 'opus' }];
+  assert.deepEqual(modelOptions(models, 'sonnet', ''), [
+    { id: 'sonnet', label: 'Sonnet 5.5' }, { id: 'opus', label: 'opus' },
+  ]);
+  assert.deepEqual(modelOptions(models, 'claude-opus-4-8').at(-1), { id: 'claude-opus-4-8', label: 'claude-opus-4-8' });
+  assert.deepEqual(modelOptions(null, 'haiku', 'haiku'), [{ id: 'haiku', label: 'haiku' }]);
+});
+
+test('a started task in a state the workflow does not name is called out', () => {
+  const plan = { unknown_states: ['Waiting Deploy'] };
+  const started = { task_id: 'UNA-3376', status: 'starting', task_state: 'waiting deploy' };
+  assert.equal(unknownStateOf(started, plan), 'waiting deploy');
+  assert.equal(unknownStateOf({ ...started, status: 'in_review' }, plan), 'waiting deploy');
+  assert.equal(unknownStateOf({ ...started, status: 'blocked' }, plan), '');  // not started: no claim
+  assert.equal(unknownStateOf({ ...started, task_state: 'Open' }, plan), '');
+  assert.equal(unknownStateOf({ ...started, task_id: '' }, plan), '');
+  assert.equal(unknownStateOf(started, {}), '');
+});
+
+test('every task toggles only the tasks that may change', () => {
+  const steps = [
+    { id: 'started', repositories: ['api'] },
+    { id: 'a', repositories: ['api', 'core'] },
+    { id: 'b', repositories: ['web'] },
+  ];
+  const open = (entry) => entry.id !== 'started';
+  const added = toggleRepoEverywhere(steps, 'core', open);
+  assert.deepEqual(added.map((entry) => entry.repositories), [['api'], ['api', 'core'], ['web', 'core']]);
+  assert.equal(added[0], steps[0]);  // a started task is the same object, untouched
+  const removed = toggleRepoEverywhere(added, 'core', open);
+  assert.deepEqual(removed.map((entry) => entry.repositories), [['api'], ['api'], ['web']]);
+  // No limit: some have it, so one click adds it to the rest.
+  assert.deepEqual(toggleRepoEverywhere(steps, 'api').map((entry) => entry.repositories),
+    [['api'], ['api', 'core'], ['web', 'api']]);
+  assert.deepEqual(toggleRepoEverywhere(null, 'api'), []);
 });
 
 test('every task works in a repository — or some, or none', () => {

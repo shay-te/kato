@@ -347,7 +347,17 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
 ```
 - **ONE place announces done:** `move_task_to_done` = `_move_to_done` (subclasses override HOW, e.g. LOCAL tasks)
   + `_announce_done`. A failed move raises and announces nothing; a failing observer never fails the done. Do not
-  add a second announcement elsewhere — the Done/Push button is NOT done (it moves to In Review).
+  add a second announcement elsewhere — the Done/Push button is NOT done (it moves to In Review). Its one
+  observer is `DoneAnnouncements` (`done_announcements.py`), which tells each on its own: the release notes and
+  **the Slack post** — add a new "on done" there, never a second hook.
+- **Slack on done** (`slack_done_announcer.py` + `slack_core_lib`, kato-free: channel id from a copied link,
+  `chat.postMessage` with a bot token, Slack's refusal codes said as what to do): Settings → Email & Slack,
+  `KATO_SLACK_DONE_CHANNEL` (the channel's link) + `KATO_SLACK_BOT_TOKEN` (xoxb-, `chat:write`, app invited),
+  read fresh (`slack_done_settings_utils.py`, live keys). Both empty = nothing sent. The task is read NOW (the
+  forget flow deletes the workspace next); its PRs (`ReleaseNoteLinks`, by branch — the same reading and links as
+  the release notes) are found and posted in the background. Everything from a ticket is escaped (`<!channel>` in a
+  title must never notify a channel). Failures are logged, never fail the done. Only kato's own done posts —
+  a ticket closed in the tracker (the done watcher) adds release notes but no Slack post.
 - **Tickets closed outside kato** are noticed as "left the live list" (NOT the workspace flip to `done` — in-review
   workspaces are always protected, so merged-then-closed never flips) and CONFIRMED with `get_issues_status`
   (YouTrack/Jira only; other trackers: only kato-marked done adds entries). First sweep only records; ≤5 per
@@ -518,6 +528,13 @@ UNA-3267 stalled for good because its first tasks sat in "Waiting Deploy": an un
 to do", and YouTrack does not mark it resolved, so its own flag cannot say. The board shows each ticket's
 own state (`Step.task_state`) and says "handed over — not started yet" for a STARTING step (it sat in "In
 progress" looking like work while kato had not picked it up, e.g. `KATO_MAX_PARALLEL_TASKS` full).
+It stalled AGAIN on UNA-3370 because that kato never listed the state — so **the board now says it**: a
+started task whose ticket state the workflow does not name (`TaskStateService.known_state_names()` + the
+listed ones → `unrecognized_states`, sent as the board's `unknown_states`, tracker plans only) gets
+"“Waiting Deploy” is not counted as done here" and a one-click "Count “Waiting Deploy” as done"
+(`POST /api/plan-queues/done-states` → `add_done_state`, written to settings.json, live). Do NOT offer a
+plain "Count as done" on a started card instead: its dependents would start before its pull request is
+merged into the main branch, without its work — the merge check is what keeps them honest.
 **An approved plan's waiting tasks can be edited** ("Edit tasks" on the board, the same `PUT .../steps`, the
 proposal's rows from `PlanStepRows.jsx`): `live_edit.py` — only a step still BLOCKED/READY and never handed
 over (`can_change`; a step someone took early has `released_at`) changes or is taken out; a started one
@@ -527,7 +544,11 @@ must come back exactly as it is, else 409 and nothing changes. On a shared track
 answers 503 naming the ticket (save again retries).
 **A dependent step starts only when every parent is merged AND its task is done**, and then
 clones fresh from the MAIN task's branch, where its parents merged — no stacked branches, no
-cloning from another workspace.
+cloning from another workspace. **Branch prep fetches the plan's branch BEFORE choosing the base**
+(`_prepare_task_branch` → `_fetch_plan_merge_branch`, then `destination_branch`): it used to choose
+first, so a sub-task clone made before the main branch reached the remote (or before its parents merged
+into it) was cut from master and its agent never saw that work ("misses those changes … starts to
+hallucinate"). Every sub-task's log line says which branch it starts from (`task X: <repo> starts from Y`).
 **A sub-task merges into the main task's branch** (the task the plan was split from, by its
 `task_branch_name`), never the repository destination: the main task carries the whole plan there
 in one PR. ONE answer, `RepositoryService.destination_branch(clone)`: for a clone of a sub-task
@@ -551,8 +572,8 @@ renamed (its sub-tasks' PRs point at its branch). Open PRs created before this a
 **Where a sub-task works: its own list, starting with all of the main task's.** The split's agent
 is NOT asked (`PlanQueueService(proposer_picks_repositories=False)`, kato's `plan_queue/wiring.py`):
 every step starts in all of the plan's `repository_ids`, and the operator ticks/unticks per task
-— and adds one kato knows ("+ Add repository" inside a task's "Works in", which also adds it to the
-plan) — in the proposal and in Edit tasks (only tasks not started). That list is the truth: a local
+— and adds one kato knows (the `+` on a task's row, which also adds it to the plan) — in the proposal
+and in Edit tasks (only tasks not started). That list is the truth: a local
 step is created with it (its `kato:repo:` tags), a tracker sub-task carries it in its footer
 (rewritten by `launcher.update` when a waiting task is edited). A repository added to the MAIN task
 later ("+ Add repository" → `TaskRepositoryService._share_with_plans` → `PlanQueueService.add_repositories`)
@@ -560,6 +581,18 @@ goes to the plan and every step NOT started (rewriting waiting tickets); a start
 agent was given. (Briefly this was "every sub-task always works in all of them, live"; the operator
 reversed it to per-task editing — do not bring back resolving a sub-task from its main task's
 workspace.)
+**Where a task works and what it runs on are ON ITS ROW, never behind the open** (`StepSetup` in
+`PlanStepRows.jsx`: repository chips, `+`, a model picker; "it's hard to find" when they sat inside the
+opened editor). Above the list, "Every task" (`PlanTaskSettings.jsx`) puts a repository in or out of every
+task, adds one, and picks the model + effort they all run on — in the proposal AND in Edit tasks, where
+every change to "every task" skips the started ones (`useStepDrafts(…, mayChange)`). A step's own `model`
+('' = the plan's `step_model`) wins in `build_request`; picking the plan's model again stores '' so the
+task follows the plan. Both pickers show the concrete model, never "Default"; an edit sends `model` /
+`effort` only when the operator picked them (Approve sends the pick, else what the plan holds), so the
+configured default is never pinned by accident. A tracker sub-task carries its model as a `kato:model`
+tag (`TrackerStepLauncher._run_on_model`, set on create and rewrite, so every kato's pickup reads it); a
+model no tag can say (a Codex model name) is REFUSED before the ticket is created or rewritten, never
+dropped. Effort does not reach tracker tickets.
 Kato still never publishes: the step parks for push like any task; merging and moving it to
 done are the operator's. The merge verdict ignores PRs created before the step's release
 (`CLOCK_SKEW_SECONDS`) — branch names repeat (LOCAL ids restart after a store reset; the same
@@ -585,6 +618,13 @@ greps the folder). The task a plan was split from carries the board mark on its 
 is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`; no timer of
 its own); a sub-task's tab shows `Subtask of UNA-1:` as a fixed mark, not as its name, and a rename
 edits only the name (`subtaskLabel.js`, pinned to `step_footer.subtask_summary` by a test).
+**Sub-task tabs fold into their main task's tab** (`utils/subtaskTabs.js` `foldSubtaskTabs`, used by
+`TabList`): a split filled the strip. The main task's tab shows a count (`SubtaskTabMenu`) that lists
+them, each with `deriveAgentStatus`'s own dot, orange when one waits for you. The OPEN sub-task shows right
+after its main task; a pinned one keeps its place; one whose main task has no tab here keeps its own; a
+loop of parents folds nothing. Keyboard Tab walks the visible order. The parent comes from `plan_parent` on
+the tab list (`PlanQueueService.step_task_sources`, any plan state, previous task ids too — local steps
+are titled `UNA-1 · Task n:` and have no "Subtask of" to read), else the ticket's "Subtask of X:" title.
 
 **A live plan's tasks are known by CODE, never by assignee.** The queue holds a step UNASSIGNED until its
 turn and hands a task back by unassigning it, and the task a plan was split from is usually not the bot's

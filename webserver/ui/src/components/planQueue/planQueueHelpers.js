@@ -158,6 +158,19 @@ export function stepTaskState(step) {
   return step.task_id ? String(step.task_state || '') : '';
 }
 
+// The tracker state a started task sits in that this kato's workflow does not
+// name ('' = none): read as "still to do", so its card never moves and the
+// tasks after it never start — "Waiting Deploy" did that. The server lists
+// them (``plan.unknown_states``); the card says so and offers to count it done.
+const STARTED = ['starting', 'active', 'in_review'];
+
+export function unknownStateOf(step, plan) {
+  const state = stepTaskState(step).trim();
+  if (!state || !STARTED.includes(step.status)) { return ''; }
+  const unknown = (plan?.unknown_states || []).map((entry) => String(entry).toLowerCase());
+  return unknown.includes(state.toLowerCase()) ? state : '';
+}
+
 // A plan another kato drives: shown here, changed only there (or after Take over).
 export function isFollowed(plan) {
   return plan?.mode === 'followed';
@@ -283,5 +296,30 @@ export function withRepoEverywhere(steps, repo, everywhere) {
     const repositories = step.repositories || [];
     if (!everywhere) { return { ...step, repositories: repositories.filter((entry) => entry !== repo) }; }
     return { ...step, repositories: repositories.includes(repo) ? [...repositories] : [...repositories, repo] };
+  });
+}
+
+// The options a task's model picker shows: every model kato offers, plus any
+// ``picked`` id it no longer offers — shown as itself, so the picker never
+// claims a model other than the one that will run.
+export function modelOptions(models, ...picked) {
+  const options = (models || []).map((model) => ({ id: model.id, label: model.label || model.id }));
+  for (const id of picked) {
+    if (id && !options.some((option) => option.id === id)) { options.push({ id, label: id }); }
+  }
+  return options;
+}
+
+// ``repo`` into every task ``mayChange`` allows — or out of all of them when
+// each already has it. A task that may not change is left exactly as it is.
+export function toggleRepoEverywhere(steps, repo, mayChange = () => true) {
+  const open = (steps || []).filter(mayChange);
+  const changed = withRepoEverywhere(open, repo, repoCoverage(open, repo).state !== 'all');
+  let at = 0;
+  return (steps || []).map((step) => {
+    if (!mayChange(step)) { return step; }
+    const next = changed[at];
+    at += 1;
+    return next;
   });
 }

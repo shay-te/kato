@@ -3,7 +3,9 @@ import { cx } from '../utils/cx.js';
 import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
 import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
 import { planStatusLine } from './planQueue/planQueueHelpers.js';
-import { subtaskParent, withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
+import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
+import SubtaskTabMenu from './SubtaskTabMenu.jsx';
+import { parentOfTab } from '../utils/subtaskTabs.js';
 import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
@@ -86,6 +88,9 @@ function Tab({
   // not wire it — the strip is the only one that does.
   dragging = false, dropTarget = false, canDrop = false,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
+  // The sub-tasks folded into this main task's tab (null = none) — see
+  // utils/subtaskTabs.js.
+  subtasks = null,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
@@ -114,8 +119,9 @@ function Tab({
   const [renameBoxWidth, setRenameBoxWidth] = useState(0);
   const labelRef = useRef(null);
   // A plan's sub-task: "Subtask of UNA-3267:" is a fixed mark beside the id,
-  // never part of the name — so a rename edits only the name after it.
-  const parentTaskId = subtaskParent(session?.task_summary);
+  // never part of the name — so a rename edits only the name after it. A
+  // local sub-task (named "UNA-3267 · Task 2: …") gets the mark too.
+  const parentTaskId = parentOfTab(session);
   const label = withoutSubtaskPrefix(String(
     displayName || session?.task_summary || '',
   ).trim());
@@ -420,6 +426,9 @@ function Tab({
         <span className={dotClass} />
         <ReviewLoopTabBadge loop={session.review_loop || null} />
         <PlanQueueTabBadge plan={session.plan_queue || null} />
+        {subtasks && subtasks.length ? (
+          <SubtaskTabMenu taskId={session.task_id} subtasks={subtasks} onSelect={onSelect} />
+        ) : null}
         <span
           ref={labelRef}
           className={cx('tab-label', renaming && 'is-renaming')}

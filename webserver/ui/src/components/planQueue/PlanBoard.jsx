@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { controlPlanQueue, planQueueStepAction, takeOverPlanQueue } from '../../api.js';
+import {
+  addPlanDoneState, controlPlanQueue, fetchPlanQueue, planQueueStepAction, takeOverPlanQueue,
+} from '../../api.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
 import {
@@ -13,6 +15,7 @@ import {
   stepCode,
   stepNote,
   stepTaskState,
+  unknownStateOf,
   stepWorker,
 } from './planQueueHelpers.js';
 import { planAction } from './planQueueActions.js';
@@ -40,6 +43,17 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
   function control(action) {
     if (action === 'stop' && !window.confirm(STOP_CONFIRM)) { return; }
     act(() => controlPlanQueue(plan.plan_id, action), `Could not ${action} the plan`);
+  }
+
+  // One click for every card stuck in that state: it is added to the states
+  // that mean done, and the board is read again.
+  function countStateDone(state) {
+    if (!window.confirm(countStateDoneConfirm(state))) { return; }
+    act(async () => {
+      const added = await addPlanDoneState(state);
+      if (!added.ok) { return added; }
+      return { ok: true, body: await fetchPlanQueue(plan.plan_id) };
+    }, `Could not count “${state}” as done`);
   }
 
   function takeOver() {
@@ -104,6 +118,8 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
                     planStatus={plan.status}
                     busy={busy}
                     readOnly={followed}
+                    unknownState={followed ? '' : unknownStateOf(step, plan)}
+                    onCountStateDone={countStateDone}
                     onOpenTask={onOpenTask}
                     onAction={(entry) => {
                       if (entry.confirm && !window.confirm(entry.confirm)) { return; }
@@ -123,7 +139,9 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
   );
 }
 
-function PlanCard({ step, planStatus, busy, readOnly, onOpenTask, onAction }) {
+function PlanCard({
+  step, planStatus, busy, readOnly, onOpenTask, onAction, unknownState = '', onCountStateDone = () => {},
+}) {
   const note = stepNote(step, planStatus);
   const worker = stepWorker(step);
   const chips = prChips(step);
@@ -143,6 +161,16 @@ function PlanCard({ step, planStatus, busy, readOnly, onOpenTask, onAction }) {
       ) : null}
       {worker ? <span className="plan-card-worker">{worker}</span> : null}
       {note ? <span className="plan-card-note">{note}</span> : null}
+      {unknownState ? (
+        <span className="plan-card-unknown-state">
+          “{unknownState}” is not counted as done here, so this card will not move.
+          <button type="button" className="plan-card-action" disabled={busy}
+            data-tooltip="Add it to Settings → General → States that mean done. Every task in it then counts as done, and the tasks after it start once its pull request is merged."
+            onClick={() => onCountStateDone(unknownState)}>
+            Count “{unknownState}” as done
+          </button>
+        </span>
+      ) : null}
       {chips.length ? (
         <span className="plan-card-prs">
           {chips.map((chip) => (chip.url ? (
@@ -169,4 +197,10 @@ function PlanCard({ step, planStatus, busy, readOnly, onOpenTask, onAction }) {
       ) : null}
     </li>
   );
+}
+
+function countStateDoneConfirm(state) {
+  return `Count every ticket in “${state}” as done? It is added to Settings → General → States that `
+    + 'mean done. A task there then waits only for its pull request to be merged, and the tasks after it '
+    + 'start once it is.';
 }

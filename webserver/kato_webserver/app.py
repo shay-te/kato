@@ -378,6 +378,7 @@ def _live_settings_keys() -> frozenset[str]:
     from kato_core_lib.helpers.review_comment_gate_utils import (
         REVIEW_COMMENTS_ENABLED_KEY,
     )
+    from kato_core_lib.helpers.slack_done_settings_utils import SLACK_DONE_KEYS
     from kato_core_lib.helpers.standing_instructions_utils import (
         STANDING_INSTRUCTIONS_KEY,
     )
@@ -390,6 +391,7 @@ def _live_settings_keys() -> frozenset[str]:
             DONE_STATES_KEY,
         })
         | RELEASE_NOTES_KEYS
+        | SLACK_DONE_KEYS
     )
 
 
@@ -7178,6 +7180,7 @@ def _records_as_dicts(
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
     review_loop_by_task = _review_loop_summaries(agent_service)
     plan_queue_by_task = _plan_queue_summaries(agent_service)
+    plan_parent_by_task = _plan_parents(agent_service)
     return [
         _workspace_record_to_dict(
             record,
@@ -7190,6 +7193,7 @@ def _records_as_dicts(
             backend_by_task=backend_by_task,
             review_loop_by_task=review_loop_by_task,
             plan_queue_by_task=plan_queue_by_task,
+            plan_parent_by_task=plan_parent_by_task,
         )
         for record in workspace_records
     ]
@@ -7226,6 +7230,19 @@ def _plan_queue_summaries(agent_service) -> dict[str, dict]:
     except Exception:
         return {}
     return live if isinstance(live, dict) else {}
+
+
+def _plan_parents(agent_service) -> dict[str, str]:
+    """``task id (lower-case) -> the task its plan was split from`` — memory
+    only. The strip folds each sub-task's tab into its main task's."""
+    queue = getattr(agent_service, 'plan_queue', None)
+    if queue is None:
+        return {}
+    try:
+        parents = queue.step_task_sources()
+    except Exception:
+        return {}
+    return parents if isinstance(parents, dict) else {}
 
 
 #: Record fields the tab list does NOT send. Nothing in the UI reads them, and
@@ -7503,10 +7520,13 @@ def _workspace_record_to_dict(
     backend_by_task: dict[str, str] | None = None,
     review_loop_by_task: dict[str, dict] | None = None,
     plan_queue_by_task: dict[str, dict] | None = None,
+    plan_parent_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     payload['review_loop'] = (review_loop_by_task or {}).get(record.task_id)
     payload['plan_queue'] = (plan_queue_by_task or {}).get(record.task_id)
+    # The task this one's plan was split from ('' = no plan's sub-task).
+    payload['plan_parent'] = (plan_parent_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
     # WORKSPACE records carry no backend — they predate agent tabs and are
     # about the clone on disk, not the chat. Without this the UI had nothing
     # to name the agent with and fell back to the literal word "Agent" on the

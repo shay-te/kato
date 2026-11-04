@@ -475,6 +475,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         )
 
     @property
+    def task_states(self):
+        """The ticket workflow: its state names and the moves between them."""
+        return self._task_state_service
+
+    @property
     def review_loops(self):
         """Every task's review loops — start / stop / state / summaries.
 
