@@ -359,6 +359,28 @@ export function formatMergeConflicts(conflicted, { chatDelivered, taskId = '' } 
   };
 }
 
+// The "merge the default branch" button's tooltip and name. A plan's sub-task
+// merges the branch of the task it was split from (``mergeBranch``, from the
+// publish state) — master/main only until that branch is on the remote, since
+// it starts from there. Any other task merges master/main.
+export function mergeButtonTitle(mergeBranch, agentName) {
+  const branch = String(mergeBranch || '').trim();
+  const what = branch
+    ? `Merge ${branch} — the branch of the task this one was split from — into this `
+      + `task branch (master/main until ${branch} is on the remote: it starts from there). `
+    : 'Merge the default branch (master/main) into this task branch. ';
+  return what
+    + "The agent's clone can't run git, so use this when the branch fell behind "
+    + `— on conflict the markers are left in place and ${agentName} is told (with the `
+    + 'file list) to resolve them. Safe to click again ("already up to date" if '
+    + 'nothing new).';
+}
+
+export function mergeButtonLabel(mergeBranch) {
+  const branch = String(mergeBranch || '').trim();
+  return branch ? `Merge ${branch}` : 'Merge default branch';
+}
+
 export function formatMergeResult(result, taskId = '') {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Merge failed');

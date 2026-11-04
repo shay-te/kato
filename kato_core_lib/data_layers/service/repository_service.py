@@ -1542,6 +1542,9 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         )
         if blocked:
             return fail('wrong_branch_checked_out', blocked)
+        # A plan sub-task merges its plan's branch, not master — even one a
+        # sibling's pull request put on the remote after this clone was made.
+        self._fetch_plan_merge_branch(repository)
         try:
             return {'default_branch': self.destination_branch(repository)}
         except ValueError as exc:
@@ -2043,11 +2046,30 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'created %s on the remote of %s from %s, for the pull requests of its plan',
                 branch, text_from_attr(repository, 'id'), base,
             )
+        self._fetch_remote_branch(local_path, branch, repository)
+        return branch
+
+    def _fetch_plan_merge_branch(self, repository) -> None:
+        """Before a git action decides what a plan sub-task merges: bring its
+        plan's branch in from the remote. The clone may predate it — the first
+        sub-task's pull request creates it — and ``destination_branch`` reads
+        only what the clone has. Not on the remote yet, or the remote
+        unreachable: nothing changes, and the action's own fetch says which."""
+        branch = self.plan_merge_branch(_task_id_of_clone(repository))
+        if not branch:
+            return
+        try:
+            self._fetch_remote_branch(text_from_attr(repository, 'local_path'), branch, repository)
+        except RuntimeError:
+            return
+
+    def _fetch_remote_branch(self, local_path: str, branch: str, repository=None) -> None:
+        """``origin/<branch>`` in the clone, as the remote has it now (forced:
+        a remote-tracking ref follows the remote, rewritten or not)."""
         self._run_git(
-            local_path, ['fetch', 'origin', f'{branch}:refs/remotes/origin/{branch}'],
+            local_path, ['fetch', 'origin', f'+refs/heads/{branch}:refs/remotes/origin/{branch}'],
             f'failed to fetch {branch}', repository,
         )
-        return branch
 
     def _own_destination_branch(self, repository) -> str:
         """What ``repository`` merges into without a plan: the inventory's

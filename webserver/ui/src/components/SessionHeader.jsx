@@ -34,6 +34,8 @@ import {
   formatMergeConflicts,
   formatPullResult,
   formatUpdateSourceResult,
+  mergeButtonLabel,
+  mergeButtonTitle,
 } from './sessionHeaderFormatters.js';
 
 export default function SessionHeader({
@@ -322,13 +324,11 @@ export default function SessionHeader({
     || 'Pull the task branch from its remote into the workspace clone (safe to '
       + 'click again — the toast reports "already in sync" if there is nothing).'
       + lastActionSuffix(session.task_id, 'pull', 'pulled');
+  // A plan sub-task merges its main task's branch, not master: named here.
   const mergeTitle = gitBlockedReason
-    || ('Merge the default branch (master/main) into this task branch. '
-      + "The agent's clone can't run git, so use this when the branch fell behind "
-      + `— on conflict the markers are left in place and ${agentName} is told (with the `
-      + 'file list) to resolve them. Safe to click again ("already up to date" if '
-      + 'nothing new).'
+    || (mergeButtonTitle(taskPublish.mergeBranch, agentName)
       + lastActionSuffix(session.task_id, 'merge', 'merged'));
+  const mergeAriaLabel = mergingDefault ? 'Merging…' : mergeButtonLabel(taskPublish.mergeBranch);
   // PR + Update-source also honour "one git op at a time" (gitDisabled), on
   // top of their own guards (PR: skip when every repo already has one).
   const prDisabled = gitDisabled || taskPublish.hasPullRequest;
@@ -452,7 +452,7 @@ export default function SessionHeader({
             data-tooltip={mergeTitle}
             onClick={onMergeDefault}
             disabled={gitDisabled}
-            aria-label={mergingDefault ? 'Merging…' : 'Merge default branch'}
+            aria-label={mergeAriaLabel}
           >
             <BusyIcon busy={mergingDefault} idle="merge" />
           </button>

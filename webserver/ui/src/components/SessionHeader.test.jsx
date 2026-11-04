@@ -451,6 +451,17 @@ describe('SessionHeader — Push / Pull / PR buttons', () => {
     expect(screen.getByRole('button', { name: /^pull$/i })).not.toBeDisabled();
   });
 
+  test('a plan sub-task\'s merge button merges its main task\'s branch', () => {
+    useTaskPublish.mockReturnValue(_defaultTaskPublish({ mergeBranch: 'UNA-1' }));
+    render(
+      <SessionHeader session={_session({ task_id: 'UNA-2' })} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />,
+    );
+    const merge = screen.getByRole('button', { name: /^merge una-1$/i });
+    expect(merge).not.toBeDisabled();
+    expect(merge.getAttribute('data-tooltip')).toMatch(/^Merge UNA-1 — the branch of the task this one was split from/);
+    expect(merge.getAttribute('data-tooltip')).not.toMatch(/Merge the default branch/);
+  });
+
   test('git buttons DISABLED when there is no workspace clone', () => {
     useTaskPublish.mockReturnValue(_defaultTaskPublish({ hasWorkspace: false }));
     render(

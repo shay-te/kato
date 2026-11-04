@@ -1829,6 +1829,16 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertTrue(result['has_workspace'])
         self.assertTrue(result['has_changes_to_push'])
 
+    def test_names_the_branch_a_plan_sub_task_merges_into(self) -> None:
+        repo = MagicMock()
+        repo.branch_needs_push.return_value = False
+        repo.plan_merge_branch.side_effect = lambda task_id: 'UNA-1' if task_id == 'UNA-2' else ''
+        service = AgentService(**_kwargs(repository_service=repo))
+        context = ([SimpleNamespace(id='r1')], 'UNA-2', SimpleNamespace(id='UNA-2'))
+        with patch.object(service.publish, '_resolve_publish_context', return_value=context):
+            self.assertEqual(service.publish.task_publish_state('UNA-2')['merge_branch'], 'UNA-1')
+            self.assertEqual(service.publish.task_publish_state('UNA-9')['merge_branch'], '')
+
     def test_slow_push_scan_still_enables_the_buttons(self) -> None:
         """A slow per-repo scan must never cost the workspace answer.
 

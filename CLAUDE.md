@@ -535,8 +535,10 @@ in one PR. ONE answer, `RepositoryService.destination_branch(clone)`: for a clon
 `origin/<branch>`; before that, the repo destination (where it will be cut from). Every reader of a
 destination gets it from there: branch prep (which no longer reads the clone's attribute first: it
 is copied from the inventory's configured destination), PR creation, the empty-PR and publishable
-checks, merge-destination, and the Changes tab / review loop (`configured_destination_branch(repo,
-local_path=<clone>)` → `destination_branch_of_clone`). Which task is a sub-task:
+checks, the header's "merge the default branch" (`_merge_preflight` fetches the main branch FIRST:
+a clone made before a sibling's PR created it still merges it, never master; the publish state's
+`merge_branch` names it in the button's tooltip), and the Changes tab / review loop
+(`configured_destination_branch(repo, local_path=<clone>)` → `destination_branch_of_clone`). Which task is a sub-task:
 `plan_queue/merge_target.py` — the queue (`source_of_step_task`, ANY plan state, so plans split
 before this exist are covered), then what `LocalStepLauncher` announced (a local step clones before
 the queue records its task), then a tracker sub-task's footer. **Nothing is pushed before the

@@ -1330,6 +1330,8 @@ class TaskPublishService(object):
           disabled.
         - ``has_changes_to_push`` → any repo has unpushed work (dirty tree,
           branch never pushed, or local ahead of ``origin/<branch>``).
+        - ``merge_branch`` → for a plan's sub-task, the branch it merges
+          into (its main task's), named in the git buttons' tooltips.
 
         All local git — returns in well under a second regardless of
         provider health. Best-effort: a per-repo push check failure is
@@ -1386,6 +1388,9 @@ class TaskPublishService(object):
             'has_workspace': True,
             'has_changes_to_push': has_changes_to_push,
             'branch': task_branch_name,
+            # A plan sub-task's git actions use the branch of the task it was
+            # split from where any other task uses master ('' = not one). No git.
+            'merge_branch': self._repository_service.plan_merge_branch(normalized),
         }
 
     # How long the pull-request lookup may take, all repositories at once —

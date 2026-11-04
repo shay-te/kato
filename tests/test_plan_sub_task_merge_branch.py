@@ -226,6 +226,51 @@ class BranchPreparationTests(_World):
         self.assertTrue((Path(clone.local_path) / 'on-plan.txt').is_file())
 
 
+class MergeButtonTests(_World):
+    """The header's "merge the default branch": a sub-task merges its plan's branch."""
+
+    def _sibling_merged_into_plan_branch(self) -> None:
+        # Created AFTER the sub-task's clone, as the first sibling's pull request does.
+        _git(self.source, 'checkout', '-b', 'plan-work')
+        self._commit(self.source, 'sibling.txt', 'merged sibling\n', 'UNA-4 work')
+        _git(self.source, 'push', 'origin', 'plan-work:UNA-1')
+        _git(self.source, 'checkout', 'main')
+
+    def test_a_sub_task_merges_the_main_tasks_branch_not_master(self) -> None:
+        clone = self._clone_for('UNA-2')
+        self.service.prepare_task_branches([clone], {'api': 'UNA-2'})
+        self._sibling_merged_into_plan_branch()
+        self._push_to_main('main-only.txt', 'not part of the plan\n')
+
+        result = self.service.merge_default_branch_into_clone(clone, 'UNA-2')
+
+        path = Path(clone.local_path)
+        self.assertEqual((result['merged'], result['default_branch']), (True, 'UNA-1'))
+        self.assertTrue((path / 'sibling.txt').is_file())
+        self.assertFalse((path / 'main-only.txt').exists())
+
+    def test_before_the_main_branch_is_on_the_remote_master_is_where_it_starts(self) -> None:
+        clone = self._clone_for('UNA-2')
+        self.service.prepare_task_branches([clone], {'api': 'UNA-2'})
+        self._push_to_main('main-only.txt', 'x\n')
+
+        result = self.service.merge_default_branch_into_clone(clone, 'UNA-2')
+
+        self.assertEqual(result['default_branch'], 'main')
+        self.assertTrue((Path(clone.local_path) / 'main-only.txt').is_file())
+
+    def test_any_other_task_still_merges_master(self) -> None:
+        clone = self._clone_for('UNA-9')
+        self.service.prepare_task_branches([clone], {'api': 'UNA-9'})
+        self._sibling_merged_into_plan_branch()
+        self._push_to_main('main-only.txt', 'x\n')
+
+        result = self.service.merge_default_branch_into_clone(clone, 'UNA-9')
+
+        self.assertEqual(result['default_branch'], 'main')
+        self.assertFalse((Path(clone.local_path) / 'sibling.txt').exists())
+
+
 class PullRequestTests(_World):
     def _publish(self, clone) -> tuple[dict, MagicMock]:
         data_access = MagicMock()

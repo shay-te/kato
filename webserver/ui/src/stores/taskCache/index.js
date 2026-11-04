@@ -131,6 +131,7 @@ export function useTaskPublishState(taskId) {
     hasWorkspace: sl.data.hasWorkspace,
     hasChangesToPush: sl.data.hasChangesToPush,
     branch: sl.data.branch,
+    mergeBranch: sl.data.mergeBranch,
     ready: sl.status === 'ready',
     error: sl.status === 'error',
   }));

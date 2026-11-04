@@ -28,7 +28,7 @@ export const RETRY_DELAY_MS = 2000;
 
 export function useTaskPublish(taskId) {
   const {
-    hasWorkspace, hasChangesToPush, branch, ready, error,
+    hasWorkspace, hasChangesToPush, branch, mergeBranch, ready, error,
   } = useTaskPublishState(taskId);
   const {
     hasPullRequest, pullRequestUrls, pullRequestLookupError, pullRequestRepositories,
@@ -117,6 +117,8 @@ export function useTaskPublish(taskId) {
     hasWorkspace,
     hasChangesToPush,
     branch,
+    // A plan sub-task merges into this branch, not master ('' = not one).
+    mergeBranch,
     hasPullRequest,
     pullRequestUrls,
     // "kato cannot SEE your pull requests" — distinct from "there is no pull

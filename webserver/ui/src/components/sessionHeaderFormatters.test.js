@@ -12,7 +12,25 @@ import {
   formatUpdateSourceResult,
   formatApprovePushResult,
   formatCreatePullRequestResult,
+  mergeButtonLabel,
+  mergeButtonTitle,
 } from './sessionHeaderFormatters.js';
+
+
+test('a plan sub-task\'s merge button names its main task\'s branch, never master', () => {
+  const title = mergeButtonTitle('UNA-1', 'Claude');
+  assert.match(title, /^Merge UNA-1 — the branch of the task this one was split from — into this task branch/);
+  assert.match(title, /master\/main until UNA-1 is on the remote/);
+  assert.match(title, /Claude is told/);
+  assert.equal(mergeButtonLabel('UNA-1'), 'Merge UNA-1');
+});
+
+test('any other task\'s merge button merges the default branch', () => {
+  for (const none of ['', '  ', undefined, null]) {
+    assert.match(mergeButtonTitle(none, 'Codex'), /^Merge the default branch \(master\/main\) into this task branch\. /);
+    assert.equal(mergeButtonLabel(none), 'Merge default branch');
+  }
+});
 
 
 test('formatMergeResult lists each merged repo with its commit count + branch', () => {

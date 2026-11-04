@@ -147,6 +147,13 @@ describe('useTaskPublish — with taskId', () => {
     await waitFor(() => expect(result.current.hasWorkspace).toBe(true));
     expect(result.current.hasChangesToPush).toBe(true);
     expect(result.current.hasPullRequest).toBe(false);  // from the PR fetch (default)
+    expect(result.current.mergeBranch).toBe('');  // not a plan sub-task
+  });
+
+  test('a plan sub-task\'s base branch comes with the git state', async () => {
+    fetchTaskPublishState.mockResolvedValue({ has_workspace: true, merge_branch: 'UNA-1' });
+    const { result } = renderHook(() => useTaskPublish('UNA-2'));
+    await waitFor(() => expect(result.current.mergeBranch).toBe('UNA-1'));
   });
 
   test('a failing PR fetch never disables the git buttons', async () => {
