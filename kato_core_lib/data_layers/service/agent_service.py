@@ -332,6 +332,22 @@ class AgentService(MissionStepLoggerMixin, Service):
             workspace_manager=later(self, '_workspace_manager'),
             implementation_service=later(self, '_implementation_service'),
             logger=later(self, 'logger'),
+            on_finished=lambda task_id, status: self._autopilot.review_loop_finished(task_id, status),
+        )
+
+        # ``kato:autopilot``: once the work (and its review loop) is finished,
+        # kato presses the operator's own Done — the same call as the button.
+        from kato_core_lib.data_layers.service.autopilot_finish import AutopilotFinisher
+        self._autopilot = AutopilotFinisher(
+            press_done=lambda task_id: self.publish.finish_task_planning_session(
+                task_id, by_operator=True,
+            ),
+            read_task=lambda task_id: self._task_service.get_task(task_id),
+            review_rounds=lambda task: self._review_loop_rounds(task),
+            start_review_loop=lambda task: self._start_review_loop_if_tagged(task),
+            holds_push=self._task_has_wait_before_push_tag,
+            runner_in_flight=self._runner_in_flight,
+            logger=later(self, 'logger'),
         )
 
         # Tasks created in kato's own UI, no tracker. On only when the task
@@ -572,7 +588,14 @@ class AgentService(MissionStepLoggerMixin, Service):
                 task_id,
             )
             return None
+        if self._autopilot.agent_said_done(task_id):
+            return None
         return self.publish.finish_task_planning_session(task_id)
+
+    def _runner_in_flight(self, task_id: str) -> bool:
+        """True while kato's own run of the task (implement, test, park) goes on."""
+        runner = self._parallel_task_runner
+        return runner is not None and bool(runner.is_in_flight(task_id))
 
     @property
     def comment_runs(self):
@@ -1045,10 +1068,15 @@ class AgentService(MissionStepLoggerMixin, Service):
             'task %s implementation complete; awaiting push approval', task_id,
         )
         self._start_review_loop_if_tagged(task)
-        return {
+        parked = {
             StatusFields.STATUS: 'awaiting_push_approval',
             'task_id': task_id,
         }
+        # ``kato:autopilot`` with no review loop: Done is pressed now.
+        autopilot = self._autopilot.task_parked(task)
+        if autopilot is not None:
+            parked['autopilot'] = autopilot
+        return parked
 
     def _start_review_loop_if_tagged(self, task: Task) -> None:
         """Start the review loop a parked task's ``kato:review-loop`` tag asks for.

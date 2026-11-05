@@ -49,7 +49,7 @@ class LocalTaskStarter(object):
         # task" a planning turn. "Chat" picks nothing — the default applies.
         mode = START_PERMISSION_MODE[start_mode]
         if start_mode == START_IMPLEMENT:
-            mode = picked_mode_to_store(mode)
+            mode = picked_mode_to_store(mode, task_id)
         self._set_mode(task_id, mode)
         _persist_mode(task_id, mode)
         self._set_override('TASK_MODEL_OVERRIDES', task_id, str(model or '').strip())

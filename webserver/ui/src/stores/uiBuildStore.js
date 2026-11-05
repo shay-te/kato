@@ -64,6 +64,17 @@ export const uiBuildStore = {
   // The build to move to, or '' when this window is current.
   staleFor() { return _latest; },
 
+  // The build this window runs now.
+  loadedBuild() { return _loaded; },
+
+  // The window moved to ``build`` without a reload (its styles were swapped
+  // in place): it is current again.
+  adopt(build) {
+    _loaded = String(build || '');
+    _candidate = '';
+    if (_latest) { _latest = ''; _pubsub.emit(); }
+  },
+
   // Test seam: pretend the page loaded ``build``.
   resetForTest(build = '') {
     _loaded = String(build || '');

@@ -19,6 +19,8 @@ to a workspace manager nobody else uses.
 
 from __future__ import annotations
 
+import threading
+
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.helpers.deadline import run_all_with_deadline, run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
@@ -222,7 +224,7 @@ class TaskPublishService(object):
         # parks a finished task there and the UI's approve button resumes it,
         # so both objects must see the same dict and the same lock.
         self._pending_publish = pending_publish if pending_publish is not None else {}
-        self._pending_publish_lock = pending_publish_lock
+        self._pending_publish_lock = pending_publish_lock or threading.RLock()
         self._update_workspace_status_after_publish = update_workspace_status_after_publish
         # Folding the ticket's ``kato:repo:`` tags into the workspace metadata
         # belongs to the repositories subsystem; publishing only needs it run
@@ -1295,6 +1297,11 @@ class TaskPublishService(object):
         # LLM round-trip; failures stay inside the worker.
         self._kick_lesson_extraction(normalized, push_result, pr_result)
         finished = moved_to_review or moved_to_done
+        if finished:
+            # A task kato ran by itself parked its work for "Approve push"; it
+            # has just been published, so there is nothing left to approve.
+            with self._pending_publish_lock:
+                self._pending_publish.pop(normalized, None)
         return {
             'finished': finished,
             'task_id': normalized,

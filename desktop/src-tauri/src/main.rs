@@ -224,7 +224,9 @@ fn main() {
                     // spawn_args does that job instead).
                     Ok(sidecar) => sidecar
                         .env("PATH", augmented_path())
-                        .env("KATO_WEBSERVER_PORT", port.to_string()),
+                        .env("KATO_WEBSERVER_PORT", port.to_string())
+                        // A graceful shutdown then says QUIT_MARKER: see below.
+                        .env("KATO_DESKTOP_APP", "1"),
                     Err(err) => {
                         report_fatal(
                             app.handle(),
@@ -298,6 +300,9 @@ fn main() {
                 // stopped is most often that line (another kato on this
                 // ~/.kato, a missing setting), so the splash shows it.
                 let mut last_said = String::new();
+                // Kato said it is shutting down on purpose (its Shut down
+                // button): when its process then ends, the app quits with it.
+                let mut quit_requested = false;
                 while let Some(event) = rx.recv().await {
                     let line = match event {
                         CommandEvent::Stdout(bytes) | CommandEvent::Stderr(bytes) => {
@@ -305,7 +310,12 @@ fn main() {
                             if let Some(said) = text.lines().rev().find(|l| !l.trim().is_empty()) {
                                 last_said = last_line_for_splash(said);
                             }
+                            quit_requested = quit_requested || says_quit(&text);
                             text
+                        }
+                        CommandEvent::Terminated(_) if quit_requested => {
+                            log_handle.exit(0);
+                            break;
                         }
                         // The sidecar process exited before it ever served the UI.
                         // Emit a fatal marker so the splash shows an error instead
@@ -804,6 +814,16 @@ fn boot_error(state: tauri::State<'_, BootError>) -> Option<String> {
     state.0.lock().ok().and_then(|guard| guard.clone())
 }
 
+/// What kato says on stderr when it was shut down on purpose (kato_core_lib's
+/// ``DESKTOP_QUIT_MARKER``, pinned equal by a Python test). Said only to a
+/// kato started with ``KATO_DESKTOP_APP`` set.
+const QUIT_MARKER: &str = "KATO-QUIT";
+
+/// Whether this output says kato is shutting down on purpose.
+fn says_quit(text: &str) -> bool {
+    text.lines().any(|line| line.trim() == QUIT_MARKER)
+}
+
 /// Stop boot with `message` on the splash (and in the console).
 fn report_fatal(app: &tauri::AppHandle, message: &str) {
     let fatal = format!("KATO-FATAL: {message}");
@@ -862,6 +882,15 @@ fn parse_lsof_holder(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shutdown_on_purpose_is_told_apart_from_a_crash() {
+        assert!(says_quit("stopping kato…\nKATO-QUIT\n"));
+        assert!(says_quit("  KATO-QUIT  "));
+        assert!(!says_quit("KATO-FATAL: the Kato service stopped"));
+        assert!(!says_quit("a line mentioning KATO-QUIT in passing"));
+        assert!(!says_quit(""));
+    }
 
     #[test]
     fn the_message_names_the_port_and_who_holds_it() {

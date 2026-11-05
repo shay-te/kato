@@ -20,6 +20,7 @@ import os
 import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Callable
 
 from review_loop_core_lib.review_loop_core_lib.data.state import ReviewLoopState
 from review_loop_core_lib.review_loop_core_lib.ports import (
@@ -294,12 +295,14 @@ def build_review_loop_service(
     implementation_service,
     logger,
     options: RunnerOptions | None = None,
+    on_finished: Callable[[str, object], None] | None = None,
 ) -> ReviewLoopService:
     """The process's one review-loop service, wired to kato.
 
     Collaborators may be ``later(...)`` markers: each is resolved per call, so
     a manager rebuilt afterwards (setup mode) is the one the loop talks to.
     ``options`` (the loop's timings) defaults to the lib's real-use values.
+    ``on_finished(task_id, status)`` hears every loop that ends (autopilot).
     """
     get_implementation_service = provider_for(implementation_service)
     get_workspace_manager = provider_for(workspace_manager)
@@ -325,7 +328,7 @@ def build_review_loop_service(
             reviewer_guidance=REVIEW_LOOP_REVIEWER_GUIDANCE,
             findings_guidance=REVIEW_LOOP_FIXER_GUIDANCE,
         ),
-        observer=lambda state, event: log_review_loop_event(get_logger(), state, event),
+        observer=_loop_observer(get_logger, on_finished),
         can_start=lambda task_id: review_loop_refusal(
             task_id,
             implementation_service=get_implementation_service(),
@@ -334,6 +337,15 @@ def build_review_loop_service(
         options=options,
         logger=get_logger(),
     )
+
+
+def _loop_observer(get_logger, on_finished):
+    """Every step logged; the end also told to ``on_finished``."""
+    def observe(state: ReviewLoopState, event: str) -> None:
+        log_review_loop_event(get_logger(), state, event)
+        if event == 'finished' and on_finished is not None:
+            on_finished(state.task_id, state.status)
+    return observe
 
 
 def mark_interrupted_review_loops(service: ReviewLoopService) -> int:

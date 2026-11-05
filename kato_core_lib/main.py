@@ -1282,6 +1282,14 @@ DEFAULT_SCAN_INTERVAL_SECONDS = 50.0
 SHUTDOWN_GRACE_SECONDS = 8.0
 
 
+#: The desktop app sets this on the kato it starts. A graceful shutdown then
+#: says ``DESKTOP_QUIT_MARKER`` on stderr, and the app quits with its kato
+#: instead of reporting a service that stopped (``desktop/src-tauri``'s
+#: ``QUIT_MARKER``, pinned equal by a test). A terminal user never sees it.
+DESKTOP_APP_ENV_KEY = 'KATO_DESKTOP_APP'
+DESKTOP_QUIT_MARKER = 'KATO-QUIT'
+
+
 #: How long the final log flush may take before the process leaves without it.
 #: ``logging.shutdown()`` acquires every handler's lock, and any thread can be
 #: holding one — see ``_emit_raw``.
@@ -1515,6 +1523,9 @@ def _register_shutdown_hook(app) -> None:
         _emit_raw(
             'stopping kato… (press Ctrl+C again to force an immediate exit)\n',
         )
+        if os.environ.get(DESKTOP_APP_ENV_KEY):
+            # The Shut down button inside the desktop app: the app goes too.
+            _emit_raw(f'{DESKTOP_QUIT_MARKER}\n')
         # BOUNDED. Cleanup used to run inline in the handler, so a session
         # whose subprocess would not terminate held the whole shutdown open
         # and Ctrl+C looked broken. On timeout kato exits anyway — the

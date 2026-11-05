@@ -100,6 +100,12 @@ class TaskTags(object):
     # so it is asked for per ticket. Parse it via ``kato_tag_utils``.
     REVIEW_LOOP = f'{KATO_TAG_NAMESPACE}:review-loop'
 
+    # Autopilot: the task's chat starts in Auto mode, and once its work is
+    # finished — and its review loop came back clean, when it has one — kato
+    # presses Done for it (the operator's own Done: push, pull request, ticket,
+    # Slack). The tag is the operator saying so in advance, per ticket.
+    AUTOPILOT = f'{KATO_TAG_NAMESPACE}:autopilot'
+
     # Model pick: ``kato:model:<family>`` runs the task on that family's
     # latest model; ``kato:model:<family>:<version>`` pins one release
     # (``kato:model:sonnet:5.5``). Parse it via ``kato_tag_utils``.

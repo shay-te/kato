@@ -180,3 +180,8 @@ def review_rounds_from_tag(tag: object) -> int:
         return 0
     rounds = int(value)
     return rounds if 1 <= rounds <= MAX_ROUNDS_LIMIT else 0
+
+
+def has_autopilot_tag(tags: object) -> bool:
+    """Whether ``tags`` carry ``kato:autopilot`` (any case)."""
+    return any(normalized_text(tag).lower() == TaskTags.AUTOPILOT for tag in tags or ())

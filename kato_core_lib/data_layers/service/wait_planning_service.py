@@ -34,13 +34,14 @@ from dataclasses import dataclass
 
 from kato_core_lib.data_layers.data.fields import TaskTags
 from kato_core_lib.data_layers.data.task import Task
+from kato_core_lib.helpers.autopilot_store import is_autopilot, set_autopilot
 from kato_core_lib.data_layers.service.workspace_provisioning_service import (
     provision_task_workspace_clones,
 )
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.plan_mode_store import PLAN_MODE
-from kato_core_lib.helpers.kato_tag_utils import is_model_tag, model_from_tag
+from kato_core_lib.helpers.kato_tag_utils import has_autopilot_tag, is_model_tag, model_from_tag
 from kato_core_lib.helpers.planning_hold_store import set_planning_hold
 from kato_core_lib.helpers.task_model_tag_store import set_task_model_tag
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
@@ -166,6 +167,7 @@ class WaitPlanningService(object):
         # exactly the sighting that releases its hold.
         self.observe_planning_hold(task)
         self.observe_model_tag(task)
+        self.observe_autopilot(task)
         if not mode:
             return None
         tag = (
@@ -234,6 +236,22 @@ class WaitPlanningService(object):
         )
         self._stop_live_editing_session(task_id)
 
+    def observe_autopilot(self, task: Task) -> None:
+        """Remember whether the ticket carries ``kato:autopilot`` (Auto mode,
+        and Done pressed by kato once the work and its review are finished).
+        Released when the tag leaves the ticket. Same places, same switch as
+        :meth:`observe_model_tag`."""
+        if not self._track_planning_holds:
+            return
+        task_id = str(getattr(task, 'id', '') or '').strip()
+        try:
+            changed = set_autopilot(task_id, has_autopilot_tag(getattr(task, 'tags', None)))
+        except Exception:
+            self.logger.exception('failed to record the autopilot tag for task %s', task_id)
+            return
+        if changed:
+            self.logger.info('task %s is %s on autopilot', task_id, 'now' if is_autopilot(task_id) else 'no longer')
+
     def observe_model_tag(self, task: Task) -> None:
         """Remember the model the ticket's ``kato:model:`` tag selects.
 
@@ -292,10 +310,12 @@ class WaitPlanningService(object):
         return selected
 
     def sync_planning_holds(self, tasks) -> None:
-        """:meth:`observe_planning_hold` and :meth:`observe_model_tag` for each of ``tasks``."""
+        """:meth:`observe_planning_hold`, :meth:`observe_model_tag` and
+        :meth:`observe_autopilot` for each of ``tasks``."""
         for task in tasks or []:
             self.observe_planning_hold(task)
             self.observe_model_tag(task)
+            self.observe_autopilot(task)
 
     # ----- internals -----
 

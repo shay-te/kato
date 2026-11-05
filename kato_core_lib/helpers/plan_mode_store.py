@@ -29,6 +29,7 @@ import threading
 from pathlib import Path
 
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
+from kato_core_lib.helpers.autopilot_store import is_autopilot
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_PLAN_MODE_PATH'
@@ -62,6 +63,9 @@ DEFAULT_MODE_CHOICES = ('', 'default', 'explain', PLAN_MODE, 'bypassPermissions'
 #: set: as '' it would read back as that default.
 EDIT_AUTOMATICALLY_MODE = 'acceptEdits'
 
+#: The composer's "Auto" — what a task on autopilot (``kato:autopilot``) starts in.
+AUTOPILOT_MODE = 'bypassPermissions'
+
 
 def configured_default_task_mode() -> str:
     """The mode a task starts in when nobody picked one for it.
@@ -75,16 +79,29 @@ def configured_default_task_mode() -> str:
     return value if value in DEFAULT_MODE_CHOICES else ''
 
 
-def picked_mode_to_store(mode: object) -> str:
+def unpicked_task_mode(task_id: object, default: str = '') -> str:
+    """The mode a task runs in when nobody picked one for it.
+
+    Auto for a task on autopilot (``kato:autopilot``), else ``default``, else
+    the configured default mode for new tasks — '' = kato's built-in default.
+    The ONE answer, read by the spawn (:func:`task_permission_mode`) and by
+    the composer's picker, so the picker shows the mode that will run.
+    """
+    if is_autopilot(task_id):
+        return AUTOPILOT_MODE
+    return default or configured_default_task_mode()
+
+
+def picked_mode_to_store(mode: object, task_id: object = '') -> str:
     """The value to keep for a mode the operator just picked.
 
-    "Edit automatically" is '' — "no mode of its own" — which, once a default
-    mode is set, would read back as THAT default: the pick would never stick.
-    So it is kept as an explicit ``acceptEdits`` then; with no default set,
-    '' as before.
+    "Edit automatically" is '' — "no mode of its own" — which, once the task
+    would otherwise run in another mode (a default mode is set, or the task is
+    on autopilot), would read back as THAT mode: the pick would never stick.
+    So it is kept as an explicit ``acceptEdits`` then; otherwise '' as before.
     """
     value = _norm(mode)
-    if not value and configured_default_task_mode():
+    if not value and unpicked_task_mode(task_id):
         return EDIT_AUTOMATICALLY_MODE
     return value
 
@@ -174,8 +191,11 @@ def task_permission_mode(task_id: str, default: str = '') -> str:
     the mode at any moment from the composer, a stale cache would keep
     spawning under the OLD mode, and a lock that applies late is not a
     lock. The file is small and spawns are rare.
+
+    A task on autopilot (``kato:autopilot``) is in Auto unless the operator
+    picked a mode for it: their pick still wins, as it does over every default.
     """
     task = _norm(task_id)
     if not task:
         return default
-    return read_task_modes().get(task, '') or default or configured_default_task_mode()
+    return read_task_modes().get(task, '') or unpicked_task_mode(task, default)

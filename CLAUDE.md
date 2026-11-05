@@ -231,7 +231,9 @@ tagged `kato:wait-before-git-push`, so every *untagged* task pushed and opened
 a PR autonomously, against the stated policy. `KATO_AUTO_PUSH_ENABLED`
 (default `false`, `helpers/push_approval_gate_utils.py`) inverts that: unset,
 the flow always parks after testing. The tag still forces a park even with the
-switch on — it is the stricter statement. The UI's own Push / Done buttons
+switch on — it is the stricter statement. A `kato:autopilot` ticket is the per-ticket
+opt-in the other way: kato presses the operator's own Done once the work (and its tagged review loop) is
+finished — see Autopilot below. The UI's own Push / Done buttons
 (`push_task`, `approve_push`) are operator actions and are never gated.
 
 Pending approvals are in-memory: a kato restart drops them, and `approve_push`
@@ -257,7 +259,11 @@ Remembered agents not resumed yet stay in every write (`pending`), so stopping a
 them. Not resumed: a deleted (forgotten) task, a workspace gone / `done` / `terminated`, a chat with no
 `agent_session_id`, one already running again (scan, queued comment). Only WORKING agents come back — an
 idle chat stays asleep until written to (lazy resume, unchanged). The route is under the CSRF guard like every
-other. The desktop app does not restart kato: after a shutdown, relaunch it.
+other. **Inside the desktop app the app quits with its kato:** the app starts kato with `KATO_DESKTOP_APP=1`
+(native sidecar `.env`, and the WSL `export`), so the shutdown handler also writes `KATO-QUIT` on stderr; the
+app's output reader sees it (`says_quit`) and, when the process then ends, calls `exit(0)` instead of showing
+"the Kato service stopped". Marker and variable are pinned equal across Python and Rust
+(`tests/test_desktop_quits_with_kato.py`). A terminal kato never prints it. The desktop app must be rebuilt.
 
 ### Lid-closed running (Settings → "Keep running with the lid closed")
 ```
@@ -535,6 +541,27 @@ done, and nothing is ever sent after the last round. The loop's between-rounds m
 fixes, first ids, sweep-next, tests digest) is DERIVED from the saved rounds at every round
 (`progress.loop_memory`) — never carried in locals — so a resumed loop judges each review
 exactly as an uninterrupted one would. Do not reintroduce loop-local memory.
+
+### Autopilot (`kato:autopilot` ticket tag): kato presses Done when the work is finished
+```
+any read of the ticket (pickup's handle_task, the started-task sweep) → WaitPlanningService.observe_autopilot
+   → helpers/autopilot_store.py (~/.kato/autopilot_tasks.json, KATO_AUTOPILOT_PATH); the tag off = released
+spawn: plan_mode_store.unpicked_task_mode → Auto (bypassPermissions) unless the operator picked a mode
+       (the composer's _task_mode_of asks the SAME function, so the picker shows Auto);
+       helpers/autopilot_guidance_utils.py → "print <KATO_TASK_DONE> when done" in the system prompt
+"the work is finished" → data_layers/service/autopilot_finish.py AutopilotFinisher:
+   chat: the done token (finish_from_done_marker) — kato's own run in flight? wait for its park
+   kato's own run: the park after tests (_pause_for_push_approval, after the tag's review loop starts)
+   → kato:review-loop tag? the loop first; its end (build_review_loop_service on_finished) → CLEAN only
+   → publish.finish_task_planning_session(task, by_operator=True)   ← THE Done button's call
+```
+**Done is the operator's own Done — nothing of its own.** Push, PR, the ticket's move (a plan sub-task to Done),
+Slack: all from `finish_task_planning_session(by_operator=True)`. Do not add a second publish path for autopilot.
+Not pressed (said in the task's status feed, the task left to the operator): a `kato:wait-before-git-push` tag
+(the stricter statement), a task that cannot be read (its loop/push tags are unknown), a loop ending any way but
+CLEAN (stuck, max rounds, stopped, failed, nothing to review), the done token during a running loop (ignored as
+before). A finished Done now also drops the task's parked "Approve push" entry (it was just published). Anyone
+who can tag the ticket can turn this on: it skips the operator's look before the push (the PR is still reviewed).
 
 ### Plan queue (split a plan into small dependent tasks)
 ```

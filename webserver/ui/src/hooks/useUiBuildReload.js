@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { uiBuildStore } from '../stores/uiBuildStore.js';
+import { onlyStylesChanged, swapStylesheets } from '../utils/stylesheetSwap.js';
 
 // Remembers the build this window last reloaded itself for, so a server and
 // a page that somehow keep disagreeing cannot turn into a reload loop: one
@@ -30,9 +31,22 @@ function unattended() {
 // Attended: do NOT reload; the page they are reading must not jump. Return
 // ``stale`` so a banner can offer the reload, and take the first moment they
 // look away. Drafts, queued prompts and the open task all survive a reload.
-export function useUiBuildReload(reloadPage = () => window.location.reload()) {
+//
+// A rebuild of the styles alone needs neither: they are swapped in place
+// (utils/stylesheetSwap.js), the window is current again, and no banner shows.
+export function useUiBuildReload(reloadPage = () => window.location.reload(), swapStyles = swapStylesheets) {
   const [target, setTarget] = useState('');
-  useEffect(() => uiBuildStore.subscribe(setTarget), []);
+  useEffect(() => uiBuildStore.subscribe(() => {
+    // Read now, not the value handed in: a style swap a moment ago may
+    // already have made this window current.
+    const next = uiBuildStore.staleFor();
+    if (next && onlyStylesChanged(uiBuildStore.loadedBuild(), next)) {
+      swapStyles(next);
+      uiBuildStore.adopt(next);
+      return;
+    }
+    setTarget(next);
+  }), [swapStyles]);
 
   const reload = useCallback(() => {
     if (target) { rememberReloadFor(target); }

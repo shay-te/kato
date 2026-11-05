@@ -407,7 +407,7 @@ pub fn spawn_args(distro: &str, binary: &str, port: u16) -> Vec<String> {
         "--".to_string(),
         "bash".to_string(),
         "-lc".to_string(),
-        format!("export KATO_WEBSERVER_PORT={port}; exec \"$HOME/.kato/bin/{binary}\""),
+        format!("export KATO_WEBSERVER_PORT={port} KATO_DESKTOP_APP=1; exec \"$HOME/.kato/bin/{binary}\""),
     ]
 }
 
@@ -503,7 +503,7 @@ mod tests {
         let args = spawn_args("Ubuntu", "kato-sidecar-0.2.1", 5053);
         assert_eq!(
             args.last().unwrap(),
-            "export KATO_WEBSERVER_PORT=5053; exec \"$HOME/.kato/bin/kato-sidecar-0.2.1\"",
+            "export KATO_WEBSERVER_PORT=5053 KATO_DESKTOP_APP=1; exec \"$HOME/.kato/bin/kato-sidecar-0.2.1\"",
         );
     }
 

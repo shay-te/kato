@@ -4437,6 +4437,16 @@ code {
   border-radius: 4px;
 }
 
+/* Behind a popup the app goes black & white, so the popup is the only thing
+ * in colour. On the overlay panels only (a filter over what is BEHIND them —
+ * the popup on top keeps its colour); never on the inline card above the
+ * composer, which has no overlay. */
+.modal:not(.is-inline),
+.adopt-session-modal-backdrop {
+  -webkit-backdrop-filter: grayscale(1);
+  backdrop-filter: grayscale(1);
+}
+
 /* permission modal */
 .modal {
   position: fixed;
