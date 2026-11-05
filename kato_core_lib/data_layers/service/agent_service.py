@@ -377,7 +377,9 @@ class AgentService(MissionStepLoggerMixin, Service):
                 session_manager=later(self, '_session_manager'),
                 task_service=later(self, '_task_service'),
                 task_state_service=later(self, '_task_state_service'),
-                pull_task=lambda task_id: self.publish.pull_task(task_id),
+                # Nobody pressed this pull: a merge that conflicts is undone,
+                # never left half-done in the main task's clone.
+                pull_task=lambda task_id: self.publish.pull_task(task_id, keep_conflicts=False),
             )
             # A plan sub-task's question, asked in the chat its plan was split in.
             self._plan_questions = build_parent_questions(
@@ -471,6 +473,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             reconcile_task_repositories=call_later(
                 self._task_repository_service, 'reconcile_task_repositories',
             ),
+            is_plan_source=call_later(self, '_is_plan_source'),
             logger=later(self, 'logger'),
         )
 
@@ -522,6 +525,14 @@ class AgentService(MissionStepLoggerMixin, Service):
     def plan_merge_target(self):
         """Where a plan's sub-task merges (``plan_queue/merge_target.py``)."""
         return self._plan_merge_target
+
+    def _is_plan_source(self, task_id: str) -> bool:
+        """Whether a plan (in any state) was split from ``task_id``: its
+        branch is where the plan's sub-tasks merge, so its Pull merges a
+        branch that moved on both sides. A finished plan counts — its
+        branch stays just as split."""
+        queue = getattr(self, '_plan_queue_service', None)
+        return queue is not None and queue.plan_for_source(task_id) is not None
 
     @property
     def _live_plan_sources(self) -> set[str]:

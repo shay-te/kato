@@ -37,6 +37,7 @@ import {
   formatUpdateSourceResult,
   mergeButtonLabel,
   mergeButtonTitle,
+  mergeConflictInstruction,
 } from './sessionHeaderFormatters.js';
 
 export default function SessionHeader({
@@ -128,24 +129,14 @@ export default function SessionHeader({
         const conflicted = Array.isArray(body.conflicted_repositories)
           ? body.conflicted_repositories : [];
         if (conflicted.length > 0) {
-          const fileLines = conflicted.flatMap((repo) =>
-            (repo.conflicted_files || []).map(
-              (f) => `- ${repo.repository_id}: ${f}`,
-            ),
-          );
           const defaultBranch =
             conflicted[0]?.default_branch || 'the default branch';
           // Tell the agent to resolve — it can't run git, but it CAN
           // edit the conflicted files. kato's normal commit/push then
           // finalises the merge.
-          const instruction =
-            `I merged origin/${defaultBranch} into this task branch and `
-            + `there are merge conflicts. The clone can't run git, so do `
-            + `NOT try git commands — just edit these files to resolve `
-            + `every conflict (remove all <<<<<<< / ======= / >>>>>>> `
-            + `markers, keeping both sides' intent where it makes sense), `
-            + `then continue:\n${fileLines.join('\n')}`;
-          const sent = await postChatMessage(session.task_id, instruction);
+          const sent = await postChatMessage(
+            session.task_id, mergeConflictInstruction(conflicted, `origin/${defaultBranch}`),
+          );
           // The toast NAMES each conflicted repository (+ file count) so the
           // operator knows where to look; the per-file resolution went to
           // Claude above.
@@ -241,13 +232,25 @@ export default function SessionHeader({
     if (typeof taskPublish.refresh === 'function') {
       taskPublish.refresh();
     }
-    // A fast-forward pull advances the workspace clone on disk — bump
+    // A pull advances the workspace clone on disk — bump
     // the workspace version so the Changes tab / Files tree / open
     // editor refetch the new content instead of staying stale.
     if (typeof onWorkspaceMutated === 'function') {
       onWorkspaceMutated(session.task_id);
     }
-    toastResult(formatPullResult(result));
+    // A plan's main task MERGES its remote branch when both sides moved; a
+    // merge that conflicts left markers in the files, so the agent is told
+    // which ones — as Merge master does.
+    const conflicted = (result?.ok && result.body?.conflicted_repositories) || [];
+    let chatDelivered = false;
+    if (conflicted.length > 0) {
+      const branch = conflicted[0]?.branch || session.task_id;
+      const sent = await postChatMessage(
+        session.task_id, mergeConflictInstruction(conflicted, `origin/${branch}`),
+      );
+      chatDelivered = !!(sent && sent.ok);
+    }
+    toastResult(formatPullResult(result, { chatDelivered }));
   }
 
   // One derivation drives BOTH the dot and the chip — the same value the tab

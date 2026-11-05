@@ -1124,5 +1124,92 @@ class WorkspaceHasTaskChangesDefensiveBranchTests(unittest.TestCase):
             )
 
 
+class DivergedPullMergeTests(unittest.TestCase):
+    """A plan's main task, on real git: its sub-tasks merge into its branch on
+    the remote while its clone gains commits of its own ("Merge master"), so
+    the two sides split and a fast-forward can never bring the plan's work in.
+    Pull merges them — and only when asked (``merge_when_diverged``)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        tmp = Path(self._tmp.name)
+        self.seed = tmp / 'seed'
+        self.seed.mkdir()
+        _git(self.seed, 'init', '-q')
+        _git(self.seed, 'config', 'user.email', 't@example.com')
+        _git(self.seed, 'config', 'user.name', 'Test')
+        _git(self.seed, 'checkout', '-q', '-b', 'main')
+        self._commit(self.seed, 'shared.txt', 'base\n', 'base')
+        _git(self.seed, 'checkout', '-q', '-b', 'UNA-1')
+        origin = tmp / 'origin.git'
+        _git(self.seed, 'clone', '-q', '--bare', str(self.seed), str(origin))
+        _git(self.seed, 'remote', 'add', 'origin', str(origin))
+        self.clone = tmp / 'clone'
+        _git(tmp, 'clone', '-q', '-b', 'UNA-1', str(origin), str(self.clone))
+        _git(self.clone, 'config', 'user.email', 't@example.com')
+        _git(self.clone, 'config', 'user.name', 'Test')
+        self.repo = SimpleNamespace(id='client', local_path=str(self.clone),
+                                    destination_branch='main')
+        self.service = _make_service()
+
+    @staticmethod
+    def _commit(where: Path, name: str, text: str, message: str) -> None:
+        (where / name).write_text(text, encoding='utf-8')
+        _git(where, 'add', '-A')
+        _git(where, 'commit', '-q', '-m', message)
+
+    def _sub_task_merged_on_the_remote(self, name='step.txt', text='from a sub-task\n') -> None:
+        self._commit(self.seed, name, text, 'Merged in UNA-2 (pull request #1)')
+        _git(self.seed, 'push', '-q', 'origin', 'UNA-1')
+
+    def _merge_in_progress(self) -> bool:
+        return (self.clone / '.git' / 'MERGE_HEAD').exists()
+
+    def test_a_branch_moved_on_both_sides_is_merged(self) -> None:
+        self._commit(self.clone, 'mine.txt', 'local\n', 'merged master here')
+        self._sub_task_merged_on_the_remote()
+
+        out = self.service.pull_workspace_clone(self.repo, 'UNA-1', merge_when_diverged=True)
+
+        self.assertEqual(out, {'pulled': True, 'updated': True, 'commits_pulled': 1, 'merged': True})
+        self.assertTrue((self.clone / 'step.txt').exists(), "the sub-task's work never arrived")
+        self.assertTrue((self.clone / 'mine.txt').exists(), 'the clone lost its own commit')
+        self.assertFalse(self._merge_in_progress())
+
+    def test_without_the_merge_it_is_refused_and_the_clone_is_untouched(self) -> None:
+        self._commit(self.clone, 'mine.txt', 'local\n', 'merged master here')
+        self._sub_task_merged_on_the_remote()
+
+        out = self.service.pull_workspace_clone(self.repo, 'UNA-1')
+
+        self.assertFalse(out['pulled'])
+        self.assertEqual(out['reason'], 'diverged')
+        self.assertFalse((self.clone / 'step.txt').exists())
+
+    def test_a_conflict_the_operator_pulled_is_left_for_the_agent(self) -> None:
+        self._commit(self.clone, 'shared.txt', 'LOCAL\n', 'local edit')
+        self._sub_task_merged_on_the_remote('shared.txt', 'REMOTE\n')
+
+        out = self.service.pull_workspace_clone(self.repo, 'UNA-1', merge_when_diverged=True)
+
+        self.assertEqual(out, {'pulled': False, 'conflicts': True, 'conflicted_files': ['shared.txt']})
+        self.assertTrue(self._merge_in_progress())
+        self.assertIn('<<<<<<<', (self.clone / 'shared.txt').read_text(encoding='utf-8'))
+
+    def test_a_conflict_nobody_asked_for_is_undone(self) -> None:
+        self._commit(self.clone, 'shared.txt', 'LOCAL\n', 'local edit')
+        self._sub_task_merged_on_the_remote('shared.txt', 'REMOTE\n')
+
+        out = self.service.pull_workspace_clone(
+            self.repo, 'UNA-1', merge_when_diverged=True, keep_conflicts=False,
+        )
+
+        self.assertFalse(out['pulled'])
+        self.assertEqual(out['reason'], 'merge_conflicts')
+        self.assertFalse(self._merge_in_progress(), 'a half-done merge was left behind')
+        self.assertEqual((self.clone / 'shared.txt').read_text(encoding='utf-8').strip(), 'LOCAL')
+
+
 if __name__ == '__main__':
     unittest.main()

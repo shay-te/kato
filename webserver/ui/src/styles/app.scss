@@ -899,7 +899,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   flex-shrink: 0;
   align-items: center;
   gap: $SPACE-4;
-  color: $C-NEUTRAL-64;
+  /* The parent tab's own violet (``.has-open-subtask``): row and parent
+   * read as one family. */
+  color: $C-INDIGO-76;
   font-size: $TEXT-11;
   white-space: nowrap;
 }
@@ -910,13 +912,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   display: none;
 }
 
-/* The main task whose sub-task is open: its family's row is showing, so it
- * reads as part of the selection, a step below the open tab itself. */
-.tabs-pane-top .tab.has-open-subtask {
-  background: $C-CYAN-52-A18;
-  border-color: $C-CYAN-52-A55;
-  color: $C-NEUTRAL-96;
-}
 
 /* Children of a tab lay out as inline boxes now that the tab is not a flex
  * container — vertical-align replaces align-items, margins replace gap. */
@@ -1356,6 +1351,18 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: linear-gradient(180deg, $C-CYAN-52 0%, $C-CYAN-47 100%);
   border-color: $C-CYAN-58;
   box-shadow: $SHADOW-20;
+}
+
+/* The main task of the sub-task that is open (its family's row shows under
+ * the strip): violet, never the selected tab's cyan, so "which task is open"
+ * and "whose sub-task it is" are told apart at a glance. After the pinned
+ * rules on purpose — a pinned parent's dark fill hid an earlier, fainter
+ * cyan mark entirely. ``needs-attention`` (orange, below) still wins. */
+.tabs-pane-top .tab.has-open-subtask,
+.tabs-pane-top .tab.is-pinned.has-open-subtask {
+  background: $C-INDIGO-76-A55;
+  border-color: $C-INDIGO-76;
+  color: $C-NEUTRAL-96;
 }
 
 /* Drag-to-reorder feedback, matching the file-tab strip's. */

@@ -2625,6 +2625,90 @@ class PullWorkspaceCloneTests(unittest.TestCase):
             result = svc.pull_workspace_clone(repository, 'feat/task')
         self.assertEqual(result['reason'], 'branch_lookup_failed')
 
+    # A branch that moved on BOTH sides (a plan's main task after "Merge
+    # master", while its sub-tasks merged into it on the remote).
+
+    def _diverged(self, tmp, **pull_kwargs):
+        (Path(tmp) / '.git').mkdir()
+        svc = self._service_with_stubs()
+        svc._left_right_commit_counts.return_value = (6, 9)
+        svc._run_git_subprocess = Mock(return_value=types.SimpleNamespace(
+            returncode=0, stdout='', stderr='',
+        ))
+        svc._unmerged_paths = Mock(return_value=[])
+        repository = types.SimpleNamespace(id='c', local_path=tmp)
+        return svc, svc.pull_workspace_clone(repository, 'feat/task', **pull_kwargs)
+
+    def test_diverged_is_reported_and_nothing_is_run_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc, result = self._diverged(tmp)
+        self.assertFalse(result['pulled'])
+        self.assertEqual(result['reason'], 'diverged')
+        self.assertIn('6 commit(s) here', result['detail'])
+        self.assertIn('9 on origin', result['detail'])
+        svc._run_git_subprocess.assert_not_called()
+        self.assertEqual(svc._run_git.call_count, 1)  # the fetch, never a pull
+
+    def test_diverged_merges_origin_in_when_asked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            svc, result = self._diverged(tmp, merge_when_diverged=True)
+        self.assertEqual(result, {
+            'pulled': True, 'updated': True, 'commits_pulled': 9, 'merged': True,
+        })
+        svc._run_git_subprocess.assert_called_once_with(
+            tmp, ['merge', '--no-edit', 'origin/feat/task'], unittest.mock.ANY,
+        )
+
+    def test_diverged_merge_conflicts_are_left_for_the_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (1, 2)
+            svc._run_git_subprocess = Mock(return_value=types.SimpleNamespace(
+                returncode=1, stdout='', stderr='CONFLICT',
+            ))
+            svc._unmerged_paths = Mock(return_value=['a.py'])
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task', merge_when_diverged=True)
+        self.assertEqual(result, {'pulled': False, 'conflicts': True, 'conflicted_files': ['a.py']})
+        self.assertEqual(svc._run_git_subprocess.call_count, 1)  # no --abort
+
+    def test_diverged_merge_conflicts_are_undone_when_nobody_asked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (1, 2)
+            svc._run_git_subprocess = Mock(return_value=types.SimpleNamespace(
+                returncode=1, stdout='', stderr='CONFLICT',
+            ))
+            svc._unmerged_paths = Mock(return_value=['a.py'])
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(
+                repository, 'feat/task', merge_when_diverged=True, keep_conflicts=False,
+            )
+        self.assertFalse(result['pulled'])
+        self.assertEqual(result['reason'], 'merge_conflicts')
+        self.assertIn('a.py', result['detail'])
+        self.assertEqual(
+            svc._run_git_subprocess.call_args_list[-1].args[1], ['merge', '--abort'],
+        )
+
+    def test_diverged_merge_failure_is_aborted_and_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / '.git').mkdir()
+            svc = self._service_with_stubs()
+            svc._left_right_commit_counts.return_value = (1, 2)
+            svc._run_git_subprocess = Mock(return_value=types.SimpleNamespace(
+                returncode=128, stdout='', stderr='fatal: refusing',
+            ))
+            svc._unmerged_paths = Mock(return_value=[])
+            repository = types.SimpleNamespace(id='c', local_path=tmp)
+            result = svc.pull_workspace_clone(repository, 'feat/task', merge_when_diverged=True)
+        self.assertEqual(result, {'pulled': False, 'reason': 'merge_failed', 'detail': 'fatal: refusing'})
+        self.assertEqual(
+            svc._run_git_subprocess.call_args_list[-1].args[1], ['merge', '--abort'],
+        )
+
 
 class UpdateSourceToTaskBranchTests(unittest.TestCase):
     """``update_source_to_task_branch`` is the 'Update source' button path.

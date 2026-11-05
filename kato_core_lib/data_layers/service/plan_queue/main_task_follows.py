@@ -4,8 +4,11 @@ task's own clones pull it, so its Changes show the plan's work as it lands.
 The main task's clones are never pushed to by the plan — its sub-tasks' pull
 requests merge into its branch on the remote — so without this they sat on the
 commit they were cloned at and every repository said "Nothing changed yet".
-The pull is the header's Pull button (``publish.pull_task``): fast-forward only,
-a clone with work of its own or a dirty tree is left alone and said so.
+The pull is the header's Pull button (``publish.pull_task``): a fast-forward,
+or — the main task's clone has commits of its own, e.g. a ``Merge master`` —
+a merge of its remote branch. Nobody pressed this one, so it is asked with
+``keep_conflicts=False``: a merge that conflicts is undone and said so, and a
+dirty tree is left alone.
 """
 
 from __future__ import annotations

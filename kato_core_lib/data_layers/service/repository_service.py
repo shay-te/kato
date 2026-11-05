@@ -1404,9 +1404,12 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         self,
         repository,
         branch_name: str,
+        *,
+        merge_when_diverged: bool = False,
+        keep_conflicts: bool = True,
     ) -> dict[str, object]:
-        """Fast-forward the per-task workspace clone of ``repository`` to
-        ``origin/<branch_name>``.
+        """Bring ``origin/<branch_name>`` into the per-task workspace clone
+        of ``repository``: a fast-forward, or — when asked — a merge.
 
         Operator-driven. Drives the planning UI's ``Pull`` button —
         symmetric to ``Push``. Refuses cleanly (does NOT auto-stash)
@@ -1416,8 +1419,22 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         is the place where we DO auto-stash, because it's targeting
         the operator's own checkout, not kato's working clone.
 
+        A branch that moved on BOTH sides (commits here origin lacks, and
+        commits on origin this clone lacks) cannot fast-forward. By default
+        that is reported as ``diverged``. With ``merge_when_diverged`` —
+        the task a plan was split from, whose remote branch is where every
+        sub-task's pull request merges — origin's branch is merged in
+        instead, exactly as ``Merge master`` merges the default branch:
+        never a rebase (it would rewrite commits already shared and need a
+        force push onto the branch the sub-tasks merge into), and nothing
+        is pushed. On a conflict the markers are left for the agent to
+        resolve (``keep_conflicts``), or the merge is aborted and the clone
+        left as it was (``keep_conflicts=False``: a pull nobody pressed).
+
         Returns a status dict with one of:
             {'pulled': True,  'updated': bool, 'commits_pulled': int}
+                (+ 'merged': True when origin's branch was merged in)
+            {'pulled': False, 'conflicts': True, 'conflicted_files': [...]}
             {'pulled': False, 'reason': '<short>', 'detail': '<long>'}
         """
         local_path = str(getattr(repository, 'local_path', '') or '').strip()
@@ -1495,7 +1512,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'reason': 'remote_branch_missing',
             }
         try:
-            _ahead, behind = self._left_right_commit_counts(
+            ahead, behind = self._left_right_commit_counts(
                 local_path, normalized_branch, remote_reference,
             )
         except Exception as exc:
@@ -1505,6 +1522,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             }
         if behind == 0:
             return {'pulled': True, 'updated': False, 'commits_pulled': 0}
+        if ahead > 0:
+            return self._pull_diverged_clone(
+                repository, local_path, remote_reference, int(ahead), int(behind),
+                merge=merge_when_diverged, keep_conflicts=keep_conflicts,
+            )
         try:
             self._run_git(
                 local_path,
@@ -1515,6 +1537,97 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         except RuntimeError as exc:
             return {'pulled': False, 'reason': 'pull_failed', 'detail': str(exc)}
         return {'pulled': True, 'updated': True, 'commits_pulled': int(behind)}
+
+    def _pull_diverged_clone(
+        self,
+        repository,
+        local_path: str,
+        remote_reference: str,
+        ahead: int,
+        behind: int,
+        *,
+        merge: bool,
+        keep_conflicts: bool,
+    ) -> dict[str, object]:
+        """``pull_workspace_clone`` for a branch that moved on both sides."""
+        if not merge:
+            return {
+                'pulled': False, 'reason': 'diverged',
+                'detail': (
+                    f'the task branch and {remote_reference} have both moved '
+                    f'({ahead} commit(s) here are not on origin, {behind} on '
+                    f'origin are not here), and Pull only fast-forwards: merge '
+                    f'{remote_reference} into the task branch, then push'
+                ),
+            }
+        merged = self._merge_into_clone(
+            repository, local_path, remote_reference,
+            keep_conflicts=keep_conflicts,
+        )
+        if merged.get('merged'):
+            return {
+                'pulled': True, 'updated': True, 'commits_pulled': behind,
+                'merged': True,
+            }
+        conflicted = merged.get('conflicts') or []
+        if conflicted and keep_conflicts:
+            return {
+                'pulled': False, 'conflicts': True,
+                'conflicted_files': conflicted,
+            }
+        if conflicted:
+            return {
+                'pulled': False, 'reason': 'merge_conflicts',
+                'detail': (
+                    f'merging {remote_reference} conflicts in '
+                    f'{", ".join(conflicted)}; the clone was left as it was — '
+                    f'press Pull to merge it and resolve them'
+                ),
+            }
+        return {'pulled': False, 'reason': 'merge_failed', 'detail': merged['error']}
+
+    def _merge_into_clone(
+        self,
+        repository,
+        local_path: str,
+        remote_reference: str,
+        *,
+        keep_conflicts: bool = True,
+    ) -> dict[str, object]:
+        """``git merge --no-edit <remote_reference>`` in a workspace clone.
+
+        The ONE merge behind ``Merge master`` and a diverged ``Pull``.
+        Returns ``{'merged': True}``, ``{'conflicts': [paths]}`` (markers and
+        ``MERGE_HEAD`` left in place when ``keep_conflicts``, else aborted),
+        or ``{'error': detail}`` (aborted, the tree left clean).
+        """
+        # ``_run_git_subprocess`` (not ``_run_git``) — a merge
+        # conflict is a non-zero exit we EXPECT and want to handle,
+        # not raise on.
+        merge_result = self._run_git_subprocess(
+            local_path,
+            ['merge', '--no-edit', remote_reference],
+            repository,
+        )
+        if merge_result.returncode == 0:
+            return {'merged': True}
+        conflicted = self._unmerged_paths(local_path)
+        if conflicted and keep_conflicts:
+            # Leave the conflict markers + MERGE_HEAD in place — the
+            # agent resolves them by editing files; kato's normal
+            # commit/push finalises the merge.
+            return {'conflicts': conflicted}
+        # A conflict nobody is there to resolve, or a non-zero exit with no
+        # unmerged paths (git refusing for another reason): abort so the
+        # tree is left clean rather than half-merged.
+        self._run_git_subprocess(local_path, ['merge', '--abort'], repository)
+        if conflicted:
+            return {'conflicts': conflicted}
+        return {'error': (
+            merge_result.stderr.strip()
+            or merge_result.stdout.strip()
+            or 'git merge failed'
+        )}
 
     def _merge_preflight(
         self,
@@ -1802,41 +1915,21 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 'default_branch': default_branch,
                 'wip_committed': wip_committed,
             }
-        # ``_run_git_subprocess`` (not ``_run_git``) — a merge
-        # conflict is a non-zero exit we EXPECT and want to handle,
-        # not raise on.
-        merge_result = self._run_git_subprocess(
-            local_path,
-            ['merge', '--no-edit', remote_reference],
-            repository,
-        )
-        if merge_result.returncode == 0:
+        merged = self._merge_into_clone(repository, local_path, remote_reference)
+        if merged.get('merged'):
             return {
                 'merged': True, 'updated': True,
                 'commits_merged': int(behind),
                 'default_branch': default_branch,
                 'wip_committed': wip_committed,
             }
-        conflicted = self._unmerged_paths(local_path)
-        if conflicted:
-            # Leave the conflict markers + MERGE_HEAD in place — the
-            # agent resolves them by editing files; kato's normal
-            # commit/push finalises the merge.
+        if merged.get('conflicts'):
             return {
                 'merged': False, 'conflicts': True,
                 'default_branch': default_branch,
-                'conflicted_files': conflicted,
+                'conflicted_files': merged['conflicts'],
             }
-        # Non-zero exit but no unmerged paths → some other merge
-        # failure (e.g. refusing for an unrelated reason). Abort so
-        # the tree is left clean rather than half-merged.
-        self._run_git_subprocess(local_path, ['merge', '--abort'], repository)
-        detail = (
-            merge_result.stderr.strip()
-            or merge_result.stdout.strip()
-            or 'git merge failed'
-        )
-        return {'merged': False, 'reason': 'merge_failed', 'detail': detail}
+        return {'merged': False, 'reason': 'merge_failed', 'detail': merged['error']}
 
     def _unmerged_paths(self, local_path: str) -> list[str]:
         """Repo-relative paths with conflict (unmerged) index entries."""
