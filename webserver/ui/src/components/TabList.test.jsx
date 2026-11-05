@@ -871,7 +871,8 @@ describe('TabList empty state tells the three cases apart', () => {
 });
 
 
-// A split plan opens a tab per sub-task; they fold into the main task's tab.
+// A split plan opens a tab per sub-task; they fold into the main task's tab,
+// and selecting that family opens a second row of sub-task tabs under the strip.
 describe('TabList — sub-tasks fold into their main task', () => {
   const SESSIONS = [
     _session('UNA-1'),
@@ -879,48 +880,64 @@ describe('TabList — sub-tasks fold into their main task', () => {
     _session('UNA-7', { task_summary: 'Subtask of UNA-1: The page' }),
     _session('B-2'),
   ];
-  const stripIds = (container) => [...container.querySelectorAll('li.tab')].map((li) => li.dataset.taskId);
+  const tabIds = (root) => [...root.querySelectorAll('li.tab')].map((li) => li.dataset.taskId);
+  const stripIds = (container) => tabIds(container.querySelector('#tab-list'));
+  const subtaskRow = () => screen.queryByRole('group', { name: /^Sub-tasks of/ });
 
   test('the strip shows the main task with a count; the sub-tasks leave it', () => {
     const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
     expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
-    expect(screen.getByRole('button', { name: '2 sub-tasks of UNA-1' })).toHaveTextContent('2');
+    expect(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' })).toHaveTextContent('2');
+    expect(subtaskRow()).toBeNull();  // another task is open: no second row
   });
 
-  test('the count lists the sub-tasks and opens the one picked — not the main task', () => {
+  test('the count is not a control: clicking it selects the main task', () => {
     const onSelect = vi.fn();
     render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={onSelect} />);
-    fireEvent.click(screen.getByRole('button', { name: '2 sub-tasks of UNA-1' }));
-    expect(onSelect).not.toHaveBeenCalled();  // the count is not a click on the tab
-    const menu = screen.getByRole('menu', { name: 'Sub-tasks of UNA-1' });
-    const items = [...menu.querySelectorAll('[role="menuitem"]')];
-    expect(items.map((item) => item.textContent)).toEqual([
-      'LOCAL-4UNA-1 · Task 1: The endpoint', 'UNA-7The page',
-    ]);
-    fireEvent.click(items[1]);
-    expect(onSelect).toHaveBeenCalledWith('UNA-7');
-    expect(screen.queryByRole('menu')).toBeNull();  // closed once picked
+    expect(screen.queryByRole('button', { name: /sub-tasks? of/ })).toBeNull();
+    expect(screen.queryByRole('menu')).toBeNull();
+    fireEvent.click(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' }));
+    expect(onSelect).toHaveBeenCalledWith('UNA-1');
   });
 
-  test('Escape and a click outside close the list', () => {
-    render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
-    const count = screen.getByRole('button', { name: '2 sub-tasks of UNA-1' });
-    fireEvent.click(count);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.click(count);
-    fireEvent.click(document.querySelector('.anchored-menu-backdrop'));
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  test('the open sub-task shows right after its main task, and Tab walks that order', () => {
+  test('the main task selected: its sub-tasks show as tabs in the second row', () => {
+    const onSelect = vi.fn();
     const onVisibleOrderChange = vi.fn();
     const { container } = render(
-      <TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}}
+      <TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={onSelect}
         onVisibleOrderChange={onVisibleOrderChange} />,
     );
-    expect(stripIds(container)).toEqual(['UNA-1', 'UNA-7', 'B-2']);
-    expect(onVisibleOrderChange).toHaveBeenLastCalledWith(['UNA-1', 'UNA-7', 'B-2']);
+    const row = screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
+    expect(tabIds(row)).toEqual(['LOCAL-4', 'UNA-7']);
+    expect(row).toHaveTextContent('The page');  // named without "Subtask of UNA-1:"
+    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
+    expect(container.querySelector('#tabs-pane')).toHaveClass('has-subtask-strip');
+    // Tab walks the eye's order: the second row right after its main task.
+    expect(onVisibleOrderChange).toHaveBeenLastCalledWith(['UNA-1', 'LOCAL-4', 'UNA-7', 'B-2']);
+    fireEvent.click(row.querySelector('li[data-task-id="UNA-7"]'));
+    expect(onSelect).toHaveBeenCalledWith('UNA-7');
+  });
+
+  test('a sub-task selected: it is the active tab of the second row, and its main task is marked', () => {
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}} />);
+    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);  // never beside its main task any more
+    const row = screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
+    expect(row.querySelector('li[data-task-id="UNA-7"]')).toHaveClass('active');
+    const main = container.querySelector('#tab-list li[data-task-id="UNA-1"]');
+    expect(main).toHaveClass('has-open-subtask');
+    expect(main).not.toHaveClass('active');
+  });
+
+  test('a pinned sub-task keeps its place in the strip and is not drawn twice', () => {
+    window.localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(['UNA-7']));
+    try {
+      const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={() => {}} />);
+      expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
+      expect(tabIds(subtaskRow())).toEqual(['LOCAL-4']);
+      expect(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' })).toBeInTheDocument();
+    } finally {
+      window.localStorage.removeItem(PINNED_TABS_STORAGE_KEY);
+    }
   });
 
   test('a sub-task waiting for you colours the count', () => {
@@ -928,16 +945,16 @@ describe('TabList — sub-tasks fold into their main task', () => {
       <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}}
         attentionTaskIds={new Set(['LOCAL-4'])} />,
     );
-    const count = screen.getByRole('button', { name: '2 sub-tasks of UNA-1' });
+    const count = screen.getByRole('img', { name: '2 sub-tasks of UNA-1 — one is waiting for you' });
     expect(count).toHaveClass('needs-attention');
-    expect(count.title).toMatch(/one is waiting for you/);
   });
 
   test('a sub-task whose main task has no tab keeps its own', () => {
     const { container } = render(
-      <TabList sessions={SESSIONS.slice(1)} activeTaskId="B-2" onSelect={() => {}} />,
+      <TabList sessions={SESSIONS.slice(1)} activeTaskId="UNA-7" onSelect={() => {}} />,
     );
     expect(stripIds(container)).toEqual(['LOCAL-4', 'UNA-7', 'B-2']);
-    expect(screen.queryByRole('button', { name: /sub-tasks? of/ })).toBeNull();
+    expect(screen.queryByRole('img', { name: /sub-tasks? of/ })).toBeNull();
+    expect(subtaskRow()).toBeNull();
   });
 });

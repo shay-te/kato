@@ -2,8 +2,8 @@ import {
   useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
+import { cx } from '../utils/cx.js';
 import { foldSubtaskTabs } from '../utils/subtaskTabs.js';
-import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
@@ -151,29 +151,24 @@ export default function TabList({
     () => orderByPinned(sessions, pinnedIds, tabOrder),
     [sessions, pinnedIds, tabOrder],
   );
-  // A split plan's sub-tasks fold into their main task's tab (the open one
-  // shows beside it; a pinned one keeps its place) — see utils/subtaskTabs.js.
-  const { visible: visibleSessions, subtasksOf } = useMemo(
+  // A split plan's sub-tasks fold into their main task's tab (a pinned one
+  // keeps its place); selecting the main task or one of them opens the second
+  // row of sub-task tabs under the strip — see utils/subtaskTabs.js.
+  const {
+    visible: visibleSessions, subtasksOf, openFamily, strip: subtaskStrip, order: tabCycleOrder,
+  } = useMemo(
     () => foldSubtaskTabs(orderedSessions, {
       activeTaskId, keep: (session) => pinnedIds.includes(session.task_id),
     }),
     [orderedSessions, activeTaskId, pinnedIds],
   );
-  // What each main task's sub-task menu shows: status inputs + the name.
-  const subtaskEntries = useMemo(() => {
-    const entries = new Map();
-    for (const [parentId, children] of subtasksOf) {
-      entries.set(parentId, children.map((child) => ({
-        session: child,
-        liveStatus: agentStatuses[child.task_id] || null,
-        needsAttention: !!attentionTaskIds && attentionTaskIds.has(child.task_id),
-        name: withoutSubtaskPrefix(tabNameFor(tabNames, child.task_id, child.task_summary)),
-      })));
-    }
-    return entries;
-  }, [subtasksOf, agentStatuses, attentionTaskIds, tabNames]);
+  // Whether any of a main task's sub-tasks is waiting for you (its count
+  // turns orange, even with the row closed).
+  const subtasksAsking = (taskId) => !!attentionTaskIds
+    && (subtasksOf.get(taskId) || []).some((child) => attentionTaskIds.has(child.task_id));
 
-  // The strip's VISIBLE order, reported upward.
+  // The strip's VISIBLE order, reported upward — the second row included,
+  // right after its main task (``tabCycleOrder``).
   //
   // Tab / Shift+Tab cycles tasks from App, which only had the raw
   // ``sessions`` array — so after a drag the keyboard still walked the
@@ -185,7 +180,7 @@ export default function TabList({
   // order are THIS component's state, and a second copy of the sort would
   // be a second thing to keep in step. Keyed on the joined ids so the
   // effect fires only when the order genuinely changes.
-  const visibleOrderKey = visibleSessions.map((s) => s.task_id).join('\n');
+  const visibleOrderKey = tabCycleOrder.map((s) => s.task_id).join('\n');
   useEffect(() => {
     if (typeof onVisibleOrderChange === 'function') {
       onVisibleOrderChange(visibleOrderKey ? visibleOrderKey.split('\n') : []);
@@ -294,6 +289,8 @@ export default function TabList({
   // on the very first render, which a plain useEffect would miss). The
   // scroll/resize tracking rides the same callback ref via onAttach.
   const wheelRef = useHorizontalWheelScroll(scrollRef, attachScrollTracking);
+  // The second row (sub-tasks) scrolls the same way, with no chevrons.
+  const subtaskWheelRef = useHorizontalWheelScroll();
 
   // No auto-scroll-into-view on tab selection: the operator's own
   // scroll position is intentional and must not be fought. With many
@@ -378,12 +375,16 @@ export default function TabList({
     };
   }
 
+  const inSubtaskRow = new Set(subtaskStrip.map((s) => s.task_id));
   const draggedSession = drag.id
     ? orderedSessions.find((s) => s.task_id === drag.id) || null
     : null;
 
-  const tabs = visibleSessions.map((session) => {
+  // One tab, in either row. The second row's tabs are full tabs (rename, pin,
+  // forget, drag among themselves): pinning one moves it up to the strip.
+  const renderTab = (session) => {
     const isActive = session.task_id === activeTaskId;
+    const subtaskCount = (subtasksOf.get(session.task_id) || []).length;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
     const liveStatus = agentStatuses[session.task_id] || null;
     return (
@@ -399,10 +400,14 @@ export default function TabList({
         onTogglePin={handleTogglePin}
         displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
         onRename={handleRename}
-        subtasks={subtaskEntries.get(session.task_id) || null}
+        subtaskCount={subtaskCount}
+        subtasksAsking={subtaskCount ? subtasksAsking(session.task_id) : false}
+        subtaskOpen={session.task_id === openFamily && !isActive}
         dragging={drag.id === session.task_id}
         dropTarget={drag.over === session.task_id && drag.id !== session.task_id}
-        canDrop={canDropOn(
+        // Among its own row only: a sub-task dropped among the main tasks
+        // (or the reverse) would move somewhere the eye cannot follow.
+        canDrop={inSubtaskRow.has(drag.id) === inSubtaskRow.has(session.task_id) && canDropOn(
           draggedSession, session,
           (s) => pinnedSet.has(s.task_id),
         )}
@@ -413,7 +418,8 @@ export default function TabList({
         onDrop={handleDrop}
       />
     );
-  });
+  };
+  const tabs = visibleSessions.map(renderTab);
 
   // NOTE: pinned tabs used to be ``position: sticky``, held against the left
   // edge while the rest of the strip scrolled underneath, with a layout
@@ -572,7 +578,7 @@ export default function TabList({
     );
   }
   return (
-    <nav id="tabs-pane" className="tabs-pane-top">
+    <nav id="tabs-pane" className={cx('tabs-pane-top', subtaskStrip.length && 'has-subtask-strip')}>
       <button
         type="button"
         className="tabs-nav-button tabs-nav-prev"
@@ -601,6 +607,22 @@ export default function TabList({
         <Icon name="chevron-right" />
       </button>
       {trailingActions}
+      {subtaskStrip.length ? (
+        // The open task's family, as a second row of tabs. Inside the nav (a
+        // full-width flex line) rather than a grid row of its own, so the
+        // layout's rows and the task header below stay where they are.
+        <div className="subtask-strip" role="group" aria-label={`Sub-tasks of ${openFamily}`}>
+          <span className="subtask-strip-label" title={`Sub-tasks of ${openFamily}`}>
+            <Icon name="subtask" />
+            {openFamily}
+          </span>
+          <div className="tabs-scroller" ref={subtaskWheelRef}>
+            <ul className="subtask-strip-list">
+              {subtaskStrip.map(renderTab)}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </nav>
   );
 }

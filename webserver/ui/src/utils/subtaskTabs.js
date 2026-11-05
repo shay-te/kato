@@ -2,10 +2,12 @@ import { subtaskParent } from '../components/planQueue/subtaskLabel.js';
 
 // A split plan can open a dozen sub-task tabs at once, which buried the strip.
 // So each sub-task folds into its MAIN task's tab: the strip shows the main
-// task with a small count, and the count opens the list of its sub-tasks.
-// The sub-task you have open is the exception: it shows right after its main
-// task, so you can always see where you are. A sub-task whose main task has
-// no tab here (another kato's plan, or a main task deleted) keeps its own.
+// task with a small count. Selecting the main task, or one of its sub-tasks,
+// opens a second row under the strip with that task's sub-tasks as tabs — the
+// way to move between them. (It was a menu on the count; the main tab's hover
+// card covered it, and a menu is one click more per switch.) A pinned sub-task
+// keeps its own place in the strip. A sub-task whose main task has no tab here
+// (another kato's plan, or a main task deleted) keeps its own too.
 
 const key = (taskId) => String(taskId || '').trim().toLowerCase();
 
@@ -16,34 +18,41 @@ export function parentOfTab(session) {
   return String(session?.plan_parent || subtaskParent(session?.task_summary) || '').trim();
 }
 
-// ``{ visible, subtasksOf }`` for the strip. ``visible``: the tabs to draw,
-// in ``sessions``' order, each folded sub-task left out (the open one placed
-// right after its main task). ``subtasksOf``: main task id -> its sub-task
-// sessions, in order. ``keep(session)``: a sub-task never folded (one the
-// operator pinned).
+// ``{ visible, subtasksOf, openFamily, strip, order }`` for the strip.
+//   visible     the tabs of the top row, in ``sessions``' order, each folded
+//               sub-task left out.
+//   subtasksOf  main task id -> ALL its sub-task sessions, in order (the count).
+//   openFamily  the main task whose sub-tasks show in the second row: the
+//               active task when it is a main task, else the active sub-task's
+//               main task. '' = no second row.
+//   strip       that row's tabs: openFamily's folded sub-tasks (a pinned one is
+//               in the top row already, so it is not drawn twice).
+//   order       what Tab / Shift+Tab walks: the top row with the second row
+//               right after its main task — the order the eye reads.
+// ``keep(session)``: a sub-task never folded (one the operator pinned).
 export function foldSubtaskTabs(sessions, { activeTaskId = '', keep = () => false } = {}) {
   const list = sessions || [];
   const byKey = new Map(list.map((session) => [key(session.task_id), session]));
   const subtasksOf = new Map();
+  const mainOf = new Map();
   const folded = new Set();
   for (const session of list) {
     const parent = mainTaskOf(session, byKey);
     if (!parent) { continue; }
     if (!subtasksOf.has(parent.task_id)) { subtasksOf.set(parent.task_id, []); }
     subtasksOf.get(parent.task_id).push(session);
-    if (!keep(session) && session.task_id !== activeTaskId) { folded.add(session.task_id); }
+    mainOf.set(session.task_id, parent.task_id);
+    if (!keep(session)) { folded.add(session.task_id); }
   }
-  const visible = [];
-  for (const session of list) {
-    if (folded.has(session.task_id)) { continue; }
-    if (session.task_id === activeTaskId && mainTaskOf(session, byKey) && !keep(session)) { continue; }
-    visible.push(session);
-    const open = (subtasksOf.get(session.task_id) || []).find(
-      (child) => child.task_id === activeTaskId && !keep(child),
-    );
-    if (open) { visible.push(open); }
-  }
-  return { visible, subtasksOf };
+  const visible = list.filter((session) => !folded.has(session.task_id));
+  const openFamily = subtasksOf.has(activeTaskId) ? activeTaskId : (mainOf.get(activeTaskId) || '');
+  const strip = openFamily
+    ? subtasksOf.get(openFamily).filter((session) => folded.has(session.task_id))
+    : [];
+  const order = visible.flatMap((session) => (
+    session.task_id === openFamily ? [session, ...strip] : [session]
+  ));
+  return { visible, subtasksOf, openFamily, strip, order };
 }
 
 // The top-most main task with a tab here: a sub-task of a sub-task folds into

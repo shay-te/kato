@@ -4,7 +4,6 @@ import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
 import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
 import { planStatusLine } from './planQueue/planQueueHelpers.js';
 import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
-import SubtaskTabMenu from './SubtaskTabMenu.jsx';
 import { parentOfTab } from '../utils/subtaskTabs.js';
 import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
@@ -88,9 +87,10 @@ function Tab({
   // not wire it — the strip is the only one that does.
   dragging = false, dropTarget = false, canDrop = false,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
-  // The sub-tasks folded into this main task's tab (null = none) — see
-  // utils/subtaskTabs.js.
-  subtasks = null,
+  // A main task's folded sub-tasks (utils/subtaskTabs.js): how many, whether
+  // one is waiting for you, and whether one of them is the task open now (its
+  // tab is in the second row then, and this one is marked as its family).
+  subtaskCount = 0, subtasksAsking = false, subtaskOpen = false,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
@@ -310,9 +310,12 @@ function Tab({
     // SEPARATE axis from the status dot (``dotClass``), which the single
     // agent-status derivation owns — this never touches that dot.
     isReviewLoopRunning(session.review_loop) && 'has-review-loop',
+    subtaskOpen && 'has-open-subtask',
   );
 
-  const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
+  const model = buildTooltipModel(session, baseStatus, needsAttention, agent, {
+    count: subtaskCount, asking: subtasksAsking,
+  });
 
   // Where the press that could become a drag started.
   //
@@ -426,8 +429,14 @@ function Tab({
         <span className={dotClass} />
         <ReviewLoopTabBadge loop={session.review_loop || null} />
         <PlanQueueTabBadge plan={session.plan_queue || null} />
-        {subtasks && subtasks.length ? (
-          <SubtaskTabMenu taskId={session.task_id} subtasks={subtasks} onSelect={onSelect} />
+        {subtaskCount ? (
+          // Not a button: a click here is a click on the tab, which opens
+          // the sub-tasks' row under the strip (and closes the hover card).
+          <span className={cx('tab-subtasks', subtasksAsking && 'needs-attention')} role="img"
+            aria-label={`${subtaskSentence(subtaskCount, session.task_id)}${subtasksAsking ? ' — one is waiting for you' : ''}`}>
+            <Icon name="subtask" />
+            {subtaskCount}
+          </span>
         ) : null}
         <span
           ref={labelRef}
@@ -554,7 +563,7 @@ function Tab({
 // Structured tooltip model — every fact the old ` · `-joined string
 // carried, now as discrete fields the card renders as a header +
 // labelled rows.
-function buildTooltipModel(session, baseStatus, needsAttention, agent) {
+function buildTooltipModel(session, baseStatus, needsAttention, agent, subtasks) {
   const taskId = String(session?.task_id || '').trim() || 'Task';
   const summary = String(session?.task_summary || '').trim();
   const rows = [];
@@ -607,6 +616,14 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   // The plan split from this task, while it runs (its own axis, like the loop).
   const planLine = planStatusLine(session?.plan_queue || null);
   if (planLine) { rows.push({ label: 'Split plan', value: planLine }); }
+  if (subtasks?.count) {
+    rows.push({
+      label: 'Sub-tasks',
+      value: `${subtasks.count} — shown in the row below the strip while this task or one of them is open`
+        + (subtasks.asking ? '. One is waiting for you.' : ''),
+      ...(subtasks.asking ? { tone: 'warn' } : {}),
+    });
+  }
   const pushedPr = String(
     session?.pr_url || session?.pull_request_url || '',
   ).trim();
@@ -621,6 +638,10 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   };
 }
 
+
+function subtaskSentence(count, taskId) {
+  return `${count} sub-task${count === 1 ? '' : 's'} of ${taskId}`;
+}
 
 // Compact Claude liveness badge for the hover card — now derived from the
 // shared agent status (utils/agentStatus.js) so the card, the tab dot, and the
