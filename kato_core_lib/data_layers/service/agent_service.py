@@ -490,6 +490,7 @@ class AgentService(MissionStepLoggerMixin, Service):
                 self._task_repository_service, 'reconcile_task_repositories',
             ),
             is_plan_source=call_later(self, '_is_plan_source'),
+            plan_parent_of=call_later(self._plan_step_source, 'source_of'),
             logger=later(self, 'logger'),
         )
 

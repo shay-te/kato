@@ -802,6 +802,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   padding-bottom: $SPACE-14;
 }
 
+/* A model picker's "Other" box, under its dropdown. */
+.settings-model-other { margin-top: $SPACE-6; }
+
 /* The empty strip's "Create your first task": the one thing a new user needs. */
 .tabs-empty-action {
   padding: $SPACE-2 $SPACE-10;

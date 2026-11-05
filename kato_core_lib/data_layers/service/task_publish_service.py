@@ -207,6 +207,7 @@ class TaskPublishService(object):
         update_workspace_status_after_publish=None,
         reconcile_task_repositories=None,
         is_plan_source=None,
+        plan_parent_of=None,
         logger=None,
     ) -> None:
         # Collaborators may arrive as the object itself or wrapped in
@@ -236,6 +237,9 @@ class TaskPublishService(object):
         # where the plan's sub-tasks merge, so its Pull merges a branch that
         # moved on both sides instead of refusing. None = no plans here.
         self._is_plan_source = is_plan_source or (lambda task_id: False)
+        # ``task_id -> main task id`` ('' = no plan's sub-task): the task a
+        # plan's sub-task was split from, whose branch gathers the plan's work.
+        self._plan_parent_of = plan_parent_of or (lambda task_id: '')
         self._logger_getter = provider_for(
             logger if logger is not None else configure_logger('TaskPublishService'),
         )
@@ -400,6 +404,11 @@ class TaskPublishService(object):
         2. For each repository the task touches, switch the operator's
            clone under ``REPOSITORY_ROOT_PATH`` to the task branch
            (see :meth:`_update_one_source_repository`).
+        3. A plan's sub-task: every other repository — one the sub-task did
+           not change, and one only its main task works in — goes to the MAIN
+           task's branch, where the plan's merged work is, so the sub-task can
+           be tested with the rest of the plan. It used to be skipped, and the
+           source stayed wherever it was (master, or another task's branch).
 
         Returns a per-repo summary the UI renders in the toast.
         """
@@ -429,22 +438,41 @@ class TaskPublishService(object):
         # update but they have something to clean up.
         warnings_per_repo: list[dict[str, object]] = []
         blocked_count = 0
+        main_branch = self._main_branch_of(normalized)
+        on_main_branch: list[str] = []
+        outcomes: list[tuple['_SourceRepoOutcome', bool]] = []
         for repository in repos:
             push_problem = push_problems.get(str(repository.id))
             if push_problem is not None:
-                outcome = _SourceRepoOutcome(
+                outcomes.append((_SourceRepoOutcome(
                     'failed', repository.id,
                     error=f'not updated, because its work did not reach the remote: {push_problem}',
-                )
-            else:
-                outcome = self._update_one_source_repository(
-                    normalized,
-                    repository,
-                    self._repository_service.build_branch_name(task_obj, repository),
-                )
+                ), False))
+                continue
+            outcome = self._update_one_source_repository(
+                normalized,
+                repository,
+                self._repository_service.build_branch_name(task_obj, repository),
+            )
+            if outcome.kind == 'skipped' and main_branch:
+                # Nothing of the sub-task's own here: the plan's work so far.
+                outcomes.append((self._switch_source(
+                    normalized, repository.id, main_branch, only_if_on_remote=True,
+                ), True))
+                continue
+            outcomes.append((outcome, False))
+        task_repository_ids = {str(repository.id).lower() for repository in repos}
+        for repository_id in self._main_task_repository_ids(normalized) if main_branch else []:
+            if repository_id.lower() not in task_repository_ids:
+                outcomes.append((self._switch_source(
+                    normalized, repository_id, main_branch, only_if_on_remote=True,
+                ), True))
+        for outcome, to_main_branch in outcomes:
             if outcome.warning is not None:
                 warnings_per_repo.append(outcome.warning)
-            if outcome.kind == 'updated':
+            if outcome.kind == 'updated' and to_main_branch:
+                on_main_branch.append(outcome.repository_id)
+            elif outcome.kind == 'updated':
                 updated_repositories.append(outcome.repository_id)
             elif outcome.kind == 'blocked':
                 blocked_count += 1
@@ -465,18 +493,42 @@ class TaskPublishService(object):
         # the frontend's classifyStatusEntry matches.
         self.logger.info(
             'Mission %s: source update finished (%d updated, %d skipped, %d failed)',
-            normalized, len(updated_repositories), len(skipped_repositories),
+            normalized, len(updated_repositories) + len(on_main_branch), len(skipped_repositories),
             len(failed_repositories) + blocked_count,
         )
         return {
-            'updated': bool(updated_repositories),
+            'updated': bool(updated_repositories or on_main_branch),
             'task_id': normalized,
             'pushed': push_result,
             'updated_repositories': updated_repositories,
+            # A sub-task's other repositories, now on its main task's branch.
+            'main_branch': main_branch,
+            'main_branch_repositories': on_main_branch,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,
             'warnings': warnings_per_repo,
         }
+
+    def _main_branch_of(self, task_id: str) -> str:
+        """The main task's branch when ``task_id`` is a plan's sub-task, else ''."""
+        try:
+            if not str(self._plan_parent_of(task_id) or '').strip():
+                return ''
+        except Exception:
+            self.logger.exception('could not tell whether task %s is a plan sub-task', task_id)
+            return ''
+        return str(self._repository_service.plan_merge_branch(task_id) or '').strip()
+
+    def _main_task_repository_ids(self, task_id: str) -> list[str]:
+        """The repositories ``task_id``'s main task works in, as this kato has
+        its workspace ([] when it has none here — another kato's plan)."""
+        try:
+            parent = str(self._plan_parent_of(task_id) or '').strip()
+            workspace = self._workspace_manager.get(parent) if parent and self._workspace_manager else None
+        except Exception:
+            self.logger.exception('could not read the main task of %s', task_id)
+            return []
+        return [str(rid) for rid in (getattr(workspace, 'repository_ids', None) or []) if str(rid).strip()]
 
     def _update_one_source_repository(
         self, task_id: str, repository, branch_name: str,
@@ -513,24 +565,46 @@ class TaskPublishService(object):
             return _SourceRepoOutcome(
                 'skipped', repository.id, reason='no changes in workspace clone',
             )
+        return self._switch_source(task_id, repository.id, branch_name)
+
+    def _switch_source(
+        self, task_id: str, repository_id: str, branch_name: str, *, only_if_on_remote: bool = False,
+    ) -> '_SourceRepoOutcome':
+        """Switch the operator's clone of ``repository_id`` to ``branch_name``.
+
+        ``only_if_on_remote``: a branch this run did not push (a plan's main
+        branch) — skipped, with why, when the remote does not have it.
+        """
         try:
-            source_repo = self._repository_service.get_repository(repository.id)
+            source_repo = self._repository_service.get_repository(repository_id)
         except ValueError as exc:
             # Failed, not skipped: there is work to bring over and kato could
             # not find where it goes. Reported as a skip this read "0 failed"
             # and a calm toast, on a source that was never updated.
             self.logger.warning(
                 'update-source for task %s failed for repository %s: %s',
-                task_id, repository.id, exc,
+                task_id, repository_id, exc,
             )
-            return _SourceRepoOutcome('failed', repository.id, error=str(exc))
+            return _SourceRepoOutcome('failed', repository_id, error=str(exc))
         source_path = str(getattr(source_repo, 'local_path', '') or '').strip()
         if not source_path:
             return _SourceRepoOutcome(
-                'failed', repository.id,
+                'failed', repository_id,
                 error='inventory entry has no local_path '
                       '(REPOSITORY_ROOT_PATH not configured?)',
             )
+        if only_if_on_remote:
+            try:
+                on_remote = self._repository_service.remote_has_branch(source_path, branch_name, source_repo)
+            except Exception as exc:
+                return _SourceRepoOutcome(
+                    'failed', repository_id, error=f'could not ask the remote about {branch_name}: {exc}',
+                )
+            if not on_remote:
+                return _SourceRepoOutcome(
+                    'skipped', repository_id,
+                    reason=f'{branch_name}, the main task\'s branch, is not on the remote yet',
+                )
         try:
             update_result = self._repository_service.update_source_to_task_branch(
                 source_repo, branch_name,
@@ -542,20 +616,20 @@ class TaskPublishService(object):
             # these are operator-state issues, not kato bugs.
             self.logger.warning(
                 'update-source for task %s failed for repository %s: %s',
-                task_id, repository.id, exc,
+                task_id, repository_id, exc,
             )
-            return _SourceRepoOutcome('failed', repository.id, error=str(exc))
+            return _SourceRepoOutcome('failed', repository_id, error=str(exc))
         except Exception as exc:
             self.logger.exception(
                 'update-source for task %s crashed in repository %s',
-                task_id, repository.id,
+                task_id, repository_id,
             )
-            return _SourceRepoOutcome('failed', repository.id, error=str(exc))
+            return _SourceRepoOutcome('failed', repository_id, error=str(exc))
         warning = text_from_mapping(update_result, 'warning')
         warning_detail = None
         if warning:
             warning_detail = {
-                'repository_id': repository.id,
+                'repository_id': repository_id,
                 'warning': warning,
                 # ``blocked`` means git refused and NOTHING was changed — the
                 # operator has to look. The UI marks it with ⚠ rather than a
@@ -566,15 +640,15 @@ class TaskPublishService(object):
             if warning_detail['blocked']:
                 self.logger.warning(
                     'update-source for task %s: %s was not updated: %s',
-                    task_id, repository.id, warning,
+                    task_id, repository_id, warning,
                 )
-                return _SourceRepoOutcome('blocked', repository.id, warning=warning_detail)
+                return _SourceRepoOutcome('blocked', repository_id, warning=warning_detail)
         self.logger.info(
             'update-source for task %s: %s @ %s now on %s%s',
-            task_id, repository.id, source_path, branch_name,
+            task_id, repository_id, source_path, branch_name,
             f' ({warning})' if warning else '',
         )
-        return _SourceRepoOutcome('updated', repository.id, warning=warning_detail)
+        return _SourceRepoOutcome('updated', repository_id, warning=warning_detail)
 
     def configured_destination_branch(self, repository_id: str, local_path: str = '') -> str:
         """Branch the task was forked from for ``repository_id``, per kato config.

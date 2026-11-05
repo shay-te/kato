@@ -1,11 +1,12 @@
 """HTTP route for the Claude models the settings model fields suggest.
 
-    GET /api/claude/models   {models: [{id, label}]}
+    GET /api/claude/models   {models: [{id, label, group: newest | version}]}
 
 The aliases first (``sonnet`` — always the newest of the family), then every
-pinned version this host knows the account has (``claude-sonnet-4-6``): an
-older plan runs an older model, and typing a name the CLI would take was the
-only way to pick one. Suggestions only — the fields stay free text, and what is
+pinned version (``claude-sonnet-4-6``): every released model kato knows, plus
+any newer one the account's sources name. An older plan runs an older model, and
+typing a name the CLI would take was the only way to pick one. The settings
+field is a dropdown of these with "Other" for anything else, and whatever is
 typed is turned into an id the CLI takes when it runs (``model_ids``).
 """
 
@@ -21,10 +22,11 @@ def claude_model_suggestions() -> list[dict]:
     )
 
     aliases = [
-        {'id': model['id'], 'label': f"{model['label']} — always the newest {model['id'].capitalize()}"}
+        {'id': model['id'], 'label': f"{model['label']} — always the newest {model['id'].capitalize()}",
+         'group': 'newest'}
         for model in discover_models()
     ]
-    return aliases + discover_pinned_models()
+    return aliases + [{**model, 'group': 'version'} for model in discover_pinned_models()]
 
 
 def register_claude_models_routes(app: Flask) -> None:

@@ -1076,3 +1076,34 @@ test('Update source: a harmless push skip is still mentioned', () => {
   });
   assert.match(out.message, /• push skipped api: nothing to push/);
 });
+
+
+// A plan's sub-task: the repositories it did not change follow its main
+// task's branch, so it can be tested with the rest of the plan.
+test('formatUpdateSourceResult: a sub-task\'s other repositories are named on the main task\'s branch', () => {
+  const out = formatUpdateSourceResult({
+    ok: true,
+    body: {
+      updated: true,
+      pushed: { pushed_repositories: ['api'] },
+      updated_repositories: ['api'],
+      main_branch: 'UNA-3267',
+      main_branch_repositories: ['web', 'core'],
+      skipped_repositories: [{ repository_id: 'docs', reason: "UNA-3267, the main task's branch, is not on the remote yet" }],
+    },
+  });
+  assert.equal(out.title, 'Source updated');
+  assert.equal(out.kind, 'success');
+  assert.match(out.message, /✓ source updated for 1 repo\(s\): api/);
+  assert.match(out.message, /✓ on UNA-3267, the main task's branch, for 2 repo\(s\): web, core/);
+  assert.match(out.message, /• skipped docs: UNA-3267, the main task's branch, is not on the remote yet/);
+});
+
+test('formatUpdateSourceResult: only main-branch moves still read as updated, never "nothing"', () => {
+  const out = formatUpdateSourceResult({
+    ok: true,
+    body: { updated: true, main_branch: 'UNA-1', main_branch_repositories: ['web'] },
+  });
+  assert.equal(out.title, 'Source updated');
+  assert.doesNotMatch(out.message, /no source repositories updated/);
+});

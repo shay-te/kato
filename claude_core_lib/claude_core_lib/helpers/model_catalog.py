@@ -40,6 +40,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from claude_core_lib.claude_core_lib.helpers.model_pricing import priced_model_ids
+
 _ANTHROPIC_MODELS_URL = 'https://api.anthropic.com/v1/models?limit=100'
 _ANTHROPIC_VERSION = '2023-06-01'
 
@@ -143,23 +145,27 @@ _pinned_stamp: float = 0.0
 
 
 def discover_pinned_models(force: bool = False) -> list[dict]:
-    """Every PINNED version this host knows of, ``[{id, label}]`` — newest
-    family first, newest version first within it (``claude-sonnet-4-6`` →
-    "Sonnet 4.6").
+    """Every PINNED version, ``[{id, label}]`` — family by family (fable, opus,
+    sonnet, haiku), newest version first (``claude-sonnet-4-6`` → "Sonnet 4.6").
 
     The aliases always run the newest, but an account on a smaller plan runs an
     older model, and its only way to pick one was typing an id the CLI would
-    take. The same three sources as the labels, but every version they name —
-    the models API's list (with a credential), the options the CLI's config says
-    the server offered this account, and the versions the session logs show
-    were run. Cached with the same TTL; never raises; ``[]`` when none.
+    take. Two parts: every released model the price table knows (so a fresh
+    install offers the older versions too, with no second list to keep), and
+    every version this host's sources name — the models API's list (with a
+    credential), the options the CLI's config says the server offered this
+    account, the versions its session logs show were run — so one newer than
+    the table still shows. A gated family's versions (fable) only once a source
+    confirms the account has it, like its alias. Cached with the same TTL;
+    never raises.
     """
     global _pinned_cache, _pinned_stamp
     now = time.monotonic()
     with _cache_lock:
         if not force and _pinned_cache is not None and (now - _pinned_stamp) < _CACHE_TTL_SECONDS:
             return [dict(m) for m in _pinned_cache]
-    models = _pinned_from(_every_known_model_id())
+    discovered = _every_known_model_id()
+    models = _pinned_from([*discovered, *_released_models_for(discovered)])
     with _cache_lock:
         _pinned_cache = models
         _pinned_stamp = time.monotonic()
@@ -188,6 +194,21 @@ def _every_known_model_id() -> list[str]:
         except Exception:
             continue
     return ids
+
+
+_GATED_FAMILIES = frozenset(alias['family'] for alias in _ALIASES if alias.get('gated'))
+
+
+def _released_models_for(discovered: list[str]) -> list[str]:
+    """The price table's models, minus a gated family no source confirmed."""
+    confirmed = {
+        parsed[0] for parsed in map(_family_version_from_model_id, discovered) if parsed
+    }
+    return [
+        model_id for model_id in priced_model_ids()
+        if (parsed := _family_version_from_model_id(model_id))
+        and (parsed[0] not in _GATED_FAMILIES or parsed[0] in confirmed)
+    ]
 
 
 def _pinned_from(model_ids) -> list[dict]:

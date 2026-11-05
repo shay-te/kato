@@ -80,6 +80,12 @@ _CONTEXT_MARKER = '[1m]'
 _SNAPSHOT_DATE = re.compile(r'-\d{8}$')
 
 
+def priced_model_ids() -> tuple[str, ...]:
+    """Every model the table has rates for — every released Claude model this
+    lib knows by name, the older versions included."""
+    return tuple(_RATES)
+
+
 def is_priced(model: object) -> bool:
     """Whether ``model`` has a price on file."""
     return _normalised(model) in _RATES

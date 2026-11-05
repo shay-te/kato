@@ -56,35 +56,56 @@ class ModelCatalogTests(unittest.TestCase):
         )
         return path
 
-    def test_every_pinned_version_known_is_offered_newest_first(self) -> None:
-        # An older plan runs an older model: the settings field offers it.
-        self._write_cli_config({
-            'additionalModelOptionsCache': [{'value': 'claude-sonnet-4-6'}, {'value': 'claude-opus-4-8'}],
-            'projects': {'/w': {'lastModelUsage': {'claude-sonnet-4-6': {}, 'claude-haiku-4-5-20251001': {}}}},
-        })
-        self._write_session_log('a.jsonl', [
-            {'message': {'model': 'claude-sonnet-5-5'}},
-            {'message': {'model': 'claude-opus-4-8[1m]'}},
-        ])
-        self._write_session_log('b.jsonl', [{'message': {'model': 'claude-haiku-4-5'}}])
-        self.assertEqual(model_catalog.discover_pinned_models(), [
-            {'id': 'claude-opus-4-8', 'label': 'Opus 4.8'},
-            {'id': 'claude-sonnet-5-5', 'label': 'Sonnet 5.5'},
-            {'id': 'claude-sonnet-4-6', 'label': 'Sonnet 4.6'},
-            # The undated id when both were seen; a [1m] marker never offered.
-            {'id': 'claude-haiku-4-5', 'label': 'Haiku 4.5'},
-        ])
-
-    def test_a_context_window_marker_is_never_part_of_the_offered_id(self) -> None:
-        # Seen ONLY with its marker: still offered, as the id the CLI takes.
-        self._write_session_log('c.jsonl', [{'message': {'model': 'claude-opus-5-5[1m]'}}])
-        self.assertEqual(model_catalog.discover_pinned_models(), [{'id': 'claude-opus-5-5', 'label': 'Opus 5.5'}])
-
-    def test_no_source_means_no_pinned_versions_and_it_never_raises(self) -> None:
-        self.assertEqual(model_catalog.discover_pinned_models(), [])
-        self._write_cli_config('{not json')
+    def _pinned_ids(self) -> list[str]:
         model_catalog.reset_models_cache()
-        self.assertEqual(model_catalog.discover_pinned_models(), [])
+        return [model['id'] for model in model_catalog.discover_pinned_models()]
+
+    def test_a_fresh_install_offers_every_released_version_from_the_price_table(self) -> None:
+        # No credential, no CLI config, no logs: the older versions still show,
+        # so a smaller plan's model (Sonnet 4.6) is one pick away.
+        from claude_core_lib.claude_core_lib.helpers.model_pricing import priced_model_ids
+        ids = self._pinned_ids()
+        self.assertIn('claude-sonnet-4-6', ids)
+        self.assertIn('claude-opus-4-6', ids)
+        self.assertEqual(set(ids), {m for m in priced_model_ids() if 'fable' not in m})
+        # The gated family only once a source confirms the account has it.
+        self.assertFalse(any('fable' in model_id for model_id in ids))
+        labels = {model['id']: model['label'] for model in model_catalog.discover_pinned_models()}
+        self.assertEqual(labels['claude-sonnet-4-6'], 'Sonnet 4.6')
+
+    def test_family_by_family_newest_first(self) -> None:
+        ids = self._pinned_ids()
+        parsed = [model_catalog._family_version_from_model_id(model_id) for model_id in ids]
+        order = [(model_catalog._FAMILIES.index(p[0]), -p[1], -p[2]) for p in parsed]
+        self.assertEqual(order, sorted(order))
+
+    def test_a_version_the_account_has_beyond_the_table_is_offered_too(self) -> None:
+        self._write_cli_config({'additionalModelOptionsCache': [{'value': 'claude-sonnet-6-1'}]})
+        self._write_session_log('a.jsonl', [{'message': {'model': 'claude-fable-5-1'}}])
+        ids = self._pinned_ids()
+        self.assertEqual(ids[ids.index('claude-sonnet-6-1') + 1], 'claude-sonnet-5-5')  # newest first
+        # Fable confirmed by a session log: its versions are offered now.
+        self.assertIn('claude-fable-5-1', ids)
+        self.assertIn('claude-fable-5', ids)
+
+    def test_one_entry_per_version_the_undated_id_and_never_a_marker(self) -> None:
+        self._write_cli_config({
+            'projects': {'/w': {'lastModelUsage': {'claude-haiku-4-5-20251001': {}}}},
+        })
+        self._write_session_log('c.jsonl', [{'message': {'model': 'claude-opus-5-5[1m]'}}])
+        ids = self._pinned_ids()
+        self.assertEqual(ids.count('claude-haiku-4-5'), 1)
+        self.assertNotIn('claude-haiku-4-5-20251001', ids)
+        self.assertFalse(any('[' in model_id for model_id in ids))
+
+    def test_a_context_window_marker_alone_is_offered_as_the_plain_id(self) -> None:
+        # A version only ever seen with its marker, and not in the table.
+        self._write_session_log('d.jsonl', [{'message': {'model': 'claude-opus-6-2[1m]'}}])
+        self.assertIn('claude-opus-6-2', self._pinned_ids())
+
+    def test_unreadable_sources_still_give_the_released_versions(self) -> None:
+        self._write_cli_config('{not json')
+        self.assertIn('claude-sonnet-4-6', self._pinned_ids())
 
     def test_ids_are_stable_aliases_with_sonnet_default(self) -> None:
         # Fable is gated (offered only when discovery confirms access — see

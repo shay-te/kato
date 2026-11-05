@@ -353,17 +353,20 @@ SETTINGS_SCHEMA: list[dict] = [
              'Path to the `claude` CLI. Plain `claude` works on PATH.',
              {}),
             ('KATO_CLAUDE_MODEL', 'text', 'Model override',
-             'Pick one, or type it: an alias (opus / sonnet / haiku — always the newest) or '
-             'a version (claude-sonnet-4-6; "Sonnet 4.6" works too). The list offers every '
-             'version kato knows this account has. Empty = Claude Code default.',
-             {'placeholder': 'sonnet  or  claude-sonnet-4-6', 'datalist': 'claude'}),
+             'The model every task runs on: the newest of a family (opus / sonnet / haiku), '
+             'or a specific version — older ones included, for a plan that runs an older model. '
+             '"Other" takes any model id ("Sonnet 4.6" works too). Not set = Claude Code\'s '
+             'own default.',
+             {'placeholder': 'claude-sonnet-4-6', 'picker': 'claude',
+              'empty_label': 'Not set — Claude Code\'s own default'}),
             ('KATO_CLAUDE_FALLBACK_MODEL', 'text', 'Safeguard fallback model',
              'Pinned model to retry on when the API\'s safeguards flag a '
              'session (the one-click "retry on a lower version" the chat '
              'offers). A full id, not an alias — aliases always resolve to '
              'the latest, which is the version that was flagged. '
-             'Empty = no retry offered.',
-             {'placeholder': 'claude-opus-4-8', 'datalist': 'claude'}),
+             'Not set = no retry offered.',
+             {'placeholder': 'claude-opus-4-8', 'picker': 'claude',
+              'empty_label': 'Not set — no retry on a lower version'}),
             ('KATO_CLAUDE_MAX_TURNS', 'number', 'Max turns',
              'Cap on agent turns per REPLY — every chat message and every run kato starts '
              'stops with "Reached maximum number of turns" once it uses this many. Empty = no '

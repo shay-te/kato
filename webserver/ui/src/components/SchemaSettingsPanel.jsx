@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchClaudeModels, fetchOpenRouterModels } from '../api.js';
+import ModelPickerField from './settings/ModelPickerField.jsx';
 import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
 import { useFieldHighlight } from '../hooks/useFieldHighlight.js';
 import { sourceLabel } from '../utils/settingsSource.js';
@@ -134,23 +135,27 @@ export function SchemaField({ field, value, onChange }) {
   const isTextarea = field.type === 'textarea';
   const boolChecked = String(value).toLowerCase() === 'true';
 
-  // Live autocomplete source (e.g. OpenRouter's catalogue) for free-text fields
-  // that opt in via ``field.datalist`` — keeps the input free text, just suggested.
+  // A live list behind the field: suggestions for a free-text field
+  // (``field.datalist``, e.g. OpenRouter's catalogue) or the choices of a
+  // picker (``field.picker``, e.g. the Claude models). Same loaders, same cache.
+  const listSource = field.datalist || field.picker || '';
   const [datalistOptions, setDatalistOptions] = useState(
-    () => (field.datalist ? _datalistCache[field.datalist] || [] : []),
+    () => (listSource ? _datalistCache[listSource] || [] : []),
   );
+  const [listLoaded, setListLoaded] = useState(() => !!(listSource && _datalistCache[listSource]));
   useEffect(() => {
-    if (!field.datalist) {
+    if (!listSource) {
       return undefined;
     }
     let alive = true;
-    loadDatalist(field.datalist).then((opts) => {
+    loadDatalist(listSource).then((opts) => {
       if (alive) {
         setDatalistOptions(opts);
+        setListLoaded(true);
       }
     });
     return () => { alive = false; };
-  }, [field.datalist]);
+  }, [listSource]);
   const datalistId = field.datalist ? `datalist-${field.key}` : undefined;
 
   // The ⓘ tooltip carries the explanation AND the env-var name — the raw
@@ -201,6 +206,14 @@ export function SchemaField({ field, value, onChange }) {
             </option>
           ))}
         </select>
+      ) : field.picker ? (
+        <ModelPickerField
+          field={field}
+          value={value}
+          onChange={onChange}
+          options={datalistOptions}
+          loaded={listLoaded}
+        />
       ) : isTextarea ? (
         // Multi-line prose (the standing instructions): spell-checked, unlike
         // the identifier-shaped single-line fields below.

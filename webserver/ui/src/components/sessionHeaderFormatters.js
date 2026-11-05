@@ -299,10 +299,18 @@ export function formatUpdateSourceResult(result) {
     const text = String(entry.warning || '').trim();
     if (text) { progress.push(`• ${text}`); }
   }
+  // A plan's sub-task: its other repositories, on the main task's branch so
+  // the sub-task is tested with the plan's merged work.
+  const onMainBranch = body.main_branch_repositories || [];
+  if (onMainBranch.length) {
+    progress.push(
+      `✓ on ${body.main_branch}, the main task's branch, for ${onMainBranch.length} repo(s): ${onMainBranch.join(', ')}`,
+    );
+  }
   for (const entry of skipped) {
     progress.push(`• skipped ${entry.repository_id}: ${entry.reason}`);
   }
-  if (!updated.length && !failed.length && !skipped.length) {
+  if (!updated.length && !onMainBranch.length && !failed.length && !skipped.length) {
     progress.push('• no source repositories updated');
   }
 

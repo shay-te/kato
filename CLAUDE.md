@@ -618,6 +618,14 @@ sit there forever ("I click Done on a subtask, the board never moves").
 (`PlanQueueService.remove_step`: the tasks waiting on it stop waiting; a tracker ticket is withdrawn — noted,
 unassigned, never deleted; a plan keeps one step). A decline that failed answers 502 and changes nothing more.
 The board then deletes the task itself with the tab's ✕ call (`forgetTaskWorkspace`: folder, chat, containers).
+**Update source on a sub-task puts the whole plan on disk** (`TaskPublishService.update_source_for_task`): a repo
+the sub-task CHANGED goes to its own branch (as for any task); every other repo — one of the sub-task's it did not
+change, and one only the MAIN task works in (`_main_task_repository_ids`: the main task's workspace record, so only
+when this kato has it) — goes to the main task's branch (`plan_merge_branch`), where the plan's merged work is, but
+only when the remote has that branch (`remote_has_branch`; else skipped with why). Reported apart as
+`main_branch_repositories` (toast: "✓ on UNA-1, the main task's branch, …"). They used to be skipped ("no changes in
+workspace clone"), leaving the operator's source on master, so the sub-task could not be tested with the plan.
+
 **The main task follows its merged sub-tasks:** when the ticker sees a step's pull request merged
 (`merged_listener`), `plan_queue/main_task_follows.py` runs the main task's Pull (`publish.pull_task`,
 fast-forward only; a dirty or diverged clone is left alone and logged) in the background — its clones were
@@ -982,11 +990,13 @@ default**, and never to a chat that is on another agent. The picker's `GET /api/
 answers the tagged model so the UI shows what will run.
 
 ### Picking a Claude model in Settings (older plans run older models)
-Settings → Claude agent → "Model override" and "Safeguard fallback model" suggest (`datalist: 'claude'` →
-`GET /api/claude/models`, `claude_models_routes.py`) the aliases, then every PINNED version this host knows the
-account has (`model_catalog.discover_pinned_models`: the models API's list, the CLI config's offered options, the
-session logs — every version, not just the newest; a `[1m]` marker dropped, the undated id preferred). Still free
-text: EVERY `--model` the claude lib builds goes through `helpers/model_ids.model_flags`, so "Sonnet 4.6" /
+Settings → Claude agent → "Model override" and "Safeguard fallback model" are DROPDOWNS (`picker: 'claude'` →
+`ModelPickerField`, fed by `GET /api/claude/models`, `claude_models_routes.py`): "Not set" (`empty_label`), then
+"Always the newest" (the aliases), then "Specific versions" (`model_catalog.discover_pinned_models`: every model
+the PRICE TABLE knows — `model_pricing.priced_model_ids`, so a fresh install offers the older ones with no second
+list — plus any version the account's sources name: the models API, the CLI config's offered options, the session
+logs; a `[1m]` marker dropped, the undated id preferred; a gated family (fable) only once confirmed), then "Other —
+type a model id…", which opens a box (picking it never saves the marker). EVERY `--model` the claude lib builds goes through `helpers/model_ids.model_flags`, so "Sonnet 4.6" /
 "sonnet:4.6" / "claude sonnet 4.6" reach the CLI as `claude-sonnet-4-6` and a bare family as its alias; anything
 else (a dated id, Bedrock, `[1m]`) passes as written. The CLI's own "There's an issue with the selected model" was
 what a teammate saw for "sonnet 4.6". Do not add a fourth `--model` builder outside `model_flags`.

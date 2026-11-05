@@ -46,17 +46,24 @@ class ClaudeModelsRouteTests(unittest.TestCase):
         self.addCleanup(model_catalog.reset_models_cache)
         self.client = create_app(session_manager=_FakeManager()).test_client()
 
-    def test_the_aliases_then_the_account_s_pinned_versions(self) -> None:
-        (self.config_dir / '.claude.json').write_text(json.dumps({
-            'additionalModelOptionsCache': [{'value': 'claude-sonnet-4-6'}],
-        }), encoding='utf-8')
+    def test_the_aliases_then_every_version_older_ones_included(self) -> None:
+        # A fresh install: nothing run, no credential — Sonnet 4.6 still offered.
         models = self.client.get('/api/claude/models').get_json()['models']
         ids = [model['id'] for model in models]
         self.assertEqual(ids[:3], ['opus', 'sonnet', 'haiku'])  # fable only once confirmed
         self.assertIn('claude-sonnet-4-6', ids)
-        by_id = {model['id']: model['label'] for model in models}
-        self.assertEqual(by_id['claude-sonnet-4-6'], 'Sonnet 4.6')
-        self.assertTrue(by_id['sonnet'].endswith('— always the newest Sonnet'), by_id['sonnet'])
+        by_id = {model['id']: model for model in models}
+        self.assertEqual(by_id['claude-sonnet-4-6']['label'], 'Sonnet 4.6')
+        self.assertTrue(by_id['sonnet']['label'].endswith('— always the newest Sonnet'))
+        self.assertEqual({model['group'] for model in models[:3]}, {'newest'})
+        self.assertEqual({model['group'] for model in models[3:]}, {'version'})
+
+    def test_a_version_the_account_has_beyond_the_known_ones_is_offered(self) -> None:
+        (self.config_dir / '.claude.json').write_text(json.dumps({
+            'additionalModelOptionsCache': [{'value': 'claude-sonnet-6-1'}],
+        }), encoding='utf-8')
+        ids = [model['id'] for model in self.client.get('/api/claude/models').get_json()['models']]
+        self.assertIn('claude-sonnet-6-1', ids)
 
     def test_a_catalogue_that_breaks_still_answers_a_list(self) -> None:
         with patch.object(model_catalog, 'discover_pinned_models', side_effect=RuntimeError('boom')):
@@ -64,11 +71,12 @@ class ClaudeModelsRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {'models': []})
 
-    def test_both_model_fields_offer_the_list_with_a_claude_placeholder(self) -> None:
+    def test_both_model_fields_are_pickers_with_a_claude_placeholder(self) -> None:
         fields = {field[0]: field[4] for section in SETTINGS_SCHEMA for field in section['fields']}
         for key in ('KATO_CLAUDE_MODEL', 'KATO_CLAUDE_FALLBACK_MODEL'):
             with self.subTest(key=key):
-                self.assertEqual(fields[key]['datalist'], 'claude')
+                self.assertEqual(fields[key]['picker'], 'claude')
+                self.assertTrue(fields[key]['empty_label'].startswith('Not set'))
                 self.assertIn('claude-', fields[key]['placeholder'])  # never "gpt-4"
 
 
