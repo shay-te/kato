@@ -136,19 +136,36 @@ export function formatRenameBranchResult(result) {
 }
 
 // Build the toast for ``POST /pull``. Mirrors the shape kato's
-// ``pull_task`` returns: per-repo pulled / skipped / failed lists.
-export function formatPullResult(result) {
+// ``pull_task`` returns: per-repo pulled / conflicted / skipped / failed
+// lists. A plan's main task may MERGE its remote branch in (``merged``).
+//
+// Green ONLY when every repository pulled cleanly or truly had nothing to
+// pull. A failed fast-forward once arrived filed as a skip and showed as a
+// green "Nothing to pull" over a list of git errors, so any skip that is not
+// one of the harmless "nothing to do" kinds keeps the toast off green too.
+// ``chatDelivered``: whether the agent was asked to resolve the conflicts.
+export function formatPullResult(result, { chatDelivered = false } = {}) {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Pull failed');
   }
   const body = result.body || {};
   const pulled = body.pulled_repositories || [];
+  const conflicted = body.conflicted_repositories || [];
   const skipped = body.skipped_repositories || [];
   const failed = body.failed_repositories || [];
+  const problems = skipped.filter((entry) => !HARMLESS_PULL_SKIPS.has(entry.reason || 'no_change'));
   const lines = [];
   for (const entry of pulled) {
     const count = Number(entry.commits_pulled || 0);
-    lines.push(`✓ ${entry.repository_id}: pulled ${count} commit(s)`);
+    lines.push(entry.merged
+      ? `✓ ${entry.repository_id}: merged ${count} commit(s) from origin — a merge commit was made here; Push sends it`
+      : `✓ ${entry.repository_id}: pulled ${count} commit(s)`);
+  }
+  for (const entry of conflicted) {
+    const n = (entry.conflicted_files || []).length;
+    lines.push(`⚠ ${entry.repository_id}: merged with ${n} conflicted file${n === 1 ? '' : 's'} — `
+      + (chatDelivered ? 'the agent was asked to resolve them' : 'resolve them')
+      + ', then Push');
   }
   for (const entry of skipped) {
     lines.push(formatPullSkipLine(entry));
@@ -157,14 +174,16 @@ export function formatPullResult(result) {
   if (lines.length === 0) {
     lines.push('• no repositories in workspace');
   }
+  const outcome = { pulled, conflicted, problems, failed };
   return {
-    title: pulled.length
-      ? (failed.length ? 'Pull partially completed' : 'Pulled')
-      : 'Nothing to pull',
-    kind: classifyPullKind({ pulled, skipped, failed }),
+    title: pullTitle(outcome),
+    kind: classifyPullKind(outcome),
     message: lines.join('\n'),
   };
 }
+
+// Skips that mean "nothing to do here" — the only ones a green toast may hold.
+const HARMLESS_PULL_SKIPS = new Set(['already_in_sync', 'remote_branch_missing', 'no_change']);
 
 function formatPullSkipLine(entry) {
   const reason = entry.reason || 'no_change';
@@ -178,14 +197,39 @@ function formatPullSkipLine(entry) {
   return `• ${entry.repository_id}: ${detail || reason}`;
 }
 
-function classifyPullKind({ pulled, skipped, failed }) {
+function pullTitle({ pulled, conflicted, problems, failed }) {
   if (failed.length > 0) {
-    return pulled.length > 0 ? 'warning' : 'error';
+    return pulled.length || conflicted.length ? 'Pull partially completed' : 'Pull failed';
   }
-  if (skipped.some((entry) => entry.reason === 'dirty_working_tree')) {
+  if (conflicted.length > 0) { return 'Pulled with conflicts to resolve'; }
+  if (pulled.length > 0) { return problems.length ? 'Pull partially completed' : 'Pulled'; }
+  return problems.length ? 'Not pulled' : 'Nothing to pull';
+}
+
+function classifyPullKind({ pulled, conflicted, problems, failed }) {
+  if (failed.length > 0) {
+    return pulled.length || conflicted.length ? 'warning' : 'error';
+  }
+  if (conflicted.length > 0 || problems.length > 0) {
     return 'warning';
   }
   return 'success';
+}
+
+// What the chat agent is told when a merge kato ran left conflicts — Merge
+// master's and a plan main task's Pull alike. The clone can't run git, but the
+// agent CAN edit the files; kato's normal commit/push finalises the merge.
+// ``fromReference``: what was merged in (``origin/main``, ``origin/UNA-1``).
+export function mergeConflictInstruction(conflicted, fromReference) {
+  const fileLines = (conflicted || []).flatMap((repo) => (repo.conflicted_files || []).map(
+    (file) => `- ${repo.repository_id}: ${file}`,
+  ));
+  return `I merged ${fromReference} into this task branch and `
+    + 'there are merge conflicts. The clone can\'t run git, so do '
+    + 'NOT try git commands — just edit these files to resolve '
+    + 'every conflict (remove all <<<<<<< / ======= / >>>>>>> '
+    + 'markers, keeping both sides\' intent where it makes sense), '
+    + `then continue:\n${fileLines.join('\n')}`;
 }
 
 function harmlessSkips(pushed) {

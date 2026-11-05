@@ -633,6 +633,15 @@ answer — never the clone's, which may name a stale or deleted plan branch) as 
 with an empty lease. The probes accept a PR into either branch (older plans merged into the
 destination); the history probe reads the main branch first. A live plan's source task cannot be
 renamed (its sub-tasks' PRs point at its branch). Open PRs created before this are NOT retargeted.
+**The main task's Pull merges; every other task's Pull only fast-forwards.** Sub-task PRs land on the main
+task's REMOTE branch while its clone gains commits of its own (a "Merge master"), so the two sides split and
+`pull --ff-only` refused for good (UNA-3267). For a task a plan was split from (`AgentService._is_plan_source`:
+`plan_for_source`, ANY plan state — a finished plan leaves the branch just as split), `pull_task` passes
+`merge_when_diverged` and `pull_workspace_clone` merges `origin/<branch>` in through `_merge_into_clone`, the ONE
+merge Merge master also uses. Never a rebase: it would copy master's commits onto the branch as new ones and
+need a force push onto the branch sub-tasks merge into. Nothing is pushed. Pressed by the operator, a conflict is
+left for the agent (told which files, like Merge master); the plan's own follow-up pull after a merge
+(`MainTaskFollowsMerges`, `keep_conflicts=False`) undoes it instead. Any other task reports `diverged`.
 **Where a sub-task works: its own list, starting with all of the main task's.** The split's agent
 is NOT asked (`PlanQueueService(proposer_picks_repositories=False)`, kato's `plan_queue/wiring.py`):
 every step starts in all of the plan's `repository_ids`, and the operator ticks/unticks per task
@@ -983,7 +992,9 @@ token) and the footnote says so. Do not add a second price table or compute cost
   (`failed`, source untouched) and Done counts it as a failure; a PR skipped as empty is not a success. Git refusing
   the source switch is `blocked`, never `updated`. A source kato cannot find is `failed`, never `skipped`.
 - A toast's colour is decided beside its title, in `sessionHeaderFormatters.js` (`kind`), never in the component: a
-  "Source not updated" box came out green. Summaries list every problem; one repo pushing must not hide another's failure.
+  "Source not updated" box came out green. **A failed pull is a failure, never a skip** (`pull_task`): filed as a
+  skip it read as a green "Nothing to pull" over git's errors. Only `already_in_sync` / `remote_branch_missing`
+  skips may leave the Pull toast green (`HARMLESS_PULL_SKIPS`). Summaries list every problem; one repo pushing must not hide another's failure.
 - **A PR that cannot be created says why.** `RepositoryPublicationService.create_pull_request` sets the PR API
   up ITSELF (`_prepare_pull_request_api`, raising the real cause: no token, no Bitbucket API email…). It used to
   rely on the lookup before it, which swallows its failure (logged once per process, then "no pull requests"), so

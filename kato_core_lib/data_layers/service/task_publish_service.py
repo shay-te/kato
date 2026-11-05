@@ -204,6 +204,7 @@ class TaskPublishService(object):
         pending_publish_lock=None,
         update_workspace_status_after_publish=None,
         reconcile_task_repositories=None,
+        is_plan_source=None,
         logger=None,
     ) -> None:
         # Collaborators may arrive as the object itself or wrapped in
@@ -229,6 +230,10 @@ class TaskPublishService(object):
         self._reconcile_task_repositories_impl = (
             reconcile_task_repositories or (lambda task_id: None)
         )
+        # ``task_id -> bool``: was a plan split from this task? Its branch is
+        # where the plan's sub-tasks merge, so its Pull merges a branch that
+        # moved on both sides instead of refusing. None = no plans here.
+        self._is_plan_source = is_plan_source or (lambda task_id: False)
         self._logger_getter = provider_for(
             logger if logger is not None else configure_logger('TaskPublishService'),
         )
@@ -741,8 +746,8 @@ class TaskPublishService(object):
             ],
         }
 
-    def pull_task(self, task_id: str) -> dict[str, object]:
-        """Fast-forward every workspace clone of the task from its remote.
+    def pull_task(self, task_id: str, *, keep_conflicts: bool = True) -> dict[str, object]:
+        """Bring every workspace clone of the task up to its remote branch.
 
         Drives the planning UI's ``Pull`` button — symmetric to the
         ``Push`` button. Per-repo outcomes are surfaced so the
@@ -750,13 +755,26 @@ class TaskPublishService(object):
         sync, refused for dirty tree, etc.) without having to look
         at logs.
 
+        A fast-forward, except on the task a plan was split from: its
+        remote branch is where the sub-tasks' pull requests merge, so a
+        clone that also has commits of its own (a ``Merge master``) merges
+        origin's branch in instead of refusing (``pull_workspace_clone``).
+        ``keep_conflicts=False`` is for a pull nobody pressed (the plan's
+        own follow-up after a merge): a conflicting merge is undone there,
+        never left half-done in the main task's clone.
+
+        A pull that FAILED is a failure, never a skip: the toast's colour
+        comes from these lists, and a failed fast-forward filed as a skip
+        read as a green "Nothing to pull".
+
         Returns:
             {
               'task_id': <id>,
               'pulled': bool,                # any repo actually moved
-              'pulled_repositories': [{repository_id, commits_pulled}],
+              'pulled_repositories': [{repository_id, commits_pulled, merged}],
+              'conflicted_repositories': [{repository_id, conflicted_files, branch}],
               'skipped_repositories': [{repository_id, reason, detail}],
-              'failed_repositories':  [{repository_id, error}],
+              'failed_repositories':  [{repository_id, error, reason}],
             }
         """
         normalized = str(task_id or '').strip()
@@ -774,13 +792,17 @@ class TaskPublishService(object):
                 task_id=normalized,
             )
         pulled_repositories: list[dict[str, object]] = []
+        conflicted_repositories: list[dict[str, object]] = []
         skipped_repositories: list[dict[str, str]] = []
         failed_repositories: list[dict[str, str]] = []
+        merge_when_diverged = self._plan_was_split_from(normalized)
         for repository in repos:
             repo_branch = self._repository_service.build_branch_name(_task, repository)
             try:
                 outcome = self._repository_service.pull_workspace_clone(
                     repository, repo_branch,
+                    merge_when_diverged=merge_when_diverged,
+                    keep_conflicts=keep_conflicts,
                 )
             except Exception as exc:
                 self.logger.exception(
@@ -792,13 +814,16 @@ class TaskPublishService(object):
                 )
                 continue
             if outcome.get('pulled') and outcome.get('updated'):
+                merged = bool(outcome.get('merged'))
                 pulled_repositories.append({
                     'repository_id': repository.id,
                     'commits_pulled': int(outcome.get('commits_pulled') or 0),
+                    'merged': merged,
                 })
                 self.logger.info(
-                    'on-demand pull for task %s: fast-forwarded %s by %s commit(s)',
-                    normalized, repository.id, outcome.get('commits_pulled'),
+                    'on-demand pull for task %s: %s %s by %s commit(s)',
+                    normalized, 'merged origin into' if merged else 'fast-forwarded',
+                    repository.id, outcome.get('commits_pulled'),
                 )
             elif outcome.get('pulled'):
                 # ``pulled=True, updated=False`` — already in sync.
@@ -807,19 +832,45 @@ class TaskPublishService(object):
                     'reason': outcome.get('reason') or 'already_in_sync',
                     'detail': outcome.get('detail') or 'nothing to pull',
                 })
-            else:
+            elif outcome.get('conflicts'):
+                conflicted_repositories.append({
+                    'repository_id': repository.id,
+                    'conflicted_files': list(outcome.get('conflicted_files') or []),
+                    # What was merged in: ``origin/<branch>``, for the agent.
+                    'branch': repo_branch,
+                })
+            elif outcome.get('reason') == 'dirty_working_tree':
+                # A refusal to touch the agent's edits, not a failure: the
+                # toast warns and says what to do.
                 skipped_repositories.append({
                     'repository_id': repository.id,
-                    'reason': outcome.get('reason') or 'unknown',
+                    'reason': 'dirty_working_tree',
                     'detail': outcome.get('detail') or '',
+                })
+            else:
+                reason = outcome.get('reason') or 'unknown'
+                failed_repositories.append({
+                    'repository_id': repository.id,
+                    'error': outcome.get('detail') or reason,
+                    'reason': reason,
                 })
         return {
             'task_id': normalized,
             'pulled': bool(pulled_repositories),
             'pulled_repositories': pulled_repositories,
+            'conflicted_repositories': conflicted_repositories,
             'skipped_repositories': skipped_repositories,
             'failed_repositories': failed_repositories,
         }
+
+    def _plan_was_split_from(self, task_id: str) -> bool:
+        """Whether a plan was split from ``task_id``. Asking must never cost
+        the pull: a queue that cannot be read means the plain fast-forward."""
+        try:
+            return bool(self._is_plan_source(task_id))
+        except Exception:
+            self.logger.exception('could not ask whether a plan was split from %s', task_id)
+            return False
 
     def merge_default_branch_for_task(self, task_id: str) -> dict[str, object]:
         """Fetch + merge each clone's default branch into its task branch.

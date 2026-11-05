@@ -1082,6 +1082,78 @@ class PullTaskTests(unittest.TestCase):
             result = service.publish.pull_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
+    def _pull(self, outcome, *, plan_source=False, **pull_kwargs):
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.pull_workspace_clone.return_value = outcome
+        service = AgentService(**_kwargs(repository_service=repo))
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))), \
+             patch.object(service, '_is_plan_source', return_value=plan_source):
+            result = service.publish.pull_task('T1', **pull_kwargs)
+        return repo, result
+
+    def test_a_failed_pull_is_a_failure_never_a_skip(self) -> None:
+        # It used to be filed as a skip, and the toast read it as a green
+        # "Nothing to pull" over a list of git errors.
+        for reason in ('pull_failed', 'diverged', 'fetch_failed', 'merge_failed'):
+            with self.subTest(reason=reason):
+                _repo, result = self._pull({'pulled': False, 'reason': reason, 'detail': 'git said no'})
+                self.assertEqual(result['skipped_repositories'], [])
+                self.assertEqual(result['failed_repositories'], [
+                    {'repository_id': 'r1', 'error': 'git said no', 'reason': reason},
+                ])
+
+    def test_a_merge_left_with_conflicts_is_reported_apart(self) -> None:
+        _repo, result = self._pull({'pulled': False, 'conflicts': True, 'conflicted_files': ['a.py']})
+        self.assertEqual(result['conflicted_repositories'], [
+            {'repository_id': 'r1', 'conflicted_files': ['a.py'], 'branch': 'feat/x'},
+        ])
+        self.assertEqual(result['failed_repositories'], [])
+
+    def test_a_merged_pull_says_so(self) -> None:
+        _repo, result = self._pull({'pulled': True, 'updated': True, 'commits_pulled': 9, 'merged': True})
+        self.assertEqual(result['pulled_repositories'], [
+            {'repository_id': 'r1', 'commits_pulled': 9, 'merged': True},
+        ])
+
+    def test_only_a_plans_main_task_merges_a_split_branch(self) -> None:
+        ok = {'pulled': True, 'updated': False, 'commits_pulled': 0}
+        repo, _result = self._pull(ok, plan_source=True)
+        repo.pull_workspace_clone.assert_called_once_with(
+            unittest.mock.ANY, 'feat/x', merge_when_diverged=True, keep_conflicts=True,
+        )
+        repo, _result = self._pull(ok, plan_source=False, keep_conflicts=False)
+        repo.pull_workspace_clone.assert_called_once_with(
+            unittest.mock.ANY, 'feat/x', merge_when_diverged=False, keep_conflicts=False,
+        )
+
+    def test_a_plan_queue_that_cannot_be_asked_means_a_plain_pull(self) -> None:
+        repo_obj = SimpleNamespace(id='r1')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'feat/x'
+        repo.pull_workspace_clone.return_value = {'pulled': True, 'updated': False}
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'feat/x',
+                                        SimpleNamespace(id='T1'))), \
+             patch.object(service, '_is_plan_source', side_effect=RuntimeError('unreadable')):
+            service.publish.pull_task('T1')
+        self.assertFalse(repo.pull_workspace_clone.call_args.kwargs['merge_when_diverged'])
+
+    def test_a_plan_split_from_the_task_in_any_state_counts(self) -> None:
+        service = AgentService(**_kwargs())
+        service._plan_queue_service = MagicMock()
+        service._plan_queue_service.plan_for_source.return_value = SimpleNamespace(plan_id='p1')
+        self.assertTrue(service._is_plan_source('UNA-1'))
+        service._plan_queue_service.plan_for_source.return_value = None
+        self.assertFalse(service._is_plan_source('UNA-1'))
+        service._plan_queue_service = None
+        self.assertFalse(service._is_plan_source('UNA-1'))
+
 
 class UpdateSourceForTaskTests(unittest.TestCase):
     def test_returns_error_for_blank_task_id(self) -> None:

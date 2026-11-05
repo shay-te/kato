@@ -14,6 +14,7 @@ import {
   formatCreatePullRequestResult,
   mergeButtonLabel,
   mergeButtonTitle,
+  mergeConflictInstruction,
 } from './sessionHeaderFormatters.js';
 
 
@@ -396,8 +397,74 @@ test('formatPullResult: any failure with no successes is an error toast', () => 
     },
   });
   assert.equal(out.kind, 'error');
-  assert.equal(out.title, 'Nothing to pull');
+  assert.equal(out.title, 'Pull failed');
   assert.match(out.message, /✗ client: fetch refused/);
+});
+
+test('formatPullResult: a failure filed as a skip is never green', () => {
+  // What an older kato sent for a fast-forward git refused: the toast read
+  // it as a green "Nothing to pull" over a list of git errors.
+  const out = formatPullResult({
+    ok: true,
+    body: {
+      pulled_repositories: [],
+      skipped_repositories: [
+        { repository_id: 'client', reason: 'pull_failed', detail: 'fatal: Not possible to fast-forward' },
+        { repository_id: 'server', reason: 'already_in_sync' },
+      ],
+      failed_repositories: [],
+    },
+  });
+  assert.notEqual(out.kind, 'success');
+  assert.equal(out.title, 'Not pulled');
+  assert.match(out.message, /• client: fatal: Not possible to fast-forward/);
+});
+
+test('formatPullResult: only "nothing to do" skips leave it green', () => {
+  const out = formatPullResult({
+    ok: true,
+    body: {
+      skipped_repositories: [
+        { repository_id: 'client', reason: 'already_in_sync' },
+        { repository_id: 'server', reason: 'remote_branch_missing' },
+      ],
+    },
+  });
+  assert.equal(out.kind, 'success');
+  assert.equal(out.title, 'Nothing to pull');
+});
+
+test('formatPullResult: a plan main task\'s merge says a merge commit was made', () => {
+  const out = formatPullResult({
+    ok: true,
+    body: { pulled_repositories: [{ repository_id: 'client', commits_pulled: 9, merged: true }] },
+  });
+  assert.equal(out.kind, 'success');
+  assert.equal(out.title, 'Pulled');
+  assert.match(out.message, /✓ client: merged 9 commit\(s\) from origin — a merge commit was made here; Push sends it/);
+});
+
+test('formatPullResult: a merge left with conflicts is a warning naming the repo', () => {
+  const body = {
+    pulled_repositories: [{ repository_id: 'server', commits_pulled: 1 }],
+    conflicted_repositories: [{ repository_id: 'client', conflicted_files: ['a.py', 'b.py'], branch: 'UNA-1' }],
+  };
+  const asked = formatPullResult({ ok: true, body }, { chatDelivered: true });
+  assert.equal(asked.kind, 'warning');
+  assert.equal(asked.title, 'Pulled with conflicts to resolve');
+  assert.match(asked.message, /⚠ client: merged with 2 conflicted files — the agent was asked to resolve them, then Push/);
+  const notAsked = formatPullResult({ ok: true, body });
+  assert.match(notAsked.message, /⚠ client: merged with 2 conflicted files — resolve them, then Push/);
+});
+
+test('mergeConflictInstruction names what was merged and every conflicted file', () => {
+  const text = mergeConflictInstruction(
+    [{ repository_id: 'client', conflicted_files: ['a.py'] }, { repository_id: 'server', conflicted_files: ['b.py'] }],
+    'origin/UNA-1',
+  );
+  assert.match(text, /^I merged origin\/UNA-1 into this task branch and there are merge conflicts\./);
+  assert.match(text, /do NOT try git commands/);
+  assert.match(text, /\n- client: a\.py\n- server: b\.py$/);
 });
 
 test('formatPullResult: partial success (some pulled + some failed) downgrades to warning', () => {

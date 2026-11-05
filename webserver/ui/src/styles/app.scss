@@ -847,7 +847,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   );
 }
 
-.tabs-scroller #tab-list {
+.tabs-scroller #tab-list,
+.subtask-strip-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -865,13 +866,52 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 /* The gap flex used to provide, restored for inline flow. */
-.tabs-scroller #tab-list > .tab + .tab {
+.tabs-scroller #tab-list > .tab + .tab,
+.subtask-strip-list > .tab + .tab {
   margin-left: $SPACE-6;
 }
 
-.tabs-scroller #tab-list > .tab {
+.tabs-scroller #tab-list > .tab,
+.subtask-strip-list > .tab {
   vertical-align: middle;
 }
+
+/* The open task's sub-tasks, as a second row of tabs under the strip
+ * (utils/subtaskTabs.js). A full-width flex line of the nav, so wrapping is
+ * switched on only while the row is there: the empty strip's long sentence
+ * must keep shrinking beside the actions, not push them to a new line. */
+.tabs-pane-top.has-subtask-strip {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.subtask-strip {
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  gap: $SPACE-8;
+  min-width: 0;
+  border-top: 1px solid $C-NEUTRAL-100-A06;
+}
+
+.subtask-strip-label {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: $SPACE-4;
+  /* The parent tab's own violet (``.has-open-subtask``): row and parent
+   * read as one family. */
+  color: $C-INDIGO-76;
+  font-size: $TEXT-11;
+  white-space: nowrap;
+}
+
+/* Every tab in this row is a sub-task: the row's label already says whose,
+ * so the per-tab mark would only repeat it. */
+.subtask-strip .tab-label-subtask {
+  display: none;
+}
+
 
 /* Children of a tab lay out as inline boxes now that the tab is not a flex
  * container — vertical-align replaces align-items, margins replace gap. */
@@ -1311,6 +1351,18 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: linear-gradient(180deg, $C-CYAN-52 0%, $C-CYAN-47 100%);
   border-color: $C-CYAN-58;
   box-shadow: $SHADOW-20;
+}
+
+/* The main task of the sub-task that is open (its family's row shows under
+ * the strip): violet, never the selected tab's cyan, so "which task is open"
+ * and "whose sub-task it is" are told apart at a glance. After the pinned
+ * rules on purpose — a pinned parent's dark fill hid an earlier, fainter
+ * cyan mark entirely. ``needs-attention`` (orange, below) still wins. */
+.tabs-pane-top .tab.has-open-subtask,
+.tabs-pane-top .tab.is-pinned.has-open-subtask {
+  background: $C-INDIGO-76-A55;
+  border-color: $C-INDIGO-76;
+  color: $C-NEUTRAL-96;
 }
 
 /* Drag-to-reorder feedback, matching the file-tab strip's. */
@@ -12385,8 +12437,9 @@ button.settings-prompt-editor-head {
 }
 
 /* The count of a split plan's sub-tasks, folded into their main task's tab
- * (utils/subtaskTabs.js); a click lists them. Orange when one is waiting for
- * you, like the tab of a task that is. */
+ * (utils/subtaskTabs.js). Not a control: a click on it is a click on the tab,
+ * which opens the sub-tasks' row. Orange when one is waiting for you, like the
+ * tab of a task that is. */
 .tab-subtasks {
   display: inline-flex;
   flex-shrink: 0;
@@ -12401,11 +12454,8 @@ button.settings-prompt-editor-head {
   font: inherit;
   font-size: $TEXT-11;
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
 }
 
-.tab-subtasks:hover,
-.tab-subtasks.is-open { border-color: $C-CYAN-52-A40; color: $C-NEUTRAL-96; }
 .tab-subtasks.needs-attention { background: $C-ORANGE-50-A35; border-color: $C-ORANGE-50-A65; color: $C-NEUTRAL-96; }
 
 /* The Docker containers a task's agent started: a chip in the header's title
