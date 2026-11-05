@@ -28,6 +28,7 @@ from agent_core_lib.agent_core_lib.helpers.one_shot import (
     AgentOneShotError,
     run_one_shot,
 )
+from claude_core_lib.claude_core_lib.helpers.model_ids import model_flags
 
 
 
@@ -57,9 +58,7 @@ def one_shot(
     :func:`run_one_shot`), so nothing the CLI keeps per directory lands in
     the caller's.
     """
-    command: list[str] = [binary, '-p', *_NO_TOOLS_FLAGS]
-    if model:
-        command.extend(['--model', model])
+    command: list[str] = [binary, '-p', *_NO_TOOLS_FLAGS, *model_flags(model)]
     return run_one_shot(
         prompt,
         command=command,

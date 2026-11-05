@@ -31,6 +31,7 @@ from claude_core_lib.claude_core_lib.helpers.one_shot_utils import OneShotError
 from claude_core_lib.claude_core_lib.helpers.write_scope_settings import (
     absolute_rule_path,
 )
+from claude_core_lib.claude_core_lib.helpers.model_ids import model_flags
 
 #: Everything the editor can do. ``Edit`` covers every way of changing the
 #: file; ``Write`` is deliberately absent, so a run cannot replace the whole
@@ -48,8 +49,7 @@ def file_editor_command(file_path: str, *, binary: str = 'claude', model: str = 
         '--strict-mcp-config',
         '--no-session-persistence',
     ]
-    if model:
-        command.extend(['--model', model])
+    command.extend(model_flags(model))
     return command
 
 

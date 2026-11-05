@@ -33,3 +33,19 @@ export function createPubSub(getSnapshot) {
 
   return { subscribe, emit };
 }
+
+
+// "Open view V of task T" — the request a toolbar button makes and App acts on
+// (``useOpenRequests``). Its ``seq`` tells a NEW request from the replay every
+// subscribe gets. ``details`` ride along (a tab's label).
+export function createOpenRequests() {
+  let request = { taskId: '', seq: 0 };
+  const pubsub = createPubSub(() => request);
+  return {
+    open(taskId, details = {}) {
+      request = { ...details, taskId: String(taskId || ''), seq: request.seq + 1 };
+      pubsub.emit();
+    },
+    subscribe: pubsub.subscribe,
+  };
+}

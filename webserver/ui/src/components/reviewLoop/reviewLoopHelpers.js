@@ -254,10 +254,15 @@ export function findingStatus(round, finding, { running = false } = {}) {
   if (!isBlockingFinding(finding)) { return null; }
   const outcome = round?.outcome || '';
   if (round?.sent_at) {
-    if (!outcome && !round.fixed_at && running) {
+    // ``sent`` is set the moment the findings go to the chat, so it alone
+    // says nothing about the fix: only ``fixed_at`` means the chat replied.
+    // Reading "sent" as replied labelled every finding "Not answered — the
+    // next review checks it again" while the chat was still fixing it, and
+    // after a loop that failed mid-fix (there was no reply, and no next review).
+    if (!round.fixed_at && running && (!outcome || outcome === 'sent')) {
       return { label: 'In progress', tone: 'busy', note: 'sent to the chat — waiting for its fix' };
     }
-    if (round.fixed_at || outcome === 'sent') {
+    if (round.fixed_at) {
       return {
         label: DECISIONS.unanswered.label, tone: DECISIONS.unanswered.tone,
         note: 'the chat\u2019s reply did not say what it did about this — the next review checks it again',

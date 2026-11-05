@@ -321,6 +321,12 @@ export function fetchTaskPullRequestState(taskId) {
   );
 }
 
+// A task's own definition: ``{task_id, summary, description}`` — the title
+// and description it was created with (a ticket's, or the New task form's).
+export function fetchTaskDefinition(taskId) {
+  return requestEnvelope(`/api/sessions/${encodeURIComponent(taskId)}/task-definition`, { cache: 'no-store' });
+}
+
 // Content (grep) search across the task's workspace repos. Returns
 // { matches: [{repo_id, path, line, text}], truncated, query }.
 export function searchTaskWorkspaceContent(taskId, query) {
@@ -604,7 +610,21 @@ export async function fetchModels(force = false) {
 // fetchModels() (same ``{models}`` shape, ``/api/<x>/models`` route). Best-effort:
 // a failed fetch yields an empty list so the field stays usable as free text.
 export function fetchOpenRouterModels() {
-  return fetchJson('/api/openrouter/models')
+  return fetchModelSuggestions('/api/openrouter/models');
+}
+
+// Every Claude model the settings model fields can suggest: the aliases (the
+// newest of each family) and each pinned version kato knows this account has
+// (``claude-sonnet-4-6``) — an older plan runs an older model, and typing its
+// name was the only way. Free text still works.
+export function fetchClaudeModels() {
+  return fetchModelSuggestions('/api/claude/models');
+}
+
+// A settings field's ``{models: [{id, label}]}`` suggestions; [] when the
+// request fails, so the field stays usable as free text.
+function fetchModelSuggestions(url) {
+  return fetchJson(url)
     .then((data) => (data && Array.isArray(data.models) ? data.models : []))
     .catch(() => []);
 }

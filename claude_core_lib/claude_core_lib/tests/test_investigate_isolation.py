@@ -191,6 +191,13 @@ class PerRunModelTests(unittest.TestCase):
         # The pick is for that run only: the client's own model is untouched.
         self.assertEqual(client.model, 'claude-opus-5-5[1m]')
 
+    def test_a_model_written_as_a_person_writes_it_reaches_the_cli_as_its_id(self) -> None:
+        # "Sonnet 4.6" in the settings field: the CLI refused it as "no such model".
+        binary, record = _fake_cli(self)
+        client = ClaudeCliClient(binary=binary, model='Sonnet 4.6')
+        client.investigate('review this', cwd=tempfile.gettempdir())
+        self.assertEqual(_flag(_recorded(record)['argv'], '--model'), 'claude-sonnet-4-6')
+
 
 if __name__ == '__main__':
     unittest.main()

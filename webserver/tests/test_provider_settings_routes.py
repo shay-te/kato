@@ -154,6 +154,20 @@ class GitProvidersGetTests(_ProviderRouteTestBase):
         # And crucially: no "active" field — git host is inferred.
         self.assertNotIn('active', body)
 
+    def test_says_which_hosts_are_set_up(self) -> None:
+        # Report: the tab always opened on Bitbucket though Azure was the one set up.
+        import json
+        self.settings_path.write_text(json.dumps({'AZURE_API_TOKEN': 'pat-1'}), encoding='utf-8')
+        env = {key: value for key, value in os.environ.items()
+               if not key.endswith('_API_TOKEN') and not key.endswith('_API_TOKEN_SOURCE')}
+        env.update(self._env({'GITHUB_API_TOKEN_SOURCE': 'gh_cli'}))
+        with patch.dict(os.environ, env, clear=True):
+            body = self._client().get('/api/git-providers').get_json()
+        set_up = {name: entry['set_up'] for name, entry in body['providers'].items()}
+        self.assertEqual(set_up, {'azure': True, 'github': True, 'bitbucket': False, 'gitlab': False})
+        # Only whether — the token itself is still the field's own value, as before.
+        self.assertIs(type(body['providers']['azure']['set_up']), bool)
+
 
 class GitProvidersPostTests(_ProviderRouteTestBase):
 

@@ -85,6 +85,26 @@ class TurnEndSinceTests(unittest.TestCase):
         session = _Session([_Event('result', 200.0, is_error=True, result='boom')])
         self.assertTrue(_delivery_for(session).turn_end_since('T1', 0).is_error)
 
+    def test_a_failed_turn_says_why_in_the_agent_s_own_words(self) -> None:
+        # The review loop's FAILED reason carries it: "ended with an error"
+        # alone left the operator nothing to act on.
+        def why(**raw) -> str:
+            return _delivery_for(_Session([_Event('result', 200.0, is_error=True, **raw)])) \
+                .turn_end_since('T1', 0).error
+        self.assertEqual(why(result='boom'), 'boom')
+        self.assertEqual(why(subtype='error_during_execution', errors=['No conversation found', 'x']),
+                         'No conversation found; x')
+        self.assertEqual(why(subtype='error_max_turns'), 'the agent used up its maximum number of turns')
+        self.assertEqual(why(subtype='error_max_turns', failure_detail='API Error: 529\n overloaded'),
+                         'API Error: 529 overloaded')
+        self.assertEqual(why(subtype='error_something_new'), 'error something new')
+        self.assertEqual(why(), '')
+        codex = _Session([_Event('turn.failed', 200.0, error={'message': 'stream disconnected'})])
+        self.assertEqual(_delivery_for(codex).turn_end_since('T1', 0).error, 'stream disconnected')
+        # A turn that did not fail has no error, whatever else it carries.
+        ok = _Session([_Event('result', 200.0, result='done', failure_detail='noise')])
+        self.assertEqual(_delivery_for(ok).turn_end_since('T1', 0).error, '')
+
     def test_a_failed_codex_turn_is_an_error_and_a_completed_one_is_not(self) -> None:
         failed = _Session([_Event('turn.failed', 200.0)])
         done = _Session([_Event('turn.completed', 200.0)])

@@ -502,6 +502,14 @@ test('a blocking finding always says where it stands', () => {
   assert.equal(status({ sent_at: 5, fixed_at: 9, outcome: 'sent' }).label, 'Not answered');
   // Sent, but the loop stopped before the fix finished.
   assert.equal(status({ sent_at: 5, fixed_at: 0, outcome: 'stopped' }).label, 'Not fixed');
+  // The runner marks a round 'sent' as it sends: while the chat is fixing it,
+  // that is in progress — never "Not answered".
+  assert.equal(status({ sent_at: 5, fixed_at: 0, outcome: 'sent' }, true).label, 'In progress');
+  // The loop failed mid-fix (the round keeps 'sent'): no reply came, so it
+  // was not fixed — not "the next review checks it again", there is none.
+  const failedMidFix = status({ sent_at: 5, fixed_at: 0, outcome: 'sent' });
+  assert.equal(failedMidFix.label, 'Not fixed');
+  assert.match(failedMidFix.note, /Resume continues the fix/);
 });
 
 test('a blocking finding never sent says why, and what to do', () => {

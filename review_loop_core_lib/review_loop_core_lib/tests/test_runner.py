@@ -132,6 +132,27 @@ class TheChatGoesWrongTests(_Runs):
         self.assertEqual(state.status, ReviewLoopStatus.FAILED)
         self.assertIn('ended with an error', state.reason)
 
+    def test_a_failed_turn_says_why_in_the_agent_s_own_words(self) -> None:
+        # The report: "after failing on the first turn it stopped but did not
+        # display why it failed" — the turn's own error was thrown away.
+        chat = FakeChat(turn_error=True, turn_error_text='Reached maximum number of turns (25)')
+        service = self.service(chat, FakeReviewer(reply(finding('MAJOR'))))
+        self.start(service)
+        state = self.finished(service)
+        self.assertEqual(
+            state.reason, "the chat's fix turn ended with an error: Reached maximum number of turns (25)",
+        )
+
+    def test_a_long_turn_error_is_shortened_to_one_line(self) -> None:
+        chat = FakeChat(turn_error=True, turn_error_text='line one\n' + 'x' * 2000)
+        service = self.service(chat, FakeReviewer(reply(finding('MAJOR'))))
+        self.start(service)
+        reason = self.finished(service).reason
+        self.assertNotIn('\n', reason)
+        self.assertTrue(reason.endswith('…'))
+        self.assertLess(len(reason), 700)
+        self.assertIn(': line one xxx', reason)
+
     def test_a_chat_whose_session_disappears_fails_after_a_grace_period(self) -> None:
         chat = FakeChat()
         chat.answer_turns = False
@@ -240,6 +261,8 @@ class TheChatGoesWrongTests(_Runs):
         state = self.finished(service)
         self.assertEqual(state.status, ReviewLoopStatus.FAILED)
         self.assertIn('was not free', state.reason)
+        # And what it was busy with: the operator's next step depends on it.
+        self.assertTrue(state.reason.endswith('(busy forever)'), state.reason)
 
     def test_a_fix_that_never_ends_fails_the_loop(self) -> None:
         chat = FakeChat()
@@ -391,7 +414,8 @@ class TheReviewGoesWrongTests(_Runs):
         self.start(service, broken)
         state = self.finished(service)
         self.assertEqual(state.status, ReviewLoopStatus.FAILED)
-        self.assertIn('unexpected error', state.reason)
+        # Its type too: str(KeyError(...)) alone is a quoted fragment.
+        self.assertEqual(state.reason, "unexpected error: KeyError: 'diff source blew up'")
 
     def test_a_broken_observer_never_breaks_the_loop(self) -> None:
         def observer(state, event):

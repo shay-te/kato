@@ -9,7 +9,7 @@ import {
   markdownViewFor,
 } from '../utils/markdownView.js';
 import { buildReviewLoopTabModels } from './reviewLoop/reviewLoopHelpers.js';
-import { STRIP_TAB_KIND, isViewTab, stripOrder } from '../utils/fileTabs.js';
+import { STRIP_TAB_KIND, TAB_VIEW, isViewTab, stripOrder } from '../utils/fileTabs.js';
 
 // VS Code-style row of open-file tabs above the centre editor/diff
 // pane. Every open file gets its own tab — opening a file never
@@ -327,7 +327,7 @@ function FileTab({
   // glyph the tree uses); a plain-file tab just shows a file.
   let tabIcon = <Icon name="file" />;
   if (isDiff) { tabIcon = <DiffKindIcon kind={tab.kind} />; }
-  if (viewTab) { tabIcon = <Icon name="board" />; }
+  if (viewTab) { tabIcon = <Icon name={tab.view === TAB_VIEW.TASK ? 'notes' : 'board'} />; }
 
   function handleSelect() {
     onSelect(tab.key);

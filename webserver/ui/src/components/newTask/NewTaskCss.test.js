@@ -18,8 +18,14 @@ function ruleBody(selector) {
 }
 
 test('the pane fills the space under the strip, like the review loop pane', () => {
-  assert.match(css, /\.center-pane-with-tabs > #review-loop-pane,\n\.center-pane-with-tabs > #new-task-pane \{[^}]*flex: 1/);
-  assert.match(css, /#review-loop-pane,\n#new-task-pane \{[^}]*display: flex/);
+  assert.match(css, /\.center-pane-with-tabs > #review-loop-pane,\n\.center-pane-with-tabs > #new-task-pane,?[^{]*\{[^}]*flex: 1/);
+  assert.match(css, /#review-loop-pane,\n#new-task-pane,?[^{]*\{[^}]*display: flex/);
+});
+
+test('a task\'s own definition fills the same space, in the same pane chrome', () => {
+  assert.match(css, /\.center-pane-with-tabs > \.task-definition-pane \{[^}]*flex: 1/);
+  assert.match(css, /#new-task-pane,\n\.task-definition-pane \{[^}]*display: flex/);
+  assert.match(css, /\.task-definition-body \{[^}]*overflow: auto/);
 });
 
 test('the description takes the height; settings sit in a narrow column', () => {

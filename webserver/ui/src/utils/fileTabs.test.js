@@ -12,6 +12,7 @@ import {
   loopStripId,
   pickTabView,
   planQueueTab,
+  taskDefinitionTab,
   isViewTab,
   TAB_VIEW,
   findTab,
@@ -459,4 +460,14 @@ test('the plan board opens as one tab per task, and keeps its view', () => {
   assert.equal(isViewTab(tabs[0]), true);
   assert.equal(isViewTab({ view: 'diff' }), false);
   assert.equal(isViewTab(null), false);
+});
+
+
+test('the task\'s own definition opens as one tab per task, a view, not a file', () => {
+  const info = taskDefinitionTab('LOCAL-3');
+  assert.deepEqual(info, { absolutePath: 'task:LOCAL-3', relativePath: 'LOCAL-3 Task', view: TAB_VIEW.TASK });
+  const { tabs, activeKey } = upsertTab([], null, { ...info, openRequestId: 1 }, 'LOCAL-3');
+  assert.equal(activeKey, 'task:LOCAL-3');
+  assert.equal(isViewTab(tabs[0]), true);  // nothing to load, diff or reveal in the tree
+  assert.equal(pickTabView(undefined, { view: TAB_VIEW.TASK }), TAB_VIEW.TASK);
 });

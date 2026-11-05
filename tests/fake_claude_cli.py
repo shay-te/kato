@@ -15,6 +15,8 @@ Two modes, chosen the way the real CLI's callers choose them:
   ``NEEDS_APPROVAL``
   asks permission for a ``Write`` (a real ``control_request``) and finishes
   only once a ``control_response`` arrives on stdin — the operator's answer.
+  One containing ``MAX_TURNS`` ends its turn as the real CLI does when it
+  runs out of turns: ``error_max_turns``, ``is_error``, and no ``result``.
 * **one-shot** (``-p --output-format json``): reads the prompt on stdin,
   records argv / cwd / prompt, and replies with the next scripted reply.
 """
@@ -57,6 +59,9 @@ if "stream-json" in argv:
         if "NEEDS_APPROVAL" in text:
             awaiting = "req-write-1"
             print(json.dumps({{"type": "control_request", "request_id": awaiting, "request": {{"subtype": "can_use_tool", "tool_name": "Write", "input": {{"file_path": "notes.txt", "content": "x"}}}}}}), flush=True)
+            continue
+        if "MAX_TURNS" in text:
+            print(json.dumps({{"type": "result", "subtype": "error_max_turns", "is_error": True, "num_turns": 26, "session_id": sid}}), flush=True)
             continue
         reply_path = os.path.join(ROOT, "chat_reply.txt")
         final = open(reply_path, encoding="utf-8").read() if os.path.exists(reply_path) else "fixed"

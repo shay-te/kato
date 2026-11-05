@@ -157,6 +157,20 @@ def _nothing_to_review(diffs: list[RepoDiff]) -> _Finish:
     return _Finish(ReviewLoopStatus.NOTHING_TO_REVIEW, NO_CHANGES_REASON)
 
 
+#: How much of a failed turn's own words a reason carries.
+_TURN_ERROR_MAX_CHARS = 600
+
+
+def _turn_failed(what: str, turn: ChatTurnEnd) -> str:
+    """"the chat's test run turn ended with an error: <why>" — the agent's
+    own words when it gave any, shortened to one line."""
+    why = ' '.join(str(turn.error or '').split())
+    if len(why) > _TURN_ERROR_MAX_CHARS:
+        why = why[:_TURN_ERROR_MAX_CHARS - 1].rstrip() + '…'
+    head = f'the chat\'s {what} turn ended with an error'
+    return f'{head}: {why}' if why else head
+
+
 def _round_outcome(status: ReviewLoopStatus) -> str:
     """What a round still open when the loop ended is recorded as."""
     if status in (ReviewLoopStatus.STOPPED, ReviewLoopStatus.INTERRUPTED):
@@ -257,7 +271,10 @@ class ReviewLoopRunner(object):
             self._finish(finish.status, finish.reason)
         except Exception as exc:
             self._logger.exception('review loop for %s broke', self._task_id)
-            self._finish(ReviewLoopStatus.FAILED, f'unexpected error: {exc}')
+            # The type too: ``str(KeyError())`` can be a bare quote, or nothing.
+            self._finish(
+                ReviewLoopStatus.FAILED, f'unexpected error: {exc.__class__.__name__}: {exc}'.rstrip(': '),
+            )
         finally:
             if self._on_finished is not None:
                 self._on_finished(self)
@@ -800,9 +817,7 @@ class ReviewLoopRunner(object):
             turn = self._chat.turn_end_since(self._task_id, dispatched_at)
             if turn is not None:
                 if turn.is_error:
-                    raise _Finish(
-                        ReviewLoopStatus.FAILED, f'the chat\'s {what} turn ended with an error',
-                    )
+                    raise _Finish(ReviewLoopStatus.FAILED, _turn_failed(what, turn))
                 readiness = self._chat.readiness(self._task_id)
                 if readiness.state is Readiness.READY:
                     self._set_waiting('')
@@ -876,9 +891,12 @@ class ReviewLoopRunner(object):
                 ready_since = None
                 self._set_waiting(readiness.reason or 'the chat is busy')
             if now >= deadline:
+                # What it was busy with: the operator's next step depends on it.
+                busy_with = '' if readiness.state is Readiness.READY else (readiness.reason or '')
                 raise _Finish(
                     ReviewLoopStatus.FAILED,
-                    f'the chat was not free for {int(options.chat_wait_timeout_seconds)}s',
+                    f'the chat was not free for {int(options.chat_wait_timeout_seconds)}s'
+                    + (f' ({busy_with})' if busy_with else ''),
                 )
             self._sleep()
 

@@ -353,17 +353,22 @@ SETTINGS_SCHEMA: list[dict] = [
              'Path to the `claude` CLI. Plain `claude` works on PATH.',
              {}),
             ('KATO_CLAUDE_MODEL', 'text', 'Model override',
-             'Alias (opus/sonnet/haiku → latest) or full name '
-             '(e.g. claude-fable-5, claude-sonnet-4-6). '
-             'Empty = Claude Code default.', {}),
+             'Pick one, or type it: an alias (opus / sonnet / haiku — always the newest) or '
+             'a version (claude-sonnet-4-6; "Sonnet 4.6" works too). The list offers every '
+             'version kato knows this account has. Empty = Claude Code default.',
+             {'placeholder': 'sonnet  or  claude-sonnet-4-6', 'datalist': 'claude'}),
             ('KATO_CLAUDE_FALLBACK_MODEL', 'text', 'Safeguard fallback model',
              'Pinned model to retry on when the API\'s safeguards flag a '
              'session (the one-click "retry on a lower version" the chat '
              'offers). A full id, not an alias — aliases always resolve to '
              'the latest, which is the version that was flagged. '
-             'Empty = no retry offered.', {}),
+             'Empty = no retry offered.',
+             {'placeholder': 'claude-opus-4-8', 'datalist': 'claude'}),
             ('KATO_CLAUDE_MAX_TURNS', 'number', 'Max turns',
-             'Cap on agent turns per task. Empty = no cap.', {}),
+             'Cap on agent turns per REPLY — every chat message and every run kato starts '
+             'stops with "Reached maximum number of turns" once it uses this many. Empty = no '
+             'cap (recommended). A CLAUDE_CODE_MAX_TURNS in the shell kato starts from caps it '
+             'too.', {}),
             ('KATO_CLAUDE_EFFORT', 'select', 'Reasoning effort',
              'Passed via --effort. Higher = more tokens/time.',
              {'options': ['', 'low', 'medium', 'high', 'xhigh', 'max']}),
@@ -626,6 +631,11 @@ SETTINGS_SCHEMA: list[dict] = [
              'Only with a channel link (not needed for a webhook URL): the bot token (xoxb-…) '
              'of a Slack app with the chat:write scope, invited to the channel '
              '(/invite @your-app).', {}),
+            ('KATO_AGENT_NAME', 'text',
+             'Agent name',
+             'How your kato signs the tasks it posts as done, so the team sees whose agent '
+             'finished each one ("Finished by Shay\'s kato"). Empty = your git user.name on '
+             'this computer + "\'s kato". Applies to the next post, no restart.', {}),
         ],
     },
     {

@@ -2310,6 +2310,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 #session-task-summary {
+  /* A button (it opens the task's description) that reads as the title:
+     none of the browser's button look. */
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   /* Match the task code (#session-task-id, a bold white <strong>):
      same colour + weight so the id and the summary read as one
      title rather than label + muted subtitle. */
@@ -2325,6 +2333,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* No-task placeholder: same bar, muted "Select a task" hint + the
    action row rendered inert (the .session-action:disabled rule
    already greys the buttons). The bar never disappears. */
+button#session-task-summary:hover { text-decoration: underline; }
+
 #session-header.is-empty #session-task-summary.is-placeholder {
   color: $C-CYAN-53;
   font-weight: 600;
@@ -5162,7 +5172,8 @@ code {
 /* The review-loop view uses the same strip-above-pane layout as the file
  * tabs, so its pane fills the space under the loop-tab strip the same way. */
 .center-pane-with-tabs > #review-loop-pane,
-.center-pane-with-tabs > #new-task-pane {
+.center-pane-with-tabs > #new-task-pane,
+.center-pane-with-tabs > .task-definition-pane {
   flex: 1;
   min-height: 0;
   border-left: 0;
@@ -5393,7 +5404,8 @@ code {
 #plan-pane,
 #plan-queue-pane,
 #review-loop-pane,
-#new-task-pane {
+#new-task-pane,
+.task-definition-pane {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -5406,7 +5418,8 @@ code {
 .plan-pane-header,
 .plan-queue-pane-header,
 .review-loop-pane-header,
-.new-task-header {
+.new-task-header,
+.task-definition-header {
   display: flex;
   align-items: center;
   gap: $SPACE-10;
@@ -5421,7 +5434,8 @@ code {
 
 .plan-pane-title,
 .plan-queue-pane-title,
-.review-loop-pane-title {
+.review-loop-pane-title,
+.task-definition-header {
   font-size: $TEXT-12;
   font-weight: 600;
   color: $C-NEUTRAL-96;
@@ -5455,17 +5469,28 @@ code {
 
 .plan-pane-body,
 .plan-queue-pane-body,
-.review-loop-pane-body {
+.review-loop-pane-body,
+.task-definition-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
 }
 
-.plan-pane-markdown {
+.plan-pane-markdown,
+.task-definition-markdown,
+.task-definition-note {
   padding: $SPACE-20 $SPACE-24;
   color: $C-NEUTRAL-96;
   line-height: 1.6;
 }
+
+.task-definition-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.task-definition-note { color: $C-NEUTRAL-96-A65; }
+.task-definition-note.is-error { color: $C-RED-71; }
 
 .plan-pane-empty {
   display: flex;

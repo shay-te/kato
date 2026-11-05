@@ -96,3 +96,15 @@ def _parse_cache(path: Path) -> list[dict] | None:
             model['default'] = True
         out.append(model)
     return out or None
+
+
+def discover_pinned_models(force: bool = False) -> list[dict]:
+    """The pinned versions beyond ``discover_models`` — none for codex.
+
+    Every transport answers this (a caller holding a backend asks each the
+    same question). A Claude alias (``sonnet``) moves to each new version, so
+    its pinned versions are a list of their own; every codex model is already
+    named by its exact version, and ``discover_models`` lists them all.
+    """
+    del force
+    return []

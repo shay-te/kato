@@ -53,7 +53,9 @@ export function tabKeyFor(info) {
 // What a tab shows. ``PLAN_QUEUE`` is not a file: it is the task's plan board,
 // opened as a tab so it lives in the strip like the files do (pinned, dragged,
 // closed the same way) instead of covering the whole window.
-export const TAB_VIEW = Object.freeze({ FILE: 'file', DIFF: 'diff', PLAN_QUEUE: 'plan_queue' });
+export const TAB_VIEW = Object.freeze({
+  FILE: 'file', DIFF: 'diff', PLAN_QUEUE: 'plan_queue', TASK: 'task',
+});
 
 const TAB_VIEWS = new Set(Object.values(TAB_VIEW));
 
@@ -75,10 +77,20 @@ export function planQueueTab(taskId, label = 'Split plan') {
   };
 }
 
+// The open request for a task's own definition — the title and description it
+// was created with ("UNA-1 Task"): what the agent was given, to read again.
+export function taskDefinitionTab(taskId) {
+  return {
+    absolutePath: `task:${taskId}`,
+    relativePath: `${taskId} Task`,
+    view: TAB_VIEW.TASK,
+  };
+}
+
 // A tab that shows a view of the task, not a file — nothing to load, diff or
 // reveal in the file tree.
 export function isViewTab(tab) {
-  return !!tab && tab.view === TAB_VIEW.PLAN_QUEUE;
+  return !!tab && (tab.view === TAB_VIEW.PLAN_QUEUE || tab.view === TAB_VIEW.TASK);
 }
 
 

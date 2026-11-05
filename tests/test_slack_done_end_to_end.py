@@ -69,6 +69,7 @@ class FinishAndForgetPostsToSlackTests(unittest.TestCase):
             posted=SlackPostedTasks(root / 'slack_posted.json'),
             client_for=lambda token: SlackClient(token, base_url=self.slack.url),
             background=lambda work: work(),
+            signed_by=lambda: "Dana Levi's kato",
         )
         config = MagicMock(
             progress_state=PROGRESS, review_state=REVIEW, done_state=DONE,
@@ -95,6 +96,7 @@ class FinishAndForgetPostsToSlackTests(unittest.TestCase):
         self.assertEqual(request['body']['channel'], 'C0RELEASE1')
         self.assertEqual(request['body']['text'], '\n'.join([
             f'✅ *{self.task_id}* is done — Set a password button',
+            "Finished by *Dana Levi's kato*",  # whose agent: several post to one channel
             '• backend: <https://git.example/backend/pull/7>',
             '• client: <https://git.example/client/pull/8>',
         ]))

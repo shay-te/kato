@@ -130,10 +130,82 @@ def discover_models(force: bool = False) -> list[dict]:
 
 def reset_models_cache() -> None:
     """Clear the discovery cache (tests / a model-list change mid-process)."""
-    global _cache, _cache_stamp
+    global _cache, _cache_stamp, _pinned_cache, _pinned_stamp
     with _cache_lock:
         _cache = None
         _cache_stamp = 0.0
+        _pinned_cache = None
+        _pinned_stamp = 0.0
+
+
+_pinned_cache: list[dict] | None = None
+_pinned_stamp: float = 0.0
+
+
+def discover_pinned_models(force: bool = False) -> list[dict]:
+    """Every PINNED version this host knows of, ``[{id, label}]`` — newest
+    family first, newest version first within it (``claude-sonnet-4-6`` →
+    "Sonnet 4.6").
+
+    The aliases always run the newest, but an account on a smaller plan runs an
+    older model, and its only way to pick one was typing an id the CLI would
+    take. The same three sources as the labels, but every version they name —
+    the models API's list (with a credential), the options the CLI's config says
+    the server offered this account, and the versions the session logs show
+    were run. Cached with the same TTL; never raises; ``[]`` when none.
+    """
+    global _pinned_cache, _pinned_stamp
+    now = time.monotonic()
+    with _cache_lock:
+        if not force and _pinned_cache is not None and (now - _pinned_stamp) < _CACHE_TTL_SECONDS:
+            return [dict(m) for m in _pinned_cache]
+    models = _pinned_from(_every_known_model_id())
+    with _cache_lock:
+        _pinned_cache = models
+        _pinned_stamp = time.monotonic()
+    return [dict(m) for m in models]
+
+
+def _every_known_model_id() -> list[str]:
+    ids: list[str] = []
+    data = _fetch_models_api()
+    if data:
+        ids.extend(str(entry.get('id') or '') for entry in data if isinstance(entry, dict))
+    try:
+        with _cli_config_path().open('r', encoding='utf-8') as handle:
+            config = json.load(handle)
+        if isinstance(config, dict):
+            ids.extend(_model_ids_in_cli_config(config))
+    except Exception:
+        pass
+    try:
+        logs = _recent_session_logs()
+    except Exception:
+        logs = []
+    for log in logs:
+        try:
+            ids.extend(_model_ids_in_log(log))
+        except Exception:
+            continue
+    return ids
+
+
+def _pinned_from(model_ids) -> list[dict]:
+    """One entry per (family, version): the shortest id seen for it (the
+    undated one when both were seen), a ``[1m]``-style marker dropped."""
+    best: dict[tuple[str, int, int], tuple[str, str]] = {}
+    for raw in model_ids:
+        model_id = str(raw or '').split('[', 1)[0].strip()
+        parsed = _family_version_from_model_id(model_id)
+        if parsed is None:
+            continue
+        family, major, minor, label = parsed
+        key = (family, major, minor)
+        if key not in best or len(model_id) < len(best[key][0]):
+            best[key] = (model_id, label)
+    order = {family: index for index, family in enumerate(_FAMILIES)}
+    ranked = sorted(best.items(), key=lambda item: (order[item[0][0]], -item[0][1], -item[0][2]))
+    return [{'id': model_id, 'label': label} for _key, (model_id, label) in ranked]
 
 
 def _aliases_with_live_labels() -> list[dict]:

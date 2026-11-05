@@ -56,6 +56,36 @@ class ModelCatalogTests(unittest.TestCase):
         )
         return path
 
+    def test_every_pinned_version_known_is_offered_newest_first(self) -> None:
+        # An older plan runs an older model: the settings field offers it.
+        self._write_cli_config({
+            'additionalModelOptionsCache': [{'value': 'claude-sonnet-4-6'}, {'value': 'claude-opus-4-8'}],
+            'projects': {'/w': {'lastModelUsage': {'claude-sonnet-4-6': {}, 'claude-haiku-4-5-20251001': {}}}},
+        })
+        self._write_session_log('a.jsonl', [
+            {'message': {'model': 'claude-sonnet-5-5'}},
+            {'message': {'model': 'claude-opus-4-8[1m]'}},
+        ])
+        self._write_session_log('b.jsonl', [{'message': {'model': 'claude-haiku-4-5'}}])
+        self.assertEqual(model_catalog.discover_pinned_models(), [
+            {'id': 'claude-opus-4-8', 'label': 'Opus 4.8'},
+            {'id': 'claude-sonnet-5-5', 'label': 'Sonnet 5.5'},
+            {'id': 'claude-sonnet-4-6', 'label': 'Sonnet 4.6'},
+            # The undated id when both were seen; a [1m] marker never offered.
+            {'id': 'claude-haiku-4-5', 'label': 'Haiku 4.5'},
+        ])
+
+    def test_a_context_window_marker_is_never_part_of_the_offered_id(self) -> None:
+        # Seen ONLY with its marker: still offered, as the id the CLI takes.
+        self._write_session_log('c.jsonl', [{'message': {'model': 'claude-opus-5-5[1m]'}}])
+        self.assertEqual(model_catalog.discover_pinned_models(), [{'id': 'claude-opus-5-5', 'label': 'Opus 5.5'}])
+
+    def test_no_source_means_no_pinned_versions_and_it_never_raises(self) -> None:
+        self.assertEqual(model_catalog.discover_pinned_models(), [])
+        self._write_cli_config('{not json')
+        model_catalog.reset_models_cache()
+        self.assertEqual(model_catalog.discover_pinned_models(), [])
+
     def test_ids_are_stable_aliases_with_sonnet_default(self) -> None:
         # Fable is gated (offered only when discovery confirms access — see
         # below), so the baseline catalog is the always-resolvable CLI aliases.

@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from claude_core_lib.claude_core_lib.helpers.result_failure import failure_reason
 from claude_core_lib.claude_core_lib.session.streaming import (
     TURN_ACK_GRACE_SECONDS as SEND_ACK_GRACE_SECONDS,
 )
@@ -37,11 +38,39 @@ from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
 
 @dataclass(frozen=True)
 class TurnEnd(object):
-    """A finished turn of a task's chat: when, whether it failed, its text."""
+    """A finished turn of a task's chat: when, whether it failed, its text,
+    and — failed — why, in the agent's own words."""
 
     received_at: float
     is_error: bool
     text: str
+    error: str = ''
+
+
+#: A failed turn that says nothing else still says what kind of failure it was.
+_FAILED_TURN_KINDS = {
+    'error_max_turns': 'the agent used up its maximum number of turns',
+    'error_during_execution': 'the agent failed while running',
+}
+
+
+def turn_failure(raw: dict) -> str:
+    """Why a failed turn ended: the result's reason (``result``, else its
+    ``errors``), a Codex turn's ``error``, the last stderr lines kato attached
+    (``failure_detail``), else what its subtype means. '' = it said nothing."""
+    reason = failure_reason(raw)
+    if reason:
+        return reason
+    error = raw.get('error')
+    if isinstance(error, dict):
+        error = error.get('message')
+    if isinstance(error, str) and error.strip():
+        return ' '.join(error.split())
+    detail = ' '.join(str(raw.get('failure_detail') or '').split())
+    if detail:
+        return detail
+    subtype = str(raw.get('subtype') or '')
+    return _FAILED_TURN_KINDS.get(subtype, subtype.replace('_', ' ') if subtype.startswith('error') else '')
 
 
 class MainChatDelivery(object):
@@ -380,9 +409,11 @@ class MainChatDelivery(object):
                 return None
             raw = getattr(event, 'raw', None) or {}
             event_type = str(getattr(event, 'event_type', '') or '')
+            is_error = bool(raw.get('is_error')) or event_type.endswith(('failed', 'aborted'))
             return TurnEnd(
                 received_at=received,
-                is_error=bool(raw.get('is_error')) or event_type.endswith(('failed', 'aborted')),
+                is_error=is_error,
                 text=str(raw.get('result', '') or ''),
+                error=turn_failure(raw) if is_error else '',
             )
         return None

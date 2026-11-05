@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchOpenRouterModels } from '../api.js';
+import { fetchClaudeModels, fetchOpenRouterModels } from '../api.js';
 import { useSchemaSectionDraft } from '../hooks/useSchemaSectionDraft.js';
 import { useFieldHighlight } from '../hooks/useFieldHighlight.js';
 import { sourceLabel } from '../utils/settingsSource.js';
@@ -95,7 +95,10 @@ export default function SchemaSettingsPanel({ sectionId, highlightKey = '' }) {
 // Wrapped in arrows so the api.js export is only touched when a datalist field is
 // actually rendered — tests that mock api.js without this export (and never open
 // the OpenRouter field) don't trip vitest's missing-export guard at module load.
-const DATALIST_LOADERS = { openrouter: () => fetchOpenRouterModels() };
+const DATALIST_LOADERS = {
+  openrouter: () => fetchOpenRouterModels(),
+  claude: () => fetchClaudeModels(),
+};
 const _datalistCache = {};
 const _datalistPromises = {};
 

@@ -122,3 +122,10 @@ class CodexModelDiscoveryTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PinnedModelsTests(unittest.TestCase):
+    def test_codex_has_no_pinned_versions_beyond_its_model_list(self) -> None:
+        # Every codex model is already its exact version (discover_models).
+        self.assertEqual(model_catalog.discover_pinned_models(), [])
+        self.assertEqual(model_catalog.discover_pinned_models(force=True), [])

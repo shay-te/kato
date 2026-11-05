@@ -21,7 +21,7 @@ import { commentStatusKey } from '../utils/commentStatus.js';
 import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
-import { resultFailureText } from '../utils/resultFailure.js';
+import { refusedToolsText, resultFailureText } from '../utils/resultFailure.js';
 import {
   anchoredScrollTop,
   isNearTop,
@@ -1129,22 +1129,28 @@ function StickyPrompt({ text, onOpenFile, epoch = 0 }) {
 }
 
 function resultBubbles(raw, index) {
-  const ok = !raw.is_error;
   // Success-case result events are pure noise: the assistant bubble
   // immediately above already says "I did X". The redundant
   // ``(result: success) <full output>`` block is what the operator
   // sees in the screenshot complaint — drop it. Errors still
   // render — they carry diagnostic info (rate-limit notices,
   // tool-failure summaries) the assistant bubble doesn't repeat.
-  if (ok) { return []; }
-  return [
-    <Bubble
-      key={keyOf(raw, index, 'result')}
-      kind={BUBBLE_KIND.ERROR}
-    >
-      {resultFailureText(raw)}
-    </Bubble>,
-  ];
+  const bubbles = [];
+  if (raw.is_error) {
+    bubbles.push(
+      <Bubble key={keyOf(raw, index, 'result')} kind={BUBBLE_KIND.ERROR}>
+        {resultFailureText(raw)}
+      </Bubble>,
+    );
+  }
+  // What the CLI refused without asking — on any turn, failed or not.
+  const refused = refusedToolsText(raw);
+  if (refused) {
+    bubbles.push(
+      <Bubble key={keyOf(raw, index, 'refused')} kind={BUBBLE_KIND.SYSTEM}>{refused}</Bubble>,
+    );
+  }
+  return bubbles;
 }
 
 function keyOf(raw, index, slot) {

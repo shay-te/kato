@@ -27,6 +27,7 @@ from slack_core_lib.slack_core_lib.helpers.channel_link import channel_from_link
 
 from kato_core_lib.data_layers.data.release_note_source import ReleaseNoteSource
 from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
+from kato_core_lib.helpers.agent_name_utils import agent_name
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.slack_done_settings_utils import SlackDoneSettings, slack_done_settings
 
@@ -67,6 +68,7 @@ class SlackDoneAnnouncer(object):
         client_for: Callable[[str], SlackClient] = SlackClient,
         webhook_for: Callable[[str], SlackWebhook] = SlackWebhook,
         background: Callable[[Callable[[], None]], None] = run_in_background,
+        signed_by: Callable[[], str] = agent_name,
         logger=None,
     ) -> None:
         self._sources = sources
@@ -76,6 +78,7 @@ class SlackDoneAnnouncer(object):
         self._client_for = client_for
         self._webhook_for = webhook_for
         self._background = background
+        self._signed_by = signed_by
         self.logger = logger or configure_logger('SlackDoneAnnouncer')
 
     def announce(self, task_id: str) -> dict:
@@ -119,7 +122,7 @@ class SlackDoneAnnouncer(object):
 
     def _send(self, send, source: ReleaseNoteSource) -> dict:
         try:
-            send(done_message(source, self._links.links(source)))
+            send(done_message(source, self._links.links(source), self._signed_by()))
         except SlackError as exc:
             self.logger.error('task %s was not posted to Slack: %s', source.task_id, exc)
             return _outcome(FAILED, str(exc))
@@ -135,16 +138,19 @@ def _outcome(status: str, error: str = '') -> dict:
     return {'status': status, 'error': error}
 
 
-def done_message(source: ReleaseNoteSource, links: list[tuple[str, str]]) -> str:
-    """``✅ *UNA-1* is done — Title``, then one line per pull request: its
-    whole link, shown as the link itself (a word like "pull request" hid where
-    it goes), after its repository's name when the task spans several.
+def done_message(source: ReleaseNoteSource, links: list[tuple[str, str]], signed_by: str = '') -> str:
+    """``✅ *UNA-1* is done — Title``, then whose agent finished it (several
+    developers' katos post to one channel), then one line per pull request:
+    its whole link, shown as the link itself (a word like "pull request" hid
+    where it goes), after its repository's name when the task spans several.
 
-    Everything that came from a ticket is escaped: a title holding
-    ``<!channel>`` must never notify a whole channel.
+    Everything that came from a ticket or a setting is escaped: a title
+    holding ``<!channel>`` must never notify a whole channel.
     """
     title = _escape(source.title.strip())
     lines = [f'✅ *{_escape(source.task_id)}* is done' + (f' — {title}' if title else '')]
+    if signed_by.strip():
+        lines.append(f'Finished by *{_escape(signed_by.strip())}*')
     if links:
         lines += [f'• {_where(label)}<{url}>' for label, url in links]
     else:

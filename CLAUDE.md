@@ -312,7 +312,7 @@ Do not put a kato name in the lib: pass it in `HostIdentity`. Everything platfor
 **A closed lid means no browser, so nothing an agent needs may depend on one.** Remembered permissions used
 to be applied only when a browser asked (pending poll, session list, chat stream), and the UI stops polling
 while its page is hidden: an agent hit an ask already granted and waited until the page came back ("the review
-loop only runs when I focus the tab"). `kato_webserver/permission_auto_resolver.py` runs the same check every 2s;
+loop only runs when I focus the tab"). `kato_webserver/permission_auto_resolver.py` runs the same check every 0.25s (it was 2s: an unattended write waited up to 2s, 20-40s a task);
 every carve-out lives in `_maybe_auto_resolve_pending`, so do not add one here. Still browser-only: messages
 queued in a chat's composer (`useBackgroundQueueDrain`) wait for the UI.
 
@@ -390,7 +390,10 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   `KATO_SLACK_DONE_CHANNEL` holds an **Incoming Webhook URL** (`hooks.slack.com/services/…`, needs nothing
   else — `SlackWebhook`; the URL is the credential, so the field is `secret` and an error never repeats it)
   or a channel link + `KATO_SLACK_BOT_TOKEN` (xoxb-, `chat:write`, app invited — `SlackClient`). A half set-up
-  says what is missing. Its PRs (`ReleaseNoteLinks`, by branch) are the release notes' links, each shown as its
+  says what is missing. The post is SIGNED — "Finished by *Shay Tessler's kato*" (`helpers/agent_name_utils.py`): several
+  developers' katos post to one channel. `KATO_AGENT_NAME` (Settings → Email & Slack, live), else git's global
+  `user.name` (an email there → the account's full name, else its local part: never post an address), else the host.
+  Its PRs (`ReleaseNoteLinks`, by branch) are the release notes' links, each shown as its
   WHOLE link (`• backend: <url>`; a lone PR just `• <url>`) — a word like "pull request" hid where it went. Everything from a
   ticket is escaped (`<!channel>` in a title must never notify a channel). A failed post is not marked posted:
   the next Done tries again.
@@ -466,6 +469,13 @@ course. None is optional, and none is a setting:
 - **A sweep is told what was ruled out** (rejected / out_of_scope WITH evidence), never how the fixes went.
   Those rulings are about the task, not the fixes. Told nothing, it reopened them in new words the fingerprint
   could not match (UNA-3348 round 5: 7 raised, 3 caught). `blind` stays true for it.
+
+**A FAILED loop says why in the agent's own words.** A failed chat turn's reason is `ChatTurnEnd.error`
+(`main_chat_delivery.turn_failure`: the result's `result`, else `errors`, else the stderr kato attached, else what
+its subtype means — `error_max_turns` → "the agent used up its maximum number of turns"); it used to be only "the
+chat's test run turn ended with an error". A chat that never freed up names what it was busy with; an exception
+names its type. A round stays `sent` until its fix turn ends (`fixed_at`), so a finding with no `fixed_at` reads "In
+progress" while running and "Not fixed — Resume continues" after — never "Not answered" (that needs a reply).
 
 **An empty change is `NOTHING_TO_REVIEW`, neither CLEAN nor FAILED.** Checked first, before a self-check or a
 test run spends a turn on it. CLEAN is a verdict on code someone read, so a green result on nothing would be a false
@@ -811,6 +821,11 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
     hardened steps a kato:wait-planning ticket takes) → first chat turn with the opener
     (plan by DEFAULT; "implement"; "chat" = clone only, send nothing)
 ```
+**The task's own definition can be read again** (report: "no way to see the original description"): the header's
+task title is a button → a `Task` tab among the files (`taskDefinitionTab`, `TAB_VIEW.TASK`, `TaskDefinitionPane`)
+← `GET /api/sessions/<task>/task-definition` (`task_definition_routes.py`), read from the workspace record — the
+same one the agent's Task definition is built from. On demand only: the 5s tab list still omits the description.
+
 **A chat needs git, not a pull request API.** Preparing a chat's repositories (`WaitPlanningService._prepare_repositories`,
 so wait-planning and every local task) passes `pull_requests_required=False`. It used to require a known host and a
 token, so a repository on any other host got no branch at all: the clone sat on `master` and the agent worked there.
@@ -945,7 +960,7 @@ session is on `acceptEdits` AND the task's next mode is too (picking Manual coun
 a repository can carry a symlink out, so the lexical `outside_sandbox` is not enough to approve on), and no control file:
 `.git`, `.claude`, `.vscode`, `.idea`, `.mcp.json`, `.gitmodules`, … at any depth, or kato's own `.kato-*`, which hold the
 task's branch and repositories. Those decide what runs next with no approval after the write, so they keep asking. It goes through
-`_resolve_permission_decision` like a click (hook, audit). No browser: the 2s `permission_auto_resolver` tick answers it.
+`_resolve_permission_decision` like a click (hook, audit). No browser: the 0.25s `permission_auto_resolver` tick answers it.
 Proven with the real CLI, a real `StreamingClaudeSession` and this path: 3 plain writes through, 6 others stopped, Manual stops all 9.
 
 **"+ Add repository" takes several at once** (`POST …/add-repository {repository_ids: [...]}` →
@@ -965,6 +980,16 @@ warned ONCE). `WaitPlanningService.observe_model_tag` records it per task (`task
 `PlanningSessionRunner.start_session` applies it: **explicit pick (chat picker) > tag > configured
 default**, and never to a chat that is on another agent. The picker's `GET /api/sessions/<id>/model`
 answers the tagged model so the UI shows what will run.
+
+### Picking a Claude model in Settings (older plans run older models)
+Settings → Claude agent → "Model override" and "Safeguard fallback model" suggest (`datalist: 'claude'` →
+`GET /api/claude/models`, `claude_models_routes.py`) the aliases, then every PINNED version this host knows the
+account has (`model_catalog.discover_pinned_models`: the models API's list, the CLI config's offered options, the
+session logs — every version, not just the newest; a `[1m]` marker dropped, the undated id preferred). Still free
+text: EVERY `--model` the claude lib builds goes through `helpers/model_ids.model_flags`, so "Sonnet 4.6" /
+"sonnet:4.6" / "claude sonnet 4.6" reach the CLI as `claude-sonnet-4-6` and a bare family as its alias; anything
+else (a dated id, Bedrock, `[1m]`) passes as written. The CLI's own "There's an issue with the selected model" was
+what a teammate saw for "sonnet 4.6". Do not add a fourth `--model` builder outside `model_flags`.
 
 ### Usage dialog (header chart button → `GET /api/usage`)
 Tokens per task, read from the Claude transcripts (`claude_core_lib/helpers/transcript_usage.py`), summed
@@ -1028,6 +1053,12 @@ token) and the footnote says so. Do not add a second price table or compute cost
   every cause read "incomplete pull request configuration" — the calendar/audit-core-lib reports of 2026-11-03.
   That message now names what is missing; an owner/name missing from the inventory is read off its configured
   remote (never the clone's). Provider API settings are read at boot: change a token or email → restart.
+- **A refused tool is never silent.** The CLI refuses some tool calls WITHOUT asking (a background subagent cannot
+  ask; a remembered "Deny always" answers): they arrive as the result's `permission_denials`, which nothing read, so
+  the agent retried until "Reached maximum number of turns" while the chat showed only its own "no permission to
+  edit". Every turn now lists them (`refusedToolsText`, a SYSTEM bubble). A turn limit is only ever there because
+  one was set — `KATO_CLAUDE_MAX_TURNS` (per REPLY, chats included; empty = none) or an inherited
+  `CLAUDE_CODE_MAX_TURNS` — and the max-turns bubble says where.
 - **A failed turn says why.** `failure_reason` (`result`, else `errors`, which a turn that fails during execution
   sends with no `result`), then `failure_detail` (the last stderr lines, attached before the event is published),
   then `resultFailureText`'s words per subtype. Never the bare word "failed".

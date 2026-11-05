@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
+from claude_core_lib.claude_core_lib.helpers.model_ids import model_flags
 
 
 def build_claude_subprocess_env(
@@ -52,8 +53,7 @@ def append_model_effort_flags(
     so this guard is a no-op there and the real filter for the
     streaming path which accepts a raw int).
     """
-    if model:
-        command.extend(['--model', model])
+    command.extend(model_flags(model))
     if max_turns is not None and max_turns > 0:
         command.extend(['--max-turns', str(max_turns)])
     if effort:

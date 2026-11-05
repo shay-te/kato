@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
-import { isSecretKey, buildDraftFor } from '../utils/providerFields.js';
+import {
+  isSecretKey, buildDraftFor, orderedProviders, providerOptionLabel,
+} from '../utils/providerFields.js';
 import { sourceLabel } from '../utils/settingsSource.js';
 import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
 import { credentialGuideFor } from '../utils/credentialGuides.js';
@@ -48,7 +50,8 @@ export default function ProviderCredentialsPanel({
   const [draft, setDraft] = useState({});
 
   const { loading, error, refresh } = useSettingsResource(fetchFn, (body) => {
-    const supported = Array.isArray(body.supported) ? body.supported : [];
+    // Set-up hosts first, so the tab opens on one the operator uses.
+    const supported = orderedProviders(body.supported, body.providers);
     const active = includeActive
       ? String(body.active || supported[0] || defaultProvider)
       : '';
@@ -112,7 +115,7 @@ export default function ProviderCredentialsPanel({
             >
               {meta.supported.map((name) => (
                 <option key={name} value={name}>
-                  {labels[name] || name}
+                  {providerOptionLabel(name, labels, meta.providers)}
                 </option>
               ))}
             </select>

@@ -178,7 +178,9 @@ class KatoChatChannel(object):
         turn = self._delivery.turn_end_since(task_id, since_epoch)
         if turn is None:
             return None
-        return ChatTurnEnd(received_at=turn.received_at, is_error=turn.is_error, text=turn.text)
+        return ChatTurnEnd(
+            received_at=turn.received_at, is_error=turn.is_error, text=turn.text, error=turn.error,
+        )
 
     def _chat_cwd(self, task_id: str) -> str:
         """The repo clone a respawned chat runs in — the one it last used."""

@@ -11,6 +11,7 @@ import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import FastPromptButtons from './FastPromptButtons.jsx';
 import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
 import PlanQueueButton from './planQueue/PlanQueueButton.jsx';
+import { taskDefinitionView } from './taskDefinition/taskDefinitionView.js';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import PullRequestList from './PullRequestList.jsx';
@@ -417,7 +418,17 @@ export default function SessionHeader({
             title={agent.title}
           />
           <strong id="session-task-id">{session.task_id}</strong>
-          <span id="session-task-summary">{taskSummary}</span>
+          {/* The title opens the task's own definition — its description,
+              what the agent was given — as a tab: there was no way to read
+              it again once the task started. */}
+          <button
+            type="button"
+            id="session-task-summary"
+            title="Read the task's description"
+            onClick={() => taskDefinitionView.open(session.task_id)}
+          >
+            {taskSummary}
+          </button>
           {/* Where the task's review loop is right now. In the title area, not
               among the actions: the title truncates to make room, so the
               buttons never move when a loop starts or ends. */}

@@ -21,7 +21,12 @@ from utils_core_lib.utils_core_lib.tick_thread import TickThread
 
 from kato_webserver.app import _pending_permission_tool_by_task
 
-TICK_SECONDS = 2.0
+# Every Edit/Write raises a permission ask this answers (plus the remembered
+# ones), and the agent waits on it: at 2s an unattended task lost up to 2s per
+# write — measured 20-40s a task. A tick is a walk over the live sessions in
+# memory, acting only on one that has an ask waiting, so a quarter-second costs
+# nothing.
+TICK_SECONDS = 0.25
 
 
 def resolve_remembered_permissions(app: Flask) -> None:

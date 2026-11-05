@@ -834,6 +834,19 @@ describe('SessionHeader — the task\'s pull requests, per repository', () => {
     return publish;
   }
 
+  test('the task\'s title opens its description as a tab', async () => {
+    const { taskDefinitionView } = await import('./taskDefinition/taskDefinitionView.js');
+    const seen = [];
+    const unsubscribe = taskDefinitionView.subscribe((request) => seen.push(request.taskId));
+    renderHeader();
+    const title = document.getElementById('session-task-summary');
+    expect(title.tagName).toBe('BUTTON');
+    expect(title).toHaveAttribute('title', "Read the task's description");
+    fireEvent.click(title);
+    unsubscribe();
+    expect(seen.at(-1)).toBe(_session().task_id);
+  });
+
   test('the header shows how many of the task\'s repositories have one open', () => {
     renderHeader();
     expect(listButton()).toHaveAccessibleName('Pull requests: 1 of 2 open');

@@ -6,11 +6,13 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 const fetchOpenRouterModels = vi.fn();
+const fetchClaudeModels = vi.fn();
 
 vi.mock('../api.js', () => ({
   fetchAllSettings: vi.fn(() => Promise.resolve({ sections: [], values: {} })),
   updateAllSettings: vi.fn(() => Promise.resolve({})),
   fetchOpenRouterModels: (...args) => fetchOpenRouterModels(...args),
+  fetchClaudeModels: (...args) => fetchClaudeModels(...args),
 }));
 
 import { SchemaField, resetDatalistCacheForTests, selectOptionLabel } from './SchemaSettingsPanel.jsx';
@@ -26,6 +28,7 @@ const OPENROUTER_FIELD = {
 describe('SchemaField — datalist autocomplete', () => {
   beforeEach(() => {
     fetchOpenRouterModels.mockReset();
+    fetchClaudeModels.mockReset();
     resetDatalistCacheForTests();
   });
 
@@ -49,6 +52,24 @@ describe('SchemaField — datalist autocomplete', () => {
     const values = [...container.querySelectorAll('datalist option')].map((o) => o.value);
     expect(values).toContain('openrouter/openai/gpt-4o');
     expect(fetchOpenRouterModels).toHaveBeenCalled();
+  });
+
+  // Report: "he works on an older model, Sonnet 4.6 — he types it and kato says
+  // there is no such model". The Claude model field offers what this account has.
+  test('the Claude model field offers the aliases AND the pinned versions, still free text', async () => {
+    fetchClaudeModels.mockResolvedValue([
+      { id: 'sonnet', label: 'Sonnet 5.5 (newest)' },
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+    ]);
+    const field = { key: 'KATO_CLAUDE_MODEL', type: 'text', label: 'Model override', datalist: 'claude' };
+    const onChange = vi.fn();
+    const { container } = render(<SchemaField field={field} value="" onChange={onChange} />);
+    await waitFor(() => expect(container.querySelectorAll('datalist option').length).toBe(2));
+    expect([...container.querySelectorAll('datalist option')].map((o) => [o.value, o.textContent]))
+      .toEqual([['sonnet', 'Sonnet 5.5 (newest)'], ['claude-sonnet-4-6', 'Sonnet 4.6']]);
+    expect(fetchOpenRouterModels).not.toHaveBeenCalled();
+    fireEvent.change(container.querySelector('input'), { target: { value: 'sonnet 4.6' } });
+    expect(onChange).toHaveBeenCalled();  // typing anything is still allowed
   });
 
   test('a field WITHOUT datalist renders no <datalist> and never fetches', () => {

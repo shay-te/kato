@@ -373,6 +373,7 @@ def _live_settings_keys() -> frozenset[str]:
     from kato_core_lib.data_layers.service.lid_awake.settings import (
         LID_AWAKE_ENABLED_KEY,
     )
+    from kato_core_lib.helpers.agent_name_utils import AGENT_NAME_KEY
     from kato_core_lib.helpers.done_states_utils import DONE_STATES_KEY
     from kato_core_lib.helpers.release_notes_settings_utils import RELEASE_NOTES_KEYS
     from kato_core_lib.helpers.review_comment_gate_utils import (
@@ -389,6 +390,7 @@ def _live_settings_keys() -> frozenset[str]:
             STANDING_INSTRUCTIONS_KEY,
             LID_AWAKE_ENABLED_KEY,
             DONE_STATES_KEY,
+            AGENT_NAME_KEY,
         })
         | RELEASE_NOTES_KEYS
         | SLACK_DONE_KEYS
@@ -612,6 +614,16 @@ _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
 # this tab is "set the credentials kato uses to clone / push / open
 # PRs against <host>". Connection-level keys only — issue scoping +
 # state-transition fields belong on the Task provider tab.
+def _git_host_set_up(fields: dict) -> bool:
+    """A git host is set up once kato has a way to sign in to it: a token
+    typed in, or a login it reuses (``*_API_TOKEN_SOURCE``)."""
+    return any(
+        str((resolved or {}).get('value') or '').strip()
+        for key, resolved in fields.items()
+        if key.endswith('_API_TOKEN') or key.endswith('_API_TOKEN_SOURCE')
+    )
+
+
 _GIT_HOST_FIELDS: dict[str, tuple[str, ...]] = {
     'bitbucket': (
         'BITBUCKET_API_BASE_URL',
@@ -1566,6 +1578,10 @@ def create_app(
     register_plan_queue_routes(app, effort_levels=lambda: _discover_chat_effort_levels(app))
     from kato_webserver.plan_question_routes import register_plan_question_routes
     register_plan_question_routes(app)
+    from kato_webserver.task_definition_routes import register_task_definition_routes
+    register_task_definition_routes(app)
+    from kato_webserver.claude_models_routes import register_claude_models_routes
+    register_claude_models_routes(app)
     return app
 
 
@@ -2994,6 +3010,11 @@ def _register_http_routes(app: Flask) -> None:
         )
 
         out = _provider_field_values(_GIT_HOST_FIELDS)
+        # Which hosts the operator set up, so the tab opens on one of them —
+        # it always opened on Bitbucket, the first in the list, even for an
+        # operator who only uses Azure DevOps.
+        for entry in out.values():
+            entry['set_up'] = _git_host_set_up(entry['fields'])
         return jsonify({
             'providers': out,
             'settings_file_path': str(kato_settings_path()),

@@ -455,6 +455,31 @@ describe('EventLog — server event rendering', () => {
     expect(screen.queryByText(/failed$/)).toBeNull();
   });
 
+  test('a turn the CLI refused tools in says so — even a turn that succeeded', () => {
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
+      type: CLAUDE_EVENT.RESULT,
+      is_error: false,
+      result: 'done',
+      permission_denials: [{ tool_name: 'Write', tool_input: { file_path: 'notes.txt' } }],
+    })]} />);
+    expect(container.querySelectorAll('.bubble').length).toBe(1);
+    expect(container.querySelector('.bubble').textContent).toMatch(/Refused without asking you \(1\):.*Write notes\.txt/s);
+  });
+
+  test('a turn that ran out of turns says why, where the limit is set, and what it was refused', () => {
+    const { container } = render(<EventLog agentName="Claude" entries={[_server({
+      type: CLAUDE_EVENT.RESULT,
+      subtype: 'error_max_turns',
+      is_error: true,
+      errors: ['Reached maximum number of turns (25)'],
+      permission_denials: [{ tool_name: 'Edit', tool_input: { file_path: 'src/app.ts' } }],
+    })]} />);
+    const bubbles = [...container.querySelectorAll('.bubble')].map((bubble) => bubble.textContent);
+    expect(bubbles).toHaveLength(2);
+    expect(bubbles[0]).toMatch(/Reached maximum number of turns \(25\).*Max turns/s);
+    expect(bubbles[1]).toMatch(/Edit src\/app\.ts/);
+  });
+
   test('event with no type renders nothing', () => {
     const { container } = render(<EventLog agentName="Claude" entries={[_server({})]} />);
     expect(container.querySelectorAll('.bubble').length).toBe(0);

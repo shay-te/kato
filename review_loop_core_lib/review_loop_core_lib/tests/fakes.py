@@ -95,13 +95,15 @@ class FakeChat(object):
     (to answer with a response block naming the ids it was sent).
     """
 
-    def __init__(self, *, fixer=None, turn_error: bool = False, reply='Fixed them.') -> None:
+    def __init__(self, *, fixer=None, turn_error: bool = False, reply='Fixed them.',
+                 turn_error_text: str = '') -> None:
         self.readiness_script: list[ChatReadiness] = []
         self.default_readiness = ChatReadiness.ready()
         self.delivered: list[tuple[str, bool]] = []
         self.turns: list[ChatTurnEnd] = []
         self.fixer = fixer
         self.turn_error = turn_error
+        self.turn_error_text = turn_error_text
         self.alive = True
         self.stalled = False
         self.awaiting_approval = ''
@@ -137,6 +139,7 @@ class FakeChat(object):
             text = self.reply(prompt) if callable(self.reply) else self.reply
             self.turns.append(ChatTurnEnd(
                 received_at=tick_after(began), is_error=self.turn_error, text=text,
+                error=self.turn_error_text if self.turn_error else '',
             ))
         return True
 

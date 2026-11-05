@@ -130,6 +130,27 @@ describe('ProviderCredentialsPanel — Git provider (no active)', () => {
     expect(arg.fields.username).toBe('newuser');
   });
 
+  // Report: "git repository always shows Bitbucket, though I set up Azure".
+  test('opens on a host the operator set up, listed first and marked', async () => {
+    fetchGitProviders.mockResolvedValue({
+      ok: true,
+      body: {
+        supported: ['bitbucket', 'github', 'azure'],
+        providers: {
+          bitbucket: { set_up: false, fields: { BITBUCKET_USERNAME: { value: '', source: 'unset' } } },
+          github: { set_up: false, fields: { GITHUB_OWNER: { value: '', source: 'unset' } } },
+          azure: { set_up: true, fields: { AZURE_USERNAME: { value: 'bot@acme.com', source: 'kato_settings' } } },
+        },
+        settings_file_path: '~/.kato/settings.json',
+      },
+    });
+    render(<GitProvidersSettingsPanel />);
+    await waitFor(() => expect(screen.getByDisplayValue('bot@acme.com')).toBeInTheDocument());
+    const options = [...screen.getByRole('combobox').querySelectorAll('option')].map((o) => o.textContent);
+    expect(options).toEqual(['Azure DevOps — set up', 'Bitbucket — not set up', 'GitHub — not set up']);
+    expect(screen.getByRole('combobox')).toHaveValue('azure');
+  });
+
   test('load error renders the error message', async () => {
     fetchGitProviders.mockResolvedValue({ ok: false, error: 'kaboom' });
     render(<GitProvidersSettingsPanel />);

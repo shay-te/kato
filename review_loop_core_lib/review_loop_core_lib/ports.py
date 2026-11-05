@@ -66,6 +66,10 @@ class ChatTurnEnd(object):
     is_error: bool = False
     # The turn's final reply. The loop reads the fixer's decisions from it.
     text: str = ''
+    # Why a failed turn failed, in the agent's own words ('' = it said
+    # nothing). The loop's FAILED reason carries it: "ended with an error"
+    # alone left the operator nothing to act on.
+    error: str = ''
 
 
 class ChatChannel(Protocol):

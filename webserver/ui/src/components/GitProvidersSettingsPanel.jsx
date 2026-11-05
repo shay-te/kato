@@ -22,7 +22,7 @@ export default function GitProvidersSettingsPanel() {
       title="Git provider"
       loadingMessage="Loading git hosts…"
       selectLabel="Host"
-      selectHint="Picking a host here only chooses which creds to edit — it does NOT change which platform kato polls (that's the Task provider tab)."
+      selectHint="Hosts you have set up are listed first. Picking a host here only chooses which creds to edit — kato uses each repository's own host, and this does NOT change which platform kato polls (that's the Task provider tab)."
       description={(
         <>
           Credentials kato uses to clone, push branches, and open PRs.

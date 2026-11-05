@@ -348,6 +348,24 @@ class ChatReadinessTests(_ModeIsolation):
             self.assertTrue(world.comment_runs.chat_delivery.dispatch_lock_for('T-1').locked())
 
 
+    def test_a_fix_turn_that_fails_says_why_in_the_loop_s_reason(self) -> None:
+        # The report: "after failing on the first turn it stopped but did not
+        # display why". The stand-in CLI ends the fix turn as claude does when
+        # it runs out of turns — error_max_turns, no ``result`` — and that kind
+        # must reach the reason the view shows.
+        world = _KatoWorld(self)
+        out_of_turns = dict(_major(), detail='MAX_TURNS — keeps going')
+        world.cli.script_replies(_verdict(out_of_turns))
+        world.service.start('T-1', diff_source=world.diffs, task_summary='Add login')
+
+        self.assertTrue(_wait(lambda: not world.service.is_running('T-1'), 30))
+        state = world.service.state('T-1')
+        self.assertEqual(state.status, ReviewLoopStatus.FAILED)
+        self.assertEqual(
+            state.reason,
+            "the chat's fix turn ended with an error: the agent used up its maximum number of turns",
+        )
+
     def test_a_fix_paused_on_an_approval_says_so_until_the_operator_answers(self) -> None:
         world = _KatoWorld(self)
         # The finding's detail reaches the chat verbatim; the stand-in CLI

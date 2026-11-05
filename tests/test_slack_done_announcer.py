@@ -23,6 +23,7 @@ from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncemen
 from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
 from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer, done_message
+from kato_core_lib.helpers.agent_name_utils import AGENT_NAME_KEY
 from kato_core_lib.helpers.slack_done_settings_utils import (
     SLACK_DONE_CHANNEL_KEY,
     SLACK_DONE_TOKEN_KEY,
@@ -66,8 +67,10 @@ class SlackDoneAnnouncerTests(unittest.TestCase):
             settings=lambda: self.settings,
             client_for=lambda token: SlackClient(token, base_url=self.slack.url),
             background=self.deferred.append,
+            signed_by=lambda: self.agent,
             logger=self.logger,
         )
+        self.agent = "Shay Tessler's kato"
 
     def _done(self, task_id='UNA-1') -> None:
         self.announcer.task_done(task_id)
@@ -81,9 +84,16 @@ class SlackDoneAnnouncerTests(unittest.TestCase):
         self.assertEqual(request['body']['channel'], 'C0RELEASE1')
         self.assertEqual(request['body']['text'], '\n'.join([
             '✅ *UNA-1* is done — Fix the login bug',
+            # Whose agent did it: several developers' katos post to one channel.
+            "Finished by *Shay Tessler's kato*",
             '• backend: <https://git.example/backend/pull/7>',
             '• client: <https://git.example/client/pull/8>',
         ]))
+
+    def test_the_name_is_read_for_each_post_so_a_settings_save_applies_at_once(self) -> None:
+        self.agent = 'Dana (laptop)'
+        self._done()
+        self.assertIn('Finished by *Dana (laptop)*', self.slack.requests[0]['body']['text'])
 
     def test_the_task_is_read_before_the_forget_flow_deletes_its_workspace(self) -> None:
         self.workspaces.add_tag('UNA-1', 'kato:branch:feature/login')
@@ -137,6 +147,14 @@ class DoneMessageTests(unittest.TestCase):
         self.assertEqual(done_message(ReleaseNoteSource(task_id='UNA-4'), [('a<!channel>&b', 'https://x/pull/2')]),
                          '✅ *UNA-4* is done\n• a&lt;!channel&gt;&amp;b: <https://x/pull/2>')
 
+    def test_the_signature_is_escaped_and_left_out_when_there_is_none(self) -> None:
+        source = ReleaseNoteSource(task_id='UNA-5', title='Add retry')
+        self.assertEqual(
+            done_message(source, [('PR', 'https://x/pull/1')], ' <!here> & co '),
+            '✅ *UNA-5* is done — Add retry\nFinished by *&lt;!here&gt; &amp; co*\n• <https://x/pull/1>',
+        )
+        self.assertNotIn('Finished by', done_message(source, [], '  '))
+
     def test_a_title_can_never_notify_the_channel(self) -> None:
         text = done_message(ReleaseNoteSource(task_id='UNA-4', title='Ping <!channel> & <@U1>'), [])
         self.assertIn('Ping &lt;!channel&gt; &amp; &lt;@U1&gt;', text)
@@ -174,7 +192,8 @@ class SettingsTests(unittest.TestCase):
         fields = {field[0]: field[1] for section in SETTINGS_SCHEMA for field in section['fields']}
         self.assertEqual(fields[SLACK_DONE_CHANNEL_KEY], 'secret')  # a webhook URL is a credential
         self.assertEqual(fields[SLACK_DONE_TOKEN_KEY], 'secret')  # never shown back
-        self.assertLessEqual({SLACK_DONE_CHANNEL_KEY, SLACK_DONE_TOKEN_KEY}, _live_settings_keys())
+        self.assertEqual(fields[AGENT_NAME_KEY], 'text')
+        self.assertLessEqual({SLACK_DONE_CHANNEL_KEY, SLACK_DONE_TOKEN_KEY, AGENT_NAME_KEY}, _live_settings_keys())
 
 
 if __name__ == '__main__':
