@@ -295,6 +295,54 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ghost/cancel').status_code, 404)
         self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ui/explode').status_code, 404)
 
+    def _handed_over(self, plan_id: str, step_id: str) -> bool:
+        step = self.queue.get(plan_id).step(step_id)
+        return bool(step.task_id) and not step.prepared_only
+
+    def test_a_started_card_s_done_only_moves_its_ticket_to_done(self) -> None:
+        # "When I click Done here it should just move the task to done — don't
+        # try to create PRs": the ticket moves through kato's one done path,
+        # and nothing publishes. The tasks after it still wait for its merge.
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'run': True})
+        self.queue.tick()  # 'api' waits for nothing: handed over
+        self.assertTrue(self._handed_over(plan_id, 'api'))
+        task_id = self.queue.get(plan_id).step('api').task_id
+        moved: list[str] = []
+        published: list[str] = []
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(
+            plan_queue=self.queue, mark_task_done=moved.append,
+            publish=SimpleNamespace(finish_task_planning_session=lambda *a, **k: published.append(a)),
+        )
+
+        answer = self._post(f'/api/plan-queues/{plan_id}/steps/api/done')
+
+        self.assertEqual(answer.status_code, 200, answer.get_json())
+        self.assertEqual(moved, [task_id])
+        self.assertEqual(published, [])
+        steps = {step['id']: step for step in answer.get_json()['steps']}
+        self.assertNotEqual(steps['api']['status'], 'satisfied')  # not "counted as done"
+        self.assertEqual(steps['ui']['status'], 'blocked')  # still waits for api's merge
+
+    def test_done_on_a_card_with_no_task_or_a_tracker_that_refuses_says_why(self) -> None:
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve')  # approved, nothing handed over yet
+
+        def refuse(task_id):
+            raise RuntimeError('YouTrack said 403')
+
+        self.app.config['AGENT_SERVICE'] = SimpleNamespace(plan_queue=self.queue, mark_task_done=refuse)
+        not_started = self._post(f'/api/plan-queues/{plan_id}/steps/api/done')
+        self.assertEqual(not_started.status_code, 409)
+        self.assertIn('has not started', not_started.get_json()['error'])
+        self.assertEqual(self._post(f'/api/plan-queues/{plan_id}/steps/ghost/done').status_code, 404)
+        self._post(f'/api/plan-queues/{plan_id}/run')
+        self.queue.tick()
+        self.assertTrue(self._handed_over(plan_id, 'api'))
+        refused = self._post(f'/api/plan-queues/{plan_id}/steps/api/done')
+        self.assertEqual(refused.status_code, 503)
+        self.assertIn('YouTrack said 403', refused.get_json()['error'])
+
     def test_an_edit_can_set_the_model_and_effort_tasks_run_on(self) -> None:
         plan_id = self._proposed()
         steps = [

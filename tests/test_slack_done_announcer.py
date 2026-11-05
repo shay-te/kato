@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -249,6 +250,67 @@ class DoneButtonAnnouncesTests(SlackDoneAnnouncerTests):
         self.announcer._settings = lambda: (_ for _ in ()).throw(RuntimeError('settings unreadable'))
         self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'failed', 'error': 'settings unreadable'})
         self.assertEqual(self.announcer.announce(''), {'status': 'failed', 'error': 'settings unreadable'})
+
+
+class OnePostWhenBothMomentsMeetTests(SlackDoneAnnouncerTests):
+    """Done on a plan's sub-task moves its ticket to Done — ``task_done``,
+    posted in the background — and then calls ``announce`` for its toast. Each
+    checked "posted already?" before either wrote it: the channel got the task
+    twice (the report: "kato is sending messages twice on Slack")."""
+
+    def _announce_in_a_thread(self) -> tuple[threading.Thread, dict]:
+        answer: dict = {}
+        thread = threading.Thread(target=lambda: answer.update(self.announcer.announce('UNA-1')))
+        thread.start()
+        return thread, answer
+
+    def test_the_done_button_waits_for_the_post_under_way_and_reports_it(self) -> None:
+        self.announcer.task_done('UNA-1')        # the ticket's move: claimed, sent in the background
+        thread, answer = self._announce_in_a_thread()
+        thread.join(0.2)
+        self.assertTrue(thread.is_alive())        # waiting for that post, not sending its own
+        for work in self.deferred:
+            work()
+        thread.join(5)
+
+        self.assertEqual(len(self.slack.requests), 1)
+        self.assertEqual(answer, {'status': 'posted', 'error': ''})  # the toast: "posted"
+        self.assertTrue(self.posted.has('UNA-1'))
+
+    def test_the_other_way_round_posts_once_too(self) -> None:
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
+        self.announcer.task_done('una-1')
+        self.assertEqual(self.deferred, [])       # nothing scheduled: already posted
+        self.assertEqual(len(self.slack.requests), 1)
+
+    def test_a_post_that_fails_gives_the_claim_back_and_says_so(self) -> None:
+        self.slack.answer = (200, {'ok': False, 'error': 'not_in_channel'})
+        self.announcer.task_done('UNA-1')
+        thread, answer = self._announce_in_a_thread()
+        thread.join(0.2)
+        for work in self.deferred:
+            work()
+        thread.join(5)
+        self.assertEqual(answer['status'], 'failed')  # what the post it waited for came to
+        self.assertFalse(self.posted.has('UNA-1'))
+        # The next Done tries again — the claim was given back.
+        self.slack.answer = (200, {'ok': True})
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
+        self.assertEqual(len(self.slack.requests), 2)
+
+    def test_a_post_that_never_finishes_is_still_one_post(self) -> None:
+        self.announcer.task_done('UNA-1')  # held: never run
+        with patch('kato_core_lib.data_layers.service.slack_done_announcer.WAIT_FOR_POST_SECONDS', 0.05):
+            self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'already_posted', 'error': ''})
+        self.assertEqual(self.slack.requests, [])
+
+    def test_a_task_that_cannot_be_read_gives_the_claim_back(self) -> None:
+        sources = self.announcer._sources
+        self.announcer._sources = SimpleNamespace(read=MagicMock(side_effect=RuntimeError('disk gone')))
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'failed')
+        self.announcer._sources = sources
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
+        self.assertEqual(len(self.slack.requests), 1)
 
 
 class SlackPostedTasksTests(unittest.TestCase):

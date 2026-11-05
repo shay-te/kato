@@ -3720,6 +3720,17 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        # ``{repository_id}`` / ``{repository_ids: [...]}``: only those — the
+        # Changes tab's per-repository button. No body: every repository.
+        body = request.get_json(silent=True) or {}
+        only = body.get('repository_ids') if isinstance(body, dict) else None
+        single = text_from_mapping(body, 'repository_id') if isinstance(body, dict) else ''
+        if single:
+            only = [single]
+        if only is not None and not (isinstance(only, list) and all(isinstance(rid, str) for rid in only)):
+            return jsonify({'error': '"repository_ids" must be a list of repository ids'}), 400
+        if only:
+            return _envelope_response(update(task_id, repository_ids=only), 'updated')
         return _envelope_response(update(task_id), 'updated')
 
     @app.get('/api/sessions/<task_id>/comments')

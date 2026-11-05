@@ -33,6 +33,7 @@ import {
   findingRepeatNote,
   selfCheckRow,
   testsReportText,
+  testsTone,
 } from './reviewLoopHelpers.js';
 
 const NOW = 10_000;
@@ -585,4 +586,16 @@ test('a re-check is never described as reading the whole change', () => {
   );
   assert.ok(steps.some((step) => step.label === 'Re-check of 3 changed files'));
   assert.ok(!steps.some((step) => step.label === 'Reviewing the whole change'));
+});
+
+
+// UNA-3406: tests that could not start in the task's folder never blocked a
+// review again — and the round says so, in amber, not as a clean pass.
+test('a test run with tests that could not run here says how many, in amber', () => {
+  const run = { passed: true, summary: '38 passed', command: 'pytest',
+    cannot_run: ["tests.test_pdf: No module named 'cloudinary'", 'tests.test_export: needs the live stack'] };
+  assert.equal(testsReportText(run), 'Tests passed — 38 passed (pytest) · 2 could not run here');
+  assert.equal(testsTone(run), 'warn');
+  assert.equal(testsTone({ passed: true, cannot_run: [] }), 'good');
+  assert.equal(testsReportText({ passed: true }), 'Tests passed');
 });

@@ -478,7 +478,9 @@ export function testsReportText(tests) {
   if (!tests) { return ''; }
   if (tests.passed === true) {
     const detail = [tests.summary, tests.command && `(${tests.command})`].filter(Boolean).join(' ');
-    return detail ? `Tests passed — ${detail}` : 'Tests passed';
+    const passed = detail ? `Tests passed — ${detail}` : 'Tests passed';
+    const notRun = (tests.cannot_run || []).length;
+    return notRun ? `${passed} · ${notRun} could not run here` : passed;
   }
   if (tests.passed === false) {
     const failing = (tests.failures || []).length;
@@ -487,9 +489,10 @@ export function testsReportText(tests) {
   return 'Tests not reported';
 }
 
-// The test result's colour family: good | bad | neutral (not reported).
+// The test result's colour family: good | warn (passed, but some tests could
+// not run here) | bad | neutral (not reported).
 export function testsTone(tests) {
-  if (tests?.passed === true) { return 'good'; }
+  if (tests?.passed === true) { return (tests.cannot_run || []).length ? 'warn' : 'good'; }
   if (tests?.passed === false) { return 'bad'; }
   return 'neutral';
 }

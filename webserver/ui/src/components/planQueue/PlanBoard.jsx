@@ -1,10 +1,9 @@
 import { useState } from 'react';
 import {
-  addPlanDoneState, controlPlanQueue, fetchPlanQueue, finishTask, forgetTaskWorkspace, planQueueStepAction,
+  addPlanDoneState, controlPlanQueue, fetchPlanQueue, forgetTaskWorkspace, planQueueStepAction,
   takeOverPlanQueue,
 } from '../../api.js';
 import { toastResult } from '../../stores/toastStore.js';
-import { formatFinishResult } from '../sessionHeaderFormatters.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
 import Icon from '../Icon.jsx';
@@ -23,7 +22,7 @@ import {
   stepWorker,
 } from './planQueueHelpers.js';
 import { planAction } from './planQueueActions.js';
-import { deleteStepConfirm, deletedStepToast } from './planStepDeleteText.js';
+import { deleteStepConfirm, deletedStepToast, movedToDoneToast } from './planStepDeleteText.js';
 import PlanLiveEditor from './PlanLiveEditor.jsx';
 
 const CONTROL_LABELS = { run: 'Run', pause: 'Pause', stop: 'Stop' };
@@ -61,13 +60,15 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
     }, `Could not count “${state}” as done`);
   }
 
-  // A started card's Done: THE task's Done (``finishTask``, the header's
-  // call) — its toast too — then the board is read again.
+  // A started card's Done: its ticket moves to Done, and nothing else — no
+  // push, no pull request (often another kato's task, with no clone here).
+  // The task's own Done, in its header, is still the one that publishes.
   function finishStep(step) {
     act(async () => {
-      toastResult(formatFinishResult(await finishTask(step.task_id), step.task_id));
-      return { ok: true, body: await fetchPlanQueue(plan.plan_id) };
-    }, `Could not finish ${stepCode(step)}`);
+      const result = await planQueueStepAction(plan.plan_id, step.id, 'done');
+      if (result.ok) { toastResult(movedToDoneToast(stepCode(step))); }
+      return result;
+    }, `Could not move ${stepCode(step)} to Done`);
   }
 
   // Delete a sub-task: its pull requests declined and the step out of the

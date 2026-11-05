@@ -49,7 +49,7 @@ _STATUS_BY_KIND = {
     ErrorKind.INVALID: 400,
     ErrorKind.UNAVAILABLE: 503,
 }
-_STEP_ACTIONS = ('start', 'plan', 'satisfy', 'retry', 'cancel', 'check', 'delete')
+_STEP_ACTIONS = ('start', 'plan', 'satisfy', 'retry', 'cancel', 'check', 'delete', 'done')
 
 
 def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[str]]) -> None:
@@ -285,12 +285,41 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         body, status = _deleted_answer(outcome)
         return jsonify(body), status
 
+    def move_step_task_to_done(service, plan_id: str, step_id: str):
+        """A started card's Done: its ticket moves to Done, and nothing else —
+        no push, no pull request (the operator: "just move the task to done,
+        don't try to create PRs"). The board is not the task's own page: it is
+        often another kato's task (assigned to someone else), with no clone
+        here to push. ``mark_task_done`` is ``move_task_to_done``, so every
+        "on done" observer hears it (release notes, Slack, the board). The tasks
+        after it still wait for its pull request to be merged — the merge check
+        is what keeps them from starting without its code."""
+        step = service.get(plan_id).step(step_id)
+        if step is None:
+            raise PlanQueueError(f'the plan has no step {step_id}', ErrorKind.NOT_FOUND)
+        if not step.task_id or step.prepared_only:
+            # A waiting card's way to done is "Count as done", which also frees
+            # what waits on it — never a quiet ticket move from here.
+            raise PlanQueueError(f'step {step_id} has not started — start it, or Count it as done')
+        mark_done = getattr(app.config.get('AGENT_SERVICE'), 'mark_task_done', None)
+        if not callable(mark_done):
+            raise PlanQueueError('kato cannot move tasks right now', ErrorKind.UNAVAILABLE)
+        try:
+            mark_done(step.task_id)
+        except Exception as exc:
+            raise PlanQueueError(
+                f'could not move {step.task_id} to Done: {exc}', ErrorKind.UNAVAILABLE,
+            ) from exc
+        return service.get(plan_id)
+
     @app.post('/api/plan-queues/<plan_id>/steps/<step_id>/<action>')
     def plan_queue_step_action(plan_id: str, step_id: str, action: str):
         if action not in _STEP_ACTIONS:
             return jsonify({'error': f'unknown action {action!r}'}), 404
         if action == 'delete':
             return delete_step(plan_id, step_id)
+        if action == 'done':
+            return answer(lambda service: move_step_task_to_done(service, plan_id, step_id))
         # A ready card's two ways to start ONE task: Plan (its agent plans
         # first, in Plan mode) or Start (it implements right away) — the
         # operator's pick for that task, whatever was chosen at Approve.

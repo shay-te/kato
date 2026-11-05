@@ -160,6 +160,21 @@ class _SourceRepoOutcome(object):
     warning: dict | None = None
 
 
+def _wanted_ids(repository_ids) -> set[str] | None:
+    """The repositories asked for, lower-cased; None = every one."""
+    if repository_ids is None:
+        return None
+    return {str(rid).strip().lower() for rid in repository_ids if str(rid).strip()}
+
+
+def _only(repos: list, repository_ids) -> list:
+    """``repos`` narrowed to ``repository_ids`` (None = all), case-blind."""
+    wanted = _wanted_ids(repository_ids)
+    if wanted is None:
+        return repos
+    return [repository for repository in repos if str(repository.id).lower() in wanted]
+
+
 @dataclass(frozen=True)
 class _PublishTaskLite(object):
     """Minimal Task-shaped object for on-demand push / PR-creation.
@@ -392,7 +407,7 @@ class TaskPublishService(object):
             return normalized in self._pending_publish
 
 
-    def update_source_for_task(self, task_id: str) -> dict[str, object]:
+    def update_source_for_task(self, task_id: str, *, repository_ids=None) -> dict[str, object]:
         """Push + sync the operator's REPOSITORY_ROOT_PATH clones to the task branch.
 
         Drives the planning UI's "Update source" button. Pure git
@@ -410,12 +425,22 @@ class TaskPublishService(object):
            be tested with the rest of the plan. It used to be skipped, and the
            source stayed wherever it was (master, or another task's branch).
 
+        ``repository_ids``: only these repositories are pushed and switched —
+        the Changes tab's per-repository button ("verify a small client change
+        without my backend source moving while Docker builds from it"). Every
+        other repository's source, and the sub-task main-branch pass for them,
+        is left exactly as it is.
+
         Returns a per-repo summary the UI renders in the toast.
         """
         normalized = str(task_id or '').strip()
         if not normalized:
             return failure('empty task id', flag='updated', task_id=task_id)
-        push_result = self.push_task(normalized)
+        wanted = _wanted_ids(repository_ids)
+        push_result = (
+            self.push_task(normalized) if wanted is None
+            else self.push_task(normalized, repository_ids=repository_ids)
+        )
         # A repository whose work did not reach the remote is refused, not
         # updated: its source would switch to whatever origin has, and read
         # "updated" without the work. The others still go ahead, because
@@ -441,6 +466,13 @@ class TaskPublishService(object):
         main_branch = self._main_branch_of(normalized)
         on_main_branch: list[str] = []
         outcomes: list[tuple['_SourceRepoOutcome', bool]] = []
+        main_repository_ids = self._main_task_repository_ids(normalized) if main_branch else []
+        known = {str(repository.id).lower() for repository in repos} | {rid.lower() for rid in main_repository_ids}
+        for repository_id in sorted(wanted - known) if wanted is not None else []:
+            outcomes.append((_SourceRepoOutcome(
+                'failed', repository_id, error='not one of this task\'s repositories',
+            ), False))
+        repos = _only(repos, repository_ids)
         for repository in repos:
             push_problem = push_problems.get(str(repository.id))
             if push_problem is not None:
@@ -461,8 +493,10 @@ class TaskPublishService(object):
                 ), True))
                 continue
             outcomes.append((outcome, False))
-        task_repository_ids = {str(repository.id).lower() for repository in repos}
-        for repository_id in self._main_task_repository_ids(normalized) if main_branch else []:
+        task_repository_ids = {str(rid).lower() for rid in self._all_repository_ids(normalized)}
+        for repository_id in main_repository_ids:
+            if wanted is not None and repository_id.lower() not in wanted:
+                continue
             if repository_id.lower() not in task_repository_ids:
                 outcomes.append((self._switch_source(
                     normalized, repository_id, main_branch, only_if_on_remote=True,
@@ -508,6 +542,11 @@ class TaskPublishService(object):
             'failed_repositories': failed_repositories,
             'warnings': warnings_per_repo,
         }
+
+    def _all_repository_ids(self, task_id: str) -> list[str]:
+        """Every repository of the task itself (not filtered)."""
+        repos, _branch, _task = self._resolve_publish_context(task_id)
+        return [str(repository.id) for repository in repos]
 
     def _main_branch_of(self, task_id: str) -> str:
         """The main task's branch when ``task_id`` is a plan's sub-task, else ''."""
@@ -687,12 +726,13 @@ class TaskPublishService(object):
             # operator-facing error.
             return ''
 
-    def push_task(self, task_id: str) -> dict[str, object]:
+    def push_task(self, task_id: str, *, repository_ids=None) -> dict[str, object]:
         """Commit + push the task branch for every repo in its workspace.
 
         Used by the planning UI's ``Push`` button: surfaces the work-in-
         progress branch on the remote without opening a pull request.
         Idempotent — pushes again from where the workspace currently is.
+        ``repository_ids``: only these (an Update source of one repository).
         """
         normalized = str(task_id or '').strip()
         if not normalized:
@@ -712,6 +752,7 @@ class TaskPublishService(object):
                 flag='pushed',
                 task_id=normalized,
             )
+        repos = _only(repos, repository_ids)
         pushed_repositories: list[str] = []
         skipped_repositories: list[dict[str, str]] = []
         failed_repositories: list[dict[str, str]] = []

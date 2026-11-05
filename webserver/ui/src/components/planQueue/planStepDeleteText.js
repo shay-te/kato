@@ -26,3 +26,14 @@ export function deletedStepToast(code, deleted, forgot) {
     taskId: deleted?.task_id || '',
   };
 }
+
+
+// A started card's Done: what moved, and what did not.
+export function movedToDoneToast(code) {
+  return {
+    title: `${code} moved to Done`,
+    kind: 'success',
+    message: 'Only its ticket moved — nothing was pushed and no pull request was opened. '
+      + 'The tasks after it start once its pull request is merged.',
+  };
+}

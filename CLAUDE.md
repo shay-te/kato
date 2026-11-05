@@ -396,7 +396,10 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   Its PRs (`ReleaseNoteLinks`, by branch) are the release notes' links, each shown as its
   WHOLE link (`• backend: <url>`; a lone PR just `• <url>`) — a word like "pull request" hid where it went. Everything from a
   ticket is escaped (`<!channel>` in a title must never notify a channel). A failed post is not marked posted:
-  the next Done tries again.
+  the next Done tries again. **Posting is CLAIMED, not checked** (`SlackDoneAnnouncer._claim`, one lock): Done on a
+  plan sub-task calls `move_task_to_done` (→ `task_done`, background) and THEN `announce` (toast); both used to check
+  "posted?" before either marked it, and the channel got the task twice. A second caller while a post is under way
+  waits for it (`WAIT_FOR_POST_SECONDS`) and reports its outcome; a failed post gives the claim back.
 - **The task's Docker containers are stopped on done** (`task_containers.py` + `container_core_lib`, kato-free).
   An agent runs `docker compose up` / `docker run` like a developer and nothing stopped them: a finished task
   kept its database and dev server running. A container belongs to a task when its Compose project (working dir
@@ -497,6 +500,11 @@ bool is the pick, anything else the default. The defaults live twice — `REVIEW
   round after round on failing tests.) Steps are read off the round
   (`ReviewRound.tests_step(digest)`: `test_runs` + `tests_fixes`), so Resume takes the same one.
   `RunnerOptions.tests_fix_attempts` (3) fixes that don't land → STUCK (Resume = one more try).
+  A test that cannot even START in the task folder for a reason no change to the task's code can fix (a package or
+  sibling library not installed there, a service not running) goes in the report's `cannot_run`, NOT `failures`:
+  shown (amber, "could not run here"), never sent to be fixed, never blocks the review. UNA-3406 spent all 3 fix
+  turns on "No module named 'cloudinary'" and ended STUCK. An import error of a module the task added or changed is
+  still a failure (the prompt says so), and the chat is told not to install or fake the missing piece.
   The last round fixes its tests too — its review comes after. Only if the code moves on
   during a review are they run again after it: a fix there closes the round `tests_fixed`
   (the next round reviews it); on the last round nothing is sent → MAX_ROUNDS.
@@ -600,8 +608,13 @@ who can tag the ticket can turn this on: it skips the operator's look before the
 a local step's chat opens in Plan mode; a shared sub-task gets `kato:wait-planning` AT CREATION
 (`TrackerStepLauncher.prepare`; a failed tag fails the create, never "runs unplanned"), so every kato's
 pickup opens it in Plan and it codes once its plan is approved in its chat. Unticked = `implement`.
-**Done on a sub-task is ONE code path** (`finish_task_planning_session(task, by_operator=True)`): the header's
-Done and a started board card's Done (`PlanBoard.finishStep` → the same `finishTask` API, the same toast) push,
+**A started board card's Done only moves its ticket to Done** (operator, 2026-11-05: "just move the task to done,
+don't try to create PRs"): `PlanBoard.finishStep` → `POST …/steps/<id>/done` → `AgentService.mark_task_done` =
+`move_task_to_done` (every "on done" observer hears it). No push, no pull request — the card is often ANOTHER
+kato's task (assigned to a teammate), with no clone here. Refused for a step not handed over yet (`prepared_only`:
+that is "Count as done"'s job). It is NOT "Count as done": the tasks after it still wait for its pull request to be
+merged. **The task's own Done (header) is still the publishing one** (`finish_task_planning_session(task,
+by_operator=True)`): it pushes,
 open its PR into the main task's branch, and — for a plan's sub-task (`_is_plan_subtask`: it has a
 `plan_merge_branch`) — move its ticket to the tracker's **Done** (not In Review) through `move_task_to_done`, so
 every "on done" observer hears it: release notes, Slack, containers, and `PlanQueueDoneNudge`, which makes the
@@ -625,6 +638,13 @@ when this kato has it) — goes to the main task's branch (`plan_merge_branch`),
 only when the remote has that branch (`remote_has_branch`; else skipped with why). Reported apart as
 `main_branch_repositories` (toast: "✓ on UNA-1, the main task's branch, …"). They used to be skipped ("no changes in
 workspace clone"), leaving the operator's source on master, so the sub-task could not be tested with the plan.
+
+**Update source of ONE repository** (the Changes tab's per-repo header button, `RepoUpdateSourceButton`; route body
+`{repository_id}` / `{repository_ids}` → `update_source_for_task(task, repository_ids=…)`, which narrows the push too):
+only that repository is pushed and its source switched — every other source stays put (an operator testing a client
+change while Docker built from the backend checkout). Same task git slot (`gitActionKey(task, 'update-source')`) and
+toast as the header's button. A sub-task's main-task-only repository asked for alone goes to the main branch; an id
+the task does not have fails ("not one of this task's repositories") and moves nothing.
 
 **The main task follows its merged sub-tasks:** when the ticker sees a step's pull request merged
 (`merged_listener`), `plan_queue/main_task_follows.py` runs the main task's Pull (`publish.pull_task`,

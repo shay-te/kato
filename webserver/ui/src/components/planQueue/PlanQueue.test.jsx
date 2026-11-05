@@ -59,7 +59,7 @@ import {
   revisePlanQueue,
   takeOverPlanQueue,
 } from '../../api.js';
-import { toast } from '../../stores/toastStore.js';
+import { toast, toastStore } from '../../stores/toastStore.js';
 import PlanQueueButton from './PlanQueueButton.jsx';
 import PlanQueueView from './PlanQueueView.jsx';
 import { planQueueChanges, planQueueView } from './planQueueViewStore.js';
@@ -875,18 +875,22 @@ describe('PlanQueueView — Done on a started card', () => {
     ],
   });
 
-  test('a started card\'s Done is the task\'s own Done, toast and all', async () => {
+  // The operator: "when I click Done here it should just move the task to
+  // done — don't try to create PRs". Often another kato's task: no clone here.
+  test('a started card\'s Done only moves its ticket to Done — no push, no pull request', async () => {
     serve(STARTED);
-    finishTask.mockResolvedValue({ ok: true, body: {
-      finished: true, moved_to_done: true, pushed: { pushed_repositories: ['api'] }, pull_request: {},
-    } });
+    planQueueStepAction.mockReturnValue(ok(STARTED));
     render(<PlanQueueView taskId="UNA-1" />);
     const card = (await screen.findByText('UNA-3376')).closest('.plan-card');
-    fetchPlanQueue.mockClear();
     fireEvent.click(within(card).getByRole('button', { name: 'Done' }));
 
-    await waitFor(() => expect(finishTask).toHaveBeenCalledWith('UNA-3376'));
-    await waitFor(() => expect(fetchPlanQueue).toHaveBeenCalledWith('p1'));  // the board is read again
+    const pushed = vi.spyOn(toastStore, 'push');
+    await waitFor(() => expect(planQueueStepAction).toHaveBeenCalledWith('p1', 'api', 'done'));
+    expect(finishTask).not.toHaveBeenCalled();  // the header's Done publishes; this does not
+    await waitFor(() => expect(pushed).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'success', title: 'UNA-3376 moved to Done',
+      message: expect.stringMatching(/nothing was pushed and no pull request was opened.*merged/),
+    })));
   });
 });
 

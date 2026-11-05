@@ -346,7 +346,7 @@ class SelfCheckTurn(object):
 class TestReport(object):
     """What the main chat reported after running the task's tests."""
 
-    #: True = all passed, False = something failed, None = it did not report.
+    #: True = all that RAN passed, False = something failed, None = it did not report.
     passed: bool | None = None
     command: str = ''
     summary: str = ''
@@ -355,11 +355,19 @@ class TestReport(object):
     #: The change the tests were asked to run on (``diff.candidate_digest``);
     #: '' for a run saved before runs kept it — that one ran on its round's.
     diff_digest: str = ''
+    #: Tests that could not even start in the task's folder, for a reason no
+    #: change to the task's code can fix (a package or sibling library not
+    #: installed there, a service not running). Shown, never sent to be fixed,
+    #: never a failure: three fix turns were spent on "No module named
+    #: 'cloudinary'" and the loop ended STUCK on code nobody could change.
+    #: Last, so a positional construction keeps its order.
+    cannot_run: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'passed': self.passed, 'command': self.command,
             'summary': self.summary, 'failures': list(self.failures),
+            'cannot_run': list(self.cannot_run),
             'reported_at': self.reported_at, 'diff_digest': self.diff_digest,
         }
 
@@ -371,6 +379,7 @@ class TestReport(object):
             command=str(data.get('command', '')),
             summary=str(data.get('summary', '')),
             failures=[str(item) for item in data.get('failures', []) or []],
+            cannot_run=[str(item) for item in data.get('cannot_run', []) or []],
             reported_at=float(data.get('reported_at', 0.0)),
             diff_digest=str(data.get('diff_digest') or ''),
         )

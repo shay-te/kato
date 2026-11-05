@@ -46,6 +46,21 @@ describe('ReviewLoopRoundList', () => {
     expect(container.querySelector('.review-loop-round')).toHaveTextContent('2 minor');
   });
 
+  // UNA-3406: tests that cannot start in the task folder are listed apart.
+  test('a test run lists what could not run here, apart from failures', () => {
+    const tested = { ...failedRound, outcome: 'clean', reviewed_at: 5, test_runs: [{
+      passed: true, command: 'pytest', summary: '38 passed', failures: [],
+      cannot_run: ["tests.test_pdf_service: No module named 'cloudinary'"],
+    }] };
+    const { container } = renderList({ loop: { rounds: [tested] }, list: { endReason: '' } });
+    fireEvent.click(container.querySelector('.review-loop-round button'));
+    const run = container.querySelector('.review-loop-tests');
+    expect(run).toHaveClass('is-warn');
+    expect(run).toHaveTextContent('Tests passed — 38 passed (pytest) · 1 could not run here');
+    expect(run).toHaveTextContent("Could not run here — not this task's code to fix:");
+    expect(run).toHaveTextContent("tests.test_pdf_service: No module named 'cloudinary'");
+  });
+
   test('a running round reads as before', () => {
     renderList({ list: { endReason: '' } });
     expect(screen.getByText('not reviewed yet')).toBeInTheDocument();

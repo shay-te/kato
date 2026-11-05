@@ -366,12 +366,13 @@ export function mergeDefaultBranch(taskId) {
   );
 }
 
-export function updateTaskSource(taskId) {
+// ``repositoryId``: only that repository (the Changes tab's per-repo button);
+// '' = every repository of the task (the header's button).
+export function updateTaskSource(taskId, repositoryId = '') {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
-  return requestEnvelope(
-    `/api/sessions/${encodeURIComponent(taskId)}/update-source`,
-    { method: 'POST' },
-  );
+  const url = `/api/sessions/${encodeURIComponent(taskId)}/update-source`;
+  if (repositoryId) { return postEnvelope(url, { repository_id: repositoryId }); }
+  return requestEnvelope(url, { method: 'POST' });
 }
 
 // Diff-tab review comments: list / create / resolve / reopen /

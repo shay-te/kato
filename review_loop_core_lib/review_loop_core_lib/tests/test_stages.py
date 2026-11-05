@@ -62,9 +62,10 @@ def self_check(clean: bool, fixed: int = 0, summary: str = '') -> str:
     return f'Checked it.\n{SELF_CHECK_OPEN}\n{body}\n{SELF_CHECK_CLOSE}'
 
 
-def test_report(passed: bool, *, failures=(), summary: str = '', command: str = 'pytest') -> str:
+def test_report(passed: bool, *, failures=(), summary: str = '', command: str = 'pytest',
+                cannot_run=()) -> str:
     body = json.dumps({'passed': passed, 'command': command, 'summary': summary,
-                       'failures': list(failures)})
+                       'failures': list(failures), 'cannot_run': list(cannot_run)})
     return f'Ran them.\n{TEST_REPORT_OPEN}\n{body}\n{TEST_REPORT_CLOSE}'
 
 
@@ -168,6 +169,38 @@ class SelfCheckTests(_Stages):
 
 
 class TestsGateTests(_Stages):
+
+    # Report (UNA-3406): three fix turns went on "No module named 'cloudinary'"
+    # and sibling libraries not installed in the task folder, and the loop ended
+    # STUCK on code nobody could change. A test that cannot START here is listed
+    # apart, never sent to be fixed, and the review goes ahead.
+    def test_tests_that_cannot_run_here_never_block_the_review(self) -> None:
+        missing = ["tests.test_pdf_service: No module named 'cloudinary'",
+                   'tests.test_tenant_isolation_export: needs the live local stack']
+        chat = ScriptedChat(tests=[test_report(True, summary='38 passed', cannot_run=missing)])
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests'])  # no fix turn
+        self.assertEqual(len(reviewer.prompts), 1)
+        (run,) = state.rounds[0].test_runs
+        self.assertEqual(run.cannot_run, missing)
+        self.assertEqual(state.rounds[0].tests_fixes, 0)
+
+    def test_the_chat_is_told_what_cannot_run_means_and_not_to_fake_it(self) -> None:
+        chat = ScriptedChat(tests=[
+            test_report(False, failures=['test_divide: ZeroDivisionError']),
+            test_report(True, summary='all green'),
+        ])
+        self.edit_on(chat, 'tests_fix')
+        self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        ask, fix = chat.delivered[0][0], chat.delivered[1][0]
+        self.assertIn('"cannot_run": []', ask)
+        self.assertIn('cannot even START here', ask)
+        self.assertIn('An import\nerror for a module this task added or changed IS a failure', ask)
+        self.assertIn('Do not install anything or fake the missing piece', ask)
+        self.assertIn('is not yours to fix: do not install or fake', fix)
 
     def test_clean_needs_the_tests_to_pass(self) -> None:
         chat = ScriptedChat(tests=[test_report(True, summary='41 passed')])
@@ -607,6 +640,22 @@ class ReviewerModelTests(_Stages):
 
 
 class StateAndParsingTests(unittest.TestCase):
+
+    def test_a_report_s_lists_read_as_lines_never_as_python_dict_text(self) -> None:
+        body = json.dumps({
+            'passed': False, 'command': 'pytest',
+            'failures': [{'test': 'test_a', 'reason': 'AssertionError'}, '  test_b: boom ', {'weird': 1}],
+            'cannot_run': [{'name': 'tests.test_pdf', 'error': "No module named 'cloudinary'"}],
+        })
+        report = parse_test_report(f'{TEST_REPORT_OPEN}\n{body}\n{TEST_REPORT_CLOSE}', now=5.0)
+        self.assertEqual(report.failures, ['test_a: AssertionError', 'test_b: boom', '{"weird": 1}'])
+        self.assertEqual(report.cannot_run, ["tests.test_pdf: No module named 'cloudinary'"])
+        again = TestReport.from_dict(json.loads(json.dumps(report.to_dict())))
+        self.assertEqual(again.cannot_run, report.cannot_run)
+        # A report saved before ``cannot_run`` existed reads as none.
+        self.assertEqual(TestReport.from_dict({'passed': True}).cannot_run, [])
+        self.assertEqual(parse_test_report(
+            f'{TEST_REPORT_OPEN}\n{{"passed": true, "cannot_run": "oops"}}\n{TEST_REPORT_CLOSE}').cannot_run, [])
 
     def test_new_fields_round_trip_and_old_states_default(self) -> None:
         state = ReviewLoopState.new('T-1', max_rounds=3, now=1.0, self_check=True,

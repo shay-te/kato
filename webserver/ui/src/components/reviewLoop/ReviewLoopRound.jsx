@@ -90,10 +90,21 @@ function RoundTests({ runs }) {
 function RoundTestRun({ run, name }) {
   const failures = (run.failures || []).map((failure) => <li key={failure}>{failure}</li>);
   const failureList = failures.length ? <ul className="review-loop-tests-failures">{failures}</ul> : null;
+  // Tests that could not even start in the task's folder (a package or a
+  // sibling library not installed there, a service not running): shown, never
+  // sent to the chat to fix, and they do not hold the review.
+  const notRun = (run.cannot_run || []).map((test) => <li key={test}>{test}</li>);
+  const notRunList = notRun.length ? (
+    <>
+      <p className="review-loop-tests-summary">Could not run here — not this task&apos;s code to fix:</p>
+      <ul className="review-loop-tests-failures">{notRun}</ul>
+    </>
+  ) : null;
   return (
     <section className={cx('review-loop-tests', `is-${testsTone(run)}`)}>
       <p className="review-loop-tests-summary">{`${name}${testsReportText(run)}`}</p>
       {failureList}
+      {notRunList}
     </section>
   );
 }

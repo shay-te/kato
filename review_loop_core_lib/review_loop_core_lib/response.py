@@ -89,15 +89,37 @@ def parse_test_report(text: str, *, now: float = 0.0) -> TestReport:
     if payload is None:
         return TestReport(reported_at=now)
     passed = payload.get('passed')
-    failures = payload.get('failures')
     return TestReport(
         passed=None if passed is None else bool(passed),
         command=str(payload.get('command', '') or '').strip(),
         summary=str(payload.get('summary', '') or '').strip(),
-        failures=[str(item).strip() for item in failures if str(item).strip()]
-        if isinstance(failures, list) else [],
+        failures=_report_items(payload.get('failures')),
+        cannot_run=_report_items(payload.get('cannot_run')),
         reported_at=now,
     )
+
+
+_ITEM_NAME_KEYS = ('test', 'name', 'id', 'file')
+_ITEM_REASON_KEYS = ('reason', 'error', 'message', 'detail')
+
+
+def _report_items(value) -> list[str]:
+    """A report's list as lines: a string as it is, an object as "name:
+    reason" — never as Python's dict text, which is how one read
+    ``{'test': 'x', 'reason': 'y'}`` in the view."""
+    if not isinstance(value, list):
+        return []
+    items = []
+    for item in value:
+        if isinstance(item, dict):
+            name = next((str(item[k]).strip() for k in _ITEM_NAME_KEYS if str(item.get(k) or '').strip()), '')
+            reason = next((str(item[k]).strip() for k in _ITEM_REASON_KEYS if str(item.get(k) or '').strip()), '')
+            text = ': '.join(part for part in (name, reason) if part) or json.dumps(item, sort_keys=True)
+        else:
+            text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
 
 
 def _answers(text: str) -> dict[str, dict]:

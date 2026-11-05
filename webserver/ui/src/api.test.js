@@ -13,6 +13,7 @@ import {
   fetchPendingPermissions,
   refreshAgentBackends,
   postChatMessage,
+  updateTaskSource,
 } from './api.js';
 import { AGENT_SESSION_ID } from './constants/sessionFields.js';
 
@@ -457,4 +458,16 @@ test('fetchPendingPermissions sends the signature and reads a 304 as unchanged',
   const body = await fetchPendingPermissions('"abc"');
   assert.deepEqual(body, { unchanged: true });
   assert.equal(calls[0].init.headers['If-None-Match'], '"abc"');
+});
+
+
+test('updateTaskSource: one repository goes in the body; none means every one', async () => {
+  const calls = _stubFetch({ ok: true, status: 200, json: async () => ({ updated: true }) });
+  await updateTaskSource('UNA-1', 'ob-love-admin-client');
+  await updateTaskSource('UNA-1');
+  assert.equal(calls[0].url, '/api/sessions/UNA-1/update-source');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { repository_id: 'ob-love-admin-client' });
+  assert.equal(calls[1].init.method, 'POST');
+  assert.equal(calls[1].init.body, undefined);  // the header's button: the whole task
 });

@@ -22,7 +22,9 @@ MAIN = 'LOCAL-1'
 SUB = 'LOCAL-2'
 
 
-class UpdateSourceOnSubTaskTests(RealLocalTask, unittest.TestCase):
+class _PlanFixture(RealLocalTask):
+    """A main task in three repositories and its sub-task in two of them."""
+
     def setUp(self) -> None:
         super().setUp()
         for name in ('web', 'core'):
@@ -63,6 +65,8 @@ class UpdateSourceOnSubTaskTests(RealLocalTask, unittest.TestCase):
     def _source_branch(self, name: str) -> str:
         return _git(self.source_root / name, 'rev-parse', '--abbrev-ref', 'HEAD')
 
+
+class UpdateSourceOnSubTaskTests(_PlanFixture, unittest.TestCase):
     def test_the_changed_repo_gets_the_sub_task_and_every_other_the_main_branch(self) -> None:
         self._merge_into_main_branch('api', 'web', 'core')
         self._sub_task_changes_api()
@@ -137,6 +141,60 @@ class UpdateSourceOnSubTaskTests(RealLocalTask, unittest.TestCase):
         blocked = [w for w in result['warnings'] if w.get('blocked')]
         self.assertEqual([w['repository_id'] for w in blocked], ['core'])
         self.assertEqual((self.source_root / 'core' / 'step1.py').read_text(), 'MINE = 1\n')
+
+
+class UpdateSourceOfOneRepositoryTests(_PlanFixture, unittest.TestCase):
+    """The Changes tab's per-repository Update source: "I just need to verify
+    a small client change, but it pulls the backend too, which I don't want —
+    my Docker is building from it". Only the repository asked for moves."""
+
+    def _work_in(self, *names: str) -> None:
+        self.assertTrue(self.service.prepare(SUB))
+        for name in names:
+            clone = Path(self.workspace.repository_path(SUB, name))
+            _git(clone, 'config', 'user.email', 't@example.com')
+            _git(clone, 'config', 'user.name', 'test')
+            (clone / f'{name}_change.py').write_text('CHANGED = True\n', encoding='utf-8')
+            _git(clone, 'add', '-A')
+            _git(clone, 'commit', '-qm', f'{name} change')
+
+    def test_only_the_repository_asked_for_is_pushed_and_switched(self) -> None:
+        self._merge_into_main_branch('api', 'web', 'core')
+        self.parents = {}  # an ordinary task
+        self._work_in('api', 'web')
+
+        result = self.publisher.update_source_for_task(SUB, repository_ids=['web'])
+
+        self.assertEqual(result['updated_repositories'], ['web'])
+        self.assertEqual(result['pushed']['pushed_repositories'], ['web'])
+        self.assertEqual(self._source_branch('web'), SUB)
+        self.assertEqual(self._source_branch('api'), 'master')  # untouched
+        # Not even pushed: the api work is still only in the task's clone.
+        self.assertEqual(_git(self._remote('api'), 'branch', '--list', SUB), '')
+
+    def test_on_a_sub_task_a_main_task_repository_alone_goes_to_the_main_branch(self) -> None:
+        self._merge_into_main_branch('api', 'web', 'core')
+        self._work_in('api')
+
+        result = self.publisher.update_source_for_task(SUB, repository_ids=['CORE'])
+
+        self.assertEqual(result['updated_repositories'], [])
+        self.assertEqual(result['main_branch_repositories'], ['core'])
+        self.assertEqual(self._source_branch('core'), MAIN)
+        self.assertEqual(self._source_branch('api'), 'master')
+        self.assertEqual(self._source_branch('web'), 'master')
+
+    def test_a_repository_the_task_does_not_have_is_said_and_nothing_moves(self) -> None:
+        self._merge_into_main_branch('api', 'web', 'core')
+        self._work_in('api')
+
+        result = self.publisher.update_source_for_task(SUB, repository_ids=['billing'])
+
+        self.assertEqual(result['failed_repositories'], [
+            {'repository_id': 'billing', 'error': "not one of this task's repositories"},
+        ])
+        self.assertFalse(result['updated'])
+        self.assertEqual({self._source_branch(n) for n in ('api', 'web', 'core')}, {'master'})
 
 
 class WiringTests(unittest.TestCase):

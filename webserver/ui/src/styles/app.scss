@@ -6800,7 +6800,8 @@ $FILES-PANE-INSET: $SPACE-6;
  * the hover/active states do the visual lifting so the resting state
  * stays calm in the dark repo header. */
 .files-tab-repo-commits-btn,
-.files-tab-repo-collapse-btn {
+.files-tab-repo-collapse-btn,
+.files-tab-repo-update-source-btn {
   background: transparent;
   border: 1px solid transparent;
   border-radius: $RADIUS-CIRCLE;
@@ -6819,7 +6820,8 @@ $FILES-PANE-INSET: $SPACE-6;
 }
 
 .files-tab-repo-commits-btn:hover,
-.files-tab-repo-collapse-btn:not(:disabled):hover {
+.files-tab-repo-collapse-btn:not(:disabled):hover,
+.files-tab-repo-update-source-btn:not(:disabled):hover {
   background: $C-NEUTRAL-16;
   color: $C-NEUTRAL-96;
   border-color: $C-NEUTRAL-16;
@@ -6827,7 +6829,8 @@ $FILES-PANE-INSET: $SPACE-6;
 
 /* Collapsed repo: there are no folders on screen to tidy. Dimmed in place
  * rather than hidden, so the history button beside it never shifts. */
-.files-tab-repo-collapse-btn:disabled {
+.files-tab-repo-collapse-btn:disabled,
+.files-tab-repo-update-source-btn:disabled {
   opacity: 0.35;
   cursor: default;
   pointer-events: none;
@@ -13404,6 +13407,7 @@ button.settings-prompt-editor-head {
 
 .review-loop-tests.is-good { border-left-color: $C-GREEN-52; }
 .review-loop-tests.is-bad { border-left-color: $C-RED-60; }
+.review-loop-tests.is-warn { border-left-color: $C-ORANGE-50; }
 
 .review-loop-tests-summary {
   margin: 0;

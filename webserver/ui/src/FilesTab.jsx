@@ -16,6 +16,7 @@ import AddRepositoryModal from './components/AddRepositoryModal.jsx';
 import CommitDiffModal from './components/CommitDiffModal.jsx';
 import ContentSearchResults from './components/ContentSearchResults.jsx';
 import DiffKindIcon from './components/DiffKindIcon.jsx';
+import RepoUpdateSourceButton from './components/RepoUpdateSourceButton.jsx';
 import Icon, { BusyIcon } from './components/Icon.jsx';
 import StickyHeader from './components/StickyHeader.jsx';
 import { useChatComposer } from './contexts/ChatComposerContext.jsx';
@@ -1053,6 +1054,15 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId, busy = true }) {
           >
             <Icon name="history" />
           </button>
+          <button
+            type="button"
+            className="files-tab-repo-update-source-btn"
+            disabled
+            aria-hidden="true"
+            tabIndex={-1}
+          >
+            <Icon name="refresh" />
+          </button>
         </div>
       </StickyHeader>
     </section>
@@ -1566,6 +1576,9 @@ function RepoTree({
             >
               <Icon name="history" />
             </button>
+          )}
+          {repoId && taskId && (
+            <RepoUpdateSourceButton taskId={taskId} repoId={repoId} heading={heading} />
           )}
         </div>
       </StickyHeader>

@@ -776,6 +776,29 @@ class PushPullPRUpdateSourceEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()['updated'])
 
+    def test_update_source_of_one_repository_passes_only_it(self):
+        # The Changes tab's per-repository button.
+        calls = []
+
+        def update(task_id, **kwargs):
+            calls.append((task_id, kwargs))
+            return {'updated': True}
+
+        client = self._client(agent=_agent(update_source_for_task=update))
+        self.assertEqual(client.post('/api/sessions/T-1/update-source', json={'repository_id': 'web'}).status_code, 200)
+        client.post('/api/sessions/T-1/update-source', json={'repository_ids': ['web', 'api']})
+        client.post('/api/sessions/T-1/update-source')  # the header's button: every one
+        client.post('/api/sessions/T-1/update-source', json={'repository_ids': []})
+        self.assertEqual(calls, [
+            ('T-1', {'repository_ids': ['web']}),
+            ('T-1', {'repository_ids': ['web', 'api']}),
+            ('T-1', {}),
+            ('T-1', {}),
+        ])
+        bad = client.post('/api/sessions/T-1/update-source', json={'repository_ids': 'web'})
+        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(len(calls), 4)  # a malformed body moves nothing
+
 
 # ---------------------------------------------------------------------------
 # Comments endpoints — GET / POST / resolve / addressed / reopen / DELETE / sync

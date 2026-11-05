@@ -13,6 +13,14 @@ Two moments, ONE post per task (``SlackPostedTasks``):
 Where it goes: an Incoming Webhook URL alone (the simplest), or a channel's link
 plus the app's bot token. Best effort: a Slack that refuses or cannot be reached
 is said in words that say what to do, and never fails the done.
+
+**One post, even when both moments come at once.** Done on a plan's sub-task
+moves its ticket to Done (which calls ``task_done``) and then calls ``announce``
+for its toast: each checked "posted already?" before either had written it, and
+the channel got the task twice. The right to post is now CLAIMED, under one lock,
+before anything is sent; a second caller while that post is under way waits for
+it and reports its outcome (the toast still says "posted"). A post that fails
+gives the claim back, so the next Done tries again.
 """
 
 from __future__ import annotations
@@ -39,6 +47,17 @@ FAILED = 'failed'
 
 def run_in_background(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name='slack-done', daemon=True).start()
+
+
+class _Post(object):
+    """A post of one task under way: whoever else asks waits for its outcome."""
+
+    def __init__(self) -> None:
+        self.finished = threading.Event()
+        self.outcome: dict | None = None
+
+#: How long a second caller waits for the post already under way.
+WAIT_FOR_POST_SECONDS = 30
 
 
 def sender_for(settings: SlackDoneSettings, *, webhook_for=SlackWebhook, client_for=SlackClient):
@@ -80,6 +99,8 @@ class SlackDoneAnnouncer(object):
         self._background = background
         self._signed_by = signed_by
         self.logger = logger or configure_logger('SlackDoneAnnouncer')
+        self._claims_lock = threading.Lock()
+        self._under_way: dict[str, _Post] = {}
 
     def announce(self, task_id: str) -> dict:
         """Post ``task_id`` now (the Done button). ``{status, error}`` — status
@@ -87,10 +108,12 @@ class SlackDoneAnnouncer(object):
         task = str(task_id or '').strip()
         try:
             prepared = self._prepare(task)
+            if isinstance(prepared, _Post):
+                return self._outcome_of(prepared)
             if isinstance(prepared, dict):
                 return prepared
-            send, source = prepared
-            return self._send(send, source)
+            send, source, post = prepared
+            return self._send(send, source, post)
         except Exception as exc:
             self.logger.exception('could not announce task %s in Slack', task)
             return _outcome(FAILED, str(exc) or exc.__class__.__name__)
@@ -100,38 +123,81 @@ class SlackDoneAnnouncer(object):
         task = str(task_id or '').strip()
         try:
             prepared = self._prepare(task)
-            if isinstance(prepared, dict):
-                return
-            send, source = prepared
-            self._background(lambda: self._send(send, source))
+            if isinstance(prepared, (dict, _Post)):
+                return  # nothing to post, or a post of it is already under way
+            send, source, post = prepared
+            self._background(lambda: self._send(send, source, post))
         except Exception:
             self.logger.exception('could not announce task %s in Slack', task)
 
     def _prepare(self, task: str):
-        """``(send, source)`` read now — or the outcome that means "do not post"."""
+        """``(send, source, post)`` — this caller holds the claim to post —
+        or the outcome that means "do not post", or the ``_Post`` already
+        under way for the task."""
         settings = self._settings()
         if not task or not settings.wanted:
             return _outcome(NOT_SET_UP)
-        if self._posted.has(task):
-            return _outcome(ALREADY_POSTED)
         send, problem = sender_for(settings, webhook_for=self._webhook_for, client_for=self._client_for)
         if problem:
             self.logger.warning('task %s was not posted to Slack: %s', task, problem)
             return _outcome(FAILED, problem)
-        return send, self._sources.read(task)
+        post = self._claim(task)
+        if not isinstance(post, tuple):
+            return post
+        try:
+            return send, self._sources.read(task), post[0]
+        except Exception:
+            self._finish(task, post[0], None)  # gives the claim back
+            raise
 
-    def _send(self, send, source: ReleaseNoteSource) -> dict:
+    def _claim(self, task: str):
+        """``(post,)``: this caller may post ``task``. Else ALREADY_POSTED,
+        or the ``_Post`` another caller is sending right now. Checked and
+        taken under one lock — that is what makes the post happen once."""
+        key = task.lower()
+        with self._claims_lock:
+            under_way = self._under_way.get(key)
+            if under_way is not None:
+                return under_way
+            if self._posted.has(task):
+                return _outcome(ALREADY_POSTED)
+            post = _Post()
+            self._under_way[key] = post
+            return (post,)
+
+    def _send(self, send, source: ReleaseNoteSource, post: _Post) -> dict:
+        outcome = None
         try:
             send(done_message(source, self._links.links(source), self._signed_by()))
         except SlackError as exc:
             self.logger.error('task %s was not posted to Slack: %s', source.task_id, exc)
-            return _outcome(FAILED, str(exc))
+            outcome = _outcome(FAILED, str(exc))
         except Exception as exc:
             self.logger.exception('could not post task %s to Slack', source.task_id)
-            return _outcome(FAILED, str(exc) or exc.__class__.__name__)
-        self._posted.mark(source.task_id)
-        self.logger.info('posted task %s and its pull requests to Slack', source.task_id)
-        return _outcome(POSTED)
+            outcome = _outcome(FAILED, str(exc) or exc.__class__.__name__)
+        else:
+            self._posted.mark(source.task_id)
+            self.logger.info('posted task %s and its pull requests to Slack', source.task_id)
+            outcome = _outcome(POSTED)
+        finally:
+            self._finish(source.task_id, post, outcome)
+        return outcome
+
+    def _finish(self, task: str, post: _Post, outcome: dict | None) -> None:
+        """The post is over: its claim is given back (a failure retries on the
+        next Done) and whoever waited is told how it went."""
+        with self._claims_lock:
+            if self._under_way.get(task.lower()) is post:
+                del self._under_way[task.lower()]
+        post.outcome = outcome
+        post.finished.set()
+
+    def _outcome_of(self, post: _Post) -> dict:
+        """What the post already under way came to — the toast says that, not
+        "already posted" for a post it just watched happen."""
+        if not post.finished.wait(WAIT_FOR_POST_SECONDS):
+            return _outcome(ALREADY_POSTED)  # still sending: it is one post either way
+        return post.outcome or _outcome(FAILED, 'the post did not finish')
 
 
 def _outcome(status: str, error: str = '') -> dict:

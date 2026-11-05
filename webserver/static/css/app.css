@@ -6701,7 +6701,8 @@ body.kato-resizing {
  * the hover/active states do the visual lifting so the resting state
  * stays calm in the dark repo header. */
 .files-tab-repo-commits-btn,
-.files-tab-repo-collapse-btn {
+.files-tab-repo-collapse-btn,
+.files-tab-repo-update-source-btn {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 50%;
@@ -6720,7 +6721,8 @@ body.kato-resizing {
 }
 
 .files-tab-repo-commits-btn:hover,
-.files-tab-repo-collapse-btn:not(:disabled):hover {
+.files-tab-repo-collapse-btn:not(:disabled):hover,
+.files-tab-repo-update-source-btn:not(:disabled):hover {
   background: #2a2a2a;
   color: #f5f5f7;
   border-color: #2a2a2a;
@@ -6728,7 +6730,8 @@ body.kato-resizing {
 
 /* Collapsed repo: there are no folders on screen to tidy. Dimmed in place
  * rather than hidden, so the history button beside it never shifts. */
-.files-tab-repo-collapse-btn:disabled {
+.files-tab-repo-collapse-btn:disabled,
+.files-tab-repo-update-source-btn:disabled {
   opacity: 0.35;
   cursor: default;
   pointer-events: none;
@@ -13310,6 +13313,10 @@ button.settings-prompt-editor-head {
 
 .review-loop-tests.is-bad {
   border-left-color: #ef4444;
+}
+
+.review-loop-tests.is-warn {
+  border-left-color: #f59e0b;
 }
 
 .review-loop-tests-summary {
