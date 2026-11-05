@@ -9,6 +9,7 @@ import {
   pullRequestLabel,
   pullRequestListTooltip,
   pullRequestTone,
+  pullRequestLink,
   pullRequestUrls,
 } from './pullRequestList.js';
 
@@ -72,4 +73,17 @@ test('a pull request is named by its number and title', () => {
 test('"open all" opens the links there are, in order', () => {
   assert.deepEqual(pullRequestUrls([repo('a', pr('1')), repo('b'), repo('c', pr('3', ''))]), ['https://host/pr/1']);
   assert.deepEqual(pullRequestUrls(null), []);
+});
+
+test('a repository the host did not answer for links to the host\'s page of its pull requests', () => {
+  const page = 'https://bitbucket.org/acme/web/pull-requests/?query=UNA-1';
+  const unanswered = { ...repo('web'), lookupFailed: true, pullRequestsPageUrl: page };
+  assert.deepEqual(pullRequestLink(unanswered), { url: page, onHost: true });
+  assert.deepEqual(pullRequestLink(repo('a', pr('1'))), { url: 'https://host/pr/1', onHost: false });
+  // "No pull request yet" is an answer: nothing to open, even with a page known.
+  assert.deepEqual(pullRequestLink({ ...repo('b'), pullRequestsPageUrl: page }), { url: '', onHost: false });
+  assert.deepEqual(pullRequestLink({ ...repo('c'), lookupFailed: true }), { url: '', onHost: false });
+  assert.deepEqual(pullRequestLink(null), { url: '', onHost: false });
+  // "Open all" opens it too, in the list's order.
+  assert.deepEqual(pullRequestUrls([repo('a', pr('1')), unanswered]), ['https://host/pr/1', page]);
 });

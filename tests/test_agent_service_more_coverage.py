@@ -2007,6 +2007,7 @@ class TaskPublishStateTests(unittest.TestCase):
             return []
 
         repo.find_pull_requests.side_effect = _find_pull_requests
+        repo.branch_pull_requests_url.return_value = 'https://bitbucket.org/o/lib/pull-requests/?query=T1'
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
         with patch.object(service.publish, '_resolve_publish_context',
@@ -2017,10 +2018,14 @@ class TaskPublishStateTests(unittest.TestCase):
             {'repository_id': 'api', 'lookup_failed': False, 'pull_request': {
                 'id': '17', 'title': 'T1 add login', 'url': 'https://example.com/pr/17'}},
             {'repository_id': 'web', 'pull_request': None, 'lookup_failed': False},
-            # Not "no pull request": kato could not ask.
-            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True},
+            # Not "no pull request": kato could not ask — so its row leads to
+            # the host's page of the branch's pull requests instead.
+            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True,
+             'pull_requests_page_url': 'https://bitbucket.org/o/lib/pull-requests/?query=T1'},
         ])
         self.assertEqual(result['pull_request_urls'], ['https://example.com/pr/17'])
+        # Asked only for the repository the host did not answer for, by its branch.
+        repo.branch_pull_requests_url.assert_called_once_with(unreachable, 'T1')
 
     def test_a_git_host_that_does_not_answer_in_time_costs_only_its_repository(self) -> None:
         # Asked one after another, one slow host (or many repositories) outran
@@ -2051,7 +2056,9 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertEqual(result['repositories'], [
             {'repository_id': 'api', 'lookup_failed': False,
              'pull_request': {'id': '3', 'title': 'T1', 'url': 'https://example.com/pr/3'}},
-            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True},
+            # A mock repository service names no page: never a guessed link.
+            {'repository_id': 'lib', 'pull_request': None, 'lookup_failed': True,
+             'pull_requests_page_url': ''},
         ])
         self.assertFalse(result['has_pull_request'])
         warning = ' '.join(str(arg) for arg in service.logger.warning.call_args[0])
@@ -2062,13 +2069,16 @@ class TaskPublishStateTests(unittest.TestCase):
         repo = MagicMock()
         repo.build_branch_name.return_value = 'T1'
         repo.find_pull_requests.side_effect = RuntimeError('401 Client Error: Unauthorized')
+        # Building the page must never cost the lookup.
+        repo.branch_pull_requests_url.side_effect = RuntimeError('no remote')
         service = AgentService(**_kwargs(repository_service=repo))
         service.logger = MagicMock()
         with patch.object(service.publish, '_resolve_publish_context',
                           return_value=([repo_obj], 'T1', SimpleNamespace(id='T1'))):
             result = service.publish.task_pull_request_state('T1')
         self.assertEqual(result['repositories'], [
-            {'repository_id': 'client', 'pull_request': None, 'lookup_failed': True},
+            {'repository_id': 'client', 'pull_request': None, 'lookup_failed': True,
+             'pull_requests_page_url': ''},
         ])
 
     def test_no_task_or_no_repositories_lists_none(self) -> None:

@@ -8,6 +8,7 @@ import {
   pullRequestButtonState,
   pullRequestCounts,
   pullRequestLabel,
+  pullRequestLink,
   pullRequestTone,
   pullRequestUrls,
 } from '../utils/pullRequestList.js';
@@ -107,8 +108,8 @@ export default function PullRequestList({
 function PullRequestRow({ repository }) {
   const { copied, copy } = useCopyAction();
   const { repositoryId, pullRequest, lookupFailed } = repository;
-  const url = pullRequest?.url || '';
-  const status = rowStatus(pullRequest, lookupFailed);
+  const { url, onHost } = pullRequestLink(repository);
+  const status = rowStatus(pullRequest, lookupFailed, onHost);
   const copyLabel = copied ? 'Link copied' : `Copy the ${repositoryId} pull request link`;
   const actions = url ? (
     <span className="pull-request-list-actions">
@@ -117,8 +118,10 @@ function PullRequestRow({ repository }) {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open the ${repositoryId} pull request in a new tab`}
-        data-tooltip="Open in a new tab"
+        aria-label={onHost
+          ? `Open the ${repositoryId} branch's pull requests on the git host in a new tab`
+          : `Open the ${repositoryId} pull request in a new tab`}
+        data-tooltip={onHost ? 'Open its pull requests on the git host' : 'Open in a new tab'}
       >
         <Icon name="external-link" />
       </a>
@@ -143,14 +146,21 @@ function PullRequestRow({ repository }) {
 }
 
 // The pull request, or why there is none to show: none yet, or kato could not
-// ask the git host — which must never read as "none".
-function rowStatus(pullRequest, lookupFailed) {
+// ask the git host — which must never read as "none". Then the row's link goes
+// to the host's page of the branch's pull requests (``onHost``).
+function rowStatus(pullRequest, lookupFailed, onHost) {
   if (pullRequest) {
     const label = pullRequestLabel(pullRequest);
     return <span className="pull-request-list-title" title={label}>{label}</span>;
   }
   if (lookupFailed) {
-    return <span className="pull-request-list-status is-warn">Could not check — the git host did not answer</span>;
+    return (
+      <span className="pull-request-list-status is-warn">
+        {onHost
+          ? 'Could not check — the git host did not answer. Open it there →'
+          : 'Could not check — the git host did not answer'}
+      </span>
+    );
   }
   return <span className="pull-request-list-status">No pull request yet</span>;
 }

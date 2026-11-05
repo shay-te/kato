@@ -42,6 +42,16 @@ def _git(cwd: Path, *args: str) -> str:
     ).stdout.strip()
 
 
+def _head_or_none(clone: Path) -> str | None:
+    """The clone's branch, or None while git is still making it: ``.git``
+    exists before HEAD can be read, and under a loaded full run the poll
+    landed in that gap (``rev-parse`` exit 128) and failed the test."""
+    try:
+        return _git(clone, 'rev-parse', '--abbrev-ref', 'HEAD')
+    except subprocess.CalledProcessError:
+        return None
+
+
 class _NoTracker(object):
     """The ticket platform. A local task must never reach it."""
 
@@ -168,7 +178,7 @@ class NewTaskEndToEndTests(unittest.TestCase):
         wanted = branch or task_id
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            if (clone / '.git').exists() and _git(clone, 'rev-parse', '--abbrev-ref', 'HEAD') == wanted:
+            if (clone / '.git').exists() and _head_or_none(clone) == wanted:
                 return clone
             time.sleep(0.05)
         self.fail(f'{task_id} was never cloned onto {wanted}')

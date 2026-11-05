@@ -375,6 +375,44 @@ def remote_web_base_url(remote_url: str) -> str:
     return _web_base(host, scheme, port)
 
 
+def branch_pull_requests_url_for_remote(
+    remote_url: str,
+    provider: str,
+    owner: str,
+    repo_slug: str,
+    branch: str,
+) -> str:
+    """The host's own page of ``branch``'s pull requests, for when its API
+    cannot be asked (rate-limited, down): the pull request is on it, whatever
+    its number. Built from the remote alone, so it needs no answer from the
+    host. '' when the remote names no repository.
+
+    GitHub filters by ``head:``, GitLab by ``source_branch``; Bitbucket's list
+    is searched for the branch (an unknown search still lists the open pull
+    requests); Azure DevOps lists the active ones.
+    """
+    web_base_url = remote_web_base_url(remote_url)
+    if not web_base_url or not owner or not repo_slug:
+        return ''
+    repository_path = f'{owner}/{repo_slug}'.strip('/')
+    if provider == 'github':
+        return f'{web_base_url}/{repository_path}/pulls?q={quote(f"is:pr head:{branch}", safe="")}'
+    if provider == 'gitlab':
+        return (
+            f'{web_base_url}/{repository_path}/-/merge_requests'
+            f'?scope=all&state=all&source_branch={quote(branch, safe="")}'
+        )
+    if provider == 'bitbucket':
+        return f'{web_base_url}/{repository_path}/pull-requests/?query={quote(branch, safe="")}'
+    if provider == 'azure':
+        owner_path = '/'.join(quote(part, safe='') for part in owner.split('/') if part)
+        return (
+            f'{web_base_url}/{owner_path}/{_AZURE_GIT_SEGMENT}/{quote(repo_slug, safe="")}'
+            '/pullrequests?_a=active'
+        )
+    return f'{web_base_url}/{repository_path}'
+
+
 def review_url_for_remote(
     remote_url: str,
     provider: str,

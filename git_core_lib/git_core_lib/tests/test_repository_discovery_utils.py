@@ -9,6 +9,7 @@ from pathlib import Path
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     AZURE_DEVOPS_SERVICES_BASE_URL,
     DiscoveredRepository,
+    branch_pull_requests_url_for_remote,
     azure_devops_remote,
     build_discovered_repository,
     discover_git_repositories,
@@ -361,6 +362,42 @@ class ReviewUrlForRemoteTests(unittest.TestCase):
             'https://example.com/org/r.git', 'unknown', 'org', 'r', 'feat', 'main',
         )
         self.assertEqual(result, 'https://example.com/org/r')
+
+
+class BranchPullRequestsUrlForRemoteTests(unittest.TestCase):
+    """The host's page of a branch's pull requests, from the remote alone —
+    for when the host's API cannot be asked."""
+
+    def test_each_host_lists_the_branch_pull_requests_on_its_own_page(self) -> None:
+        cases = [
+            ('git@bitbucket.org:shacoshe/ob-love-bridge.git', 'bitbucket', 'shacoshe', 'ob-love-bridge',
+             'https://bitbucket.org/shacoshe/ob-love-bridge/pull-requests/?query=UNA-3369'),
+            ('https://github.com/org/r.git', 'github', 'org', 'r',
+             'https://github.com/org/r/pulls?q=is%3Apr%20head%3AUNA-3369'),
+            ('ssh://git@gitlab.example.com:2222/group/sub/r.git', 'gitlab', 'group/sub', 'r',
+             'https://gitlab.example.com/group/sub/r/-/merge_requests?scope=all&state=all&source_branch=UNA-3369'),
+            ('https://dev.azure.com/acme/My%20Project/_git/r', 'azure', 'acme/My Project', 'r',
+             'https://dev.azure.com/acme/My%20Project/_git/r/pullrequests?_a=active'),
+            ('https://example.com/org/r.git', 'unknown', 'org', 'r', 'https://example.com/org/r'),
+        ]
+        for remote, provider, owner, slug, expected in cases:
+            with self.subTest(provider=provider):
+                self.assertEqual(
+                    branch_pull_requests_url_for_remote(remote, provider, owner, slug, 'UNA-3369'),
+                    expected,
+                )
+
+    def test_a_branch_with_a_slash_is_encoded(self) -> None:
+        self.assertEqual(
+            branch_pull_requests_url_for_remote(
+                'https://bitbucket.org/o/r.git', 'bitbucket', 'o', 'r', 'feat/a b'),
+            'https://bitbucket.org/o/r/pull-requests/?query=feat%2Fa%20b',
+        )
+
+    def test_no_remote_or_no_repository_says_nothing(self) -> None:
+        self.assertEqual(branch_pull_requests_url_for_remote('', 'github', 'o', 'r', 'b'), '')
+        self.assertEqual(branch_pull_requests_url_for_remote('https://github.com/o/r.git', 'github', '', 'r', 'b'), '')
+        self.assertEqual(branch_pull_requests_url_for_remote('https://github.com/o/r.git', 'github', 'o', '', 'b'), '')
 
 
 if __name__ == '__main__':

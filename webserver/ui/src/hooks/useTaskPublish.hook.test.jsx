@@ -214,7 +214,8 @@ describe('useTaskPublish — with taskId', () => {
       repositories: [
         { repository_id: 'api', pull_request: { id: 1, title: 'T1', url: 'https://example/pr/1' }, lookup_failed: false },
         { repository_id: 'web', pull_request: null, lookup_failed: false },
-        { repository_id: 'lib', pull_request: null, lookup_failed: true },
+        { repository_id: 'lib', pull_request: null, lookup_failed: true,
+          pull_requests_page_url: 'https://bitbucket.org/acme/lib/pull-requests/?query=T1' },
         { repository_id: '', pull_request: null },  // nothing to name: dropped
       ],
     });
@@ -222,9 +223,11 @@ describe('useTaskPublish — with taskId', () => {
     const { result } = renderHook(() => useTaskPublish('T1'));
     await waitFor(() => {
       expect(result.current.pullRequestRepositories).toEqual([
-        { repositoryId: 'api', pullRequest: { id: '1', title: 'T1', url: 'https://example/pr/1' }, lookupFailed: false },
-        { repositoryId: 'web', pullRequest: null, lookupFailed: false },
-        { repositoryId: 'lib', pullRequest: null, lookupFailed: true },
+        { repositoryId: 'api', pullRequest: { id: '1', title: 'T1', url: 'https://example/pr/1' },
+          lookupFailed: false, pullRequestsPageUrl: '' },
+        { repositoryId: 'web', pullRequest: null, lookupFailed: false, pullRequestsPageUrl: '' },
+        { repositoryId: 'lib', pullRequest: null, lookupFailed: true,
+          pullRequestsPageUrl: 'https://bitbucket.org/acme/lib/pull-requests/?query=T1' },
       ]);
     });
   });

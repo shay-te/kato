@@ -91,6 +91,23 @@ class HostDetectionTests(unittest.TestCase):
             self.review_url(repository),
         )
 
+    def test_the_branch_pull_requests_page_goes_to_the_real_host(self) -> None:
+        # The PR list's link when the host's API did not answer: built from the
+        # remote alone, through the same host resolution as the review link.
+        repository = self.prepared('git@work:team/api.git')
+
+        self.assertEqual(
+            self.service.branch_pull_requests_url(repository, 'UNA-3369'),
+            'https://bitbucket.org/team/api/pull-requests/?query=UNA-3369',
+        )
+
+    def test_the_branch_pull_requests_page_of_a_telling_alias_too(self) -> None:
+        github = self.prepared('git@github-work:team/api.git')
+        self.assertEqual(
+            self.service.branch_pull_requests_url(github, 'UNA-3369'),
+            'https://github.com/team/api/pulls?q=is%3Apr%20head%3AUNA-3369',
+        )
+
     def test_the_remote_itself_is_never_rewritten(self) -> None:
         # A push compares it with the clone's own, and refuses on a difference.
         repository = self.prepared('git@work:team/api.git')

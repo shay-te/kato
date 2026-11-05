@@ -20,6 +20,7 @@ from git_core_lib.git_core_lib.helpers.repository_discovery_utils import (
     parse_git_remote_url,
     remote_web_base_url,
     repository_id_from_name,
+    branch_pull_requests_url_for_remote,
     review_url_for_remote,
 )
 from git_core_lib.git_core_lib.helpers.ssh_alias_utils import remote_with_real_host
@@ -951,20 +952,29 @@ class RepositoryInventoryService(Service):
         return f'{message}. kato could not read them from its remote {_without_credentials(remote_url)}.'
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:
+        return self._page_on_host(repository, lambda **where: review_url_for_remote(
+            **where, source_branch=source_branch, destination_branch=destination_branch,
+        ))
+
+    def branch_pull_requests_url(self, repository, branch: str) -> str:
+        """The host's page of ``branch``'s pull requests in ``repository``: where
+        the header's pull-request list sends a repository the host's API did not
+        answer for (Bitbucket's 429s outlast its wait). '' = no address known."""
+        return self._page_on_host(repository, lambda **where: branch_pull_requests_url_for_remote(
+            **where, branch=branch,
+        ))
+
+    def _page_on_host(self, repository, build) -> str:
+        """A page on the repository's host: ``build(remote_url=, provider=,
+        owner=, repo_slug=)`` on its real host (an SSH alias resolved), else on
+        the configured web base. The ONE place both links find the host."""
         remote_url = self._remote_for_addresses(repository)
         provider = text_from_attr(repository, 'provider')
         owner = text_from_attr(repository, 'owner')
         repo_slug = text_from_attr(repository, 'repo_slug')
 
         if remote_url and provider and owner and repo_slug:
-            return review_url_for_remote(
-                remote_url=remote_url,
-                provider=provider,
-                owner=owner,
-                repo_slug=repo_slug,
-                source_branch=source_branch,
-                destination_branch=destination_branch,
-            )
+            return build(remote_url=remote_url, provider=provider, owner=owner, repo_slug=repo_slug)
 
         web_base_url = fallback_web_base_url(repository)
         if not web_base_url or not owner or not repo_slug:
@@ -973,13 +983,9 @@ class RepositoryInventoryService(Service):
             text_from_attr(repository, 'provider_base_url')
         )
         if provider:
-            return review_url_for_remote(
+            return build(
                 remote_url=f'{web_base_url}/{owner}/{repo_slug}.git',
-                provider=provider,
-                owner=owner,
-                repo_slug=repo_slug,
-                source_branch=source_branch,
-                destination_branch=destination_branch,
+                provider=provider, owner=owner, repo_slug=repo_slug,
             )
         repository_path = f'{owner}/{repo_slug}'.strip('/')
         return f'{web_base_url}/{repository_path}'

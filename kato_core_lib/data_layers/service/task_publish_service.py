@@ -1547,7 +1547,7 @@ class TaskPublishService(object):
             seconds=self.PULL_REQUEST_LOOKUP_SECONDS,
             default=late,
         )
-        for repository, result in zip(repos, results):
+        for repository, branch, result in zip(repos, branches, results):
             if result is late:
                 self.logger.warning(
                     'PR lookup for repository %s did not answer within %ss — '
@@ -1569,11 +1569,16 @@ class TaskPublishService(object):
                     pull_request_urls.append(pull_request[PullRequestFields.URL])
             else:
                 repos_missing_pull_request += 1
-            repositories.append({
+            entry = {
                 'repository_id': str(getattr(repository, 'id', '') or ''),
                 'pull_request': pull_request,
                 'lookup_failed': existing is None,
-            })
+            }
+            if existing is None:
+                # Not asked, so the row still leads to the pull request: the
+                # host's own page of the branch's pull requests.
+                entry['pull_requests_page_url'] = self._pull_requests_page(repository, branch)
+            repositories.append(entry)
         return {
             'has_pull_request': repos_missing_pull_request == 0,
             'pull_request_urls': pull_request_urls,
@@ -1583,6 +1588,20 @@ class TaskPublishService(object):
             # (see task_publish_state), so this is a note, not a failure.
             'lookup_error': lookup_error,
         }
+
+    def _pull_requests_page(self, repository, branch: str) -> str:
+        """The host's page of ``branch``'s pull requests ('' = no address).
+        Built from the remote, so it needs no answer from the host, and it never
+        costs the lookup it is part of."""
+        try:
+            url = self._repository_service.branch_pull_requests_url(repository, branch)
+        except Exception:
+            self.logger.exception(
+                'could not build the pull requests page of repository %s',
+                getattr(repository, 'id', ''),
+            )
+            return ''
+        return url if isinstance(url, str) else ''
 
     def _resolve_publish_context(self, task_id: str):
         """Build (repos-with-local-path, branch_name, task-lite) for ``task_id``.

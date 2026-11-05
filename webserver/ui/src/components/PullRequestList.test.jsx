@@ -109,6 +109,28 @@ describe('PullRequestList — the list', () => {
     ]);
   });
 
+  // The git host did not answer (Bitbucket's 429s outlast the lookup's wait):
+  // the row still leads to the pull request, on the host's own page.
+  test('a repository the host did not answer for opens its pull requests on the host', () => {
+    const page = 'https://bitbucket.org/acme/lib/pull-requests/?query=UNA-1';
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const { list } = openList([
+      repo('api', API), { ...repo('lib', null, true), pullRequestsPageUrl: page },
+    ]);
+    const row = list.querySelectorAll('.pull-request-list-row')[1];
+    expect(row.textContent).toBe('libCould not check — the git host did not answer. Open it there →');
+    const link = within(row).getByRole('link', {
+      name: "Open the lib branch's pull requests on the git host in a new tab",
+    });
+    expect(link).toHaveAttribute('href', page);
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(link.getAttribute('data-tooltip')).toBe('Open its pull requests on the git host');
+    fireEvent.click(within(row).getByRole('button', { name: 'Copy the lib pull request link' }));
+    expect(copyTextToClipboard).toHaveBeenCalledWith(page);
+    fireEvent.click(within(list).getByRole('button', { name: 'Open all 2 in new tabs' }));
+    expect(open.mock.calls.map((call) => call[0])).toEqual([API.url, page]);
+  });
+
   test('a pull request opens in a new tab', () => {
     const { list } = openList([repo('api', API)]);
     const link = within(list).getByRole('link', { name: 'Open the api pull request in a new tab' });

@@ -38,6 +38,9 @@ function parseRepositories(items) {
         url: String(item.pull_request.url || ''),
       } : null,
       lookupFailed: !!item?.lookup_failed,
+      // Where the host lists the branch's pull requests — sent when it could
+      // not be asked, so the row still leads to the pull request.
+      pullRequestsPageUrl: String(item?.pull_requests_page_url || ''),
     }))
     .filter((repository) => repository.repositoryId);
 }

@@ -2,7 +2,8 @@
 // their pull requests. Pure — PullRequestList.jsx renders these.
 //
 // ``repositories`` is the pull-request store's list: ``{ repositoryId,
-// pullRequest: { id, title, url } | null, lookupFailed }`` per repository.
+// pullRequest: { id, title, url } | null, lookupFailed, pullRequestsPageUrl }``
+// per repository.
 
 // How many repositories have an open pull request, of how many, and how many
 // the provider could not be asked about.
@@ -68,7 +69,19 @@ export function pullRequestLabel(pullRequest) {
   return [number, pullRequest?.title].filter(Boolean).join(' ') || 'Pull request';
 }
 
-// The links "Open all" opens, in the list's order.
+// Where a row's open button goes: its pull request; or — the git host did not
+// answer, so kato cannot say whether there is one — the host's page of the
+// branch's pull requests, where it is. '' = nothing to open ("no pull request
+// yet" is an answer, not a page to look at).
+export function pullRequestLink(repository) {
+  const url = repository?.pullRequest?.url || '';
+  if (url) { return { url, onHost: false }; }
+  const page = repository?.lookupFailed ? repository.pullRequestsPageUrl || '' : '';
+  return { url: page, onHost: !!page };
+}
+
+// The links "Open all" opens, in the list's order — the host's page standing
+// in for a pull request it could not be asked about.
 export function pullRequestUrls(repositories) {
-  return (repositories || []).map((repository) => repository.pullRequest?.url).filter(Boolean);
+  return (repositories || []).map((repository) => pullRequestLink(repository).url).filter(Boolean);
 }
