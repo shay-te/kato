@@ -122,6 +122,33 @@ export function effectiveEffort(draftEffort, effort) {
   return draftEffort || effort?.default || (effort?.levels || [])[0] || '';
 }
 
+// Matches the server's own cap (prompt_attachment_store.MAX_ATTACHMENT_BYTES) —
+// kept here too so an oversized file is rejected at the click/drop instead of
+// a round trip to the server.
+export const MAX_ATTACHMENT_BYTES = 64 * 1024 * 1024;
+
+// Append newly picked/dropped files to the current list, filtering out
+// anything over the size cap. ``rejected`` names what was dropped, for a
+// toast — the accepted ones are returned already appended so the caller
+// never has to merge two lists itself.
+export function addAttachments(current, picked) {
+  const accepted = [];
+  const rejected = [];
+  for (const file of picked || []) {
+    if (!file) { continue; }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      rejected.push(file.name || 'file');
+      continue;
+    }
+    accepted.push(file);
+  }
+  return { files: [...(current || []), ...accepted], rejected };
+}
+
+export function removeAttachmentAt(current, index) {
+  return (current || []).filter((_, i) => i !== index);
+}
+
 // The draft's tab in the centre strip; null while the draft is closed.
 export function buildNewTaskTabModel(draft, { active = false, hasOtherTabs = false } = {}) {
   if (!draft.open) { return null; }

@@ -854,6 +854,31 @@ task title is a button → a `Task` tab among the files (`taskDefinitionTab`, `T
 ← `GET /api/sessions/<task>/task-definition` (`task_definition_routes.py`), read from the workspace record — the
 same one the agent's Task definition is built from. On demand only: the 5s tab list still omits the description.
 
+**A chat's opener never named the branch it was already on** (`resume_session_for_chat`, used by every chat-started
+spawn — "New task"'s Plan and Implement, a `kato:wait-planning`/`kato:wait-editing` hold): only the one-shot
+implementation prompt named it, via `repository_scope_text`, which reads a destination off repository OBJECTS a chat
+never has — only bare paths. Plan mode, asked to propose a plan with nothing naming the branch, told the operator
+none was set even though one was given and the orchestration layer had already checked it out on disk (the
+checkout itself was never wrong; only the agent's account of it). `workspace_inventory_block` (agent_core_lib) now
+takes `branch_name` and names it right after the repository list, in BOTH the first-spawn block and the
+resumed-session scope reminder (re-sent every turn, like the repo list); the webserver's `_chat_branch_name`
+resolves it via `repository_service.task_branch_name(task_id)`, the same kato-tags-based answer the actual
+checkout uses, so the two can never disagree.
+
+**Attachments at creation — "New task" acts as the first prompt, so this is the one chance to hand over documents**
+(a spec, a CSV, a PDF: report, "task creation itself acts as the first prompt"). The pane's `NewTaskAttachments`
+(drag/drop + a picker, files held in `NewTaskPane` and persisted across a tab switch in IndexedDB —
+`newTaskAttachmentDraft.js`, the same idiom as the composer's own image draft, because the pane UNMOUNTS on every
+tab switch while the rest of the draft survives even a reload) → `createLocalTask(body, files)` goes multipart only
+when there are files (`payload` = the same JSON body, stringified, + one `attachments` field per file — the common,
+no-attachment case stays plain JSON). `POST /api/local-tasks` saves each one into the new task's `attachments/`
+folder — reusing `save_attachment`, the SAME folder a ticket's downloaded screenshots use — synchronously, BEFORE
+`starter.start()` even begins the background clone+spawn thread: no race against the upload. `LocalTaskStarter`
+then lists that folder (`list_attachment_paths`) and prepends `agent_prompt_utils.task_uploaded_files_block` (a
+generic cousin of `task_attachments_block` — these can be any document type, not only images, so the wording never
+assumes a screenshot) ahead of the opening message. Only for Plan/Implement: "Just open the chat" sends nothing on
+purpose, so an attached file there is saved but not auto-mentioned — the operator's own first message covers it.
+
 **A chat needs git, not a pull request API.** Preparing a chat's repositories (`WaitPlanningService._prepare_repositories`,
 so wait-planning and every local task) passes `pull_requests_required=False`. It used to require a known host and a
 token, so a repository on any other host got no branch at all: the clone sat on `master` and the agent worked there.

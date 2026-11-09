@@ -507,8 +507,22 @@ export function adoptTask(taskId) {
 // ``{ summary, description, repositories, start_mode, model, effort }``.
 // 202 ``{ task_id }`` — the tab exists at once; the clone and the agent's
 // first turn follow in the background. 400 / 403 say what to fix.
-export function createLocalTask(body) {
-  return postEnvelope('/api/local-tasks', body || {});
+//
+// ``files`` (documents attached while drafting — a spec, a CSV, a PDF) go
+// multipart, as ``payload`` (this same body, stringified) plus one
+// ``attachments`` field per file: megabytes as base64 JSON would be a third
+// larger for no benefit, same reasoning as ``uploadAttachment``. No files
+// (the common case) keeps the plain JSON POST unchanged.
+export function createLocalTask(body, files = []) {
+  if (!files || files.length === 0) {
+    return postEnvelope('/api/local-tasks', body || {});
+  }
+  const form = new FormData();
+  form.append('payload', JSON.stringify(body || {}));
+  for (const file of files) {
+    form.append('attachments', file, file.name);
+  }
+  return requestEnvelope('/api/local-tasks', { method: 'POST', body: form });
 }
 
 // Recent commits on a repo's task branch (newest first). Drives the

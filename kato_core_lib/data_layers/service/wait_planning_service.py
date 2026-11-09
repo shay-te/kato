@@ -690,6 +690,7 @@ class WaitPlanningService(object):
         inventory = agent_prompt_utils.workspace_inventory_block(
             context.cwd,
             [path for path in context.repository_paths if path != context.cwd],
+            branch_name=context.expected_branch,
         )
         if inventory:
             sections.extend([inventory, ''])

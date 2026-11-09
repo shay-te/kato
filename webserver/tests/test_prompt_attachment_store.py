@@ -18,6 +18,7 @@ from kato_webserver.prompt_attachment_store import (
     ATTACHMENTS_DIRNAME,
     MAX_ATTACHMENT_BYTES,
     attachments_dir,
+    list_attachment_paths,
     save_attachment,
 )
 
@@ -86,6 +87,30 @@ class SaveAttachmentTests(unittest.TestCase):
         result = save_attachment(self.workspace, 'logs.txt', b'x')
         self.assertFalse(result['ok'])
         self.assertTrue(result['error'])
+
+
+class ListAttachmentPathsTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = self._tmp.name
+
+    def test_lists_every_saved_file_sorted(self) -> None:
+        save_attachment(self.workspace, 'b.csv', b'x')
+        save_attachment(self.workspace, 'a.pdf', b'y')
+        paths = list_attachment_paths(self.workspace)
+        self.assertEqual([Path(p).name for p in paths], ['a.pdf', 'b.csv'])
+
+    def test_no_folder_yet_is_empty_not_a_crash(self) -> None:
+        self.assertEqual(list_attachment_paths(self.workspace), [])
+        self.assertEqual(list_attachment_paths(''), [])
+
+    def test_a_subfolder_inside_attachments_is_not_listed_as_a_file(self) -> None:
+        save_attachment(self.workspace, 'a.pdf', b'y')
+        (attachments_dir(self.workspace) / 'sub').mkdir()
+        paths = list_attachment_paths(self.workspace)
+        self.assertEqual([Path(p).name for p in paths], ['a.pdf'])
 
 
 if __name__ == '__main__':

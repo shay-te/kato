@@ -210,6 +210,17 @@ class HoldPromptWorkspaceScopeTests(unittest.TestCase):
         prompt = WaitPlanningService._build_editing_prompt(build_task(), self._context())
         self.assertNotIn('clone directory to work in', prompt)
 
+    def test_editing_prompt_names_the_branch_already_checked_out(self) -> None:
+        prompt = WaitPlanningService._build_editing_prompt(build_task(), self._context())
+        self.assertIn('checked out on UNA-1', prompt)
+
+    def test_planning_prompt_names_the_branch_already_checked_out(self) -> None:
+        # The planning hold is read-only by design, but a plan proposed with
+        # no idea which branch it is on reads as "no branch specified" even
+        # when one was given and is already checked out on disk.
+        prompt = WaitPlanningService._build_planning_prompt(build_task(), self._context())
+        self.assertIn('checked out on UNA-1', prompt)
+
 
 
 class HoldChatScreenshotTests(unittest.TestCase):

@@ -12,6 +12,9 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
+from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
+    task_uploaded_files_block,
+)
 from flask import Flask
 
 from kato_core_lib.data_layers.service.local_task_service import (
@@ -21,6 +24,7 @@ from kato_core_lib.data_layers.service.local_task_service import (
 )
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 from kato_core_lib.helpers.plan_mode_store import picked_mode_to_store
+from kato_webserver.prompt_attachment_store import list_attachment_paths
 
 
 class LocalTaskStarter(object):
@@ -72,8 +76,31 @@ class LocalTaskStarter(object):
         message = opening_message(start_mode)
         if not message:
             return
+        message = _with_attached_files(self._app, task_id, message)
         with self._app.app_context():
             self._start_chat(task_id, message)
+
+
+def _with_attached_files(app: Flask, task_id: str, message: str) -> str:
+    """Name files the operator attached when creating the task, ahead of the
+    opener — "task creation itself acts as the first prompt", so a document
+    handed over at creation (a spec, a CSV, a PDF) must be named in it, not
+    discovered by the agent later by chance.
+
+    The route that created the task saves them into the attachments folder
+    BEFORE this background thread is even started, so reading the folder
+    here — after the clone, right before the opener is sent — is never a
+    race against the upload.
+    """
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    if workspace_manager is None:
+        return message
+    try:
+        workspace_dir = str(workspace_manager.workspace_path(task_id))
+    except Exception:
+        return message
+    block = task_uploaded_files_block(list_attachment_paths(workspace_dir))
+    return f'{block}\n\n{message}' if block else message
 
 
 def _persist_mode(task_id: str, mode: str) -> None:

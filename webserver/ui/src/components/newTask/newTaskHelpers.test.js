@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   EMPTY_DRAFT,
+  MAX_ATTACHMENT_BYTES,
   START_MODE,
   START_MODE_OPTIONS,
+  addAttachments,
   buildNewTaskTabModel,
   coerceDraft,
   draftPayload,
@@ -12,6 +14,7 @@ import {
   effectiveEffort,
   effectiveModel,
   isDraftDirty,
+  removeAttachmentAt,
   repositoryChoices,
   toggleRepository,
 } from './newTaskHelpers.js';
@@ -108,4 +111,30 @@ test('the tab exists only while the draft is open', () => {
     buildNewTaskTabModel(draft({ open: true, title: ' Fix it ' }), { active: true, hasOtherTabs: true }),
     { label: 'Fix it', dirty: true, active: true, groupStart: true },
   );
+});
+
+const file = (name, size) => ({ name, size });
+
+test('attachments append, skipping anything over the size cap', () => {
+  const picked = [file('spec.pdf', 1024), file('huge.csv', MAX_ATTACHMENT_BYTES + 1)];
+  const { files, rejected } = addAttachments([file('existing.txt', 10)], picked);
+  assert.deepEqual(files.map((f) => f.name), ['existing.txt', 'spec.pdf']);
+  assert.deepEqual(rejected, ['huge.csv']);
+});
+
+test('a file exactly at the cap is accepted, not rejected', () => {
+  const { files, rejected } = addAttachments([], [file('at-cap.csv', MAX_ATTACHMENT_BYTES)]);
+  assert.equal(files.length, 1);
+  assert.deepEqual(rejected, []);
+});
+
+test('null/empty inputs never throw', () => {
+  assert.deepEqual(addAttachments(null, null), { files: [], rejected: [] });
+  assert.deepEqual(addAttachments(undefined, [null, file('x', 1)]).files.map((f) => f.name), ['x']);
+});
+
+test('removing an attachment drops only that index', () => {
+  const files = [file('a', 1), file('b', 2), file('c', 3)];
+  assert.deepEqual(removeAttachmentAt(files, 1).map((f) => f.name), ['a', 'c']);
+  assert.deepEqual(removeAttachmentAt(null, 0), []);
 });

@@ -13997,6 +13997,85 @@ button.settings-prompt-editor-head {
 
 .new-task-problems { color: $C-ORANGE-50; }
 
+.new-task-attachments.is-drop-target {
+  outline: 2px dashed $C-ORANGE-50-A65;
+  outline-offset: 4px;
+  border-radius: $RADIUS-8;
+}
+
+.new-task-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-4;
+  margin: 0 0 $SPACE-6;
+  padding: 0;
+  list-style: none;
+}
+
+.new-task-attachment {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-6;
+  padding: $SPACE-4 $SPACE-6;
+  border-radius: $RADIUS-6;
+  background: $C-NEUTRAL-100-A06;
+  font-size: $TEXT-12;
+}
+
+.new-task-attachment-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: $C-NEUTRAL-96;
+}
+
+.new-task-attachment-size {
+  flex: 0 0 auto;
+  color: $C-NEUTRAL-96-A42;
+}
+
+.new-task-attachment-remove {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: $RADIUS-CIRCLE;
+  border: none;
+  background: transparent;
+  color: $C-NEUTRAL-96-A42;
+  font-size: $TEXT-14;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.new-task-attachment-remove:hover { background: $C-RED-51-A95; color: $C-NEUTRAL-96; }
+
+.new-task-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: $SPACE-4;
+  padding: $SPACE-5 $SPACE-8;
+  border: 1px dashed $C-NEUTRAL-100-A10;
+  border-radius: $RADIUS-6;
+  background: none;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-12;
+  cursor: pointer;
+}
+
+.new-task-attach-btn:hover { color: $C-NEUTRAL-96; border-color: $C-NEUTRAL-100-A10; }
+
+.new-task-attachments-hint {
+  margin: $SPACE-4 0 0;
+  font-size: $TEXT-11;
+  color: $C-NEUTRAL-96-A42;
+}
+
 .new-task-agent {
   display: grid;
   grid-template-columns: 1fr 1fr;

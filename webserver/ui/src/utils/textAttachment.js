@@ -148,8 +148,9 @@ export function formatTextAttachment(name, text, { truncated = false } = {}) {
   return `Attached \`${safeName}\`${note}:\n${fence}${lang}\n${body}\n${fence}`;
 }
 
-// Human-readable size for the saved-file fragment below.
-function humanSize(bytes) {
+// Human-readable size — shared with the New Task pane's attachment chips
+// (newTask/NewTaskAttachments.jsx), not just the saved-file fragment below.
+export function humanSize(bytes) {
   const value = Number(bytes) || 0;
   if (value >= 1024 * 1024) { return `${(value / (1024 * 1024)).toFixed(1)} MB`; }
   if (value >= 1024) { return `${Math.round(value / 1024)} KB`; }

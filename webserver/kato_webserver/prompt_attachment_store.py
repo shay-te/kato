@@ -79,3 +79,25 @@ def save_attachment(workspace_dir, name: str, data: bytes) -> dict:
         'path': str(target),
         'bytes': len(payload),
     }
+
+
+def list_attachment_paths(workspace_dir) -> list[str]:
+    """Every file already saved in the task's attachments folder.
+
+    Read straight off disk — unlike a ticket's screenshots (fetched from
+    the tracker at spawn time), these are files the operator already
+    uploaded here, so there is nothing to fetch.
+    """
+    if not workspace_dir:
+        # ``task_attachments_directory('')`` answers '' too, and
+        # ``Path('')`` resolves to the CURRENT WORKING DIRECTORY (and
+        # IS a directory) rather than "no folder" — without this guard an
+        # empty workspace_dir would list the process's own cwd.
+        return []
+    folder = attachments_dir(workspace_dir)
+    if not folder.is_dir():
+        return []
+    try:
+        return sorted(str(path) for path in folder.iterdir() if path.is_file())
+    except OSError:
+        return []

@@ -14075,6 +14075,91 @@ button.settings-prompt-editor-head {
   color: #f59e0b;
 }
 
+.new-task-attachments.is-drop-target {
+  outline: 2px dashed rgba(245, 158, 11, 0.65);
+  outline-offset: 4px;
+  border-radius: 8px;
+}
+
+.new-task-attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.new-task-attachment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.new-task-attachment-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f5f5f7;
+}
+
+.new-task-attachment-size {
+  flex: 0 0 auto;
+  color: rgba(245, 245, 247, 0.42);
+}
+
+.new-task-attachment-remove {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: rgba(245, 245, 247, 0.42);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.new-task-attachment-remove:hover {
+  background: rgba(220, 38, 38, 0.95);
+  color: #f5f5f7;
+}
+
+.new-task-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: none;
+  color: #a3a3a3;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.new-task-attach-btn:hover {
+  color: #f5f5f7;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.new-task-attachments-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(245, 245, 247, 0.42);
+}
+
 .new-task-agent {
   display: grid;
   grid-template-columns: 1fr 1fr;

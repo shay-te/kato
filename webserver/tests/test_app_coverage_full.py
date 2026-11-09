@@ -863,6 +863,67 @@ class PreToolUseHookTests(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 
+class ChatBranchNameTests(unittest.TestCase):
+    """The branch a chat spawn tells the agent it is already on.
+
+    Only the autonomous one-shot prompt named the branch (via
+    ``repository_scope_text``, which reads a destination off repository
+    objects a chat never has); every chat-started task — "New task"'s Plan
+    and Implement alike — went in blind, so a Plan-mode session proposed a
+    plan with no idea which branch it was on and told the operator none was
+    set, even though one was given and already checked out.
+    """
+
+    def test_resolves_via_the_repository_service(self):
+        from kato_webserver.app import _chat_branch_name
+
+        repository_service = MagicMock()
+        repository_service.task_branch_name.return_value = 'feature/export'
+        app = create_app(
+            agent_service=SimpleNamespace(repository_service=repository_service),
+        )
+        self.assertEqual(_chat_branch_name(app, 'T-1'), 'feature/export')
+        repository_service.task_branch_name.assert_called_once_with('T-1')
+
+    def test_no_agent_service_is_empty_not_a_crash(self):
+        from kato_webserver.app import _chat_branch_name
+
+        app = create_app()
+        self.assertEqual(_chat_branch_name(app, 'T-1'), '')
+
+    def test_a_lookup_that_raises_is_empty_not_a_crash(self):
+        from kato_webserver.app import _chat_branch_name
+
+        repository_service = MagicMock()
+        repository_service.task_branch_name.side_effect = RuntimeError('boom')
+        app = create_app(
+            agent_service=SimpleNamespace(repository_service=repository_service),
+        )
+        self.assertEqual(_chat_branch_name(app, 'T-1'), '')
+
+    def test_spawn_or_reject_passes_it_to_the_runner(self):
+        repository_service = MagicMock()
+        repository_service.task_branch_name.return_value = 'feature/export'
+        runner = MagicMock()
+        app = create_app(
+            planning_session_runner=runner,
+            agent_service=SimpleNamespace(repository_service=repository_service),
+        )
+        app.config['WORKSPACE_MANAGER'] = None
+
+        with app.app_context(), patch.object(
+            app_module, '_chat_resume_context', return_value=('/cwd', 'sum', ''),
+        ), patch.object(
+            app_module, '_chat_additional_dirs', return_value=[],
+        ):
+            app_module._spawn_or_reject_chat_session(app, 'T-1', 'go')
+
+        self.assertEqual(
+            runner.resume_session_for_chat.call_args.kwargs['branch_name'],
+            'feature/export',
+        )
+
+
 class PostMessageEffortRespawnTests(unittest.TestCase):
     def test_effort_change_terminates_and_respawns(self):
         # A live idle session at a different effort than the override

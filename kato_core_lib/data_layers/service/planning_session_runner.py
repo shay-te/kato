@@ -368,6 +368,7 @@ class PlanningSessionRunner(object):
         model: str = '',
         effort: str = '',
         permission_mode: str = '',
+        branch_name: str = '',
     ):
         """Spawn a fresh Claude subprocess for ``task_id`` and queue ``message``.
 
@@ -435,6 +436,7 @@ class PlanningSessionRunner(object):
             # there, and asked the operator to type the clone directory in.
             scope_reminder = agent_prompt_utils.workspace_inventory_block(
                 cwd, additional_dirs, workspace_root=workspace_root,
+                branch_name=branch_name,
             )
             initial_prompt = (
                 f'{scope_reminder}\n\n{normalized_message}'
@@ -476,6 +478,7 @@ class PlanningSessionRunner(object):
                 first_turn,
                 cwd=cwd,
                 additional_dirs=additional_dirs,
+                branch_name=branch_name,
             )
             # The boundary goes ABOVE the continuity/inventory preamble, not
             # inside it. The block's own first line is "read this first", and

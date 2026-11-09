@@ -165,6 +165,12 @@ class PrependChatWorkspaceContextTests(unittest.TestCase):
         self.assertTrue(out.endswith(prompt))
         self.assertIn('Continuity instruction', out)
 
+    def test_branch_name_passes_through_to_the_inventory_block(self) -> None:
+        out = prepend_chat_workspace_context(
+            'PROMPT', cwd='/wks/PROJ/repo-a', branch_name='feature/export',
+        )
+        self.assertIn('checked out on feature/export', out)
+
 
 class SecurityGuardrailsTextTests(unittest.TestCase):
     def test_returns_structural_guardrail_text(self) -> None:

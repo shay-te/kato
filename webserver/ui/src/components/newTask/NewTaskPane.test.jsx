@@ -5,6 +5,22 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import NewTaskPane from './NewTaskPane.jsx';
 import { _resetNewTaskDraft, openNewTaskDraft, readNewTaskDraft } from './newTaskDraftStore.js';
+import { readNewTaskAttachmentDraft } from '../../utils/newTaskAttachmentDraft.js';
+
+// In-memory stand-in for IndexedDB (jsdom has none) — same shim used by
+// MessageForm.test.jsx for the composer's own image draft. The attachments
+// draft (newTaskAttachmentDraft.js) reads/writes through this.
+const { _idbMem } = vi.hoisted(() => ({ _idbMem: new Map() }));
+vi.mock('../../utils/idbStore.js', () => ({
+  idbGet: async (key) => _idbMem.get(key),
+  idbSet: async (key, value) => { _idbMem.set(key, value); },
+  idbDelete: async (key) => { _idbMem.delete(key); },
+  _resetIdbConnection: () => {},
+}));
+
+function textFile(name) {
+  return new File(['x'], name, { type: 'text/plain' });
+}
 
 function fakeKato({ create = { status: 202, body: { task_id: 'LOCAL-1' } } } = {}) {
   const kato = { created: [] };
@@ -22,7 +38,17 @@ function fakeKato({ create = { status: 202, body: { task_id: 'LOCAL-1' } } } = {
       return respond(200, { levels: ['low', 'medium', 'high'], default: 'high' });
     }
     if (url === '/api/local-tasks') {
-      kato.created.push(JSON.parse(init.body));
+      // Plain JSON when there are no attachments (the common case) — a
+      // FormData body (``payload`` + one ``attachments`` field per file)
+      // only once the operator has picked files to send alongside the task.
+      if (init.body instanceof FormData) {
+        kato.created.push({
+          ...JSON.parse(init.body.get('payload') || '{}'),
+          attachments: init.body.getAll('attachments').map((f) => f.name),
+        });
+      } else {
+        kato.created.push(JSON.parse(init.body));
+      }
       return respond(create.status, create.body);
     }
     return respond(404, { error: `unknown route ${url}` });
@@ -46,11 +72,13 @@ async function fillIn() {
 beforeEach(() => {
   _resetNewTaskDraft();
   openNewTaskDraft();
+  _idbMem.clear();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   _resetNewTaskDraft();
+  _idbMem.clear();
 });
 
 describe('NewTaskPane', () => {
@@ -182,5 +210,48 @@ describe('NewTaskPane', () => {
     expect(onHide).toHaveBeenCalled();
     expect(readNewTaskDraft().title).toBe('Keep me');
     expect(readNewTaskDraft().open).toBe(true);
+  });
+
+  test('an attached file goes multipart, alongside the same fields', async () => {
+    const kato = fakeKato();
+    const { onCreated } = renderPane();
+    await fillIn();
+    fireEvent.change(screen.getByLabelText('Attach files'), { target: { files: [textFile('spec.pdf')] } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith('LOCAL-1'));
+    expect(kato.created).toEqual([{
+      summary: 'Add retry', description: 'Times out.', repositories: ['api'], branch: '',
+      start_mode: 'plan', model: 'opus', effort: 'high', attachments: ['spec.pdf'],
+    }]);
+  });
+
+  test('no attachments stays plain JSON — the common case is unchanged', async () => {
+    const kato = fakeKato();
+    const { onCreated } = renderPane();
+    await fillIn();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(kato.created[0].attachments).toBeUndefined();
+  });
+
+  test('an attached file survives closing and reopening the pane, like the text draft', async () => {
+    fakeKato();
+    const first = renderPane();
+    fireEvent.change(screen.getByLabelText('Attach files'), { target: { files: [textFile('spec.pdf')] } });
+    await waitFor(async () => expect((await readNewTaskAttachmentDraft()).map((f) => f.name)).toEqual(['spec.pdf']));
+    first.unmount();
+    renderPane();
+    expect(await screen.findByText('spec.pdf')).toBeInTheDocument();
+  });
+
+  test('a successful create clears the attachment draft too', async () => {
+    const kato = fakeKato();
+    const { onCreated } = renderPane();
+    await fillIn();
+    fireEvent.change(screen.getByLabelText('Attach files'), { target: { files: [textFile('spec.pdf')] } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(kato.created[0].attachments).toEqual(['spec.pdf']);
+    expect(await readNewTaskAttachmentDraft()).toEqual([]);
   });
 });

@@ -259,6 +259,42 @@ class PlanningSessionRunnerTests(unittest.TestCase):
         self.assertLess(prompt.index('Task definition'), prompt.index(saved))
         self.assertTrue(prompt.endswith('please continue'))
 
+    def test_first_chat_spawn_names_the_branch_already_checked_out(self) -> None:
+        # Only the autonomous implementation prompt named the branch (via
+        # repository_scope_text, which needs repository objects a chat
+        # never has). A Plan-mode chat asked to propose a plan had nothing
+        # to go on and told the operator no branch was set, even though one
+        # was given and the orchestration layer had already checked it out.
+        manager = _FakeManager(_terminal(result='ok'))
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1', message='please continue', cwd='/tmp/client',
+            branch_name='feature/export',
+        )
+
+        prompt = manager.start_kwargs['initial_prompt']
+        self.assertIn('checked out on feature/export', prompt)
+        self.assertTrue(prompt.endswith('please continue'))
+
+    def test_a_resumed_chat_still_gets_the_branch_reminder(self) -> None:
+        # Unlike the task definition/screenshots, the branch reminder is
+        # re-sent on every turn — same reasoning as the repo-list reminder:
+        # a resumed session's first turn's history can never be edited
+        # after the fact, and the branch can only be known at spawn time.
+        manager = _FakeManager(_terminal(result='ok'))
+        manager.get_record = lambda task_id: SimpleNamespace(
+            agent_session_id='0fd1267c-fb21-4364-aaa0-d71a2bb692c8', status='active',
+        )
+        runner = PlanningSessionRunner(session_manager=manager, defaults=self.defaults)
+
+        runner.resume_session_for_chat(
+            task_id='PROJ-1', message='next', cwd='/tmp/client',
+            branch_name='feature/export',
+        )
+
+        self.assertIn('checked out on feature/export', manager.start_kwargs['initial_prompt'])
+
     def test_a_resumed_chat_is_not_handed_them_again(self) -> None:
         # It already has them in its history; re-sending made the agent
         # re-litigate the task every turn.

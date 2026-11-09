@@ -9,6 +9,7 @@ import {
   readTextAttachment,
   formatTextAttachment,
   formatSavedAttachment,
+  humanSize,
   TEXT_REJECT_REASON,
   MAX_TEXT_ATTACHMENT_BYTES,
 } from './textAttachment.js';
@@ -155,4 +156,13 @@ test('formatSavedAttachment: scales the size unit', function () {
 
 test('formatSavedAttachment: falls back when the name is blank', function () {
   assert.ok(formatSavedAttachment('', '/p', 10).includes('`attachment`'));
+});
+
+// Exported so the New Task pane's attachment chips (newTask/NewTaskAttachments.jsx)
+// share one size formatter instead of re-implementing it.
+test('humanSize: bytes, KB, MB, and a non-numeric input', function () {
+  assert.equal(humanSize(42), '42 bytes');
+  assert.equal(humanSize(2048), '2 KB');
+  assert.equal(humanSize(5 * 1024 * 1024), '5.0 MB');
+  assert.equal(humanSize(undefined), '0 bytes');
 });

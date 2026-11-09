@@ -14,6 +14,7 @@ The model / effort / mode are applied BEFORE the chat starts: the CLI fixes
 
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 from flask import Flask, jsonify, request
@@ -24,6 +25,7 @@ from kato_core_lib.data_layers.service.local_task_service import (
     LocalTaskRejected,
 )
 from kato_webserver.local_task_starter import LocalTaskStarter
+from kato_webserver.prompt_attachment_store import save_attachment
 
 
 def register_local_task_routes(
@@ -50,7 +52,7 @@ def register_local_task_routes(
         service = _service()
         if service is None:
             return jsonify({'error': 'creating tasks in kato is not available'}), 503
-        body = request.get_json(silent=True) or {}
+        body, attachments = _creation_request_body(request)
         start_mode = str(body.get('start_mode') or START_PLAN).strip()
         if start_mode not in START_MODES:
             return jsonify({
@@ -72,7 +74,52 @@ def register_local_task_routes(
         except LocalTaskRejected as exc:
             return jsonify({'error': str(exc)}), 400
         task_id = str(task.id)
+        if attachments:
+            # Saved NOW, synchronously, before the background clone+spawn
+            # thread starts — so by the time it builds the opening message
+            # (after the clone), these files are already on disk and named
+            # in it. No race against the upload.
+            _save_created_task_attachments(app, task_id, attachments)
         starter.start(task_id, start_mode, model=str(body.get('model') or ''), effort=effort)
         return jsonify({
             'task_id': task_id, 'summary': task.summary, 'start_mode': start_mode,
         }), 202
+
+
+def _creation_request_body(req) -> tuple[dict, list]:
+    """``(body, attachments)`` from either a plain JSON POST or a multipart
+    one carrying files: ``payload`` (the same JSON, stringified) plus zero
+    or more ``attachments`` fields. Multipart only when there is at least
+    one file to attach, so the common case is unchanged.
+    """
+    uploads = req.files.getlist('attachments')
+    if not uploads:
+        return req.get_json(silent=True) or {}, []
+    try:
+        body = json.loads(req.form.get('payload') or '{}')
+    except (TypeError, ValueError):
+        body = {}
+    return (body if isinstance(body, dict) else {}), uploads
+
+
+def _save_created_task_attachments(app: Flask, task_id: str, uploads) -> None:
+    """Best-effort: a file that fails to save costs the agent that one
+    document, never the task — the create response has already gone out.
+    """
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    if workspace_manager is None:
+        return
+    try:
+        workspace_dir = str(workspace_manager.workspace_path(task_id))
+    except Exception:
+        app.logger.exception('no workspace to save attachments for task %s', task_id)
+        return
+    for upload in uploads:
+        if not upload or not upload.filename:
+            continue
+        result = save_attachment(workspace_dir, upload.filename, upload.read())
+        if not result.get('ok'):
+            app.logger.warning(
+                'could not save attachment %s for task %s: %s',
+                upload.filename, task_id, result.get('error'),
+            )

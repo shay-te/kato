@@ -6158,6 +6158,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
         manager, workspace_manager, task_id,
     )
     additional_dirs = _chat_additional_dirs(workspace_manager, task_id)
+    branch_name = _chat_branch_name(app, task_id)
     model_override = _get_task_override(app, 'TASK_MODEL_OVERRIDES', task_id)
     # No per-task override (or it was cleared) → pass the concrete chat default
     # explicitly, so kato never falls through to the CLI's opaque built-in
@@ -6186,6 +6187,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
             model=model_override,
             effort=effort_override,
             permission_mode=permission_mode,
+            branch_name=branch_name,
         )
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
@@ -6344,6 +6346,27 @@ def _migrate_adopted_session_transcript(
         transcript_path=transcript_path,
         target_cwd=target_cwd,
     )
+
+
+def _chat_branch_name(app: Flask, task_id: str) -> str:
+    """The branch this task's chat works on — best-effort, '' on failure.
+
+    A chat's first-turn prompt never carried this: the one-shot
+    implementation prompt names the branch via ``repository_scope_text``
+    (it has repository objects to read a destination off), but a chat only
+    ever had paths, so ``workspace_inventory_block`` named the repositories
+    and never the branch. Plan mode, asked to propose a plan with nothing
+    naming the branch, told the operator none was set — even though one had
+    been given and was already checked out on disk, and the actual
+    implementation worked on it correctly regardless.
+    """
+    repository_service = getattr(app.config.get('AGENT_SERVICE'), 'repository_service', None)
+    if repository_service is None:
+        return ''
+    try:
+        return str(repository_service.task_branch_name(task_id) or '')
+    except Exception:
+        return ''
 
 
 def _chat_resume_context(
