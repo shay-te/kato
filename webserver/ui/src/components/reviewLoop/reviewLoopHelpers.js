@@ -263,10 +263,12 @@ export function findingStatus(round, finding, { running = false } = {}) {
       return { label: 'In progress', tone: 'busy', note: 'sent to the chat — waiting for its fix' };
     }
     if (round.fixed_at) {
-      return {
-        label: DECISIONS.unanswered.label, tone: DECISIONS.unanswered.tone,
-        note: 'the chat\u2019s reply did not say what it did about this — the next review checks it again',
-      };
+      // The last round's fix is never re-reviewed — say so instead of
+      // promising a next review that will not happen.
+      const note = outcome === 'max_rounds'
+        ? 'the chat\u2019s reply did not say what it did about this — and this was the last round, so nothing reviews it again'
+        : 'the chat\u2019s reply did not say what it did about this — the next review checks it again';
+      return { label: DECISIONS.unanswered.label, tone: DECISIONS.unanswered.tone, note };
     }
     return { label: 'Not fixed', tone: 'bad', note: 'the loop stopped before the chat finished — Resume continues the fix' };
   }

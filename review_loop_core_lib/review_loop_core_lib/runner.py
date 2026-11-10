@@ -17,15 +17,17 @@
         [confirm_clean] the reviewer saw the ledger ─▶ clean-room round n+1
         otherwise ........................... done: CLEAN
       claimed fixes all still there ........ done: STUCK       (nothing sent)
-      n is the last round .................. done: MAX_ROUNDS  (nothing sent)
       otherwise ─▶ wait for the chat ─▶ send the findings ─▶ wait for the fix
-                 ─▶ read its decisions ─▶ begin round n+1
+                 ─▶ read its decisions
+      n is the last round .................. done: MAX_ROUNDS  (sent; no round
+                                                                  left to re-review it)
+      otherwise ─▶ begin round n+1
     any cancel ─▶ STOPPED (or INTERRUPTED)    anything broken ─▶ FAILED
 
 A loop cut off part-way (stopped, failed, interrupted or stuck) can be RESUMED:
 it finishes the step it was cut off in — the round's review run again, a
-"continue" nudge to a chat that was mid-fix, findings never sent — and goes on
-as if it had never stopped (``ReviewLoopState.resume_point``).
+"continue" nudge to a chat that was mid-fix, findings not yet sent — and goes
+on as if it had never stopped (``ReviewLoopState.resume_point``).
 
 Every wait is a ``cancel_event`` wait, so a Stop ends the loop within one poll
 and a running review is killed through the reviewer's own cancel handling. The
@@ -361,8 +363,13 @@ class ReviewLoopRunner(object):
     def _after_blocking_review(
         self, review_round: ReviewRound, verdict: ReviewVerdict, memory: LoopMemory,
     ) -> None:
-        """Blocking findings: stuck, out of rounds, or sent to be fixed."""
-        number = review_round.number
+        """Blocking findings: stuck, or sent to be fixed — the last round too.
+
+        A finding left unfixed only because no round remained to re-review it
+        is worse than a fix no one re-checked: the last round still gets its
+        chance (:meth:`_after_fix_for_blocking_round` ends the loop once that
+        fix turn is in, since there is no round n+1 to read it).
+        """
         current = review_round.blocking_fingerprints
         missed = memory.missed
         if memory.previous is not None:
@@ -374,14 +381,23 @@ class ReviewLoopRunner(object):
         if is_stuck(current, missed):
             self._close_round(review_round, 'stuck')
             raise _Finish(ReviewLoopStatus.STUCK, _stuck_reason(verdict))
-        if number == self._state.max_rounds:
-            self._close_round(review_round, 'max_rounds')
-            raise _Finish(
-                ReviewLoopStatus.MAX_ROUNDS,
-                f'{len(verdict.blocking)} blocking issue(s) left after {number} reviews',
-            )
         prompt, dispatched_at = self._send_findings(review_round, verdict)
         self._await_fix(review_round, prompt, dispatched_at)
+        self._after_fix_for_blocking_round(review_round)
+
+    def _after_fix_for_blocking_round(self, review_round: ReviewRound) -> None:
+        """A blocking round's fix turn just ended. The last round ends the
+        loop here — there is no round left to read the fix back — every
+        other round goes on to review it (the caller's loop continues)."""
+        if review_round.number != self._state.max_rounds:
+            return
+        blocking = len(review_round.blocking_fingerprints)
+        self._close_round(review_round, 'max_rounds')
+        raise _Finish(
+            ReviewLoopStatus.MAX_ROUNDS,
+            f'sent {blocking} blocking issue(s) found on the last round for a fix — '
+            'no round is left to confirm it landed',
+        )
 
     def _memory_before(self, review_round: ReviewRound) -> LoopMemory:
         return loop_memory(
@@ -409,11 +425,13 @@ class ReviewLoopRunner(object):
         if stage is ResumeStage.CONTINUE_FIX:
             prompt, dispatched_at = self._nudge(review_round, failing_tests=False)
             self._await_fix(review_round, prompt, dispatched_at)
+            self._after_fix_for_blocking_round(review_round)
             return None
         if stage is ResumeStage.SEND_FINDINGS:
             # Sent as saved — with the repeat marks a stuck round was judged by.
             prompt, dispatched_at = self._send_findings(review_round, _saved_verdict(review_round))
             self._await_fix(review_round, prompt, dispatched_at)
+            self._after_fix_for_blocking_round(review_round)
             return None
         if stage is ResumeStage.SEND_TESTS_FIX:
             # Sent even past ``tests_fix_attempts``: resuming a loop stuck on

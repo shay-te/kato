@@ -469,13 +469,13 @@ start (POST /api/sessions/<id>/review-loop {max_rounds: 1..30, default 5}) → R
            only what MOVED since the last review; a sweep reads the whole diff again
            (ImplementationService.investigate: no --resume, no session persistence, Bash/Edit denied)
      no BLOCKER/MAJOR → CLEAN │ every blocking issue left survived 2 fixes, none new → STUCK │
-     n == max → MAX_ROUNDS
-     (new issues always go to the chat; a fix that missed once is resent marked
-      ``repeat_of`` + ``missed_fixes`` — "you said R2-1 was fixed; still here")
-     else → findings (ids R<n>-<k> + invariants) posted into the MAIN chat (MainChatDelivery —
+     otherwise → findings (ids R<n>-<k> + invariants) posted into the MAIN chat (MainChatDelivery —
             the comment runs' own sender and per-task lock) → wait for that fix turn to end →
-            parse its <review-response> into the DECISION LEDGER → round n+1, whose reviewer is
-            told the ledger
+            parse its <review-response> into the DECISION LEDGER (new issues always go to the
+            chat; a fix that missed once is resent marked ``repeat_of`` + ``missed_fixes`` —
+            "you said R2-1 was fixed; still here")
+     n == max → MAX_ROUNDS (that fix is never re-reviewed — see below) │ otherwise → round n+1,
+            whose reviewer is told the ledger
 ```
 **A review is held to the task, not to everything that could be better.** A fresh reader always
 finds something, and each fix is more code for the next one to find it in: on 18 saved loops at least 25
@@ -510,6 +510,21 @@ progress" while running and "Not fixed — Resume continues" after — never "No
 test run spends a turn on it. CLEAN is a verdict on code someone read, so a green result on nothing would be a false
 pass; FAILED means something broke. A plan's parent task is the usual case: its work is in its sub-tasks. A repository
 whose diff could not be READ also has zero files, and stays FAILED with the repo and the error: never "no changes".
+
+**A blocking finding on the last round is still sent — never discarded for want of a round to
+re-check it.** The old rule ("n == max → MAX_ROUNDS, nothing sent") spent a whole review finding
+a real blocker and then threw the finding away, unfixed, because no round n+1 was left to confirm
+a fix: tokens spent finding it, nothing done about it. `_after_blocking_review` now always sends
+(`_send_findings` + `_await_fix`) before checking the round number; only AFTER that fix turn ends
+does `_after_fix_for_blocking_round` end the loop as MAX_ROUNDS, when it was the last round — one
+round, never two, it just no longer skips the send. The same applies to a STUCK round that happens
+to land on the last round (Resume still offers it "one more try", same as any other round —
+`ReviewLoopState.resume_point`'s `SEND_FINDINGS` branch no longer refuses past `max_rounds`). A
+finding's own status line says so once fixed with no decision recorded ("this was the last round,
+so nothing reviews it again") rather than promising a next review that will never run. Untouched:
+a last round whose TESTS keep failing after a CLEAN verdict still goes unsent
+(`_send_failing_tests`'s own `review_follows` guard) — there the round has no blocking finding to
+act on, only a fix no review would ever see either way, so there is nothing to gain by sending it.
 
 **Optional stages** (lib default OFF; in kato `verify_tests`, `confirm_clean`, `extra_sweep` start
 ON and `self_check` OFF — checkboxes in the loop view, remembered in `kato.reviewLoopStages.v2`;
@@ -580,8 +595,9 @@ is run again IN THE SAME ROUND (the reviewer is a fresh one-shot — there is no
 `--resume`); a chat cut off mid-fix gets a `Kato review loop — continue round N` nudge, never
 the findings twice, and its reply is still read for the `<review-response>` ledger; findings or
 failing tests never sent (or held back as STUCK) are sent; a cut-off self-check / test run is
-asked again. The summary's `resume` names the step ('' = no button). CLEAN and MAX_ROUNDS are
-done, and nothing is ever sent after the last round. The loop's between-rounds memory (missed
+asked again. The summary's `resume` names the step ('' = no button). CLEAN is done outright; MAX_ROUNDS
+is done too, but only after its round's blocking findings (if any) were already sent and given their one
+fix — see the false-success-guards note above. The loop's between-rounds memory (missed
 fixes, first ids, sweep-next, tests digest) is DERIVED from the saved rounds at every round
 (`progress.loop_memory`) — never carried in locals — so a resumed loop judges each review
 exactly as an uninterrupted one would. Do not reintroduce loop-local memory.

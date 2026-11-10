@@ -772,11 +772,12 @@ def _round_resume_point(
     if outcome == 'max_rounds':
         return None
     # ``stuck``, or a round that ended (stopped / failed) before its next step
-    # went out: its findings, or — a clean round — a step of its tests. A last
-    # round's findings and failures are never sent — no review would follow.
+    # went out: its findings, or — a clean round — a step of its tests. The
+    # last round's findings are sent too (the fix is never re-reviewed, but a
+    # finding left untouched is worse than one no one re-checked) — unlike a
+    # last round's FAILING TESTS, which still go unsent with no review to
+    # follow (``_send_failing_tests``'s own ``review_follows`` guard).
     if last.blocking:
-        if number >= max_rounds:
-            return None
         return ResumePoint(
             ResumeStage.SEND_FINDINGS, number, f'send round {number}\'s findings to the chat',
         )

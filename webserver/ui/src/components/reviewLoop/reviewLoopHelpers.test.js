@@ -501,6 +501,11 @@ test('a blocking finding always says where it stands', () => {
   assert.equal(status({ sent_at: 0, outcome: '' }, true).note, 'about to be sent to the chat');
   // The fix turn ended without a word on this one.
   assert.equal(status({ sent_at: 5, fixed_at: 9, outcome: 'sent' }).label, 'Not answered');
+  // Sent and fixed on the LAST round: still "Not answered" without a
+  // decision, but never promising a next review that will not happen.
+  const lastRound = status({ sent_at: 5, fixed_at: 9, outcome: 'max_rounds' });
+  assert.equal(lastRound.label, 'Not answered');
+  assert.match(lastRound.note, /this was the last round, so nothing reviews it again/);
   // Sent, but the loop stopped before the fix finished.
   assert.equal(status({ sent_at: 5, fixed_at: 0, outcome: 'stopped' }).label, 'Not fixed');
   // The runner marks a round 'sent' as it sends: while the chat is fixing it,

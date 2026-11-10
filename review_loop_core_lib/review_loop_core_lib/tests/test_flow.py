@@ -175,27 +175,31 @@ class LoopsThatDoNotConvergeTests(_Flow):
                          ['clean', 'sent', 'sent', 'clean', 'clean'])
         self.assertEqual([f.repeat_of for f in state.rounds[2].blocking], ['R2-1', '', ''])
 
-    def test_five_reviews_at_most_and_the_last_is_not_sent(self) -> None:
+    def test_five_reviews_at_most_and_the_last_is_sent_too(self) -> None:
+        # A finding only the last round turns up is worse unfixed than unverified:
+        # it is still sent, just with no round left to confirm the fix landed.
         chat = FakeChat()
         replies = [reply(finding('MAJOR', symbol=f'fn{n}')) for n in range(1, 6)]
         reviewer = FakeReviewer(*replies)
         state = self.run_to_end(self.service(chat, reviewer))
         self.assertEqual(state.status, ReviewLoopStatus.MAX_ROUNDS)
         self.assertEqual(len(state.rounds), 5)
-        self.assertEqual(len(chat.delivered), 4)
+        self.assertEqual(len(chat.delivered), 5)
         self.assertEqual(
             [prompt.splitlines()[0] for prompt, _ in chat.delivered],
-            [f'Host review loop — round {n} of 5' for n in range(1, 5)],
+            [f'Host review loop — round {n} of 5' for n in range(1, 6)],
         )
         self.assertEqual(state.rounds[-1].outcome, 'max_rounds')
-        self.assertIn('1 blocking issue(s) left after 5 reviews', state.reason)
+        self.assertTrue(state.rounds[-1].sent_at)
+        self.assertIn('sent 1 blocking issue(s) found on the last round for a fix', state.reason)
+        self.assertIn('no round is left to confirm it landed', state.reason)
 
     def test_a_smaller_cap_is_honoured(self) -> None:
         chat = FakeChat()
         reviewer = FakeReviewer(reply(finding('MAJOR', symbol='a')), reply(finding('MAJOR', symbol='b')))
         state = self.run_to_end(self.service(chat, reviewer, max_rounds=2))
         self.assertEqual(state.status, ReviewLoopStatus.MAX_ROUNDS)
-        self.assertEqual(len(chat.delivered), 1)
+        self.assertEqual(len(chat.delivered), 2)
 
 
 class TheChatComesFirstTests(_Flow):

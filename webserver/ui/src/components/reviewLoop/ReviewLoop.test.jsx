@@ -174,21 +174,26 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(live).toHaveAttribute('title', expect.stringMatching(/^Round 2 has been running for 1m \d+s$/));
   });
 
-  test('a last-round blocking finding says it was not sent, why, and what to do', async () => {
-    const ended = summary({ status: 'max_rounds', phase: 'done' });
-    kato.loop = { ...ended, rounds: [round(1, { outcome: 'max_rounds', sent_at: 0, fixed_at: 0 })] };
+  test('a last-round blocking finding is sent and fixed too, with no review left to confirm it', async () => {
+    const ended = summary({
+      status: 'max_rounds', phase: 'done',
+      reason: "sent 1 blocking issue(s) found on the last round for a fix — no round is left to confirm it landed",
+    });
+    kato.loop = {
+      ...ended,
+      rounds: [round(1, { outcome: 'max_rounds', sent_at: NOW - 300, fixed_at: NOW - 100 })],
+    };
     const { container } = render(<ReviewLoopPane session={session(ended)} onClose={() => {}} />);
     await screen.findByText('Round 1');
     // Collapsed, the round already says it.
     expect(container.querySelector('[data-round="1"] .review-loop-round-outcome'))
-      .toHaveTextContent('last round — not sent');
+      .toHaveTextContent('last round');
     fireEvent.click(screen.getByText('Round 1'));
     await screen.findByText('bug in round 1');
-    expect(screen.getByText('Blocking — not sent to the chat')).toBeInTheDocument();
+    expect(screen.getByText('Blocking — sent to the chat to fix')).toBeInTheDocument();
     const status = container.querySelector('.review-loop-decision');
-    expect(status).toHaveClass('is-warn');
-    expect(status).toHaveTextContent('Not sent');
-    expect(status).toHaveTextContent('fix it in the chat yourself, or run the loop again with more rounds');
+    expect(status).toHaveTextContent('Not answered');
+    expect(status).toHaveTextContent('this was the last round, so nothing reviews it again');
   });
 
   test('a blocking finding sent to the chat of a running loop shows it is in progress', async () => {

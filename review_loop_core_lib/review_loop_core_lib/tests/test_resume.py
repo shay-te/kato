@@ -342,14 +342,24 @@ class AStuckLoopTests(_Resume):
         # Sent the way it was judged: a repeat that survived two fixes.
         self.assertIn('first reported as R1-1', chat.delivered[2][0])
 
-    def test_stuck_on_the_last_round_has_nothing_to_resume(self) -> None:
-        service = self.service(ResumeChat(), ScriptedReviewer(MAJOR))
+    def test_stuck_on_the_last_round_still_gets_one_more_try(self) -> None:
+        # A finding held back as stuck is resent on Resume on any other round
+        # (test_the_held_back_findings_are_sent_and_the_loop_goes_on, above) —
+        # the last round is no exception: it is worse to refuse the one more
+        # try than to spend it with no round left to confirm it landed.
+        chat = ResumeChat()
+        service = self.service(chat, ScriptedReviewer(MAJOR))
         self.start(service, max_rounds=3)
         stuck = self.finished(service)
         self.assertEqual((stuck.status, stuck.round), (ReviewLoopStatus.STUCK, 3))
-        self.assertEqual(stuck.summary()['resume'], '')
-        with self.assertRaisesRegex(ReviewLoopError, 'ended stuck — there is nothing to resume'):
-            self.resume(service)
+        self.assertEqual(stuck.summary()['resume'], "send round 3's findings to the chat")
+
+        self.resume(service)
+        state = self.finished(service)
+        self.assertEqual(state.status, ReviewLoopStatus.MAX_ROUNDS)
+        self.assertEqual(state.round, 3)  # the same round — there is no round 4
+        self.assertEqual(state.rounds[-1].outcome, 'max_rounds')
+        self.assertIn('sent 1 blocking issue(s) found on the last round for a fix', state.reason)
 
 
 class StepsThatNeverWentOutTests(_Resume):
@@ -670,8 +680,11 @@ class ResumePointTests(unittest.TestCase):
                          (ResumeStage.FINISH_CLEAN, 2, "run the tests again after round 2's fix"))
 
     def test_nothing_is_sent_after_the_last_round(self) -> None:
+        # Still true for a last round whose failing TESTS left no review to
+        # follow (``_send_failing_tests``'s own guard, untouched), and for the
+        # two already-closed shapes. A last round's blocking FINDINGS are the
+        # one exception now — see test_a_stuck_or_blocking_last_round_is_still_sent.
         last = [
-            _round(5, outcome='stuck'),
             _round(5, outcome='stopped', clean=True, tests=TestReport(passed=False)),
             _round(5, outcome='sent', fixed=True),
             _round(5, outcome='max_rounds'),
@@ -679,6 +692,15 @@ class ResumePointTests(unittest.TestCase):
         for review_round in last:
             with self.subTest(outcome=review_round.outcome):
                 self.assertIsNone(_state(ReviewLoopStatus.STUCK, review_round).resume_point())
+
+    def test_a_stuck_or_blocking_last_round_is_still_sent(self) -> None:
+        # Unlike a failing-tests last round, a blocking REVIEW finding is
+        # always worth the chat's attempt, even with no round left to
+        # re-review the fix (held back as 'stuck', or simply never sent).
+        for review_round in (_round(5, outcome='stuck'), _round(5, outcome='')):
+            with self.subTest(outcome=review_round.outcome):
+                point = _state(ReviewLoopStatus.STUCK, review_round).resume_point()
+                self.assertEqual((point.stage, point.number), (ResumeStage.SEND_FINDINGS, 5))
 
 
 class ReopenTests(unittest.TestCase):
