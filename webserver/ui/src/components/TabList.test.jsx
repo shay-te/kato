@@ -957,4 +957,33 @@ describe('TabList — sub-tasks fold into their main task', () => {
     expect(screen.queryByRole('img', { name: /sub-tasks? of/ })).toBeNull();
     expect(subtaskRow()).toBeNull();
   });
+
+  test('pinning a sub-task from the second row, then unpinning it, folds it back', () => {
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={() => {}} />);
+    const row = () => screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
+    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
+    fireEvent.click(row().querySelector('li[data-task-id="UNA-7"] .tab-pin-btn'));
+    // Pinned: UNA-7 leaves the second row for the top-level strip.
+    expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
+    expect(tabIds(row())).toEqual(['LOCAL-4']);
+    const pinnedTab = container.querySelector('#tab-list li[data-task-id="UNA-7"]');
+    fireEvent.click(pinnedTab.querySelector('.tab-pin-btn'));
+    // Unpinned: UNA-7 must fold back into the second row, not stay in the strip.
+    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
+    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
+  });
+
+  test('same round trip with the sub-task itself (not its parent) active', () => {
+    // The operator is usually looking at the sub-task's own chat when they
+    // pin/unpin it, not sitting on the parent tab — a second row still has
+    // to show (activeTaskId resolves to its main task either way).
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}} />);
+    const row = () => screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
+    fireEvent.click(row().querySelector('li[data-task-id="UNA-7"] .tab-pin-btn'));
+    expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
+    const pinnedTab = container.querySelector('#tab-list li[data-task-id="UNA-7"]');
+    fireEvent.click(pinnedTab.querySelector('.tab-pin-btn'));
+    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
+    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
+  });
 });
