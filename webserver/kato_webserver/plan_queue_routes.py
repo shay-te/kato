@@ -13,6 +13,7 @@
     POST   /api/plan-queues/<plan>/approve               approve; ``run`` to start at once; ``shared``
                                                          puts the steps on the tracker as sub-tasks
     POST   /api/plan-queues/<plan>/take-over             drive a plan another kato drove
+    POST   /api/plan-queues/<plan>/sync                  reread its steps and driver record now
     POST   /api/plan-queues/<plan>/run | pause | stop
     DELETE /api/plan-queues/<plan>                       forget a plan that is not running
     POST   /api/plan-queues/<plan>/steps/<step>/satisfy | retry | cancel | check
@@ -248,6 +249,10 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
     @app.post('/api/plan-queues/<plan_id>/take-over')
     def take_over_plan_queue(plan_id: str):
         return answer(lambda service: service.take_over(plan_id))
+
+    @app.post('/api/plan-queues/<plan_id>/sync')
+    def sync_plan_queue(plan_id: str):
+        return answer(lambda service: service.sync_now(plan_id))
 
     @app.post('/api/plan-queues/<plan_id>/<action>')
     def control_plan_queue(plan_id: str, action: str):

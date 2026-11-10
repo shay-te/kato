@@ -261,10 +261,14 @@ class F1_FullIssueLifecycle(unittest.TestCase):
             ],
         })
         transition_post_resp = mock_response()
-        with patch.object(client, '_get', return_value=transitions_resp) as mock_get, \
+        verify_status_resp = mock_response(json_data={'fields': {'status': 'In Review'}})
+        with patch.object(client, '_get', side_effect=[transitions_resp, verify_status_resp]) as mock_get, \
              patch.object(client, '_post', return_value=transition_post_resp) as mock_post:
             client.move_issue_to_state('DEMO-101', 'status', 'In Review')
-        mock_get.assert_called_once_with('/rest/api/3/issue/DEMO-101/transitions')
+        mock_get.assert_has_calls([
+            call('/rest/api/3/issue/DEMO-101/transitions'),
+            call('/rest/api/3/issue/DEMO-101', params={'fields': 'status'}),
+        ])
         mock_post.assert_called_once_with(
             '/rest/api/3/issue/DEMO-101/transitions',
             json={'transition': {JiraTransitionFields.ID: '31'}},

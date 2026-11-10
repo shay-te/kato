@@ -15,7 +15,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
@@ -30,6 +30,7 @@ from workspace_core_lib.workspace_core_lib import WorkspaceCoreLib
 
 from kato_core_lib import main as main_module
 from kato_core_lib.comment_core_lib import CommentRecord, KatoCommentStatus
+from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.agent_service import AgentService
 from kato_core_lib.data_layers.service.implementation_service import (
     ImplementationService,
@@ -127,8 +128,17 @@ class DoneMarkerGuardTests(unittest.TestCase):
     def test_the_marker_publishes_when_no_loop_runs(self) -> None:
         # The empty id is the one input the real publish flow answers without
         # touching git or the tracker — enough to see the call went through.
+        # Not autopilot and no operator click, so it also has to clear the
+        # push-approval gate first — opt in, same as the publish-machinery
+        # tests in test_agent_service.py.
         kato = _Kato(self)
-        result = kato.service.finish_from_done_marker('')
+        kato.service._task_service = MagicMock()
+        kato.service._task_service.get_task.return_value = Task(id='', tags=[])
+        with patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        ):
+            result = kato.service.finish_from_done_marker('')
         self.assertEqual(result['error'], 'empty task id')
 
     def test_the_marker_is_ignored_while_the_tasks_loop_runs(self) -> None:

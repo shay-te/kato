@@ -47,6 +47,11 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
   const baseStatus = deriveTabStatus(session);
   const inReview = baseStatus === TAB_STATUS.REVIEW;
   const hasUnpushed = !!session.has_changes_pending;
+  // This task may be a live plan's source: its sub-tasks are forgotten the
+  // same way, so the operator sees that before confirming, not after.
+  const plan = session.plan_queue;
+  const subTaskCount = plan && !['finished', 'cancelled'].includes(plan.status)
+    ? (plan.step_count || 0) : 0;
 
   return (
     <DialogShell
@@ -96,6 +101,14 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
               <strong>not</strong> changed. If it&rsquo;s still in a
               state kato watches, kato may re-clone it fresh on a later
               scan.
+            </li>
+          )}
+          {subTaskCount > 0 && (
+            <li>
+              This task&rsquo;s plan has{' '}
+              <strong>{subTaskCount} sub-task{subTaskCount === 1 ? '' : 's'}</strong>
+              {' '}&mdash; they&rsquo;ll be deleted the same way, with
+              their own workspace and session.
             </li>
           )}
         </ul>

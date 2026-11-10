@@ -372,10 +372,52 @@ class AgentServiceTests(_Isolated):
         agent.finish_from_done_marker('UNA-1')
         self.publish.finish_task_planning_session.assert_called_once_with('UNA-1', by_operator=True)
 
-    def test_off_autopilot_the_done_token_is_unchanged(self) -> None:
+    def test_off_autopilot_the_done_token_waits_for_push_approval_by_default(self) -> None:
+        # The agent believes the operator signed off; nothing proves it did.
+        # Publishing stays an operator action by default, same as the
+        # autonomous flow's own park.
         agent = _agent()
-        agent.finish_from_done_marker('UNA-2')
+        agent._task_service.get_task.return_value = Task(id='UNA-2', tags=[])
+        with patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=False,
+        ):
+            agent.finish_from_done_marker('UNA-2')
+        self.publish.finish_task_planning_session.assert_not_called()
+
+    def test_off_autopilot_the_done_token_publishes_when_auto_push_is_enabled(self) -> None:
+        agent = _agent()
+        agent._task_service.get_task.return_value = Task(id='UNA-2', tags=[])
+        with patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        ):
+            agent.finish_from_done_marker('UNA-2')
         self.publish.finish_task_planning_session.assert_called_once_with('UNA-2')
+
+    def test_off_autopilot_wait_before_push_tag_holds_even_with_auto_push_enabled(self) -> None:
+        agent = _agent()
+        agent._task_service.get_task.return_value = Task(
+            id='UNA-2', tags=[TaskTags.WAIT_BEFORE_GIT_PUSH],
+        )
+        with patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        ):
+            agent.finish_from_done_marker('UNA-2')
+        self.publish.finish_task_planning_session.assert_not_called()
+
+    def test_off_autopilot_an_unreadable_task_holds_the_push(self) -> None:
+        # Without the task, its push-approval tag is unknown — guessing
+        # could publish work the operator asked to see first.
+        agent = _agent()
+        agent._task_service.get_task.side_effect = RuntimeError('boom')
+        with patch(
+            'kato_core_lib.data_layers.service.agent_service.auto_push_enabled',
+            return_value=True,
+        ):
+            agent.finish_from_done_marker('UNA-2')
+        self.publish.finish_task_planning_session.assert_not_called()
 
     def test_the_done_token_starts_the_tagged_review_loop_instead(self) -> None:
         agent = _agent()

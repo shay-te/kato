@@ -29,6 +29,7 @@ vi.mock('../../api.js', () => ({
   discardPlanQueue: vi.fn(),
   planQueueStepAction: vi.fn(),
   takeOverPlanQueue: vi.fn(),
+  syncPlanQueue: vi.fn(),
   fetchSharedPlanQueue: vi.fn(),
   fetchInventoryRepositories: vi.fn(),
   fetchModels: vi.fn(),
@@ -57,6 +58,7 @@ import {
   proposePlanQueue,
   retryPlanQueueProposal,
   revisePlanQueue,
+  syncPlanQueue,
   takeOverPlanQueue,
 } from '../../api.js';
 import { toast, toastStore } from '../../stores/toastStore.js';
@@ -802,6 +804,19 @@ describe('PlanQueueView — the board', () => {
     confirm.mockRestore();
   });
 
+  test('Sync rereads the tracker now, with no confirm — it changes nothing', async () => {
+    serve(BOARD);
+    syncPlanQueue.mockReturnValue(ok(BOARD));
+    const confirm = vi.spyOn(window, 'confirm');
+    render(<PlanQueueView taskId="UNA-1" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sync' }));
+
+    await waitFor(() => expect(syncPlanQueue).toHaveBeenCalledWith('p1'));
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
+  });
+
   test('a finished plan can be split again', async () => {
     serve({ ...BOARD, status: 'finished' });
     proposePlanQueue.mockReturnValue(ok(plan({ plan_id: 'p2', status: 'proposing', steps: [] })));
@@ -984,6 +999,8 @@ describe('PlanQueueView — a plan shared on the tracker', () => {
     for (const name of ['Run', 'Pause', 'Stop']) {
       expect(screen.queryByRole('button', { name })).toBeNull();
     }
+    // Sync is read-only: offered here too, unlike the driver-only actions.
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeInTheDocument();
     expect(container.querySelectorAll('.plan-card-action')).toHaveLength(0);  // even stuck cards
     expect(screen.getByText('with Dana')).toBeInTheDocument();
 

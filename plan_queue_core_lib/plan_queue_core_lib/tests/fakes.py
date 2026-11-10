@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from plan_queue_core_lib.plan_queue_core_lib.plan_record import parse_record, render_record
 from plan_queue_core_lib.plan_queue_core_lib.ports import (
     LaunchRequest,
+    PlanRecord,
     ProbeError,
     PullRequestFact,
     TaskObservation,
@@ -144,6 +145,7 @@ class FakeProgress(object):
         self.details: dict[str, str] = {}
         self.error: Exception | None = None
         self.asked: list[list[str]] = []
+        self.forgotten: list[str] = []
 
     def set(self, task_id: str, phase: TaskPhase, detail: str = '') -> None:
         self.phases[task_id] = phase
@@ -158,6 +160,24 @@ class FakeProgress(object):
             task_id: TaskObservation(self.phases[task_id], self.details.get(task_id, ''))
             for task_id in task_ids if task_id in self.phases
         }
+
+    def forget(self, task_id: str) -> None:
+        self.forgotten.append(task_id)
+
+
+class FakeRecordSource(object):
+    """Scripted ``PlanRecordSource``; records what it was told to forget —
+    a plan's own ``task_changed``/Sync-now equivalent for the driver record."""
+
+    def __init__(self) -> None:
+        self.record: PlanRecord | None = None
+        self.forgotten: list[str] = []
+
+    def latest(self, source_task_id: str) -> PlanRecord | None:
+        return self.record
+
+    def forget(self, source_task_id: str) -> None:
+        self.forgotten.append(source_task_id)
 
 
 class FakeProbe(object):

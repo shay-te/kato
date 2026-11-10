@@ -481,6 +481,17 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(refused.status_code, 409)
         self.assertIn('not driven by another host', refused.get_json()['error'])
 
+    def test_sync_rereads_a_running_plans_steps_now(self) -> None:
+        plan_id = self._proposed()
+        self._post(f'/api/plan-queues/{plan_id}/approve', {'run': True})
+        self.queue.tick()  # releases 'api'
+
+        synced = self._post(f'/api/plan-queues/{plan_id}/sync')
+
+        self.assertEqual(synced.status_code, 200)
+        self.assertEqual(synced.get_json()['plan_id'], plan_id)
+        self.assertEqual(self._post(f'/api/plan-queues/{"e" * 32}/sync').status_code, 404)
+
     def test_the_shared_lookup_finds_the_tasks_plan(self) -> None:
         plan_id = self._proposed()
         found = self.client.get('/api/sessions/T-1/plan-queue/shared')

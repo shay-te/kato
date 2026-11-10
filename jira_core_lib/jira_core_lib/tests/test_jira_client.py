@@ -403,6 +403,9 @@ class JiraClientRemoveTagTests(unittest.TestCase):
 
 class JiraClientMoveIssueToStateTests(unittest.TestCase):
     def test_uses_transition_for_status_field(self) -> None:
+        # After the transition, move_issue_to_state re-fetches the issue's
+        # status to verify it actually moved. Both GETs go through the same
+        # patched ``_get``: transitions lookup, then the verify fetch.
         client = _make_client()
         transitions_response = mock_response(
             json_data={
@@ -412,13 +415,17 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
                 ]
             }
         )
+        verify_response = mock_response(json_data={'fields': {'status': 'In Review'}})
         update_response = mock_response()
 
-        with patch.object(client, '_get', return_value=transitions_response) as mock_get, \
+        with patch.object(client, '_get', side_effect=[transitions_response, verify_response]) as mock_get, \
              patch.object(client, '_post', return_value=update_response) as mock_post:
             client.move_issue_to_state('PROJ-1', 'status', 'In Review')
 
-        mock_get.assert_called_once_with('/rest/api/3/issue/PROJ-1/transitions')
+        mock_get.assert_has_calls([
+            call('/rest/api/3/issue/PROJ-1/transitions'),
+            call('/rest/api/3/issue/PROJ-1', params={'fields': 'status'}),
+        ])
         mock_post.assert_called_once_with(
             '/rest/api/3/issue/PROJ-1/transitions',
             json={'transition': {JiraTransitionFields.ID: '31'}},
@@ -434,9 +441,10 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
                 ]
             }
         )
+        verify_response = mock_response(json_data={'fields': {'status': 'Done'}})
         update_response = mock_response()
 
-        with patch.object(client, '_get', return_value=transitions_response), \
+        with patch.object(client, '_get', side_effect=[transitions_response, verify_response]), \
              patch.object(client, '_post', return_value=update_response):
             client.move_issue_to_state('PROJ-1', 'STATUS', 'Done')
 
@@ -450,9 +458,10 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
                 ]
             }
         )
+        verify_response = mock_response(json_data={'fields': {'status': 'In Review'}})
         update_response = mock_response()
 
-        with patch.object(client, '_get', return_value=transitions_response), \
+        with patch.object(client, '_get', side_effect=[transitions_response, verify_response]), \
              patch.object(client, '_post', return_value=update_response) as mock_post:
             client.move_issue_to_state('PROJ-1', 'status', 'In Review')
 
@@ -460,6 +469,28 @@ class JiraClientMoveIssueToStateTests(unittest.TestCase):
             '/rest/api/3/issue/PROJ-1/transitions',
             json={'transition': {JiraTransitionFields.ID: '42'}},
         )
+
+    def test_raises_when_transition_silently_does_not_move_the_status(self) -> None:
+        # The bug this verification catches: Jira accepts the transition
+        # POST with 200 OK but a workflow condition or post-function leaves
+        # the issue in its old status — the transition-branch equivalent of
+        # test_raises_when_field_update_silently_ignored below.
+        client = _make_client()
+        transitions_response = mock_response(
+            json_data={
+                'transitions': [
+                    {JiraTransitionFields.ID: '31', JiraTransitionFields.NAME: 'Done',
+                     JiraTransitionFields.TO: {JiraTransitionFields.NAME: 'Done'}}
+                ]
+            }
+        )
+        verify_response = mock_response(json_data={'fields': {'status': 'In Progress'}})  # unchanged
+        update_response = mock_response()
+
+        with patch.object(client, '_get', side_effect=[transitions_response, verify_response]), \
+             patch.object(client, '_post', return_value=update_response):
+            with self.assertRaisesRegex(RuntimeError, 'still'):
+                client.move_issue_to_state('PROJ-1', 'status', 'Done')
 
     def test_raises_when_transition_not_found(self) -> None:
         client = _make_client()
@@ -1082,13 +1113,14 @@ class JiraClientFlowTests(unittest.TestCase):
             }
         )
         ok_response = mock_response()
+        verify_status_response = mock_response(json_data={'fields': {'status': 'In Progress'}})
 
         comment_response = mock_response()
         add_tag_response = mock_response()
         remove_tag_response = mock_response()
 
         with patch.object(client, '_post', side_effect=[comment_response, ok_response]) as mock_post, \
-             patch.object(client, '_get', return_value=transitions_response), \
+             patch.object(client, '_get', side_effect=[transitions_response, verify_status_response]), \
              patch.object(client, '_put', side_effect=[add_tag_response, remove_tag_response]) as mock_put:
             client.add_comment('ACME-1', 'Starting work.')
             client.move_issue_to_state('ACME-1', 'status', 'In Progress')

@@ -28,6 +28,26 @@ export function deletedStepToast(code, deleted, forgot) {
 }
 
 
+// Deleting a task that is a live plan's source cascades to its sub-tasks —
+// never silent on one that didn't fully clean up, even though it never
+// blocks the parent's own delete.
+export function forgottenSubTasksToast(subTasks) {
+  const list = subTasks || [];
+  if (!list.length) { return null; }
+  const problems = list.filter((entry) => !entry.forgotten || entry.error || entry.decline_problems?.length);
+  const lines = list.map((entry) => {
+    const extra = [entry.error, ...(entry.decline_problems || [])].filter(Boolean).join('; ');
+    return `${entry.forgotten ? '✓' : '⚠'} ${entry.task_id}${extra ? `: ${extra}` : ''}`;
+  });
+  return {
+    kind: problems.length ? 'warning' : 'success',
+    title: problems.length
+      ? `${list.length - problems.length}/${list.length} sub-tasks forgotten`
+      : `${list.length} sub-task${list.length === 1 ? '' : 's'} forgotten too`,
+    message: lines.join('\n'),
+  };
+}
+
 // A started card's Done: what moved, and what did not.
 export function movedToDoneToast(code) {
   return {

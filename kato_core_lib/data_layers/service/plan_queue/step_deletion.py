@@ -27,13 +27,16 @@ class PlanStepDeletion(object):
         if step is None:
             # The queue's own refusal, in its own words.
             return {'task_id': '', 'declined': [], 'problems': [], 'plan': queue.remove_step(plan_id, step_id)}
-        declined, problems = self._decline_pull_requests(step) if step.task_id else ([], [])
+        declined, problems = self.decline_pull_requests(step) if step.task_id else ([], [])
         if problems:
             return {'task_id': step.task_id, 'declined': declined, 'problems': problems, 'plan': None}
         plan = queue.remove_step(plan_id, step_id)
         return {'task_id': step.task_id, 'declined': declined, 'problems': [], 'plan': plan}
 
-    def _decline_pull_requests(self, step) -> tuple[list[str], list[str]]:
+    def decline_pull_requests(self, step) -> tuple[list[str], list[str]]:
+        """Every open pull request of ``step``'s task, across its
+        repositories — reused by a cascading delete of the task the plan was
+        split from, which tears a whole plan's sub-tasks down at once."""
         service = self._get_repository_service()
         branch = service.task_branch_name(step.task_id)
         declined, problems = [], []

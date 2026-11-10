@@ -923,6 +923,12 @@ export function takeOverPlanQueue(planId) {
   return postEnvelope(planQueueUrl(planId, '/take-over'), {});
 }
 
+// Reread this plan's steps and driver record now instead of waiting out
+// their caches and backoff — the board's Sync button.
+export function syncPlanQueue(planId) {
+  return postEnvelope(planQueueUrl(planId, '/sync'), {});
+}
+
 // The task's plan as published on the tracker (the task is its ticket or one
 // of its sub-tasks) — followed here, read-only, until taken over.
 export function fetchSharedPlanQueue(taskId) {

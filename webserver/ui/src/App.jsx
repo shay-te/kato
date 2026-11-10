@@ -48,6 +48,7 @@ import ToastContainer from './components/ToastContainer.jsx';
 import { fetchScanStatus, forgetTaskWorkspace, triggerScan } from './api.js';
 import { waitForScanToFinish } from './utils/scanProgress.js';
 import { toast, toastResult } from './stores/toastStore.js';
+import { forgottenSubTasksToast } from './components/planQueue/planStepDeleteText.js';
 import { forgottenContainersToast } from './components/taskContainersText.js';
 import { deleteQueue } from './stores/deleteQueueStore.js';
 import { apiErrorMessage } from './utils/apiError.js';
@@ -442,6 +443,11 @@ export default function App() {
     // would not remove is said, never left to be found later.
     const containers = forgottenContainersToast(taskId, result.body?.containers);
     if (containers) { toastResult(containers); }
+    // This task may have been a live plan's source: its sub-tasks went
+    // with it too — said on its own, never silent on one that did not
+    // fully clean up.
+    const subTasks = forgottenSubTasksToast(result.body?.sub_tasks);
+    if (subTasks) { toastResult(subTasks); }
   }, [purgeForgottenTask, refresh]);
 
   // ----- bulk delete -----

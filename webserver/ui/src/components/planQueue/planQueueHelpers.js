@@ -72,7 +72,7 @@ export function stuckActions(step) {
 }
 
 // Plan states in which its steps are tracked and may be handed over.
-const LIVE_PLAN = ['approved', 'running', 'paused'];
+export const LIVE_PLAN = ['approved', 'running', 'paused'];
 
 // Whether the board may change this plan's tasks: one this kato drives, while
 // its steps are tracked.

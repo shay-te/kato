@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import {
   addPlanDoneState, controlPlanQueue, fetchPlanQueue, forgetTaskWorkspace, planQueueStepAction,
-  takeOverPlanQueue,
+  syncPlanQueue, takeOverPlanQueue,
 } from '../../api.js';
 import { toastResult } from '../../stores/toastStore.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
 import Icon from '../Icon.jsx';
 import {
+  LIVE_PLAN,
   PLAN_STATUS_TEXT,
   boardColumns,
   canEditPlan,
@@ -91,6 +92,12 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
     act(() => takeOverPlanQueue(plan.plan_id), 'Could not take the plan over');
   }
 
+  // Read-only: reread the tracker now instead of waiting out the usual
+  // cache/backoff. Offered on a followed board too, unlike Take over/Edit.
+  function sync() {
+    act(() => syncPlanQueue(plan.plan_id), 'Could not sync the plan');
+  }
+
   // Another kato drives it: shown here, changed there — or after Take over.
   const followed = isFollowed(plan);
 
@@ -119,6 +126,12 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
           {followed && !['finished', 'cancelled'].includes(plan.status) ? (
             <button type="button" className="plan-board-control" disabled={busy} onClick={takeOver}>
               Take over
+            </button>
+          ) : null}
+          {LIVE_PLAN.includes(plan.status) ? (
+            <button type="button" className="plan-board-control" disabled={busy} onClick={sync}
+              data-tooltip="Reread every task's tracker status and pull-request state now, instead of waiting.">
+              Sync
             </button>
           ) : null}
           {(followed ? [] : headerActions(plan.status)).map((action) => (

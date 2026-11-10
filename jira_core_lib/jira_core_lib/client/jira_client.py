@@ -304,6 +304,18 @@ class JiraClient(IssueClientBase):
                 json={'transition': {JiraTransitionFields.ID: transition[JiraTransitionFields.ID]}},
             )
             response.raise_for_status()
+            # Verify the issue actually moved. Jira can return 200/204 for a
+            # transition a workflow post-function or screen then silently
+            # undoes, or one that becomes unavailable between the lookup
+            # above and this call — the same "accepted but ignored" risk the
+            # custom-field branch below already guards against.
+            verified_state = self._fetch_issue_field(issue_id, JiraIssueFields.STATUS)
+            if verified_state != state_name:
+                raise RuntimeError(
+                    f'Jira accepted the transition to {state_name!r} on {issue_id} '
+                    f'but its status is still {verified_state!r}. The transition '
+                    f'may be blocked by a workflow condition or post-function.'
+                )
             return
         response = self._put_with_retry(
             f'/rest/api/3/issue/{issue_id}',

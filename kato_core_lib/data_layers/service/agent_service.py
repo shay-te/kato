@@ -588,6 +588,16 @@ class AgentService(MissionStepLoggerMixin, Service):
         ignored (loudly) while the task's loop runs. The operator's own Done
         button calls ``publish.finish_task_planning_session`` directly and is
         never held back by this.
+
+        Publishing is still an operator action otherwise. Autopilot is the one
+        case that presses it on the operator's behalf (its own tag is the
+        opt-in); every other chat only reaches here because the agent BELIEVES
+        it heard the operator sign off — a system-prompt instruction the model
+        can misjudge, printing the token (and pushing + opening a PR with it)
+        on its own say-so, go-ahead-to-start mistaken for a done confirmation.
+        So a non-autopilot done token runs through the same push-approval gate
+        the autonomous flow runs before publishing, instead of trusting the
+        token alone.
         """
         if self._review_loop_service.is_running(str(task_id or '')):
             self.logger.warning(
@@ -598,7 +608,37 @@ class AgentService(MissionStepLoggerMixin, Service):
             return None
         if self._autopilot.agent_said_done(task_id):
             return None
+        if self._chat_done_marker_should_wait(task_id):
+            return None
         return self.publish.finish_task_planning_session(task_id)
+
+    def _chat_done_marker_should_wait(self, task_id: str) -> bool:
+        """True when a chat's own done token must not publish by itself.
+
+        Mirrors :meth:`_should_pause_for_push_approval` — the same default
+        pause, the same ``kato:wait-before-git-push`` override — for a task
+        whose "finished" signal came from a chat printing the sentinel
+        rather than kato's own autonomous run reaching the end of testing.
+        An unreadable task is held too: push/PR stay an operator action
+        until the gate is proven to allow them, never the other way round.
+        """
+        try:
+            task = self._task_service.get_task(task_id)
+        except Exception:
+            task = None
+            self.logger.exception(
+                'could not read task %s to check the push-approval gate for '
+                'its done token — holding the push', task_id,
+            )
+        if task is not None and not self._should_pause_for_push_approval(task):
+            return False
+        self._log_task_step(
+            task_id,
+            'the agent printed <KATO_TASK_DONE>, but push and pull-request '
+            'creation are an operator action — press Done in the planning UI '
+            '(or set %s) to publish', AUTO_PUSH_ENABLED_KEY,
+        )
+        return True
 
     def _runner_in_flight(self, task_id: str) -> bool:
         """True while kato's own run of the task (implement, test, park) goes on."""

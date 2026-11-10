@@ -232,6 +232,50 @@ describe('ForgetTaskModal', () => {
     expect(alert).toHaveTextContent(/haven.t been pushed yet/i);
   });
 
+  test('warns about sub-tasks when this task is a live plan source', () => {
+    render(
+      <ForgetTaskModal
+        session={_session({ plan_queue: { status: 'running', step_count: 3 } })}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    expect(document.querySelectorAll('.forget-task-effects li').length).toBe(5);
+    expect(screen.getByText(/3 sub-tasks/)).toBeInTheDocument();
+  });
+
+  test('says "sub-task" singular for exactly one', () => {
+    render(
+      <ForgetTaskModal
+        session={_session({ plan_queue: { status: 'paused', step_count: 1 } })}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/1 sub-task\b/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 sub-tasks/)).not.toBeInTheDocument();
+  });
+
+  test('no sub-task warning once the plan is finished or cancelled', () => {
+    for (const status of ['finished', 'cancelled']) {
+      const { unmount } = render(
+        <ForgetTaskModal
+          session={_session({ plan_queue: { status, step_count: 5 } })}
+          onConfirm={vi.fn()} onCancel={vi.fn()}
+        />,
+      );
+      expect(document.querySelectorAll('.forget-task-effects li').length).toBe(4);
+      unmount();
+    }
+  });
+
+  test('no sub-task warning for a task with no plan', () => {
+    render(
+      <ForgetTaskModal
+        session={_session()} onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    expect(document.querySelectorAll('.forget-task-effects li').length).toBe(4);
+  });
+
   test('falls back to "this task" when the id is blank', () => {
     render(
       <ForgetTaskModal

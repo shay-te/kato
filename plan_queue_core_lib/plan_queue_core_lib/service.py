@@ -206,6 +206,32 @@ class PlanQueueService(object):
         if callable(forget):
             forget(str(task_id or '').strip())
 
+    def sync_now(self, plan_id: str) -> Plan:
+        """Read this plan's steps and its driver record again right now,
+        instead of waiting out their caches and backoff — the board's Sync
+        button. Drops what the caches remember, then runs one real tick: the
+        same pass the background thread runs every few seconds, just now —
+        no second tracking/merge-check path to keep in step with that one."""
+        plan = self._registry.get(plan_id)
+        if not plan.status.has_steps_in_flight:
+            return plan
+
+        def apply(live: Plan) -> None:
+            for step in live.steps:
+                if step.status.is_released and not step.status.is_terminal:
+                    step.merge.forced = True
+                    step.merge.next_check_at = 0.0
+
+        self._registry.mutate(plan_id, apply)
+        for step in plan.steps:
+            if step.task_id:
+                self.task_changed(step.task_id)
+        forget_record = getattr(self._record_source, 'forget', None)
+        if callable(forget_record):
+            forget_record(plan.source_task_id)
+        self.tick()
+        return self._registry.get(plan_id)
+
     def source_of_step_task(self, task_id: str) -> str:
         """The task ``task_id``'s plan was split from, when ``task_id`` runs
         one of a plan's steps ('' otherwise). Any plan state: a step's task

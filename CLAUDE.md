@@ -657,6 +657,20 @@ sit there forever ("I click Done on a subtask, the board never moves").
 (`PlanQueueService.remove_step`: the tasks waiting on it stop waiting; a tracker ticket is withdrawn — noted,
 unassigned, never deleted; a plan keeps one step). A decline that failed answers 502 and changes nothing more.
 The board then deletes the task itself with the tab's ✕ call (`forgetTaskWorkspace`: folder, chat, containers).
+**Deleting the task a plan was split from cascades the other way.** `forget_task_workspace` (any task, not just a
+plan's source) calls `_forget_cascaded_sub_tasks` FIRST: a plan this kato drives (never a FOLLOWED one — no
+authority to touch it) has every sub-task's pull requests declined (`PlanStepDeletion.decline_pull_requests`,
+now public, reused rather than re-derived) and its own workspace/session/containers forgotten through the exact
+same `_forget_one_task_result` the parent itself goes through next (the route's old body, extracted so a
+cascade can call it per sub-task). The whole plan is then `stop()`ped once (if it still has steps in flight) —
+never `remove_step` per sub-task: there is no "rest of the plan" to keep healthy once its source is gone, and
+`remove_step` refuses to take out the last one anyway. A sub-task's declined-PR failure is reported in its own
+`sub_tasks` entry and never blocks the parent's own delete, same precedent `containers` already sets in this
+function — an un-declined PR outliving the clone it pointed at is better than an orphaned workspace left behind
+forever. `?done=1` on the parent is never propagated to its sub-tasks' own tickets. `ForgetTaskModal` warns
+about the sub-task count before the operator confirms (`session.plan_queue.step_count`, already on the tab
+list); `doForgetTask`'s success toast names what happened to each cascaded sub-task
+(`forgottenSubTasksToast`, `planStepDeleteText.js`) — never silent on one that did not fully clean up.
 **Update source on a sub-task puts the whole plan on disk** (`TaskPublishService.update_source_for_task`): a repo
 the sub-task CHANGED goes to its own branch (as for any task); every other repo — one of the sub-task's it did not
 change, and one only the MAIN task works in (`_main_task_repository_ids`: the main task's workspace record, so only
@@ -764,6 +778,14 @@ plan split twice), and an old merged PR must never release a dependent early. "C
 (`ProbeError`, from `RepositoryService.pull_request_states`, which raises) is never "no PR";
 probes back off 15→300s, ≤4 per tick, "Check now" resets. No PR at all after DONE → "no pull
 request found — Count as done" (a no-changes step). No queue cap: kato's own limits apply.
+**The board's "Sync" button** (`PlanQueueService.sync_now`, any live plan — a follower's board
+offers it too, unlike "Take over"/"Edit tasks") drops the step-progress cache
+(`TrackerTaskProgress.forget`, 60s) and the driver-record cache (`TrackerRecordSource.forget`,
+also 60s — its own docstring already said "the operator asked to look now", years before a
+button called it) for every step/record this plan has, then calls the service's own public
+`tick()` — the SAME pass the background thread runs every few seconds, just now. No second
+tracking/merge-check path exists to drift from that one. A plan not yet approved
+(`has_steps_in_flight` False) is left alone.
 Every change is compare-and-set through `PlanRegistry.mutate` (saved only on change). Pause /
 Stop stop RELEASES only — a released task is an ordinary task. Restart: PROPOSING →
 PROPOSE_FAILED, RUNNING → PAUSED (press Run), never resumed on its own. Plans live in
@@ -1118,6 +1140,20 @@ so the page never formats a model id. Figures are API-equivalent ESTIMATES (a su
 token) and the footnote says so. Do not add a second price table or compute cost in JS.
 
 ### False-success guards (important — previously bugs)
+- **A chat's own `<KATO_TASK_DONE>` is not proof the operator signed off.** The sentinel callback
+  (`AgentService.finish_from_done_marker`, wired onto every spawned session — chats included) used to
+  publish unconditionally once off the autopilot/review-loop branches: push, open a PR, move to review,
+  with no button pressed and no `kato:autopilot` tag, on a `kato:wait-planning`/`kato:wait-editing` chat
+  the operator was driving by hand. The system prompt says "print it only once the operator has said
+  we're done" — a go-ahead to *start* ("let's do it please") read back by the model as a sign-off on the
+  *result* is exactly the kind of thing a soft instruction cannot stop, and it did not: it pushed an
+  unreviewed branch and opened a PR, no autopilot, no click (a real `kato:wait-editing` task, confirmed
+  on the operator's own tracker as a bare push, not a tracker-side merge automation). `finish_from_done_marker`
+  now runs any non-autopilot done token through `_chat_done_marker_should_wait` — the exact same
+  `_should_pause_for_push_approval` gate (`KATO_AUTO_PUSH_ENABLED` default off, `kato:wait-before-git-push`
+  override) the autonomous flow already ran, never past it before. An unreadable task holds too, same reasoning
+  as autopilot's own "could not read the task" case: push/PR stay an operator action until the gate is proven
+  to allow them. `push_approval_gate_utils.py` now documents both callers.
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
 - **Green means the work landed.** `_push_problems(push_result)` is the ONE answer to "what did not reach the remote":
@@ -1143,6 +1179,13 @@ token) and the footnote says so. Do not add a second price table or compute cost
 - **A failed turn says why.** `failure_reason` (`result`, else `errors`, which a turn that fails during execution
   sends with no `result`), then `failure_detail` (the last stderr lines, attached before the event is published),
   then `resultFailureText`'s words per subtype. Never the bare word "failed".
+- **A ticket move is verified, not just POSTed.** `TaskStateService.move_task_to_done` (and `_in_progress`/
+  `_review`) resolve to each tracker client's `move_issue_to_state`. YouTrack's already re-read the field after
+  writing it (`_assert_issue_state`). `JiraClient.move_issue_to_state`'s custom-field branch did too — but its
+  `status` branch (the native workflow transition, and Jira's `done_state_field` DEFAULT per
+  `kato_core_lib.yaml`, so this was the common case, not an edge one) only checked `raise_for_status()`: a
+  transition a workflow post-function or screen then silently undid read back as a success. It now re-fetches
+  `status` after the transition POST and raises if it didn't actually move, same shape as the other branch.
 
 ---
 

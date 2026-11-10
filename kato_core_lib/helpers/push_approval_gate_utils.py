@@ -21,9 +21,19 @@ only ever set in the shell. Going through the boot-time OmegaConf config
 would make this restart-only, and an operator turning autonomous publishing
 off means *now*, before the next scan tick pushes something.
 
-Scope is the autonomous flow only. The UI's own Push / "Done - Push" buttons
-(``push_task``, ``approve_push``) are operator actions by definition and are
-never gated — this switch decides whether kato may act *without* being asked.
+Two callers check it: the autonomous flow (above) and ``AgentService``'s
+``<KATO_TASK_DONE>`` callback for a chat NOT on autopilot (a Plan/Implement
+session, a ``kato:wait-planning``/``kato:wait-editing`` hold, a local task).
+That second caller used to publish unconditionally the moment the sentinel
+appeared, trusting the system prompt's "only print this once the operator
+has said we're done" — a model can print it on its own say-so (a go-ahead to
+*start* read back as a sign-off on the *result*), pushing and opening a PR
+with no button pressed and no autopilot tag. It now runs the same check.
+
+The UI's own Push / "Done - Push" buttons (``push_task``, ``approve_push``,
+and the header's Done on a by-operator finish) are operator actions by
+definition and are never gated — this switch only decides whether kato may
+act *without* being asked, from either caller.
 """
 
 from __future__ import annotations

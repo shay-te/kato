@@ -66,6 +66,14 @@ class StepDeletionTests(unittest.TestCase):
         with self.assertRaises(PlanQueueError):
             self.deletion.delete('p1', 'nope')
 
+    def test_decline_pull_requests_is_public_for_a_cascading_delete(self) -> None:
+        # The task a plan was split from being deleted tears every sub-task
+        # down too, step by step, without going through remove_step for each
+        # (the whole plan is stopped once instead) — it still needs this.
+        declined, problems = self.deletion.decline_pull_requests(self.step)
+        self.assertEqual(declined, ['https://git/ob-love-admin-backend/pull/7'])
+        self.assertEqual(problems, [])
+
 
 class DeclineOpenPullRequestsTests(unittest.TestCase):
     def test_only_the_open_ones_are_declined(self) -> None:

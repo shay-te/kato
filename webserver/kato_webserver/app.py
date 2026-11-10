@@ -4152,131 +4152,193 @@ def _register_http_routes(app: Flask) -> None:
         additionally moves the TICKET to the tracker's done column
         before any of that runs — see ``_move_task_to_done_or_error``
         for why that ordering is the safe one.
+
+        A task that is a live plan's SOURCE cascades: every sub-task it
+        created gets the exact same forget, first — see
+        ``_forget_cascaded_sub_tasks``.
         """
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         if workspace_manager is None:
             return jsonify({'error': 'workspace manager not wired'}), 503
         mark_done = _truthy_arg(request.args.get('done'))
-        if mark_done:
-            done_error = _move_task_to_done_or_error(app, task_id)
-            if done_error:
-                return jsonify({
-                    'forgotten': False,
-                    'moved_to_done': False,
-                    'task_id': task_id,
-                    'error': done_error,
-                }), 502
-        errors: list[str] = []
-        # 0. A review loop on this task: stop it and delete its rounds first,
-        #    so it can neither send into the chat being torn down nor write
-        #    its folder back after the task is gone.
-        loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
-        if loops is not None:
-            try:
-                loops.forget(task_id)
-            except Exception as exc:
-                errors.append(f'review loop: {exc}')
-        # 0b. What the task used — read NOW, from the transcripts step 1 deletes.
-        #     The Usage dialog counts from transcripts, so without this a
-        #     deleted task's tokens would vanish from it.
-        usage_snapshot = snapshot_task_usage(app, task_id)
-        # 1. Kill the live subprocess + wipe the session record /
-        #    Claude JSONL transcript. Best-effort: a missing session
-        #    or terminate failure shouldn't block the workspace
-        #    cleanup that's right after.
-        session_manager = app.config.get('SESSION_MANAGER')
-        if session_manager is not None:
-            try:
-                session_manager.terminate_session(
-                    task_id, remove_record=True,
-                )
-            except Exception as exc:
-                errors.append(f'terminate_session: {exc}')
-            else:
-                # Only once the transcripts are really gone: a failed terminate
-                # leaves them counted under the live task, and keeping the
-                # snapshot too would count the same tokens twice.
-                if usage_snapshot is not None:
-                    keep_deleted_task_usage(app, usage_snapshot)
-        # 1b. The containers its agent started in the task folder: removed with
-        #     the folder they ran from (and on Windows a running container's
-        #     mount can hold the files the delete below needs). Never blocks
-        #     the delete; what failed is reported with its answer.
-        containers = _remove_task_containers(app, task_id)
-        # Record the operator's intent FIRST so the platform poll (the
-        # review-comment scan, which discovers in-review tasks from YouTrack/
-        # Bitbucket — not from local records) doesn't resurrect this task on the
-        # next tick or after a restart, even if the clone delete below partially
-        # fails on a file lock. Cleared when the operator re-adopts the task.
-        from kato_core_lib.helpers.forgotten_tasks_store import forget as _mark_forgotten
-        _mark_forgotten(task_id)
-        # ...and its cached Files tree, so nothing of it is served again.
-        app.config['FILE_TREE_CACHE'].forget(task_id)
-        # Drop any persisted plan-mode lock + its live override so a
-        # forgotten task doesn't reappear plan-locked after a restart.
-        from kato_core_lib.helpers.plan_mode_store import set_plan_mode
-        set_plan_mode(task_id, False)
-        _set_task_mode_of(app, task_id, '')
-        # ...and its planning hold. Re-adopting a still-tagged task holds it
-        # again on the next scan.
-        from kato_core_lib.helpers.planning_hold_store import set_planning_hold
-        set_planning_hold(task_id, False)
-        # Same for Remote Control: a forgotten task must not come back
-        # bridged to the Claude app the next time it is adopted.
-        _store_remote_control(app, task_id, False)
-        # Drop the task's registry state — PR contexts AND its persisted
-        # processed-review-comment marks — so ~/.kato/processed_review_comments.json
-        # never keeps marks for a task that no longer exists. Best-effort: this
-        # secondary cleanup never blocks the workspace/session removal that IS the
-        # point of DELETE (and the task is already marked forgotten above).
-        agent_service = app.config.get('AGENT_SERVICE')
-        if agent_service is not None:
-            try:
-                agent_service.forget_task_state(task_id)
-            except Exception:
-                app.logger.warning(
-                    'failed to drop registry state for deleted task %s '
-                    '(workspace/session removal still applies)', task_id,
-                )
-        # ...and the lesson candidates it staged. Nothing else ever removes
-        # them once the task is gone: promotion needs a finished push or an
-        # addressed comment, and a deleted task can have neither.
-        _release_task_lesson_candidates(app, task_id, validated=mark_done)
-        # 2. Wipe the per-task workspace clone(s). ``delete``
-        #    silently swallows ``OSError``; we VERIFY after.
-        try:
-            workspace_manager.delete(task_id)
-        except Exception as exc:
-            errors.append(f'workspace.delete: {exc}')
-        # 3. Verify nothing's left behind. The only reason a
-        #    well-formed delete would leave the dir is a file lock
-        #    (Windows antivirus, another process with handles open,
-        #    a clone with read-only files). Surfacing this to the
-        #    UI is the operator's escape hatch.
-        try:
-            workspace_dir = workspace_manager.workspace_path(task_id)
-        except Exception:
-            workspace_dir = None
-        if workspace_dir is not None and workspace_dir.exists():
-            errors.append(
-                f'workspace directory still exists at {workspace_dir} '
-                '(likely a file lock — close any process with files '
-                'open in this clone and try again)'
-            )
-        if errors:
-            return jsonify({
+        sub_tasks = _forget_cascaded_sub_tasks(app, task_id)
+        body, status = _forget_one_task_result(app, task_id, mark_done=mark_done)
+        body['sub_tasks'] = sub_tasks
+        return jsonify(body), status
+
+
+def _forget_one_task_result(app: Flask, task_id: str, *, mark_done: bool) -> tuple[dict, int]:
+    """Wipe everything for ``task_id`` — the single-task body
+    ``forget_task_workspace`` returns, as a plain value so a cascading
+    delete of a plan's sub-tasks can call it per sub-task too."""
+    workspace_manager = app.config.get('WORKSPACE_MANAGER')
+    if mark_done:
+        done_error = _move_task_to_done_or_error(app, task_id)
+        if done_error:
+            return {
                 'forgotten': False,
-                'moved_to_done': mark_done,
+                'moved_to_done': False,
                 'task_id': task_id,
-                'error': '; '.join(errors),
-                'containers': containers,
-            }), 500
-        return jsonify({
-            'forgotten': True,
+                'error': done_error,
+            }, 502
+    errors: list[str] = []
+    # 0. A review loop on this task: stop it and delete its rounds first,
+    #    so it can neither send into the chat being torn down nor write
+    #    its folder back after the task is gone.
+    loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
+    if loops is not None:
+        try:
+            loops.forget(task_id)
+        except Exception as exc:
+            errors.append(f'review loop: {exc}')
+    # 0b. What the task used — read NOW, from the transcripts step 1 deletes.
+    #     The Usage dialog counts from transcripts, so without this a
+    #     deleted task's tokens would vanish from it.
+    usage_snapshot = snapshot_task_usage(app, task_id)
+    # 1. Kill the live subprocess + wipe the session record /
+    #    Claude JSONL transcript. Best-effort: a missing session
+    #    or terminate failure shouldn't block the workspace
+    #    cleanup that's right after.
+    session_manager = app.config.get('SESSION_MANAGER')
+    if session_manager is not None:
+        try:
+            session_manager.terminate_session(
+                task_id, remove_record=True,
+            )
+        except Exception as exc:
+            errors.append(f'terminate_session: {exc}')
+        else:
+            # Only once the transcripts are really gone: a failed terminate
+            # leaves them counted under the live task, and keeping the
+            # snapshot too would count the same tokens twice.
+            if usage_snapshot is not None:
+                keep_deleted_task_usage(app, usage_snapshot)
+    # 1b. The containers its agent started in the task folder: removed with
+    #     the folder they ran from (and on Windows a running container's
+    #     mount can hold the files the delete below needs). Never blocks
+    #     the delete; what failed is reported with its answer.
+    containers = _remove_task_containers(app, task_id)
+    # Record the operator's intent FIRST so the platform poll (the
+    # review-comment scan, which discovers in-review tasks from YouTrack/
+    # Bitbucket — not from local records) doesn't resurrect this task on the
+    # next tick or after a restart, even if the clone delete below partially
+    # fails on a file lock. Cleared when the operator re-adopts the task.
+    from kato_core_lib.helpers.forgotten_tasks_store import forget as _mark_forgotten
+    _mark_forgotten(task_id)
+    # ...and its cached Files tree, so nothing of it is served again.
+    app.config['FILE_TREE_CACHE'].forget(task_id)
+    # Drop any persisted plan-mode lock + its live override so a
+    # forgotten task doesn't reappear plan-locked after a restart.
+    from kato_core_lib.helpers.plan_mode_store import set_plan_mode
+    set_plan_mode(task_id, False)
+    _set_task_mode_of(app, task_id, '')
+    # ...and its planning hold. Re-adopting a still-tagged task holds it
+    # again on the next scan.
+    from kato_core_lib.helpers.planning_hold_store import set_planning_hold
+    set_planning_hold(task_id, False)
+    # Same for Remote Control: a forgotten task must not come back
+    # bridged to the Claude app the next time it is adopted.
+    _store_remote_control(app, task_id, False)
+    # Drop the task's registry state — PR contexts AND its persisted
+    # processed-review-comment marks — so ~/.kato/processed_review_comments.json
+    # never keeps marks for a task that no longer exists. Best-effort: this
+    # secondary cleanup never blocks the workspace/session removal that IS the
+    # point of DELETE (and the task is already marked forgotten above).
+    agent_service = app.config.get('AGENT_SERVICE')
+    if agent_service is not None:
+        try:
+            agent_service.forget_task_state(task_id)
+        except Exception:
+            app.logger.warning(
+                'failed to drop registry state for deleted task %s '
+                '(workspace/session removal still applies)', task_id,
+            )
+    # ...and the lesson candidates it staged. Nothing else ever removes
+    # them once the task is gone: promotion needs a finished push or an
+    # addressed comment, and a deleted task can have neither.
+    _release_task_lesson_candidates(app, task_id, validated=mark_done)
+    # 2. Wipe the per-task workspace clone(s). ``delete``
+    #    silently swallows ``OSError``; we VERIFY after.
+    try:
+        workspace_manager.delete(task_id)
+    except Exception as exc:
+        errors.append(f'workspace.delete: {exc}')
+    # 3. Verify nothing's left behind. The only reason a
+    #    well-formed delete would leave the dir is a file lock
+    #    (Windows antivirus, another process with handles open,
+    #    a clone with read-only files). Surfacing this to the
+    #    UI is the operator's escape hatch.
+    try:
+        workspace_dir = workspace_manager.workspace_path(task_id)
+    except Exception:
+        workspace_dir = None
+    if workspace_dir is not None and workspace_dir.exists():
+        errors.append(
+            f'workspace directory still exists at {workspace_dir} '
+            '(likely a file lock — close any process with files '
+            'open in this clone and try again)'
+        )
+    if errors:
+        return {
+            'forgotten': False,
             'moved_to_done': mark_done,
             'task_id': task_id,
+            'error': '; '.join(errors),
             'containers': containers,
+        }, 500
+    return {
+        'forgotten': True,
+        'moved_to_done': mark_done,
+        'task_id': task_id,
+        'containers': containers,
+    }, 200
+
+
+def _forget_cascaded_sub_tasks(app: Flask, task_id: str) -> list[dict]:
+    """``task_id`` may be a live plan's SOURCE: every sub-task it created
+    gets the exact same forget as the task itself, so none is left behind
+    with its workspace, session and containers still on disk. A plan this
+    kato only FOLLOWS is left alone — it has no authority to stop or alter
+    another kato's plan.
+
+    Never blocks or fails the parent's own delete: a problem here is
+    reported per sub-task, the same precedent ``containers`` already sets
+    in ``_forget_one_task_result`` (best-effort, reported, never blocking —
+    one stuck sub-task must not make an otherwise-clean parent delete read
+    as a failure)."""
+    from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanMode
+
+    from kato_core_lib.data_layers.service.plan_queue.step_deletion import PlanStepDeletion
+
+    agent_service = app.config.get('AGENT_SERVICE')
+    queue = getattr(agent_service, 'plan_queue', None)
+    if queue is None:
+        return []
+    plan = queue.plan_for_source(task_id)
+    if plan is None or plan.mode == PlanMode.FOLLOWED:
+        return []
+    deletion = PlanStepDeletion(queue=queue, repository_service=getattr(agent_service, 'repository_service', None))
+    cascaded = []
+    for step in plan.steps:
+        if not step.task_id:
+            continue
+        declined, decline_problems = deletion.decline_pull_requests(step)
+        result, _status = _forget_one_task_result(app, step.task_id, mark_done=False)
+        cascaded.append({
+            'task_id': step.task_id,
+            'forgotten': result['forgotten'],
+            'error': result.get('error', ''),
+            'declined': declined,
+            'decline_problems': decline_problems,
         })
+    if queue.get(plan.plan_id).status.has_steps_in_flight:
+        try:
+            queue.stop(plan.plan_id)
+        except Exception:
+            app.logger.exception(
+                'could not stop plan %s after its source task %s was forgotten', plan.plan_id, task_id,
+            )
+    return cascaded
 
 
 def _remove_task_containers(app: Flask, task_id: str) -> dict:

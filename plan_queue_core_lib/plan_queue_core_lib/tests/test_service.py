@@ -20,6 +20,7 @@ from plan_queue_core_lib.plan_queue_core_lib.tests.fakes import (
     FakeProbe,
     FakeProgress,
     FakeProposer,
+    FakeRecordSource,
     FakeWording,
     ManualClock,
     split_reply,
@@ -458,6 +459,67 @@ class ServiceTests(unittest.TestCase):
         self.service.tick()
         step = self.service.check_now(plan.plan_id, 'api').step('api')
         self.assertTrue(step.merge.forced)
+
+    def test_sync_now_forgets_caches_and_runs_a_real_tick(self) -> None:
+        plan = self._approved(run=True)
+        self.service.tick()  # releases 'api' ('ui' still waits on it)
+        released = self.service.get(plan.plan_id).step('api')
+
+        self.service.sync_now(plan.plan_id)
+
+        self.assertIn(released.task_id, self.progress.forgotten)
+        # 'api' was 'starting', not yet AWAITING_MERGE: only the forced
+        # check (set then consumed by the tick inside sync_now) could have
+        # made the probe run for it at all.
+        self.assertIn((released.task_id, 'api'), self.probe.calls)
+        # 'ui' still waits on 'api' — nothing of its to forget or force.
+        self.assertNotIn('ui', [task for task, _repo in self.probe.calls])
+        self.assertFalse(self.service.get(plan.plan_id).step('ui').merge.forced)
+
+    def test_sync_now_asks_the_record_source_to_look_again(self) -> None:
+        # Fully isolated from ``self.service``: its own store/proposer, so
+        # nothing here races the other tests' shared fixtures.
+        tmp = tempfile.TemporaryDirectory(prefix='plan-service-sync-')
+        self.addCleanup(tmp.cleanup)
+        record_source = FakeRecordSource()
+        service = PlanQueueService(
+            store=PlanQueueStore(tmp.name), proposer=FakeProposer(SPLIT), wording=FakeWording(),
+            progress=FakeProgress(), probe=FakeProbe(), clock=ManualClock(5_000.0),
+            tick_seconds=0.01, record_source=record_source,
+        )
+        service.bind_launcher(FakeLauncher())
+        self.addCleanup(service.shutdown)
+
+        plan = service.propose('SRC-2', plan_markdown='# The plan', repository_ids=['api', 'web'], title='D')
+        self.assertTrue(wait_until(lambda: service.get(plan.plan_id).status == PlanStatus.PROPOSED))
+        plan = service.approve(plan.plan_id, run=True)
+
+        service.sync_now(plan.plan_id)
+
+        self.assertEqual(record_source.forgotten, [plan.source_task_id])
+
+    def test_sync_now_on_a_plan_with_nothing_tracked_yet_does_nothing(self) -> None:
+        # PROPOSED: not yet approved, so has_steps_in_flight is False — the
+        # guard must short-circuit before telling anything to look again,
+        # not just happen to have nothing to tell (a record source is wired
+        # here specifically so a removed guard would show up as a call).
+        tmp = tempfile.TemporaryDirectory(prefix='plan-service-sync-noop-')
+        self.addCleanup(tmp.cleanup)
+        record_source = FakeRecordSource()
+        service = PlanQueueService(
+            store=PlanQueueStore(tmp.name), proposer=FakeProposer(SPLIT), wording=FakeWording(),
+            progress=FakeProgress(), probe=FakeProbe(), clock=ManualClock(5_000.0),
+            tick_seconds=0.01, record_source=record_source,
+        )
+        service.bind_launcher(FakeLauncher())
+        self.addCleanup(service.shutdown)
+        plan = service.propose('SRC-3', plan_markdown='# The plan', repository_ids=['api', 'web'], title='D')
+        self.assertTrue(wait_until(lambda: service.get(plan.plan_id).status == PlanStatus.PROPOSED))
+
+        unchanged = service.sync_now(plan.plan_id)
+
+        self.assertEqual(unchanged.status, PlanStatus.PROPOSED)
+        self.assertEqual(record_source.forgotten, [])
 
     # ----- reading, lifecycle -----
 
