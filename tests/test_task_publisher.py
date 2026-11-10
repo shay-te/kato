@@ -1,6 +1,8 @@
+import tempfile
 import types
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -10,6 +12,7 @@ from kato_core_lib.data_layers.data.fields import (
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.publish_conventions_writer import PublishText
 from kato_core_lib.data_layers.service.repository_service import (
     RepositoryHasNoChangesError,
     RepositoryService,
@@ -550,3 +553,132 @@ class TaskPublisherTests(unittest.TestCase):
         ]
         self.assertEqual(published_repo_ids, ['client'])
         self.failure_handler.handle_started_task_failure.assert_called_once()
+
+
+class TaskPublisherConventionsTests(unittest.TestCase):
+    """Commit message / PR title / PR description follow a repository's own
+    CLAUDE.md / AGENTS.md — only when the operator turns it on AND at least
+    one repository actually has one. Otherwise: kato's own plain text,
+    unchanged — exactly the existing fallback values asserted above."""
+
+    def setUp(self) -> None:
+        self.task_service = Mock(spec=TaskService)
+        self.task_state_service = Mock(spec=TaskStateService)
+        self.repository_service = Mock(spec=RepositoryService)
+        self.repository_service.create_pull_request.return_value = {
+            PullRequestFields.REPOSITORY_ID: 'client',
+            PullRequestFields.ID: '1',
+            PullRequestFields.URL: 'https://host/pr/1',
+        }
+        self.notification_service = Mock(spec=NotificationService)
+        self.state_registry = Mock(spec=AgentStateRegistry)
+        self.failure_handler = Mock(spec=TaskFailureHandler)
+        self.writer = Mock()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def _publisher(self, *, writer=None) -> TaskPublisher:
+        return TaskPublisher(
+            self.task_service,
+            self.task_state_service,
+            self.repository_service,
+            self.notification_service,
+            self.state_registry,
+            self.failure_handler,
+            publish_max_retries=0,
+            publish_conventions_writer=writer,
+        )
+
+    def _repo_with_claude_md(self, repo_id: str, text: str) -> types.SimpleNamespace:
+        root = Path(self._tmp.name) / repo_id
+        root.mkdir()
+        (root / 'CLAUDE.md').write_text(text, encoding='utf-8')
+        return types.SimpleNamespace(id=repo_id, destination_branch='master', local_path=str(root))
+
+    def _publish(self, publisher, *, repositories, enabled: bool):
+        task = build_task(description='fix the thing')
+        prepared_task = types.SimpleNamespace(
+            repositories=repositories,
+            repository_branches={repo.id: f'feature/{repo.id}' for repo in repositories},
+        )
+        execution = {ImplementationFields.SUCCESS: True}
+        with patch(
+            'kato_core_lib.data_layers.service.task_publisher.publish_follows_project_conventions',
+            return_value=enabled,
+        ):
+            publisher.publish_task_execution(task, prepared_task, execution)
+
+    def test_the_writer_is_asked_when_on_and_a_repo_has_conventions(self) -> None:
+        self.writer.write.return_value = PublishText(
+            commit_message='feat: x', title='Conventioned title', description='Conventioned body',
+        )
+        repo = self._repo_with_claude_md('client', 'Commits follow Conventional Commits.')
+        self._publish(self._publisher(writer=self.writer), repositories=[repo], enabled=True)
+
+        self.writer.write.assert_called_once()
+        self.assertIn('Commits follow Conventional Commits.', self.writer.write.call_args.kwargs['conventions_text'])
+        call = self.repository_service.create_pull_request.call_args
+        self.assertEqual(call.kwargs['title'], 'Conventioned title')
+        self.assertEqual(call.kwargs['description'], 'Conventioned body')
+        self.assertEqual(call.kwargs['commit_message'], 'feat: x')
+
+    def test_one_shared_call_covers_every_repository_of_the_task(self) -> None:
+        self.writer.write.return_value = PublishText(commit_message='x', title='T', description='D')
+        repos = [
+            self._repo_with_claude_md('client', 'rule one'),
+            self._repo_with_claude_md('backend', 'rule two'),
+        ]
+        self._publish(self._publisher(writer=self.writer), repositories=repos, enabled=True)
+
+        self.writer.write.assert_called_once()
+        self.assertEqual(self.repository_service.create_pull_request.call_count, 2)
+        for call in self.repository_service.create_pull_request.call_args_list:
+            self.assertEqual(call.kwargs['title'], 'T')
+
+    def test_the_setting_off_never_asks_even_with_a_claude_md(self) -> None:
+        task = build_task(description='fix the thing')
+        repo = self._repo_with_claude_md('client', 'Commits follow Conventional Commits.')
+        self._publish(self._publisher(writer=self.writer), repositories=[repo], enabled=False)
+
+        self.writer.write.assert_not_called()
+        call = self.repository_service.create_pull_request.call_args
+        self.assertEqual(call.kwargs['title'], f'{task.id} {task.summary}')
+        self.assertEqual(call.kwargs['commit_message'], f'Implement {task.id}')
+
+    def test_no_conventions_file_anywhere_never_asks(self) -> None:
+        # Setting on, writer wired — but the repo's folder has neither
+        # CLAUDE.md nor AGENTS.md, so there is nothing to follow.
+        root = Path(self._tmp.name) / 'bare'
+        root.mkdir()
+        repo = types.SimpleNamespace(id='bare', destination_branch='master', local_path=str(root))
+        self._publish(self._publisher(writer=self.writer), repositories=[repo], enabled=True)
+
+        self.writer.write.assert_not_called()
+
+    def test_no_writer_wired_at_all_never_asks_even_if_on(self) -> None:
+        repo = self._repo_with_claude_md('client', 'Commits follow Conventional Commits.')
+        self._publish(self._publisher(writer=None), repositories=[repo], enabled=True)
+        # Nothing to assert on self.writer (never injected) — the plain
+        # assertion is simply that this doesn't raise and still publishes.
+        self.repository_service.create_pull_request.assert_called_once()
+
+    def test_a_failing_one_shot_still_publishes_with_kato_s_own_text(self) -> None:
+        # The REAL writer (not a mock): proves the integration relies on its
+        # own "any failure means the fallback" contract rather than a second
+        # guard here — publish_conventions_writer.py has the unit coverage
+        # for every way the one-shot call itself can fail.
+        from kato_core_lib.data_layers.service.publish_conventions_writer import (
+            PublishConventionsWriter,
+        )
+
+        def boom(prompt: str) -> str:
+            raise RuntimeError('model call failed')
+
+        task = build_task(description='fix the thing')
+        real_writer = PublishConventionsWriter(one_shot=boom, logger=Mock())
+        repo = self._repo_with_claude_md('client', 'Commits follow Conventional Commits.')
+        self._publish(self._publisher(writer=real_writer), repositories=[repo], enabled=True)
+
+        call = self.repository_service.create_pull_request.call_args
+        self.assertEqual(call.kwargs['title'], f'{task.id} {task.summary}')
+        self.assertEqual(call.kwargs['commit_message'], f'Implement {task.id}')

@@ -21,9 +21,15 @@ from __future__ import annotations
 
 import threading
 
+from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
+    repository_conventions_text,
+)
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.helpers.deadline import run_all_with_deadline, run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
+from kato_core_lib.helpers.publish_conventions_gate_utils import (
+    publish_follows_project_conventions,
+)
 from kato_core_lib.helpers.service_results import failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
@@ -189,6 +195,19 @@ class _PublishTaskLite(object):
     summary: str = ''
 
 
+def _task_context_text(task) -> str:
+    """What changed, for the conventions-aware writer. ``task`` may be the
+    minimal ``_PublishTaskLite`` (no ``description``), so every field is
+    read defensively."""
+    task_id = str(getattr(task, 'id', '') or '')
+    summary = str(getattr(task, 'summary', '') or '').strip()
+    parts = [f'{task_id}: {summary}'] if (task_id or summary) else []
+    description = str(getattr(task, 'description', '') or '').strip()
+    if description:
+        parts.append(description)
+    return '\n\n'.join(parts)
+
+
 def _push_problems(push_result: dict) -> dict[str, str]:
     """Why each repository's work did not reach the remote; empty when it all did.
 
@@ -223,6 +242,7 @@ class TaskPublishService(object):
         reconcile_task_repositories=None,
         is_plan_source=None,
         plan_parent_of=None,
+        publish_conventions_writer=None,
         logger=None,
     ) -> None:
         # Collaborators may arrive as the object itself or wrapped in
@@ -233,6 +253,7 @@ class TaskPublishService(object):
         self._get_task_publisher = provider_for(task_publisher)
         self._get_workspace_manager = provider_for(workspace_manager)
         self._get_lesson_service = provider_for(lesson_service)
+        self._get_publish_conventions_writer = provider_for(publish_conventions_writer)
         # ``task_id -> {status, error}``: tells the team the task is done (the
         # Slack post), set by the host once its announcer exists. None = nobody.
         self.announce_finished = None
@@ -258,6 +279,52 @@ class TaskPublishService(object):
         self._logger_getter = provider_for(
             logger if logger is not None else configure_logger('TaskPublishService'),
         )
+
+    def _conventioned_commit_message(
+        self, repos, *, context_text: str, fallback_commit_message: str,
+    ) -> str:
+        """``fallback_commit_message`` reshaped to the repositories' own
+        CLAUDE.md/AGENTS.md, when the operator turned that on and at least
+        one has one. See ``publish_conventions_writer.py`` — any failure
+        there already falls back to this exact value."""
+        writer = self._get_publish_conventions_writer()
+        if writer is None or not publish_follows_project_conventions():
+            return fallback_commit_message
+        conventions = repository_conventions_text(repos or [])
+        if not conventions:
+            return fallback_commit_message
+        return writer.write(
+            context_text=context_text,
+            conventions_text=conventions,
+            fallback_commit_message=fallback_commit_message,
+        ).commit_message
+
+    def _conventioned_pr_text(
+        self,
+        repos,
+        *,
+        context_text: str,
+        fallback_title: str,
+        fallback_description: str,
+        fallback_commit_message: str,
+    ) -> tuple[str, str, str]:
+        """``(title, description, commit_message)`` — same reasoning as
+        ``_conventioned_commit_message``, for the PR-creation path."""
+        fallback = (fallback_title, fallback_description, fallback_commit_message)
+        writer = self._get_publish_conventions_writer()
+        if writer is None or not publish_follows_project_conventions():
+            return fallback
+        conventions = repository_conventions_text(repos or [])
+        if not conventions:
+            return fallback
+        written = writer.write(
+            context_text=context_text,
+            conventions_text=conventions,
+            fallback_commit_message=fallback_commit_message,
+            fallback_title=fallback_title,
+            fallback_description=fallback_description,
+        )
+        return written.title, written.description, written.commit_message
 
     @property
     def logger(self):
@@ -753,6 +820,10 @@ class TaskPublishService(object):
                 task_id=normalized,
             )
         repos = _only(repos, repository_ids)
+        commit_message = self._conventioned_commit_message(
+            repos, context_text=_task_context_text(_task),
+            fallback_commit_message=f'Update {normalized}',
+        )
         pushed_repositories: list[str] = []
         skipped_repositories: list[dict[str, str]] = []
         failed_repositories: list[dict[str, str]] = []
@@ -818,7 +889,7 @@ class TaskPublishService(object):
                 self._repository_service.publish_review_fix(
                     repository,
                     branch_name,
-                    commit_message=f'Update {normalized}',
+                    commit_message=commit_message,
                 )
                 pushed_repositories.append(repository.id)
                 self.logger.info(
@@ -1196,6 +1267,19 @@ class TaskPublishService(object):
                 flag='created',
                 task_id=normalized,
             )
+        # Reuse the canonical title builder so on-demand PRs match the
+        # autonomous flow's format: ``<id> <summary>``, not the older
+        # ``Implement <id>`` placeholder. Same helper task_publisher uses
+        # for the auto-published flow, so PR titles are consistent
+        # regardless of which path opened them.
+        from kato_core_lib.helpers.pull_request_utils import pull_request_title
+        fallback_title = pull_request_title(task_obj)
+        title, description, commit_message = self._conventioned_pr_text(
+            repos, context_text=_task_context_text(task_obj),
+            fallback_title=fallback_title,
+            fallback_description=str(getattr(task_obj, 'summary', '') or ''),
+            fallback_commit_message=fallback_title,
+        )
         created: list[dict[str, str]] = []
         skipped: list[dict[str, str]] = []
         failed: list[dict[str, str]] = []
@@ -1238,20 +1322,12 @@ class TaskPublishService(object):
                 })
                 continue
             try:
-                # Reuse the canonical title builder so on-demand PRs
-                # match the autonomous flow's format: ``<id> <summary>``,
-                # not the older ``Implement <id>`` placeholder. Same
-                # helper task_publisher uses for the auto-published
-                # flow, so PR titles are consistent regardless of which
-                # path opened them.
-                from kato_core_lib.helpers.pull_request_utils import pull_request_title
-                title = pull_request_title(task_obj)
                 pull_request = self._repository_service.create_pull_request(
                     repository,
                     title=title,
                     source_branch=branch_name,
-                    description=str(getattr(task_obj, 'summary', '') or ''),
-                    commit_message=title,
+                    description=description,
+                    commit_message=commit_message,
                 )
                 created.append({
                     'repository_id': repository.id,

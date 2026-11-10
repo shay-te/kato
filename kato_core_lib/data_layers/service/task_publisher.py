@@ -5,6 +5,9 @@ from typing import Callable, TypeVar
 
 from core_lib.data_layers.service.service import Service
 
+from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
+    repository_conventions_text,
+)
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import fix_session_id
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
@@ -29,6 +32,9 @@ from kato_core_lib.helpers.pull_request_utils import (
     pull_request_repositories_text,
     pull_request_summary_comment,
     pull_request_title,
+)
+from kato_core_lib.helpers.publish_conventions_gate_utils import (
+    publish_follows_project_conventions,
 )
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext, task_started_comment
@@ -101,6 +107,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         state_registry: AgentStateRegistry,
         failure_handler: TaskFailureHandler,
         publish_max_retries: int | None = None,
+        publish_conventions_writer=None,
         sleep_fn=time.sleep,
         logger=None,
     ) -> None:
@@ -110,6 +117,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         self._notification_service = notification_service
         self._state_registry = state_registry
         self._failure_handler = failure_handler
+        self._publish_conventions_writer = publish_conventions_writer
         # Retry budget for the publish-side calls (PR creation +
         # move-to-review). 2 retries → up to 3 attempts. Implementation
         # work is never re-run; this only catches transient git/Bitbucket/
@@ -187,9 +195,15 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         # without digging through logs.
         failed_repositories: list[tuple[str, str]] = []
         unchanged_repositories: list[str] = []
-        description = pull_request_description(task, execution)
+        title, description, commit_message = self._conventioned_publish_text(
+            prepared_task.repositories,
+            task=task,
+            execution=execution,
+            fallback_title=pull_request_title(task),
+            fallback_description=pull_request_description(task, execution),
+            fallback_commit_message=self._task_commit_message(task),
+        )
         agent_session_id = fix_session_id(execution.get(ImplementationFields.AGENT_SESSION_ID))
-        commit_message = self._task_commit_message(task)
         read_only_ids = getattr(prepared_task, 'read_only_repository_ids', None) or set()
         for repository in prepared_task.repositories or []:
             if str(getattr(repository, 'id', '') or '') in read_only_ids:
@@ -208,6 +222,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
                 task,
                 prepared_task,
                 repository,
+                title,
                 description,
                 commit_message,
                 agent_session_id,
@@ -241,11 +256,45 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
     ) -> str:
         return f'Implement {task.id}'
 
+    def _conventioned_publish_text(
+        self,
+        repositories,
+        *,
+        task: Task,
+        execution: dict[str, str | bool],
+        fallback_title: str,
+        fallback_description: str,
+        fallback_commit_message: str,
+    ) -> tuple[str, str, str]:
+        """``(title, description, commit_message)`` — kato's own fallback
+        text, unless the operator turned on following the repositories' own
+        CLAUDE.md/AGENTS.md AND at least one of them has one. See
+        ``publish_conventions_writer.py``; any failure there already falls
+        back to these exact values, so this is never a second guard against
+        the same thing — only the setting + "is there anything to follow"
+        decide whether the extra call happens at all.
+        """
+        fallback = (fallback_title, fallback_description, fallback_commit_message)
+        if self._publish_conventions_writer is None or not publish_follows_project_conventions():
+            return fallback
+        conventions = repository_conventions_text(repositories or [])
+        if not conventions:
+            return fallback
+        written = self._publish_conventions_writer.write(
+            context_text=_publish_context_text(task, execution),
+            conventions_text=conventions,
+            fallback_commit_message=fallback_commit_message,
+            fallback_title=fallback_title,
+            fallback_description=fallback_description,
+        )
+        return written.title, written.description, written.commit_message
+
     def _create_pull_request_for_repository(
         self,
         task: Task,
         prepared_task: PreparedTaskContext,
         repository,
+        title: str,
         description: str,
         commit_message: str,
         agent_session_id: str,
@@ -270,6 +319,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
             task,
             repository,
             branch_name,
+            title,
             description,
             commit_message,
         )
@@ -342,6 +392,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         task: Task,
         repository,
         branch_name: str,
+        title: str,
         description: str,
         commit_message: str,
     ):
@@ -350,7 +401,7 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
             return self._run_publish_with_retry(
                 lambda: self._repository_service.create_pull_request(
                     repository,
-                    title=pull_request_title(task),
+                    title=title,
                     source_branch=branch_name,
                     description=description,
                     commit_message=commit_message,
@@ -644,6 +695,19 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         # Defensive: the loop either returns or raises.
         assert last_exc is not None  # pragma: no cover
         raise last_exc  # pragma: no cover
+
+
+def _publish_context_text(task: Task, execution: dict[str, str | bool]) -> str:
+    """What changed, for the conventions-aware writer — plain text, no
+    markdown fixups: it's read by the model, not rendered anywhere."""
+    parts = [f'{task.id}: {task.summary}']
+    description = str(task.description or '').strip()
+    if description:
+        parts.append(description)
+    notes = str(execution.get(ImplementationFields.MESSAGE, '') or '').strip()
+    if notes:
+        parts.append(notes)
+    return '\n\n'.join(parts)
 
 
 def _record_task_completed(task, prepared_task, pull_requests) -> None:

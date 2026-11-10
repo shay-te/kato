@@ -130,6 +130,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         review_comment_service: ReviewCommentService | None = None,
         task_failure_handler: TaskFailureHandler | None = None,
         task_publisher: TaskPublisher | None = None,
+        publish_conventions_writer=None,
         repository_connections_validator: RepositoryConnectionsValidator | None = None,
         startup_validator: StartupDependencyValidator | None = None,
         task_preflight_service: TaskPreflightService | None = None,
@@ -174,6 +175,11 @@ class AgentService(MissionStepLoggerMixin, Service):
         self._lessons_service = lessons_service
         # Notices tickets closed in the tracker, once per cleanup sweep.
         self._release_notes_watcher = release_notes_watcher
+        # Reshapes kato's own commit message / PR title / PR description to
+        # follow a repository's CLAUDE.md/AGENTS.md — forwarded to the
+        # publish service below; whether it's consulted is the operator's
+        # own switch (publish_conventions_gate_utils), checked per publish.
+        self._publish_conventions_writer = publish_conventions_writer
         # `kato:wait-before-git-push` plumbing. The dict stashes the
         # (task, prepared_task, execution) tuple after testing so the
         # operator-triggered ``approve_push`` can resume publish without
@@ -491,6 +497,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             ),
             is_plan_source=call_later(self, '_is_plan_source'),
             plan_parent_of=call_later(self._plan_step_source, 'source_of'),
+            publish_conventions_writer=self._publish_conventions_writer,
             logger=later(self, 'logger'),
         )
 

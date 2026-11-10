@@ -239,6 +239,14 @@ SETTINGS_SCHEMA: list[dict] = [
              'opens a pull request on its own. Turn ON to let the scan '
              'loop publish without asking. The UI Push / Done buttons '
              'are operator actions and are never affected.', {}),
+            ('KATO_PUBLISH_FOLLOWS_PROJECT_CONVENTIONS', 'bool',
+             'Commits/PRs follow the repo\'s own conventions',
+             'Off by default. When on, kato reads the repository\'s own '
+             'CLAUDE.md (else AGENTS.md) and asks the model to write the '
+             'commit message, pull request title and description to match '
+             'it. No such file, or the extra call fails: kato\'s own plain '
+             'text, unchanged. The agent\'s own PR description (when it '
+             'wrote one) still wins over this either way.', {}),
             ('KATO_LID_AWAKE_ENABLED', 'bool',
              'Keep running with the lid closed',
              'Off by default. Kato keeps this computer awake with the lid closed: '

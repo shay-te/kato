@@ -428,6 +428,32 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   Opt-in (titles leave the machine). Failures are kept in `~/.kato/release_notes_sync.json` and shown in the
   header's Release notes dialog with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
 
+### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
+Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan
+queue below: the orchestration layer owns BRANCH STATE and PUBLISHING only). So a developer's own
+commit/PR conventions, written in their repo's `CLAUDE.md`, never reached that text — the agent reads
+them (Claude Code loads `CLAUDE.md` natively), but the agent never runs git. `KATO_PUBLISH_FOLLOWS_PROJECT_CONVENTIONS`
+(off by default — this changes text in a shared repo's history and PRs) turns on a small EXTRA one-shot
+model call, same shape as `ReleaseNoteWriter`: it reads the repositories' own `CLAUDE.md` (else `AGENTS.md`
+— `agent_core_lib/helpers/project_conventions_utils.py`, a plain file read, CLAUDE.md preferred per
+directory) and asks `PublishConventionsWriter` (`kato_core_lib/data_layers/service/publish_conventions_writer.py`)
+to reshape kato's own commit message / PR title / PR description to match — plain markers
+(`COMMIT MESSAGE:` / `PR TITLE:` / `PR DESCRIPTION:`), each section falling back independently, never all-or-nothing.
+One real difference from the release-note writer: a release note is improved AFTER publish, in the
+background, because nothing is waiting on it; this runs SYNCHRONOUSLY before the commit, on a short
+dedicated timeout (45s, not the 120s default). No conventions file anywhere, the setting off, or the
+one-shot call failing for any reason: kato's own plain text, byte for byte — the writer's `write()`
+never raises, so no call site needs a second guard. Three call sites share the one writer (injected via
+`kato_core_lib.py`'s `_build_publish_conventions_writer`, same `_claude_one_shot_settings` as release
+notes): `task_publisher.py`'s autonomous publish (title + description + commit message, once per task,
+not per repo — matching how `pull_request_title`/`_task_commit_message` already worked), `task_publish_service.py`'s
+on-demand push (`push_task`, commit message only) and on-demand PR creation (`create_pull_request_for_task`,
+all three), and `review_comment_service.py`'s review-fix commit (commit message only — it replies on an
+already-open PR, no new title/description). **Deliberately untouched:** the agent's own `pr_description.md`
+override (`repository_service.py`'s `_pr_description_from_task_folder`, resolved per repo, deep inside
+`_publish_branch_updates`) still wins over this either way — this only replaces what `pull_request_description(task,
+execution)` computes as the structured DEFAULT, used when the agent wrote no override.
+
 ### Review loop (from the review loop view, or a `kato:review-loop` ticket tag)
 **The tag:** `kato:review-loop` (default rounds) or `kato:review-loop:<n>` on a task kato runs by itself starts
 the loop once the task parks (`AgentService._start_review_loop_if_tagged`, the last step of

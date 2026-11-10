@@ -1156,6 +1156,7 @@ class MediumServicesRemainingEdgeTests(unittest.TestCase):
                 Task(id='PROJ-1'),
                 prepared,
                 repo,
+                title='PROJ-1 fix it',
                 description='',
                 commit_message='msg',
                 agent_session_id='',

@@ -93,6 +93,9 @@ from kato_core_lib.data_layers.service.plan_queue.pull_request_probe import Kato
 from kato_core_lib.data_layers.service.release_note_links import ReleaseNoteLinks
 from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
 from kato_core_lib.data_layers.service.release_note_writer import ReleaseNoteWriter
+from kato_core_lib.data_layers.service.publish_conventions_writer import (
+    PublishConventionsWriter,
+)
 from kato_core_lib.data_layers.service.release_notes_done_watcher import ReleaseNotesDoneWatcher
 from kato_core_lib.data_layers.service.release_notes_google_sync import ReleaseNotesGoogleSync
 from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
@@ -112,6 +115,12 @@ from task_core_lib.task_core_lib.platform import Platform
 from task_core_lib.task_core_lib.task_core_lib import TaskCoreLib
 
 logger = configure_logger('KatoCoreLib')
+
+# A publish is synchronous (the Done button / the scan loop waits on it), so
+# this one-shot gets a short, dedicated timeout — not the 120s default used
+# by the backgrounded release-note improver, which nothing is waiting on.
+_PUBLISH_CONVENTIONS_TIMEOUT_SECONDS = 45
+
 ISSUE_PLATFORM_CONFIG_NAMES = {
     Platform.YOUTRACK: 'youtrack',
     Platform.JIRA: 'jira',
@@ -610,6 +619,11 @@ class KatoCoreLib(CoreLib):
             repository_service=repository_service,
             notification_service=notification_service,
         )
+        # Reshapes kato's own commit message / PR title / PR description to
+        # follow a repository's CLAUDE.md/AGENTS.md, when the operator turns
+        # that on — shared by every place that writes one (see
+        # publish_conventions_writer.py).
+        self.publish_conventions_writer = self._build_publish_conventions_writer(open_cfg)
         task_publisher = TaskPublisher(
             task_service=task_service,
             task_state_service=task_state_service,
@@ -618,6 +632,7 @@ class KatoCoreLib(CoreLib):
             state_registry=state_registry,
             failure_handler=task_failure_handler,
             publish_max_retries=TaskPublisher.max_retries_from_config(open_cfg),
+            publish_conventions_writer=self.publish_conventions_writer,
         )
         review_comment_service = ReviewCommentService(
             task_service=task_service,
@@ -632,6 +647,7 @@ class KatoCoreLib(CoreLib):
             # Per-task workspace clones isolate parallel review-fix
             # workers from each other's git state on the shared repo.
             workspace_manager=self.workspace_manager,
+            publish_conventions_writer=self.publish_conventions_writer,
         )
         # Stash recovery so main.py can invoke it once after startup
         # validation — adopting orphan workspace folders is opt-in, runs
@@ -656,6 +672,7 @@ class KatoCoreLib(CoreLib):
             review_comment_service=review_comment_service,
             task_failure_handler=task_failure_handler,
             task_publisher=task_publisher,
+            publish_conventions_writer=self.publish_conventions_writer,
             repository_connections_validator=repository_connections_validator,
             startup_validator=startup_validator,
             task_preflight_service=task_preflight_service,
@@ -887,6 +904,20 @@ class KatoCoreLib(CoreLib):
         except OSError:
             cwd = ''
         return binary, model, cwd
+
+    def _build_publish_conventions_writer(self, open_cfg: DictConfig) -> PublishConventionsWriter:
+        """Kato's commit message / PR title / PR description, reshaped to
+        follow a repository's own CLAUDE.md / AGENTS.md — see
+        ``publish_conventions_writer.py``. Built unconditionally, like
+        ``ReleaseNoteWriter``; whether it is actually consulted is the
+        operator's switch (``publish_conventions_gate_utils``), checked at
+        each publish call site, not here.
+        """
+        binary, model, cwd = self._claude_one_shot_settings(open_cfg)
+        return PublishConventionsWriter(one_shot=make_one_shot(
+            binary=binary, model=model, cwd=cwd,
+            timeout_seconds=_PUBLISH_CONVENTIONS_TIMEOUT_SECONDS,
+        ))
 
     def _build_release_notes_service(self, open_cfg: DictConfig, task_service, repository_service):
         """The release notes: a dated line per task that reaches Done.

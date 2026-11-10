@@ -7,6 +7,9 @@ from urllib.parse import urlparse
 from core_lib.data_layers.service.service import Service
 from git_core_lib.git_core_lib.helpers.repository_discovery_utils import azure_devops_remote
 
+from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
+    repository_conventions_text,
+)
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
@@ -31,6 +34,9 @@ from kato_core_lib.helpers.mission_logging_utils import (
     log_mission_start,
     log_review_comment_end,
     log_review_comment_start,
+)
+from kato_core_lib.helpers.publish_conventions_gate_utils import (
+    publish_follows_project_conventions,
 )
 from kato_core_lib.helpers.review_comment_gate_utils import (
     REVIEW_COMMENTS_DISABLED_REASON,
@@ -68,11 +74,13 @@ class ReviewCommentService(Service):
         planning_session_runner=None,
         use_streaming_for_review_fixes: bool = False,
         workspace_manager=None,
+        publish_conventions_writer=None,
     ) -> None:
         self._task_service = task_service
         self._implementation_service = implementation_service
         self._repository_service = repository_service
         self._state_registry = state_registry
+        self._publish_conventions_writer = publish_conventions_writer
         self._planning_session_runner = planning_session_runner
         self._use_streaming_for_review_fixes = bool(
             planning_session_runner is not None and use_streaming_for_review_fixes
@@ -1207,7 +1215,7 @@ class ReviewCommentService(Service):
         self._repository_service.publish_review_fix(
             repository,
             review_context.branch_name,
-            self._review_fix_commit_message(),
+            self._conventioned_review_fix_commit_message(repository, comments),
         )
         for comment in comments:
             try:
@@ -1399,6 +1407,28 @@ class ReviewCommentService(Service):
     def _review_fix_commit_message() -> str:
         return 'Address review comments'
 
+    def _conventioned_review_fix_commit_message(
+        self, repository, comments: list[ReviewComment],
+    ) -> str:
+        """``'Address review comments'`` reshaped to the repository's own
+        CLAUDE.md/AGENTS.md, when the operator turned that on and the
+        repository has one. See ``publish_conventions_writer.py`` — any
+        failure there already falls back to the plain text, so this is
+        never a second guard against the same thing.
+        """
+        fallback = self._review_fix_commit_message()
+        if self._publish_conventions_writer is None or not publish_follows_project_conventions():
+            return fallback
+        conventions = repository_conventions_text([repository] if repository else [])
+        if not conventions:
+            return fallback
+        written = self._publish_conventions_writer.write(
+            context_text=_review_fix_context_text(comments),
+            conventions_text=conventions,
+            fallback_commit_message=fallback,
+        )
+        return written.commit_message
+
     def _restore_review_comment_repository(self, comment: ReviewComment, repository) -> None:
         try:
             self.logger.info(
@@ -1460,3 +1490,10 @@ def _record_review_fix_completed(comments, review_context) -> None:
         pr_url=', '.join(pr_ids),
         outcome=OUTCOME_SUCCESS,
     )
+
+
+def _review_fix_context_text(comments: list[ReviewComment]) -> str:
+    """What the fix addresses, for the conventions-aware writer."""
+    bodies = [str(getattr(comment, 'body', '') or '').strip() for comment in comments or []]
+    bodies = [body for body in bodies if body]
+    return '\n\n'.join(bodies) or 'Addressed pull request review comments.'

@@ -244,6 +244,7 @@ class KatoCoreLibTests(unittest.TestCase):
             state_registry=ANY,
             failure_handler=mock_task_failure_handler_cls.return_value,
             publish_max_retries=ANY,
+            publish_conventions_writer=ANY,
         )
         mock_task_da_cls.assert_called_once_with(
             self.cfg.kato.youtrack,
@@ -297,6 +298,7 @@ class KatoCoreLibTests(unittest.TestCase):
             review_comment_service=ANY,
             task_failure_handler=mock_task_failure_handler_cls.return_value,
             task_publisher=mock_task_publisher_cls.return_value,
+            publish_conventions_writer=ANY,
             repository_connections_validator=ANY,
             startup_validator=ANY,
             task_preflight_service=mock_task_preflight_service_cls.return_value,
