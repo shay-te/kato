@@ -304,6 +304,18 @@ export function fetchTaskPublishState(taskId) {
   );
 }
 
+// What deleting the task's workspace would lose: ``{repositories: [{
+// repository_id, changed_files, unpushed_commits}], unchecked: [{
+// repository_id, error}]}``. Asked when the tab's ✕ is pressed, before the
+// delete dialog opens. Local git only; the server gives up on a clone at 15s,
+// so this waits a little longer. A rejection means "could not check".
+export function fetchTaskUnpushedWork(taskId) {
+  return fetchJson(
+    `/api/sessions/${encodeURIComponent(taskId)}/unpushed-work`,
+    { timeoutMs: 20000 },
+  );
+}
+
 // PR-existence for the task's Pull-request button + "open PR" link. A
 // SEPARATE fetch from publish-state so a slow provider (429 retry backoff)
 // can never freeze the git buttons — worst case only the PR button/link is

@@ -3,6 +3,7 @@ import AdoptTaskModal from './components/AdoptTaskModal.jsx';
 import DiffPane from './components/DiffPane.jsx';
 import EditorPane from './components/EditorPane.jsx';
 import ForgetTaskModal from './components/ForgetTaskModal.jsx';
+import UnpushedWorkWarning from './components/UnpushedWorkWarning.jsx';
 import BulkForgetModal from './components/BulkForgetModal.jsx';
 import { moveTab } from './utils/tabOrder.js';
 import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
@@ -317,6 +318,11 @@ export default function App() {
   // is irreversible, so the operator must approve it in
   // ForgetTaskModal before anything is deleted.
   const [forgetCandidate, setForgetCandidate] = useState(null);
+  // Before that dialog: UnpushedWorkWarning asks what the workspace would
+  // lose and warns first when it holds work that was never pushed. Its
+  // answer goes on to the delete dialog, which names the same repositories.
+  const [forgetPreflight, setForgetPreflight] = useState(null);
+  const [forgetUnpushedWork, setForgetUnpushedWork] = useState(null);
   // Read through a ref: this goes to every tab, and depending on ``sessions``
   // gave them all a new function, so one session changing redrew the strip.
   const sessionsRef = useRef(sessions);
@@ -325,8 +331,20 @@ export default function App() {
     if (!taskId) { return; }
     const session = sessionsRef.current.find((s) => s.task_id === taskId)
       || { task_id: taskId };
-    setForgetCandidate(session);
+    setForgetPreflight(session);
   }, []);
+  const continueToForgetTask = useCallback((answer) => {
+    setForgetCandidate(forgetPreflight);
+    setForgetUnpushedWork(answer || null);
+    setForgetPreflight(null);
+  }, [forgetPreflight]);
+  const cancelForgetPreflight = useCallback(() => {
+    setForgetPreflight(null);
+  }, []);
+  const openTaskInsteadOfForget = useCallback((taskId) => {
+    setForgetPreflight(null);
+    selectTaskAndReveal(taskId);
+  }, [selectTaskAndReveal]);
   const cancelForgetTask = useCallback(() => {
     setForgetCandidate(null);
   }, []);
@@ -1291,9 +1309,19 @@ export default function App() {
           onClose={closeTaskPalette}
         />
       )}
+      {forgetPreflight && (
+        <UnpushedWorkWarning
+          key={forgetPreflight.task_id}
+          session={forgetPreflight}
+          onContinue={continueToForgetTask}
+          onCancel={cancelForgetPreflight}
+          onOpenTask={openTaskInsteadOfForget}
+        />
+      )}
       {forgetCandidate && (
         <ForgetTaskModal
           session={forgetCandidate}
+          unpushedWork={forgetUnpushedWork}
           onConfirm={confirmForgetTask}
           onCancel={cancelForgetTask}
         />

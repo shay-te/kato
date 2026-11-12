@@ -4112,6 +4112,23 @@ def _register_http_routes(app: Flask) -> None:
         state['task_id'] = task_id
         return jsonify(state)
 
+    @app.get('/api/sessions/<task_id>/unpushed-work')
+    def get_task_unpushed_work(task_id: str):
+        """What deleting this task's workspace would lose — asked by the page
+        before the delete dialog opens. Local git only, never the provider."""
+        agent_service = app.config.get('AGENT_SERVICE')
+        check = getattr(getattr(agent_service, 'publish', agent_service), 'task_unpushed_work', None)
+        if not callable(check):
+            # No service to ask is "could not tell", never "nothing to lose".
+            return jsonify({
+                'repositories': [],
+                'unchecked': [{'repository_id': '', 'error': 'kato is not ready to check yet'}],
+                'task_id': task_id,
+            })
+        state = check(task_id) or {}
+        state['task_id'] = task_id
+        return jsonify(state)
+
     @app.get('/api/sessions/<task_id>/search')
     def search_task_workspace_content(task_id: str):
         """Content (grep) search across the task's workspace repos."""

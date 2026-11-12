@@ -34,6 +34,7 @@ from kato_core_lib.helpers.service_results import failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import text_from_mapping
 import copy
+from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import dataclass
 from kato_core_lib.data_layers.service.repository_service import (
@@ -52,6 +53,11 @@ _RECONCILE_TIMEOUT_SECONDS = 10.0
 # returned without it. Comfortably inside the client's own 8s abort, so a
 # multi-repo task can never turn "is there a workspace?" into a failed fetch.
 _PUSH_SCAN_BUDGET_SECONDS = 3.0
+
+# How long the before-delete check may read every clone, all at once. Under
+# the 20s the page waits for it (api.js); a clone that outruns it is reported
+# "could not check", never "nothing to lose".
+UNPUSHED_WORK_CHECK_SECONDS = 15.0
 
 
 def _auth_hint_for(exc: Exception) -> str:
@@ -1679,6 +1685,74 @@ class TaskPublishService(object):
             # split from where any other task uses master ('' = not one). No git.
             'merge_branch': self._repository_service.plan_merge_branch(normalized),
         }
+
+    def task_unpushed_work(self, task_id: str) -> dict[str, object]:
+        """What deleting this task's workspace would lose, per repository.
+
+        Asked before the delete dialog opens. Unlike ``has_changes_to_push``
+        (a button hint with a 3s budget, where False means "none found yet")
+        this answer is a warning about lost work, so it never guesses:
+
+        - ``repositories`` — each clone holding work its remote does not
+          have: ``changed_files`` (uncommitted, on any branch) and
+          ``unpushed_commits`` (on any local branch, pushed nowhere).
+        - ``unchecked`` — each clone git could not read in time, with why.
+          The page treats it as "may lose work", never as "clean".
+
+        A repository with no clone on disk has nothing to lose and is left
+        out. All local git, every clone at once.
+        """
+        normalized = str(task_id or '').strip()
+        empty = {'repositories': [], 'unchecked': []}
+        if not normalized:
+            return empty
+        repos, _branch_name, _task = self._resolve_publish_context(normalized)
+        clones = [
+            repository for repository in repos
+            if (Path(str(getattr(repository, 'local_path', '') or '')) / '.git').is_dir()
+        ]
+        if not clones:
+            return empty
+        late = object()
+        results = run_all_with_deadline(
+            [
+                (lambda path=str(repository.local_path): self._unpushed_work_of(path))
+                for repository in clones
+            ],
+            seconds=UNPUSHED_WORK_CHECK_SECONDS,
+            default=late,
+        )
+        repositories: list[dict[str, object]] = []
+        unchecked: list[dict[str, object]] = []
+        for repository, result in zip(clones, results):
+            repository_id = str(getattr(repository, 'id', '') or '')
+            if result is late:
+                unchecked.append({
+                    'repository_id': repository_id,
+                    'error': f'git did not answer within {UNPUSHED_WORK_CHECK_SECONDS:g}s',
+                })
+                continue
+            if 'error' in result:
+                unchecked.append({'repository_id': repository_id, 'error': result['error']})
+                continue
+            changed_files = len(result['changed_files'])
+            unpushed_commits = int(result['unpushed_commits'])
+            if changed_files or unpushed_commits:
+                repositories.append({
+                    'repository_id': repository_id,
+                    'changed_files': changed_files,
+                    'unpushed_commits': unpushed_commits,
+                })
+        return {'repositories': repositories, 'unchecked': unchecked}
+
+    def _unpushed_work_of(self, local_path: str) -> dict[str, object]:
+        """One clone's answer; a git failure comes back as its ``error``
+        (``run_all_with_deadline`` would turn a raise into "late")."""
+        try:
+            return self._repository_service.work_not_on_remote(local_path)
+        except Exception as exc:
+            self.logger.warning('could not read unpushed work in %s: %s', local_path, exc)
+            return {'error': str(exc) or type(exc).__name__}
 
     # How long the pull-request lookup may take, all repositories at once —
     # under the 8s the page waits for it (api.js), so a slow git host costs

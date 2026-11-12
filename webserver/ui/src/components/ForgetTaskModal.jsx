@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { deriveTabStatus } from '../utils/tabStatus.js';
 import { useEscapeKey } from '../hooks/useEscapeKey.js';
+import { unpushedWorkLines } from '../utils/unpushedWork.js';
 import DialogShell from './DialogShell.jsx';
 
 /**
@@ -25,7 +26,7 @@ import DialogShell from './DialogShell.jsx';
  * two mutually exclusive sentences rather than hedging in one.
  * ``onConfirm`` receives the checkbox state.
  */
-export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
+export default function ForgetTaskModal({ session, unpushedWork = null, onConfirm, onCancel }) {
   const cancelRef = useRef(null);
   // Default OFF: closing someone's ticket is an outward-facing action,
   // so it only happens when the operator says so on this specific delete.
@@ -46,7 +47,11 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
   const taskTitle = String(session.task_summary || '').trim();
   const baseStatus = deriveTabStatus(session);
   const inReview = baseStatus === TAB_STATUS.REVIEW;
-  const hasUnpushed = !!session.has_changes_pending;
+  // ``unpushedWork`` is what UnpushedWorkWarning found just before this
+  // dialog opened (the operator chose "Delete anyway"): the callout names
+  // the same repositories, so the last screen before the delete says it too.
+  const unpushedLines = unpushedWorkLines(unpushedWork).filter((line) => !line.unchecked);
+  const hasUnpushed = !!session.has_changes_pending || unpushedLines.length > 0;
   // This task may be a live plan's source: its sub-tasks are forgotten the
   // same way, so the operator sees that before confirming, not after.
   const plan = session.plan_queue;
@@ -138,11 +143,21 @@ export default function ForgetTaskModal({ session, onConfirm, onCancel }) {
                 any fixes that haven&rsquo;t been pushed.{' '}
               </>
             )}
-            {hasUnpushed && (
+            {hasUnpushed && unpushedLines.length === 0 && (
               <>
                 ⚠ This task has <strong>changes ready to push that
                 haven&rsquo;t been pushed yet</strong> — they will be
                 gone for good.
+              </>
+            )}
+            {unpushedLines.length > 0 && (
+              <>
+                ⚠ This task has <strong>work that was never pushed</strong>
+                {' '}&mdash; it will be gone for good:{' '}
+                {unpushedLines
+                  .map((line) => `${line.repository} (${line.text})`)
+                  .join('; ')}
+                .
               </>
             )}
           </p>

@@ -187,10 +187,15 @@ class TheChatGoesWrongTests(_Runs):
         # The turn is paused on a person; even reading as stalled must not
         # get it killed and respawned.
         chat.awaiting_approval = 'Write'
-        chat.stalled = True
         self.assertTrue(wait_until(
             lambda: service.state('T-1').waiting_for == 'waiting for your approval in the chat (Write)',
         ))
+        # Stalled only once the runner has SEEN the approval. Set together, a
+        # poll could read "no approval" just before and "stalled" just after
+        # (two reads, another thread between them) and respawn: the gate's
+        # load hit exactly that. The runner reads the approval first on every
+        # poll, so from here on each poll that sees "stalled" sees it too.
+        chat.stalled = True
         time.sleep(0.05)
         self.assertEqual([forced for _, forced in chat.delivered], [False])
         # Approved: the turn finishes and the loop moves on.

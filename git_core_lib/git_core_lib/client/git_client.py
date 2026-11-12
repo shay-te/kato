@@ -325,6 +325,35 @@ class GitClientMixin:
             f'failed to set the upstream of {branch_name}',
         )
 
+    def work_not_on_remote(self, local_path: str) -> dict[str, object]:
+        """What deleting this clone would lose: work the remote does not have.
+
+        ``changed_files`` — paths ``git status`` reports (edited, staged or
+        new), on whatever branch is checked out. ``unpushed_commits`` —
+        commits on ANY local branch that no remote-tracking branch contains,
+        so a commit sitting on a branch that is not checked out counts too.
+
+        Read against the remote-tracking refs as last fetched: a commit
+        merged upstream since then still counts until the next fetch. That
+        errs towards warning, never towards a silent loss. Raises when git
+        cannot answer — "could not tell" is not "nothing to lose".
+        """
+        status = self._working_tree_status(local_path)
+        changed_files = [line[3:] for line in status.splitlines() if line.strip()]
+        count_text = self._git_stdout(
+            local_path,
+            ['rev-list', '--count', '--branches', '--not', '--remotes'],
+            f'failed to count unpushed commits in {local_path}',
+        )
+        try:
+            unpushed_commits = int(count_text or '0')
+        except ValueError as exc:
+            raise RuntimeError(
+                f'failed to parse the unpushed commit count in {local_path}: '
+                f'{count_text or "<empty>"}'
+            ) from exc
+        return {'changed_files': changed_files, 'unpushed_commits': unpushed_commits}
+
     def has_local_branch(self, local_path: str, branch_name: str) -> bool:
         return self._git_reference_exists(local_path, f'refs/heads/{branch_name}')
 

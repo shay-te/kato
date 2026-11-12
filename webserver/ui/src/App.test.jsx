@@ -11,6 +11,9 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 vi.mock('./api.js', () => ({
   forgetTaskWorkspace: vi.fn().mockResolvedValue({ ok: true }),
+  // Asked when a tab's ✕ is pressed, before the delete dialog. Clean by
+  // default: nothing unpushed, so the delete dialog opens straight away.
+  fetchTaskUnpushedWork: vi.fn().mockResolvedValue({ repositories: [], unchecked: [] }),
   triggerScan: vi.fn().mockResolvedValue({ ok: true }),
   // usePlanWatch polls this on mount; stub it so the mock doesn't
   // reject (unhandled-rejection noise Vitest flags).
@@ -237,7 +240,7 @@ vi.mock('./components/ToastContainer.jsx', () => ({
 
 import { useSessions } from './hooks/useSessions.js';
 import { useResizable } from './hooks/useResizable.js';
-import { createLocalTask, forgetTaskWorkspace } from './api.js';
+import { createLocalTask, fetchTaskUnpushedWork, forgetTaskWorkspace } from './api.js';
 import { _resetNewTaskDraft } from './components/newTask/newTaskDraftStore.js';
 import { _resetLastActiveTask } from './utils/lastActiveTask.js';
 import App from './App.jsx';
@@ -245,6 +248,8 @@ import App from './App.jsx';
 
 beforeEach(() => {
   forgetTaskWorkspace.mockClear();
+  fetchTaskUnpushedWork.mockReset();
+  fetchTaskUnpushedWork.mockResolvedValue({ repositories: [], unchecked: [] });
   useResizable.mockClear();
   useSessions.mockReturnValue({
     sessions: [],
@@ -644,6 +649,12 @@ describe('App — forget task (hard-confirm modal gate)', () => {
   // ForgetTaskModal and the operator must approve.
   const confirmBtn = () => document.getElementById('forget-task-confirm');
   const cancelBtn = () => document.getElementById('forget-task-cancel');
+  // The ✕ first asks what the workspace would lose; with nothing unpushed
+  // the delete dialog follows as soon as that answer is in.
+  const openForget = async (taskId) => {
+    fireEvent.click(screen.getByRole('button', { name: `forget-${taskId}` }));
+    await waitFor(() => { expect(confirmBtn()).toBeInTheDocument(); });
+  };
 
   test('clicking "forget" opens the modal but does NOT delete yet', async () => {
     useSessions.mockReturnValue({
@@ -652,7 +663,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     });
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await openForget('T1');
 
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(confirmBtn()).toBeInTheDocument();
@@ -666,7 +677,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     });
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await openForget('T1');
     fireEvent.click(cancelBtn());
 
     await waitFor(() => {
@@ -683,7 +694,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     });
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await openForget('T1');
     fireEvent.click(confirmBtn());
 
     await waitFor(() => {
@@ -701,7 +712,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     });
 
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await openForget('T1');
     fireEvent.click(document.getElementById('forget-task-done'));
     fireEvent.click(confirmBtn());
 
@@ -719,7 +730,7 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
     expect(screen.getByText('active=T1')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await openForget('T1');
     fireEvent.click(confirmBtn());
     await waitFor(() => {
       expect(screen.getByText('active=none')).toBeInTheDocument();
@@ -735,12 +746,128 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
     expect(screen.getByText('active=T1')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'forget-T2' }));
+    await openForget('T2');
     fireEvent.click(confirmBtn());
     await waitFor(() => {
       expect(forgetTaskWorkspace).toHaveBeenCalledWith('T2', { markDone: false });
     });
     expect(screen.getByText('active=T1')).toBeInTheDocument();
+  });
+});
+
+
+describe('App — warns about unpushed work BEFORE the delete dialog', () => {
+  const UNPUSHED = {
+    repositories: [{ repository_id: 'backend', changed_files: 2, unpushed_commits: 3 }],
+    unchecked: [],
+  };
+  const warning = () => document.getElementById('unpushed-work-modal');
+  const deleteDialog = () => document.getElementById('forget-task-modal');
+
+  function renderWithTasks(sessions = [{ task_id: 'T1' }, { task_id: 'T2' }]) {
+    useSessions.mockReturnValue({ sessions, refresh: vi.fn() });
+    render(<App />);
+  }
+
+  test('unpushed work shows the warning first, naming what would be lost', async () => {
+    fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+    expect(fetchTaskUnpushedWork).toHaveBeenCalledWith('T1');
+    expect(warning()).toHaveTextContent('Work not pushed');
+    expect(warning()).toHaveTextContent('backend');
+    expect(warning()).toHaveTextContent('3 commits not pushed, 2 files changed and not committed');
+    expect(deleteDialog()).toBeNull();
+    expect(document.activeElement).toBe(document.getElementById('unpushed-work-cancel'));
+  });
+
+  test('Cancel on the warning deletes nothing and opens no delete dialog', async () => {
+    fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+
+    fireEvent.click(document.getElementById('unpushed-work-cancel'));
+    await waitFor(() => { expect(warning()).toBeNull(); });
+    expect(deleteDialog()).toBeNull();
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+  });
+
+  test('"Delete anyway" opens the delete dialog, which names the work too', async () => {
+    fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+
+    fireEvent.click(document.getElementById('unpushed-work-continue'));
+    await waitFor(() => { expect(deleteDialog()).toBeInTheDocument(); });
+    expect(warning()).toBeNull();
+    expect(deleteDialog().querySelector('.forget-task-warning'))
+      .toHaveTextContent('backend (3 commits not pushed, 2 files changed and not committed)');
+    // Still the delete dialog's own confirm that deletes — not the warning.
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+    fireEvent.click(document.getElementById('forget-task-confirm'));
+    await waitFor(() => {
+      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1', { markDone: false });
+    });
+  });
+
+  test('"Open task" goes to the task instead of deleting it', async () => {
+    fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T2' }));
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+
+    fireEvent.click(document.getElementById('unpushed-work-open'));
+    await waitFor(() => { expect(screen.getByText('active=T2')).toBeInTheDocument(); });
+    expect(warning()).toBeNull();
+    expect(deleteDialog()).toBeNull();
+    expect(forgetTaskWorkspace).not.toHaveBeenCalled();
+  });
+
+  test('nothing unpushed goes straight to the delete dialog, no warning', async () => {
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await waitFor(() => { expect(deleteDialog()).toBeInTheDocument(); });
+    expect(warning()).toBeNull();
+    expect(deleteDialog().querySelector('.forget-task-warning')).toBeNull();
+  });
+
+  test('a check that fails warns that it could not tell — never "clean"', async () => {
+    fetchTaskUnpushedWork.mockRejectedValue(new Error('timed out'));
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+    expect(warning()).toHaveTextContent('could not check');
+    expect(deleteDialog()).toBeNull();
+  });
+
+  test('a repository git could not read warns, and says why', async () => {
+    fetchTaskUnpushedWork.mockResolvedValue({
+      repositories: [], unchecked: [{ repository_id: 'api', error: 'git did not answer within 15s' }],
+    });
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    await waitFor(() => { expect(warning()).toBeInTheDocument(); });
+    expect(warning()).toHaveTextContent('api');
+    expect(warning()).toHaveTextContent('could not check: git did not answer within 15s');
+  });
+
+  test('a slow check shows "Checking…" (with Cancel) instead of nothing', async () => {
+    let answer;
+    fetchTaskUnpushedWork.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    renderWithTasks();
+    fireEvent.click(screen.getByRole('button', { name: 'forget-T1' }));
+    expect(warning()).toBeNull();
+    await waitFor(() => {
+      expect(warning()).toHaveTextContent('Checking for unpushed work');
+    });
+    expect(document.getElementById('unpushed-work-continue')).toBeNull();
+    await act(async () => { answer({ repositories: [], unchecked: [] }); });
+    await waitFor(() => { expect(deleteDialog()).toBeInTheDocument(); });
+    expect(warning()).toBeNull();
   });
 });
 

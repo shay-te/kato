@@ -1,0 +1,155 @@
+import { useEffect, useRef, useState } from 'react';
+import { fetchTaskUnpushedWork } from '../api.js';
+import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
+import { useEscapeKey } from '../hooks/useEscapeKey.js';
+import { mayLoseWork, unpushedWorkLines } from '../utils/unpushedWork.js';
+import DialogShell from './DialogShell.jsx';
+
+// How long the check may run before "Checking…" is shown. It is local git and
+// usually answers in a blink; a dialog painted for those frames is a flash.
+export const CHECKING_GRACE_MS = 300;
+
+/**
+ * The step BEFORE the delete dialog: does this task hold work that was never
+ * pushed?
+ *
+ * Deleting a task deletes its workspace clones, and with them every commit
+ * and edit the remote does not have. The delete dialog says that in general
+ * words; this says it about THIS task — which repositories, how many commits,
+ * how many files — and only when it is true. Nothing to lose → it renders
+ * nothing and hands straight on to the delete dialog (``onContinue``).
+ *
+ * "Could not check" (a clone git could not read, a failed request) warns too:
+ * the operator decides, not a guess. Cancel is focused; Esc cancels. ``onOpenTask``
+ * takes the operator to the task to push it first.
+ */
+export default function UnpushedWorkWarning({ session, onContinue, onCancel, onOpenTask }) {
+  const taskId = String(session?.task_id || '').trim();
+  // undefined = still checking; null = could not ask at all.
+  const [answer, setAnswer] = useState(undefined);
+  const cancelRef = useRef(null);
+  const onContinueRef = useRef(onContinue);
+  onContinueRef.current = onContinue;
+
+  useEscapeKey(onCancel);
+
+  useEffect(() => {
+    let live = true;
+    fetchTaskUnpushedWork(taskId).then(
+      (body) => { if (live) { setAnswer(body && typeof body === 'object' ? body : null); } },
+      () => { if (live) { setAnswer(null); } },
+    );
+    return () => { live = false; };
+  }, [taskId]);
+
+  const checking = answer === undefined;
+  const warn = !checking && mayLoseWork(answer);
+  const showChecking = useDelayedFlag(checking, CHECKING_GRACE_MS);
+
+  useEffect(() => {
+    if (!checking && !warn) { onContinueRef.current(answer); }
+  }, [checking, warn, answer]);
+
+  useEffect(() => {
+    if (warn || showChecking) { cancelRef.current?.focus(); }
+  }, [warn, showChecking]);
+
+  if (!warn && !showChecking) { return null; }
+
+  const cancelButton = (
+    <button
+      id="unpushed-work-cancel"
+      type="button"
+      className="secondary"
+      ref={cancelRef}
+      onClick={onCancel}
+    >
+      Cancel
+    </button>
+  );
+
+  if (!warn) {
+    return (
+      <DialogShell
+        id="unpushed-work-modal"
+        ariaLabelledBy="unpushed-work-title"
+        title="Checking for unpushed work…"
+        subtitle={taskId}
+        subtitleId="unpushed-work-name"
+        onClose={onCancel}
+        backdropClose
+      >
+        <p className="forget-task-lead">
+          Looking for commits and edits in <strong>{taskId}</strong> that
+          were never pushed, before it can be deleted.
+        </p>
+        <div className="modal-actions">{cancelButton}</div>
+      </DialogShell>
+    );
+  }
+
+  const lines = unpushedWorkLines(answer);
+  return (
+    <DialogShell
+      id="unpushed-work-modal"
+      ariaLabelledBy="unpushed-work-title"
+      title="Work not pushed"
+      subtitle={taskId}
+      subtitleId="unpushed-work-name"
+      onClose={onCancel}
+      backdropClose
+    >
+      <p className="forget-task-warning" role="alert">
+        {answer === null ? (
+          <>
+            ⚠ Kato <strong>could not check</strong> whether {taskId} has work
+            that was never pushed. Deleting the task deletes its workspace,
+            and anything not pushed with it.
+          </>
+        ) : (
+          <>
+            ⚠ <strong>{taskId} has work that was never pushed.</strong>{' '}
+            Deleting the task deletes its workspace, and this work with it
+            &mdash; there is no backup.
+          </>
+        )}
+      </p>
+
+      {lines.length > 0 && (
+        <ul className="forget-task-effects" id="unpushed-work-list">
+          {lines.map((line) => (
+            <li key={`${line.unchecked ? 'unchecked' : 'unpushed'}:${line.repository}`}>
+              <strong>{line.repository || 'workspace'}</strong>{' '}&mdash; {line.text}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="forget-task-lead">
+        To keep it, open the task and press <strong>Push</strong> first.
+      </p>
+
+      <div className="modal-actions">
+        {cancelButton}
+        {typeof onOpenTask === 'function' && (
+          <button
+            id="unpushed-work-open"
+            type="button"
+            className="secondary"
+            onClick={() => onOpenTask(taskId)}
+          >
+            Open task
+          </button>
+        )}
+        <button
+          id="unpushed-work-continue"
+          type="button"
+          className="danger"
+          onClick={() => onContinue(answer)}
+        >
+          Delete anyway…
+        </button>
+      </div>
+    </DialogShell>
+  );
+}

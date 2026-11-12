@@ -220,6 +220,43 @@ describe('ForgetTaskModal', () => {
     );
   });
 
+  // What the check before this dialog found (the operator chose "Delete
+  // anyway") is named here too: the last screen before the delete says it.
+  test('names each repository the pre-delete check found unpushed work in', () => {
+    render(
+      <ForgetTaskModal
+        session={_session({ has_changes_pending: true })}
+        unpushedWork={{
+          repositories: [
+            { repository_id: 'backend', changed_files: 0, unpushed_commits: 2 },
+            { repository_id: 'client', changed_files: 1, unpushed_commits: 0 },
+          ],
+          unchecked: [{ repository_id: 'api', error: 'boom' }],
+        }}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent(
+      'backend (2 commits not pushed); client (1 file changed and not committed)',
+    );
+    // One sentence about it, not the general one as well.
+    expect(alert).not.toHaveTextContent(/haven.t been pushed yet/i);
+    // A repository it could not read is not claimed to hold unpushed work.
+    expect(alert).not.toHaveTextContent('api');
+  });
+
+  test('a check that found nothing adds no callout', () => {
+    render(
+      <ForgetTaskModal
+        session={_session()}
+        unpushedWork={{ repositories: [], unchecked: [] }}
+        onConfirm={vi.fn()} onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   test('both warnings combine when in review AND changes pending', () => {
     render(
       <ForgetTaskModal

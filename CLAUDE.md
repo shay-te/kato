@@ -1170,6 +1170,14 @@ token) and the footnote says so. Do not add a second price table or compute cost
   override) the autonomous flow already ran, never past it before. An unreadable task holds too, same reasoning
   as autopilot's own "could not read the task" case: push/PR stay an operator action until the gate is proven
   to allow them. `push_approval_gate_utils.py` now documents both callers.
+- **Deleting a task warns first when its work was never pushed.** The tab's ✕ opens `UnpushedWorkWarning`
+  BEFORE `ForgetTaskModal`: `GET /api/sessions/<id>/unpushed-work` → `TaskPublishService.task_unpushed_work` →
+  `GitClientMixin.work_not_on_remote` per clone (uncommitted files on ANY branch + `rev-list --branches --not
+  --remotes`: commits on any local branch no remote has). Nothing to lose → straight to the delete dialog, no
+  flash (300ms grace before "Checking…"). Otherwise "Work not pushed" names each repo, with Cancel (focused) /
+  Open task / Delete anyway…, and the delete dialog's red callout names the same repos. A clone git cannot
+  read in 15s, a failed request, or no service = "could not check" → warns, NEVER "clean". Not
+  `has_changes_to_push`: that is a button hint with a 3s budget where False means "none found yet".
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
 - **Green means the work landed.** `_push_problems(push_result)` is the ONE answer to "what did not reach the remote":
