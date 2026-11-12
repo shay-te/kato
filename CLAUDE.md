@@ -496,8 +496,9 @@ conventions used to answer "restart required" though they never needed one.
 ### The tasks rail (left edge, Chrome-style vertical tabs) and the task switcher
 There is no task strip at the top and **no app bar** any more. Every task is a ROW in a rail on the left
 (`TabList`, `#tabs-pane` `.tabs-pane-side`), `position: fixed`, top to bottom of the screen, z-index 900, ALWAYS
-there, COLLAPSED to each row's dot + task code (`$TASK-RAIL-WIDTH`, 128px — the one column the page gives up:
-`#root`'s left padding). Hovering the rail expands it OVER the page after `TASK_MENU_OPEN_DELAY_MS` (a pointer
+there, COLLAPSED to each row's dot + task code, bare (no row box except the task on screen, one waiting for you, a
+pinned one), `$TASK-RAIL-WIDTH` 118px — the one column the page gives up (`#root`'s left padding), as narrow as a
+WHOLE code allows: codes are never cut or stripped of their prefix ("…" costs as much as "UNA"). Hovering the rail expands it OVER the page after `TASK_MENU_OPEN_DELAY_MS` (a pointer
 only passing the edge does nothing; pointing at the kato logo expands at once) and it PUSHES NOTHING; leaving
 collapses it after `TASK_MENU_CLOSE_GRACE_MS` (`stores/taskMenuStore.js`); Escape and a press outside collapse
 it. **Expanding moves nothing already on screen** (proven in Chromium: every row's top/height/dot, the logo, the

@@ -76,7 +76,7 @@ test('the task id is not set in the smallest available type', () => {
 test('the chips wrap within the collapsed rail, expanded too, so none moves under the pointer', () => {
   const body = rulesFor('.permission-roster');
   assert.match(body, /flex-wrap:\s*wrap/);
-  assert.match(body, /max-width:\s*112px/);  // $TASK-RAIL-INNER
+  assert.match(body, /max-width:\s*106px/);  // $TASK-RAIL-INNER
 });
 
 test('the chip is never narrower than the id it carries', () => {

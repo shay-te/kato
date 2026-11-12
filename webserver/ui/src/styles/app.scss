@@ -713,7 +713,7 @@ body {
   flex-direction: column;
   width: $TASK-RAIL-WIDTH;
   box-sizing: border-box;
-  padding: $SPACE-8;
+  padding: $SPACE-8 $SPACE-6;
   gap: $SPACE-8;
   border-right: 1px solid $C-NEUTRAL-100-A06;
   background: linear-gradient(180deg,
@@ -741,6 +741,19 @@ body {
 .tabs-pane-side:not(.is-open) .tab .tab-pin-btn,
 .tabs-pane-side:not(.is-open) .tab .tab-forget-btn {
   display: none;
+}
+
+/* Collapsed, a row is bare, like Chrome's rail: no box, a little less room on
+ * its right (nothing is there). The task on screen, a task waiting for you and
+ * a pinned one keep theirs — that is how the rail still says which they are.
+ * Hovering gives a row its box back (the rail is expanding by then). */
+.tabs-pane-side:not(.is-open) .tab {
+  padding-right: $SPACE-4;
+}
+
+.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(:hover) {
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Collapsed, the actions that fit (go to task, new task, add task); the rest
@@ -792,8 +805,8 @@ body {
 
 .tabs-pane-side .tab-children > ul {
   list-style: none;
-  margin: 0 0 0 $SPACE-6;
-  padding: 0 0 0 $SPACE-6;
+  margin: 0 0 0 $SPACE-2;
+  padding: 0 0 0 $SPACE-3;
   border-left: 1px solid $C-NEUTRAL-100-A10;
   display: flex;
   flex-direction: column;
@@ -1022,7 +1035,7 @@ body {
   min-height: calc(#{$ICON-BOX-SM} + 2 * #{$SPACE-6} + 2px);
   white-space: nowrap;
   font-size: $TEXT-12;
-  padding: $SPACE-6 $SPACE-8 $SPACE-6 $SPACE-10;
+  padding: $SPACE-6 $SPACE-8 $SPACE-6 $SPACE-6;
   border-radius: $RADIUS-6;
   background: $C-NEUTRAL-100-A06;
   border: 1px solid $C-NEUTRAL-100-A06;

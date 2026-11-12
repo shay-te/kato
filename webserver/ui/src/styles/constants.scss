@@ -201,11 +201,13 @@ $ICON-GLYPH-SM: 10px;
 // ---------- Layout ----------
 // The tasks rail on the left, collapsed: each task's dot and code. It is the
 // one column the page gives up for it (``#root``'s left padding); expanded,
-// it lays over the page and moves nothing.
-$TASK-RAIL-WIDTH: 128px;
-// What the collapsed rail holds inside its 8px padding: the controls that must
-// not move when it expands are laid out within this width in both states.
-$TASK-RAIL-INNER: $TASK-RAIL-WIDTH - 16px;
+// it lays over the page and moves nothing. As narrow as a WHOLE task code
+// allows (codes are never cut: "UNA-3444" is ~65px at 12px semibold), with a
+// sub-task's indent and a few pixels to spare for wider system fonts.
+$TASK-RAIL-WIDTH: 118px;
+// What the collapsed rail holds inside its 6px side padding: the controls that
+// must not move when it expands are laid out within this width in both states.
+$TASK-RAIL-INNER: $TASK-RAIL-WIDTH - 12px;
 
 // ---------- Radius ----------
 $RADIUS-4: 4px;

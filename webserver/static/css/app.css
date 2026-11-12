@@ -125,7 +125,7 @@ body {
   overflow-x: hidden;
   /* The tasks rail's column (it is ``position: fixed`` at the left edge).
    * There is no app bar: the page starts at the top, beside the rail. */
-  padding-left: 128px;
+  padding-left: 118px;
 }
 
 /* The rail's top: the kato logo (its handle) and name. There is no app bar —
@@ -667,9 +667,9 @@ body {
   z-index: 900;
   display: flex;
   flex-direction: column;
-  width: 128px;
+  width: 118px;
   box-sizing: border-box;
-  padding: 8px;
+  padding: 8px 6px;
   gap: 8px;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   background: linear-gradient(180deg, rgba(28, 28, 30, 0.62) 0%, rgba(16, 16, 18, 0.75) 100%);
@@ -695,6 +695,19 @@ body {
 .tabs-pane-side:not(.is-open) .tab .tab-pin-btn,
 .tabs-pane-side:not(.is-open) .tab .tab-forget-btn {
   display: none;
+}
+
+/* Collapsed, a row is bare, like Chrome's rail: no box, a little less room on
+ * its right (nothing is there). The task on screen, a task waiting for you and
+ * a pinned one keep theirs — that is how the rail still says which they are.
+ * Hovering gives a row its box back (the rail is expanding by then). */
+.tabs-pane-side:not(.is-open) .tab {
+  padding-right: 4px;
+}
+
+.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(:hover) {
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Collapsed, the actions that fit (go to task, new task, add task); the rest
@@ -746,8 +759,8 @@ body {
 
 .tabs-pane-side .tab-children > ul {
   list-style: none;
-  margin: 0 0 0 6px;
-  padding: 0 0 0 6px;
+  margin: 0 0 0 2px;
+  padding: 0 0 0 3px;
   border-left: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
@@ -984,7 +997,7 @@ body {
   min-height: calc(16px + 2 * 6px + 2px);
   white-space: nowrap;
   font-size: 12px;
-  padding: 6px 8px 6px 10px;
+  padding: 6px 8px 6px 6px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -12524,7 +12537,7 @@ button.settings-prompt-editor-head {
   /* In the rail's foot: as many chips to a row as the COLLAPSED rail holds,
    * expanded too, so a chip never moves out from under the pointer. */
   flex-wrap: wrap;
-  max-width: 112px;
+  max-width: 106px;
   gap: 6px;
   align-items: center;
   /* Never shrunk. Shrinking a nowrap row does not reflow it, it just makes

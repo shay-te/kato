@@ -45,8 +45,8 @@ test('the tasks rail is always there, and the page gives up only its collapsed w
   assertDeclaration(menu, 'position', 'fixed');
   assertDeclaration(menu, 'left', '0');
   assertDeclaration(menu, 'top', '0');
-  assertDeclaration(menu, 'width', '128px');
-  assertDeclaration(ruleBody('#root'), 'padding-left', '128px');
+  assertDeclaration(menu, 'width', '118px');
+  assertDeclaration(ruleBody('#root'), 'padding-left', '118px');
   // Over everything on the page; dialogs still cover it.
   const z = Number(menu.match(/z-index:\s*(\d+)/)[1]);
   assert.ok(z > 60 && z < 999, `menu z-index ${z} must clear page chrome and stay under dialogs`);
@@ -66,6 +66,12 @@ test('collapsed, a row is its dot and code, at the height it has expanded', () =
     assert.match(css, new RegExp(`\\.tabs-pane-side:not\\(\\.is-open\\) \\.tab \\.${hidden}[,\\s][^{]*\\{[^}]*display:\\s*none`));
   }
   assertDeclaration(ruleBody('.tabs-pane-side .tab'), 'min-height', 'calc\\(16px \\+ 2 \\* 6px \\+ 2px\\)');
+});
+
+test('collapsed, a row is bare — but the task on screen, one waiting for you and a pinned one keep their box', () => {
+  const bare = ruleBody('.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(:hover)');
+  assertDeclaration(bare, 'background', 'transparent');
+  assertDeclaration(bare, 'border-color', 'transparent');
 });
 
 test('the footer\'s icons stay three to a row in both widths', () => {
