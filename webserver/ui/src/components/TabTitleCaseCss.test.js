@@ -19,7 +19,7 @@ function rules(selector) {
 }
 
 test('the task name on a tab is capitalized', () => {
-  const bodies = rules('.tabs-pane-top .tab .tab-label-title');
+  const bodies = rules('.tabs-pane-side .tab .tab-label-title');
   assert.ok(bodies.length > 0, 'expected the tab title rule in the built stylesheet');
   assert.ok(
     bodies.some((body) => /text-transform\s*:\s*capitalize\s*;/.test(body)),
@@ -28,7 +28,7 @@ test('the task name on a tab is capitalized', () => {
 });
 
 test('the rename box keeps what is typed', () => {
-  for (const body of rules('.tabs-pane-top .tab .tab-label-rename')) {
+  for (const body of rules('.tabs-pane-side .tab .tab-label-rename')) {
     assert.doesNotMatch(body, /text-transform/);
   }
 });

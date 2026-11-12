@@ -9,19 +9,23 @@ import { render } from '@testing-library/react';
 
 const renders = vi.hoisted(() => ({ byTask: {} }));
 
-// A child of Tab that runs exactly when Tab does.
-vi.mock('./reviewLoop/ReviewLoopTabBadge.jsx', () => ({
-  default: function CountingBadge({ loop }) {
-    renders.byTask[loop.task] = (renders.byTask[loop.task] || 0) + 1;
-    return null;
-  },
-}));
+// Called exactly once per Tab render (each row derives its agent status).
+vi.mock('../utils/agentStatus.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    deriveAgentStatus: (session, ...rest) => {
+      renders.byTask[session.task_id] = (renders.byTask[session.task_id] || 0) + 1;
+      return actual.deriveAgentStatus(session, ...rest);
+    },
+  };
+});
 
 import TabList from './TabList.jsx';
 import { reuseUnchanged } from '../utils/reuseUnchanged.js';
 
 const session = (id, extra = {}) => ({
-  task_id: id, task_summary: `Task ${id}`, status: 'active', review_loop: { task: id }, ...extra,
+  task_id: id, task_summary: `Task ${id}`, status: 'active', ...extra,
 });
 const noop = () => {};
 const stableProps = {

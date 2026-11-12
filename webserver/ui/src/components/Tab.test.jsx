@@ -7,6 +7,8 @@ import { describe, test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 
 import Tab from './Tab.jsx';
+import { planQueueView } from './planQueue/planQueueViewStore.js';
+import { reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
@@ -145,80 +147,23 @@ describe('Tab', () => {
   });
 
 
-  test('an un-resized tab is left to size itself to its name', () => {
-    // No inline max-width, and no `has-custom-width` class: both of those
-    // are what pinned the pill to a default width and ellipsised the ticket
-    // name the operator was trying to read.
-    window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
-    const { container } = render(
-      <Tab session={_session()} onSelect={() => {}} />,
-    );
+  test('a row is as wide as the menu: no resize grip, no stored width', () => {
+    const { container } = render(<Tab session={_session()} onSelect={() => {}} />);
     const li = container.querySelector('li');
-
-    expect(li.style.maxWidth).toBe('');
+    expect(container.querySelector('.tab-resize-handle')).toBeNull();
+    expect(li.style.width).toBe('');
     expect(li).not.toHaveClass('has-custom-width');
   });
 
-  test('a tab the operator resized takes a definite width, not a cap', () => {
-    // Definite, because a max-width leaves an inline-block pill sizing to
-    // its content — and the label's percentage reserve then resolves against
-    // a width derived from the label, ellipsising a name that had room. No
-    // amount of widening cleared it.
-    window.localStorage.setItem('kato.tab.cap.v3.KATO-123', '320');
-    try {
-      const { container } = render(
-        <Tab session={_session()} onSelect={() => {}} />,
-      );
-      const li = container.querySelector('li');
-
-      expect(li.style.width).toBe('320px');
-      expect(li.style.maxWidth).toBe('');
-      expect(li).toHaveClass('has-custom-width');
-    } finally {
-      window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
-    }
-  });
-
-  test('a width left over from the mount-persisting hook is ignored', () => {
-    // Every browser has one of these for every task it ever opened: the old
-    // hook wrote the default on mount, so "stored" did not mean "chosen".
-    // Honouring them would pin every tab to 260px and ellipsise the name.
-    window.localStorage.setItem('kato.tab.cap.KATO-123', '260');
-    try {
-      const { container } = render(
-        <Tab session={_session()} onSelect={() => {}} />,
-      );
-      const li = container.querySelector('li');
-
-      expect(li.style.maxWidth).toBe('');
-      expect(li).not.toHaveClass('has-custom-width');
-    } finally {
-      window.localStorage.removeItem('kato.tab.cap.KATO-123');
-    }
-  });
-
-  test('a stored width wider than the content is pulled back to it', () => {
-    // Dragging past the natural width only adds empty pill, so the measured
-    // auto-size width is the drag's upper bound. useResizable re-clamps when
-    // that bound arrives, so an over-wide stored value corrects on load.
-    const rect = window.HTMLElement.prototype.getBoundingClientRect;
-    window.HTMLElement.prototype.getBoundingClientRect = function () {
-      return { width: 300, height: 30, top: 0, left: 0, right: 0, bottom: 0 };
-    };
-    window.localStorage.setItem('kato.tab.cap.v3.KATO-123', '900');
-    try {
-      const { container } = render(
-        <Tab session={_session()} onSelect={() => {}} />,
-      );
-
-      // 300 measured + 24px slack. The slack is generous on purpose: an
-      // exact bound puts the ellipsis back at maximum width the moment any
-      // of the chrome measurements shifts by a pixel.
-      expect(container.querySelector('li').style.width).toBe('302px');
-    } finally {
-      window.localStorage.removeItem('kato.tab.cap.v3.KATO-123');
-      window.HTMLElement.prototype.getBoundingClientRect = rect;
-    }
+  test('a sub-task row under its main task is marked nested, without the sub-task icon', () => {
+    // Its place under the main task already says whose it is.
+    const session = _session({ task_id: 'LOCAL-4', plan_parent: 'KATO-123' });
+    const { container, rerender } = render(<Tab session={session} onSelect={() => {}} nested />);
+    expect(container.querySelector('li')).toHaveClass('is-nested');
+    expect(screen.queryByRole('img', { name: /subtask of/i })).toBeNull();
+    // Out of its group (its main task has no row here) it keeps the mark.
+    rerender(<Tab session={session} onSelect={() => {}} />);
+    expect(screen.getByRole('img', { name: 'Subtask of KATO-123' })).toBeInTheDocument();
   });
 
   test('a pencil button opens the rename box', () => {
@@ -317,45 +262,6 @@ describe('Tab', () => {
         .toBe('237.6px');
     } finally {
       window.HTMLElement.prototype.getBoundingClientRect = rect;
-    }
-  });
-
-  test('the pill keeps its width while renaming', () => {
-    // A tab is inline-block, so it sizes to content — and renaming swaps the
-    // id + name for one input. Without pinning, double-clicking shrank the
-    // pill (and shoved every tab after it) the moment you started editing.
-    // jsdom reports offsetWidth as 0, so stub a real measurement.
-    const measured = Object.getOwnPropertyDescriptor(
-      window.HTMLElement.prototype, 'offsetWidth',
-    );
-    Object.defineProperty(window.HTMLElement.prototype, 'offsetWidth', {
-      configurable: true, value: 240,
-    });
-    try {
-      const { container } = render(
-        <Tab session={_session()} onSelect={() => {}} onRename={() => {}} />,
-      );
-      const li = container.querySelector('li');
-      expect(li.style.width).toBe('');
-
-      fireEvent.doubleClick(container.querySelector('.tab-label-title'));
-      expect(li.style.width).toBe('240px');
-      // The input is sized from the label it replaces, so its box can never
-      // run on under the pin / × (which paint above it and would hide the
-      // overflow). Same stub, less the 2px inset.
-      expect(container.querySelector('.tab-label-rename').style.width)
-        .toBe('238px');
-
-      fireEvent.keyDown(container.querySelector('.tab-label-rename'), {
-        key: 'Escape',
-      });
-      // Released afterwards — the pinned width must not outlive the edit, or
-      // a later resize-drag would be fighting a stale inline width.
-      expect(li.style.width).toBe('');
-    } finally {
-      Object.defineProperty(
-        window.HTMLElement.prototype, 'offsetWidth', measured,
-      );
     }
   });
 
@@ -539,7 +445,7 @@ describe('Tab — pin button', () => {
 // dialog, even when I press it 5-6 times, and he also switches to the task
 // which I did not want."
 //
-// Cause: `.tabs-pane-top .tab:active { transform: scale(0.97) }` scaled the
+// Cause: `.tabs-pane-side .tab:active { transform: scale(0.97) }` scaled the
 // whole <li> about its centre on mouse-DOWN, sliding the × disc LEFT out from
 // under the cursor — 0.03 x (halfWidth - 20px), i.e. ~9px on a 665px tab and
 // ~13px on a 909px one, against a disc only 16px wide. Tabs size to the ticket
@@ -654,23 +560,69 @@ describe('Tab — a plan\'s tasks', () => {
     expect(screen.queryByRole('img', { name: /subtask of/i })).toBeNull();
   });
 
-  test('the task a plan was split from carries the split\'s mark, and its card says where it is', () => {
+  test('the task a plan was split from: its row\'s plan button says so, and its card says where it is', () => {
     vi.useFakeTimers();
     try {
       const plan = { plan_id: 'p', status: 'running', step_count: 17, counts: { satisfied: 3 } };
       const { container, rerender } = render(
         <Tab session={_session({ plan_queue: plan })} onSelect={() => {}} />,
       );
-      expect(container.querySelector('.tab-plan-queue-badge.is-running'))
-        .toHaveAttribute('aria-label', 'Split plan: Running · 3/17 done');
+      const button = screen.getByRole('button', { name: 'Plan board of KATO-123' });
+      expect(button).toHaveClass('has-status');  // shown without hovering
+      expect(button.querySelector('.plan-queue-dot.is-running')).not.toBeNull();
       fireEvent.mouseEnter(container.querySelector('li'));
       act(() => { vi.advanceTimersByTime(400); });
       expect(document.querySelector('.tab-tooltip')).toHaveTextContent('Split planRunning · 3/17 done');
       fireEvent.mouseLeave(container.querySelector('li'));
       rerender(<Tab session={_session({ plan_queue: null })} onSelect={() => {}} />);
-      expect(container.querySelector('.tab-plan-queue-badge')).toBeNull();
+      const idle = screen.getByRole('button', { name: 'Split plan of KATO-123' });
+      expect(idle).not.toHaveClass('has-status');  // revealed on hover, like the pencil
+      expect(idle.querySelector('.plan-queue-dot')).toBeNull();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test('the row\'s plan button switches to the task and opens its plan tab', () => {
+    const onSelect = vi.fn();
+    const seen = [];
+    const unsubscribe = planQueueView.subscribe((request) => seen.push([request.taskId, request.label]));
+    try {
+      render(<Tab session={_session()} onSelect={onSelect} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Split plan of KATO-123' }));
+    } finally {
+      unsubscribe();
+    }
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith('KATO-123');
+    expect(seen.at(-1)).toEqual(['KATO-123', 'Split plan']);
+  });
+
+  test('the row\'s review loop button switches to the task and opens its loop', () => {
+    const onSelect = vi.fn();
+    const seen = [];
+    const unsubscribe = reviewLoopView.subscribe((request) => seen.push(request.taskId));
+    try {
+      render(<Tab session={_session()} onSelect={onSelect} />);
+      const button = screen.getByRole('button', { name: 'Review loop of KATO-123' });
+      expect(button).not.toHaveClass('has-status');
+      expect(button.querySelector('[data-icon="loop"]')).not.toBeNull();
+      fireEvent.click(button);
+    } finally {
+      unsubscribe();
+    }
+    expect(onSelect).toHaveBeenCalledWith('KATO-123');
+    expect(seen.at(-1)).toBe('KATO-123');
+  });
+
+  test('a running loop shows on the row\'s loop button, without hovering', () => {
+    const loop = {
+      loop_id: 'c'.repeat(32), status: 'running', phase: 'reviewing', round: 1, max_rounds: 5,
+      started_at: Date.now() / 1000,
+    };
+    render(<Tab session={_session({ review_loop: loop })} onSelect={() => {}} />);
+    const button = screen.getByRole('button', { name: 'Review loop of KATO-123' });
+    expect(button).toHaveClass('has-status');
+    expect(button.querySelector('.review-loop-dot.is-running')).not.toBeNull();
   });
 });

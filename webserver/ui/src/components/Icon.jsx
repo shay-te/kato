@@ -31,6 +31,12 @@ const LINE_ICONS = {
   'plus': 'M12 5v14M5 12h14',
   'minus': 'M5 12h14',
   'xmark': 'M18 6L6 18M6 6l12 12',
+  // Three bars: "a menu is here" (the kato icon opens the tasks menu).
+  // Taller than a usual menu glyph: it stands beside the kato logo, sized to
+  // it, and must read as its partner. Bars in the middle half looked like a
+  // smaller mark; bars to the very edges looked bigger than the logo. These
+  // stop ~3px inside it (``.kato-menu-glyph``).
+  'menu': 'M3 4h18M3 12h18M3 20h18',
   // Crosshair — "take me to this exact spot". Four ticks reaching the edge
   // of the 24x24 grid, an r=7 ring, and a centre dot. The first attempt
   // used an r=5.5 ring with stubby ticks, which at icon size collapsed

@@ -3,9 +3,12 @@
 // the sessions list is empty.
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 
 import TabList from './TabList.jsx';
+import {
+  TASK_MENU_CLOSE_GRACE_MS, _resetTaskMenu, openTaskMenu,
+} from '../stores/taskMenuStore.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
@@ -14,6 +17,9 @@ import {
   readPinnedIds,
 } from '../utils/pinnedTabs.js';
 
+
+// The menu's open state is module-wide: never let one test's hover leak.
+beforeEach(() => { _resetTaskMenu(); });
 
 function _session(taskId, overrides = {}) {
   return {
@@ -255,92 +261,19 @@ describe('TabList — pinned tab ordering', () => {
   // jsdom never moves a scroller, a real browser does. The harness gives the
   // strip a live scrollLeft and makes ``scrollIntoView`` jump it the way a
   // browser would, so "the strip did not move" is something a test can see.
-  function withStripScroll(container, run) {
-    const scroller = container.querySelector('.tabs-scroller');
-    let left = 120;
-    Object.defineProperty(scroller, 'scrollLeft', {
-      configurable: true,
-      get: () => left,
-      set: (value) => { left = value; },
-    });
+  function withFrames(run) {
     const frames = [];
     vi.stubGlobal('requestAnimationFrame', (fn) => { frames.push(fn); return frames.length; });
     const origSIV = window.HTMLElement.prototype.scrollIntoView;
-    const scrollIntoView = vi.fn(() => { left = 900; });
+    const scrollIntoView = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
     try {
-      run({
-        scroller,
-        scrollIntoView,
-        flushFrames: () => frames.splice(0).forEach((fn) => fn(0)),
-        shift: (value) => { left = value; },
-      });
+      run({ scrollIntoView, flushFrames: () => frames.splice(0).forEach((fn) => fn(0)) });
     } finally {
       window.HTMLElement.prototype.scrollIntoView = origSIV;
       vi.unstubAllGlobals();
     }
   }
-
-  test('unpinning several tabs in a row leaves the strip where it was', () => {
-    // The operator clears pins from the pinned block one after another.
-    // Following each unpinned tab out to the unpinned group dragged the strip
-    // away, so they had to scroll back to the pins after every click.
-    window.localStorage.setItem(
-      PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-1', 'A-2']),
-    );
-    const { container } = render(
-      <TabList
-        sessions={[_session('A-1'), _session('A-2'), _session('A-3'), _session('A-4')]}
-        onSelect={() => {}}
-      />,
-    );
-    withStripScroll(container, ({ scroller, scrollIntoView, flushFrames }) => {
-      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-1
-      flushFrames();
-      expect(tabOrder(container)).toEqual(['A-2', 'A-1', 'A-3', 'A-4']);
-      expect(scroller.scrollLeft).toBe(120);
-
-      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-2
-      flushFrames();
-      expect(tabOrder(container)).toEqual(['A-1', 'A-2', 'A-3', 'A-4']);
-      expect(readPinnedIds(window.localStorage)).toEqual([]);
-      expect(scroller.scrollLeft).toBe(120);
-      expect(scrollIntoView).not.toHaveBeenCalled();
-    });
-  });
-
-  test('an unpin holds the strip even when the re-sort itself shifts it', () => {
-    // The pill is moved in the DOM; a browser may nudge the scroller while it
-    // lays the strip out again. The pre-unpin offset wins.
-    window.localStorage.setItem(
-      PINNED_TABS_STORAGE_KEY, JSON.stringify(['A-1', 'A-2']),
-    );
-    const { container } = render(
-      <TabList
-        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
-        onSelect={() => {}}
-      />,
-    );
-    withStripScroll(container, ({ scroller, flushFrames, shift }) => {
-      const list = container.querySelector('#tab-list');
-      const origInsertBefore = list.insertBefore;
-      const origAppendChild = list.appendChild;
-      list.insertBefore = function insertBefore(...args) {
-        const out = origInsertBefore.apply(this, args);
-        shift(640);
-        return out;
-      };
-      list.appendChild = function appendChild(...args) {
-        const out = origAppendChild.apply(this, args);
-        shift(640);
-        return out;
-      };
-      fireEvent.click(container.querySelectorAll('.tab-pin-btn')[0]); // unpin A-1
-      flushFrames();
-      expect(tabOrder(container)).toEqual(['A-2', 'A-1', 'A-3']);
-      expect(scroller.scrollLeft).toBe(120);
-    });
-  });
 
   test('pinning still follows the tab to the pinned block', () => {
     const { container } = render(
@@ -349,7 +282,7 @@ describe('TabList — pinned tab ordering', () => {
         onSelect={() => {}}
       />,
     );
-    withStripScroll(container, ({ scrollIntoView, flushFrames }) => {
+    withFrames(({ scrollIntoView, flushFrames }) => {
       fireEvent.click(container.querySelectorAll('.tab-pin-btn')[2]); // pin A-3
       flushFrames();
       expect(tabOrder(container)).toEqual(['A-3', 'A-1', 'A-2']);
@@ -389,81 +322,6 @@ describe('TabList — pinned tab ordering', () => {
     expect(tabOrder(container)).toEqual(['A-2', 'A-1']);
   });
 
-  test('a LINE-mode mouse wheel scrolls the strip by pixels, not by ~3px', () => {
-    const { container } = render(
-      <TabList
-        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
-        onSelect={() => {}}
-      />,
-    );
-    const scroller = container.querySelector('.tabs-scroller');
-    // jsdom does no layout, so fake a strip that CAN scroll right.
-    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
-    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
-    scroller.scrollLeft = 0;
-
-    // A physical wheel on Windows/Firefox reports deltaMode 1 (LINES):
-    // deltaY of 3 means "3 lines". The old code did scrollLeft += 3 (dead).
-    // Normalised, 3 lines → 48px.
-    const wheel = new WheelEvent('wheel', {
-      deltaY: 3, deltaMode: 1, bubbles: true, cancelable: true,
-    });
-    scroller.dispatchEvent(wheel);
-
-    expect(scroller.scrollLeft).toBe(48);
-    expect(wheel.defaultPrevented).toBe(true);
-  });
-
-  test('a mostly-horizontal (trackpad) wheel is left to the browser', () => {
-    const { container } = render(
-      <TabList sessions={[_session('A-1'), _session('A-2')]} onSelect={() => {}} />,
-    );
-    const scroller = container.querySelector('.tabs-scroller');
-    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
-    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
-    scroller.scrollLeft = 10;
-    // deltaX dominates → the handler must NOT hijack it (native horizontal
-    // trackpad scroll already works).
-    const wheel = new WheelEvent('wheel', {
-      deltaX: 40, deltaY: 5, bubbles: true, cancelable: true,
-    });
-    scroller.dispatchEvent(wheel);
-    expect(scroller.scrollLeft).toBe(10);
-    expect(wheel.defaultPrevented).toBe(false);
-  });
-
-  test('THE REGRESSION: wheel scroll still works after the FIRST session loads (starts on the empty-state placeholder)', () => {
-    // The real-world sequence on every app load: sessions start as []
-    // (before the initial /api/sessions fetch resolves), so TabList
-    // renders the empty-state placeholder — no .tabs-scroller exists
-    // yet. A plain useRef + useEffect hook only runs its attach-effect
-    // once, on that first (no scroller) render, and never re-runs once
-    // sessions actually populate and the real strip mounts — so the
-    // wheel listener silently never attached. This is the exact
-    // transition that must be exercised, not just "render with
-    // sessions already present" (which happened to mask the bug).
-    const { container, rerender } = render(
-      <TabList sessions={[]} onSelect={() => {}} />,
-    );
-    expect(container.querySelector('.tabs-scroller')).toBeNull();
-
-    rerender(
-      <TabList
-        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
-        onSelect={() => {}}
-      />,
-    );
-    const scroller = container.querySelector('.tabs-scroller');
-    Object.defineProperty(scroller, 'clientWidth', { value: 100, configurable: true });
-    Object.defineProperty(scroller, 'scrollWidth', { value: 500, configurable: true });
-    scroller.scrollLeft = 0;
-    const wheel = new WheelEvent('wheel', {
-      deltaY: 50, deltaX: 0, bubbles: true, cancelable: true,
-    });
-    scroller.dispatchEvent(wheel);
-    expect(scroller.scrollLeft).toBe(50);
-    expect(wheel.defaultPrevented).toBe(true);
-  });
 });
 
 describe('TabList — pinned tabs scroll like every other tab', () => {
@@ -691,7 +549,6 @@ describe('TabList — drag to reorder task tabs', () => {
   // which a <span> with no attribute reports anyway — it passed with the
   // guard deleted.
   for (const [name, selector] of [
-    ['the resize handle', '.tab-resize-handle'],
     ['a control button', 'button'],
   ]) {
     test(`a drag starting on ${name} is cancelled`, () => {
@@ -873,117 +730,147 @@ describe('TabList empty state tells the three cases apart', () => {
 
 // A split plan opens a tab per sub-task; they fold into the main task's tab,
 // and selecting that family opens a second row of sub-task tabs under the strip.
-describe('TabList — sub-tasks fold into their main task', () => {
+describe('TabList — sub-tasks are grouped under their main task', () => {
   const SESSIONS = [
     _session('UNA-1'),
     _session('LOCAL-4', { plan_parent: 'UNA-1', task_summary: 'UNA-1 · Task 1: The endpoint' }),
     _session('UNA-7', { task_summary: 'Subtask of UNA-1: The page' }),
     _session('B-2'),
   ];
-  const tabIds = (root) => [...root.querySelectorAll('li.tab')].map((li) => li.dataset.taskId);
-  const stripIds = (container) => tabIds(container.querySelector('#tab-list'));
-  const subtaskRow = () => screen.queryByRole('group', { name: /^Sub-tasks of/ });
+  const ids = (nodes) => [...nodes].map((li) => li.dataset.taskId);
+  const outerIds = (container) => ids(container.querySelectorAll('#tab-list > li.tab'));
+  const group = (name = 'Sub-tasks of UNA-1') => screen.queryByRole('list', { name });
 
-  test('the strip shows the main task with a count; the sub-tasks leave it', () => {
+  test('the main task is a row, its sub-tasks are rows under it', () => {
     const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
-    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
-    expect(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' })).toHaveTextContent('2');
-    expect(subtaskRow()).toBeNull();  // another task is open: no second row
+    expect(outerIds(container)).toEqual(['UNA-1', 'B-2']);
+    const rows = group().querySelectorAll('li.tab');
+    expect(ids(rows)).toEqual(['LOCAL-4', 'UNA-7']);
+    rows.forEach((row) => expect(row).toHaveClass('is-nested'));
+    expect(group()).toHaveTextContent('The page');  // named without "Subtask of UNA-1:"
+    // Grouped whichever task is open — the menu is a list to scan, not a
+    // strip that has to stay short.
+    expect(container.querySelector('.has-open-subtask')).toBeNull();
   });
 
-  test('the count is not a control: clicking it selects the main task', () => {
-    const onSelect = vi.fn();
-    render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={onSelect} />);
-    expect(screen.queryByRole('button', { name: /sub-tasks? of/ })).toBeNull();
-    expect(screen.queryByRole('menu')).toBeNull();
-    fireEvent.click(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' }));
-    expect(onSelect).toHaveBeenCalledWith('UNA-1');
-  });
-
-  test('the main task selected: its sub-tasks show as tabs in the second row', () => {
-    const onSelect = vi.fn();
+  test('Tab walks the order the eye reads: each task, then its sub-tasks', () => {
     const onVisibleOrderChange = vi.fn();
-    const { container } = render(
-      <TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={onSelect}
+    render(
+      <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}}
         onVisibleOrderChange={onVisibleOrderChange} />,
     );
-    const row = screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
-    expect(tabIds(row)).toEqual(['LOCAL-4', 'UNA-7']);
-    expect(row).toHaveTextContent('The page');  // named without "Subtask of UNA-1:"
-    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
-    expect(container.querySelector('#tabs-pane')).toHaveClass('has-subtask-strip');
-    // Tab walks the eye's order: the second row right after its main task.
     expect(onVisibleOrderChange).toHaveBeenLastCalledWith(['UNA-1', 'LOCAL-4', 'UNA-7', 'B-2']);
-    fireEvent.click(row.querySelector('li[data-task-id="UNA-7"]'));
+  });
+
+  test('a sub-task row selects that sub-task, and shows it is the open one', () => {
+    const onSelect = vi.fn();
+    const { rerender } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={onSelect} />);
+    fireEvent.click(group().querySelector('li[data-task-id="UNA-7"]'));
     expect(onSelect).toHaveBeenCalledWith('UNA-7');
+    rerender(<TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={onSelect} />);
+    expect(group().querySelector('li[data-task-id="UNA-7"]')).toHaveClass('active');
   });
 
-  test('a sub-task selected: it is the active tab of the second row, and its main task is marked', () => {
-    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}} />);
-    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);  // never beside its main task any more
-    const row = screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
-    expect(row.querySelector('li[data-task-id="UNA-7"]')).toHaveClass('active');
-    const main = container.querySelector('#tab-list li[data-task-id="UNA-1"]');
-    expect(main).toHaveClass('has-open-subtask');
-    expect(main).not.toHaveClass('active');
+  test('a sub-task waiting for you marks its own row', () => {
+    render(
+      <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}}
+        attentionTaskIds={new Set(['LOCAL-4'])} />,
+    );
+    expect(group().querySelector('li[data-task-id="LOCAL-4"]')).toHaveClass('needs-attention');
   });
 
-  test('a pinned sub-task keeps its place in the strip and is not drawn twice', () => {
+  test('a pinned sub-task keeps its place among the pins and is not drawn twice', () => {
     window.localStorage.setItem(PINNED_TABS_STORAGE_KEY, JSON.stringify(['UNA-7']));
     try {
       const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={() => {}} />);
-      expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
-      expect(tabIds(subtaskRow())).toEqual(['LOCAL-4']);
-      expect(screen.getByRole('img', { name: '2 sub-tasks of UNA-1' })).toBeInTheDocument();
+      expect(outerIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
+      expect(ids(group().querySelectorAll('li.tab'))).toEqual(['LOCAL-4']);
     } finally {
       window.localStorage.removeItem(PINNED_TABS_STORAGE_KEY);
     }
   });
 
-  test('a sub-task waiting for you colours the count', () => {
-    render(
-      <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}}
-        attentionTaskIds={new Set(['LOCAL-4'])} />,
-    );
-    const count = screen.getByRole('img', { name: '2 sub-tasks of UNA-1 — one is waiting for you' });
-    expect(count).toHaveClass('needs-attention');
-  });
-
-  test('a sub-task whose main task has no tab keeps its own', () => {
+  test('a sub-task whose main task has no row here is a row of its own', () => {
     const { container } = render(
       <TabList sessions={SESSIONS.slice(1)} activeTaskId="UNA-7" onSelect={() => {}} />,
     );
-    expect(stripIds(container)).toEqual(['LOCAL-4', 'UNA-7', 'B-2']);
-    expect(screen.queryByRole('img', { name: /sub-tasks? of/ })).toBeNull();
-    expect(subtaskRow()).toBeNull();
+    expect(outerIds(container)).toEqual(['LOCAL-4', 'UNA-7', 'B-2']);
+    expect(group()).toBeNull();
   });
 
-  test('pinning a sub-task from the second row, then unpinning it, folds it back', () => {
-    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-1" onSelect={() => {}} />);
-    const row = () => screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
-    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
-    fireEvent.click(row().querySelector('li[data-task-id="UNA-7"] .tab-pin-btn'));
-    // Pinned: UNA-7 leaves the second row for the top-level strip.
-    expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
-    expect(tabIds(row())).toEqual(['LOCAL-4']);
-    const pinnedTab = container.querySelector('#tab-list li[data-task-id="UNA-7"]');
-    fireEvent.click(pinnedTab.querySelector('.tab-pin-btn'));
-    // Unpinned: UNA-7 must fold back into the second row, not stay in the strip.
-    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
-    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
-  });
-
-  test('same round trip with the sub-task itself (not its parent) active', () => {
-    // The operator is usually looking at the sub-task's own chat when they
-    // pin/unpin it, not sitting on the parent tab — a second row still has
-    // to show (activeTaskId resolves to its main task either way).
+  test('pinning a sub-task, then unpinning it, puts it back under its main task', () => {
     const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}} />);
-    const row = () => screen.getByRole('group', { name: 'Sub-tasks of UNA-1' });
-    fireEvent.click(row().querySelector('li[data-task-id="UNA-7"] .tab-pin-btn'));
-    expect(stripIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
-    const pinnedTab = container.querySelector('#tab-list li[data-task-id="UNA-7"]');
-    fireEvent.click(pinnedTab.querySelector('.tab-pin-btn'));
-    expect(stripIds(container)).toEqual(['UNA-1', 'B-2']);
-    expect(tabIds(row())).toEqual(['LOCAL-4', 'UNA-7']);
+    fireEvent.click(group().querySelector('li[data-task-id="UNA-7"] .tab-pin-btn'));
+    expect(outerIds(container)).toEqual(['UNA-7', 'UNA-1', 'B-2']);
+    expect(ids(group().querySelectorAll('li.tab'))).toEqual(['LOCAL-4']);
+    fireEvent.click(container.querySelector('#tab-list > li[data-task-id="UNA-7"] .tab-pin-btn'));
+    expect(outerIds(container)).toEqual(['UNA-1', 'B-2']);
+    expect(ids(group().querySelectorAll('li.tab'))).toEqual(['LOCAL-4', 'UNA-7']);
+  });
+
+  test('a sub-task cannot be dragged out among the main tasks', () => {
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
+    const dataTransfer = { effectAllowed: '', dropEffect: '', setData() {} };
+    fireEvent.dragStart(group().querySelector('li[data-task-id="UNA-7"]'), { dataTransfer });
+    // Not cancelled = not a legal target (the cursor says "no").
+    expect(fireEvent.dragOver(container.querySelector('#tab-list > li[data-task-id="B-2"]'), { dataTransfer })).toBe(true);
+    // Among its siblings it can.
+    expect(fireEvent.dragOver(group().querySelector('li[data-task-id="LOCAL-4"]'), { dataTransfer })).toBe(false);
+  });
+});
+
+describe('TabList — the tasks menu opens from the kato icon', () => {
+  const SESSIONS = [_session('A-1'), _session('A-2')];
+  const pane = (container) => container.querySelector('#tabs-pane');
+
+  afterEach(() => { vi.useRealTimers(); });
+
+  test('closed until hovered, a vertical list of rows once open', () => {
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    expect(pane(container)).toHaveClass('tabs-pane-side');
+    expect(pane(container)).not.toHaveClass('is-open');
+    act(() => openTaskMenu());  // what hovering the kato icon does
+    expect(pane(container)).toHaveClass('is-open');
+  });
+
+  test('leaving the menu closes it after a moment; coming back in time keeps it open', () => {
+    vi.useFakeTimers();
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    fireEvent.mouseEnter(pane(container));
+    expect(pane(container)).toHaveClass('is-open');
+    fireEvent.mouseLeave(pane(container));
+    act(() => { vi.advanceTimersByTime(TASK_MENU_CLOSE_GRACE_MS - 50); });
+    expect(pane(container)).toHaveClass('is-open');
+    fireEvent.mouseEnter(pane(container));  // back before the grace ran out
+    act(() => { vi.advanceTimersByTime(TASK_MENU_CLOSE_GRACE_MS * 2); });
+    expect(pane(container)).toHaveClass('is-open');
+    fireEvent.mouseLeave(pane(container));
+    act(() => { vi.advanceTimersByTime(TASK_MENU_CLOSE_GRACE_MS + 1); });
+    expect(pane(container)).not.toHaveClass('is-open');
+  });
+
+  test('Escape, or a press outside the menu, closes it', () => {
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    act(() => openTaskMenu());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(pane(container)).not.toHaveClass('is-open');
+    act(() => openTaskMenu());
+    fireEvent.mouseDown(container.querySelector('li.tab'));
+    expect(pane(container)).toHaveClass('is-open');  // inside: stays
+    fireEvent.mouseDown(document.body);
+    expect(pane(container)).not.toHaveClass('is-open');
+  });
+
+  test('with no task at all it is held open, so the first task is one click away', () => {
+    const { container } = render(<TabList sessions={[]} onSelect={() => {}} onNewTask={() => {}} />);
+    expect(pane(container)).toHaveClass('is-open');
+    expect(screen.getByRole('button', { name: 'Create your first task' })).toBeInTheDocument();
+  });
+
+  test('the actions head the menu, above the rows', () => {
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    const children = [...pane(container).children];
+    expect(children[0]).toHaveClass('tabs-actions');
+    expect(children[1].id).toBe('tab-list');
   });
 });

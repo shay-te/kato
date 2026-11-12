@@ -34,7 +34,7 @@ function ruleBody(selector) {
 }
 
 test('a pinned tab is not stuck to the strip edge', () => {
-  const body = ruleBody('.tabs-pane-top .tab.is-pinned {');
+  const body = ruleBody('.tabs-pane-side .tab.is-pinned {');
   assert.doesNotMatch(body, /position:\s*sticky/);
   assert.doesNotMatch(body, /left:/);
 });
@@ -48,26 +48,13 @@ test('the sticky-left custom property is gone from the sheet entirely', () => {
 test('pinned tabs keep their opaque panel', () => {
   // Redundant now that nothing scrolls underneath them, but it is also what
   // makes a pinned tab legible against the strip's gradient.
-  const body = ruleBody('.tabs-pane-top .tab.is-pinned {');
+  const body = ruleBody('.tabs-pane-side .tab.is-pinned {');
   assert.match(body, /background:/);
-});
-
-test('the parent of the open sub-task is violet, and a pin cannot hide it', () => {
-  // Its first mark was a faint cyan placed BEFORE the pinned rule, so a
-  // pinned parent showed nothing; and cyan is the selected tab's colour.
-  const selector = '.tabs-pane-top .tab.is-pinned.has-open-subtask {';
-  const body = ruleBody(selector);
-  assert.match(body, /border-color:\s*#a78bfa/);
-  assert.doesNotMatch(body, /#2997ff|#0a84ff/);  // never the selected tab's cyan
-  assert.ok(
-    css.indexOf(selector) > css.indexOf('.tabs-pane-top .tab.is-pinned {'),
-    'the parent mark must come after the pinned rule, or a pinned parent shows nothing',
-  );
 });
 
 test('the drag affordances are emitted', () => {
   // Without these a reorder gives no feedback at all: no indication of what
   // is moving, nor of where it will land.
-  assert.match(ruleBody('.tabs-pane-top .tab.dragging {'), /opacity:/);
-  assert.match(ruleBody('.tabs-pane-top .tab.drop-target {'), /outline:/);
+  assert.match(ruleBody('.tabs-pane-side .tab.dragging {'), /opacity:/);
+  assert.match(ruleBody('.tabs-pane-side .tab.drop-target {'), /outline:/);
 });

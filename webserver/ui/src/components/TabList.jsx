@@ -1,13 +1,15 @@
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
 import { cx } from '../utils/cx.js';
-import { foldSubtaskTabs } from '../utils/subtaskTabs.js';
+import { groupSubtaskTabs } from '../utils/subtaskTabs.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
-import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
+import {
+  closeTaskMenu, closeTaskMenuSoon, openTaskMenu, useTaskMenuOpen,
+} from '../stores/taskMenuStore.js';
 import {
   orderByPinned,
   readPinnedIds,
@@ -24,17 +26,16 @@ import {
 } from '../utils/taskTabNames.js';
 
 /**
- * iOS-style segmented controller at the top of the app.
+ * The tasks menu: every task as a row in a vertical list on the left edge,
+ * like Chrome's vertical tabs. It opens while the pointer is over the kato
+ * icon in the header or over the menu itself, and closes shortly after it
+ * leaves both (``taskMenuStore``). Tab / Ctrl+Tab still walk the tasks with
+ * the menu closed — the order is reported up to App.
  *
- * Each task gets a segment (rendered as `<li class="tab">` to keep
- * existing role-/structure-based tests green). The list scrolls
- * horizontally when it overflows the viewport; left/right chevron
- * buttons appear automatically on either side of the strip when
- * scrolling is possible, mirroring the iOS pattern.
- *
- * The two action buttons that lived in the old left-pane header
- * (Add task, Scan now) move to the trailing edge of the strip so
- * they're always reachable without scrolling.
+ * Each task is a row (``<li class="tab">``); a split plan's sub-tasks are rows
+ * grouped under their main task. The actions (go to task, new task, add task,
+ * delete tasks, scan now) head the menu. With no task at all the menu stays
+ * open: the first-run "Create your first task" must not hide behind a hover.
  */
 export default function TabList({
   sessions,
@@ -63,11 +64,7 @@ export default function TabList({
   // The connected ticket system's name ('' = none: tasks are made in kato).
   trackerName = '',
 }) {
-  const scrollRef = useRef(null);
-  const [scrollState, setScrollState] = useState({
-    canScrollLeft: false,
-    canScrollRight: false,
-  });
+  const menuOpen = useTaskMenuOpen();
   // Pinned tab ids (in pin order). localStorage-backed so the
   // operator's preference survives reloads. Read lazily on mount;
   // every toggle re-persists. See utils/pinnedTabs.js for the rules.
@@ -89,38 +86,17 @@ export default function TabList({
       return next;
     });
   }, []);
-  // The strip's scrollLeft at the moment of an UNPIN, restored once the
-  // re-sorted strip commits (layout effect below). ``null`` = nothing pending.
-  const keepScrollLeftRef = useRef(null);
   const handleTogglePin = useCallback((taskId) => {
-    const unpinning = pinnedIds.includes(taskId);
+    const pinning = !pinnedIds.includes(taskId);
     setPinnedIds((prev) => {
       const next = togglePinned(taskId, prev);
       writePinnedIds(next);
       return next;
     });
-    // Unpinning STAYS PUT. The operator unpins from the pinned block and
-    // usually clears several in a row; following each tab out to the
-    // unpinned group dragged the strip away and they had to scroll back to
-    // the pins after every click. The pill moves; the view does not.
-    if (unpinning) {
-      keepScrollLeftRef.current = scrollRef.current
-        ? scrollRef.current.scrollLeft
-        : null;
-      return;
-    }
-    // Pinning follows the tab to its new home.
-    //
-    // Pinning MOVES the pill to the pinned block at the front, and the strip
-    // scrolls horizontally — so on a right-scrolled strip the tab the
-    // operator just clicked disappears leftward. Sticky positioning used to
-    // hide this (a pinned tab was clamped into the scrollport by definition);
-    // removing it made the jump visible, so the scroll has to be explicit
-    // now. The pin click deliberately never reaches ``onSelect``, so nothing
-    // else brings it back.
-    if (typeof document === 'undefined') { return; }
-    // After the re-render that re-sorts the strip, or we would scroll to
-    // where the tab used to be.
+    // Pinning MOVES the row to the pinned block at the top; follow it, or on
+    // a scrolled menu the row just clicked disappears upward. Unpinning stays
+    // put: the operator usually clears several pins in a row.
+    if (!pinning || typeof document === 'undefined') { return; }
     const follow = () => {
       const node = document.querySelector(
         `#tabs-pane [data-task-id="${CSS.escape(taskId)}"]`,
@@ -128,7 +104,7 @@ export default function TabList({
       // jsdom (and a couple of older embedded browsers) have no
       // ``scrollIntoView``; not scrolling is cosmetic, so never throw.
       if (node && typeof node.scrollIntoView === 'function') {
-        node.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
     };
     if (typeof requestAnimationFrame === 'function') {
@@ -137,38 +113,31 @@ export default function TabList({
       follow();
     }
   }, [pinnedIds]);
-  // Before paint, so an unpin never shows a frame at any other offset.
-  useLayoutEffect(() => {
-    const left = keepScrollLeftRef.current;
-    keepScrollLeftRef.current = null;
-    const node = scrollRef.current;
-    if (left === null || !node || node.scrollLeft === left) { return; }
-    node.scrollLeft = left;
-  }, [pinnedIds]);
   // ``orderByPinned`` is a pure sort; memoise on the inputs so we
   // don't reshuffle the list on unrelated re-renders.
   const orderedSessions = useMemo(
     () => orderByPinned(sessions, pinnedIds, tabOrder),
     [sessions, pinnedIds, tabOrder],
   );
-  // A split plan's sub-tasks fold into their main task's tab (a pinned one
-  // keeps its place); selecting the main task or one of them opens the second
-  // row of sub-task tabs under the strip — see utils/subtaskTabs.js.
-  const {
-    visible: visibleSessions, subtasksOf, openFamily, strip: subtaskStrip, order: tabCycleOrder,
-  } = useMemo(
-    () => foldSubtaskTabs(orderedSessions, {
-      activeTaskId, keep: (session) => pinnedIds.includes(session.task_id),
+  // A split plan's sub-tasks are drawn under their main task (a pinned one
+  // keeps its place among the pins) — see utils/subtaskTabs.js.
+  const { top: topSessions, childrenOf, order: tabCycleOrder } = useMemo(
+    () => groupSubtaskTabs(orderedSessions, {
+      keep: (session) => pinnedIds.includes(session.task_id),
     }),
-    [orderedSessions, activeTaskId, pinnedIds],
+    [orderedSessions, pinnedIds],
   );
-  // Whether any of a main task's sub-tasks is waiting for you (its count
-  // turns orange, even with the row closed).
-  const subtasksAsking = (taskId) => !!attentionTaskIds
-    && (subtasksOf.get(taskId) || []).some((child) => attentionTaskIds.has(child.task_id));
+  // The row a task is drawn in: '' = the outer level, else its main task.
+  // A drag reorders among one level only (see ``canDrop`` below).
+  const levelOf = useCallback((taskId) => {
+    for (const [mainId, children] of childrenOf) {
+      if (children.some((child) => child.task_id === taskId)) { return mainId; }
+    }
+    return '';
+  }, [childrenOf]);
 
-  // The strip's VISIBLE order, reported upward — the second row included,
-  // right after its main task (``tabCycleOrder``).
+  // The menu's VISIBLE order, reported upward — each task with its
+  // sub-tasks right after it (``tabCycleOrder``).
   //
   // Tab / Shift+Tab cycles tasks from App, which only had the raw
   // ``sessions`` array — so after a drag the keyboard still walked the
@@ -239,152 +208,34 @@ export default function TabList({
     setDrag({ id: '', over: '' });
   }, []);
 
-  // Recompute "can I scroll?" any time the scroller's size or
-  // content changes — that drives whether the chevron nav buttons
-  // are visible. Without this, the chevrons would only update on
-  // user scroll, leaving them visually stale after a tab is added
-  // or removed.
-  const recomputeScrollState = useCallback(() => {
-    const node = scrollRef.current;
-    if (!node) { return; }
-    const canScrollLeft = node.scrollLeft > 2;
-    const canScrollRight =
-      node.scrollLeft + node.clientWidth < node.scrollWidth - 2;
-    setScrollState((prev) =>
-      prev.canScrollLeft === canScrollLeft
-        && prev.canScrollRight === canScrollRight
-        ? prev
-        : { canScrollLeft, canScrollRight },
-    );
-  }, []);
-
+  // The menu also closes on a press outside it (a touch screen has no mouse
+  // to leave with) and on Escape. Only while it is open.
   useEffect(() => {
-    recomputeScrollState();
-  }, [sessions, recomputeScrollState]);
-
-  // Scroll/resize listeners that keep the chevron enabled-state live. These
-  // MUST attach when the ``.tabs-scroller`` node attaches — a plain
-  // ``useEffect`` reading ``scrollRef.current`` fires on the FIRST render,
-  // when the empty-state branch means the strip isn't mounted yet, and never
-  // re-runs (its deps don't change), so the listeners never attached after
-  // sessions loaded and the chevrons only refreshed on the next poll. Riding
-  // the wheel hook's callback ref (same node, same attach/detach lifecycle)
-  // fixes that with no second ref competing for the one ref slot.
-  const attachScrollTracking = useCallback((node) => {
-    const onScroll = () => recomputeScrollState();
-    const onResize = () => recomputeScrollState();
-    node.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onResize);
-    recomputeScrollState();  // initial compute now that the node exists
-    return () => {
-      node.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onResize);
-    };
-  }, [recomputeScrollState]);
-  // Vertical-mouse-wheel-to-horizontal-scroll remap — shared with
-  // every other horizontally-scrolling tab strip (see the hook for
-  // the Windows/Firefox deltaMode normalisation this fixes, and why
-  // this is a CALLBACK ref rather than a plain useRef + useEffect —
-  // the empty-state branch below means .tabs-scroller isn't mounted
-  // on the very first render, which a plain useEffect would miss). The
-  // scroll/resize tracking rides the same callback ref via onAttach.
-  const wheelRef = useHorizontalWheelScroll(scrollRef, attachScrollTracking);
-  // The second row (sub-tasks) scrolls the same way, with no chevrons.
-  const subtaskWheelRef = useHorizontalWheelScroll();
-
-  // No auto-scroll-into-view on tab selection: the operator's own
-  // scroll position is intentional and must not be fought. With many
-  // open tasks, ``sessions`` changes on every status poll, and a
-  // dependency on it here would re-center the active tab mid-scroll
-  // (the reported bug) — better to let operators navigate freely and
-  // use the chevrons or wheel to reach a tab that's off-screen.
-
-  function scrollByPage(direction) {
-    const node = scrollRef.current;
-    if (!node) { return; }
-    const delta = Math.round(node.clientWidth * 0.7) * (direction === 'next' ? 1 : -1);
-    node.scrollBy({ left: delta, behavior: 'smooth' });
-  }
-
-  // ----- hold-to-scroll on the chevron buttons ------------------
-  // Click ➜ one-page jump (above). Press-and-hold ➜ continuous
-  // scroll until release. Implemented as a rAF loop so the
-  // animation stays smooth on any frame rate; an interval timer
-  // would tear under load. Touch + mouse both feed the same
-  // start/stop pair.
-  const holdRef = useRef({ rafId: 0, direction: 0 });
-
-  const stopHoldScroll = useCallback(() => {
-    if (holdRef.current.rafId) {
-      cancelAnimationFrame(holdRef.current.rafId);
-      holdRef.current.rafId = 0;
+    if (!menuOpen) { return undefined; }
+    function onPress(event) {
+      const target = event.target;
+      if (target?.closest?.('#tabs-pane, #kato-menu-trigger')) { return; }
+      closeTaskMenu();
     }
-    holdRef.current.direction = 0;
-  }, []);
-
-  const startHoldScroll = useCallback((direction) => {
-    const node = scrollRef.current;
-    if (!node) { return; }
-    stopHoldScroll();
-    holdRef.current.direction = direction === 'next' ? 1 : -1;
-    // ~8 px per frame ≈ 480 px/s at 60Hz — fast enough to step
-    // through a long task list in a couple seconds, slow enough
-    // that the operator can release mid-scroll on the target tab.
-    const STEP_PX = 8;
-    const tick = () => {
-      const dir = holdRef.current.direction;
-      if (!dir) { return; }
-      node.scrollLeft += dir * STEP_PX;
-      // Stop automatically when we hit the edge so the operator
-      // doesn't have to keep holding past the end.
-      const atEdge = dir > 0
-        ? node.scrollLeft + node.clientWidth >= node.scrollWidth - 1
-        : node.scrollLeft <= 0;
-      if (atEdge) {
-        stopHoldScroll();
-        return;
-      }
-      holdRef.current.rafId = requestAnimationFrame(tick);
-    };
-    holdRef.current.rafId = requestAnimationFrame(tick);
-  }, [stopHoldScroll]);
-
-  // Global mouseup / touchend listeners — a button's own onMouseUp
-  // misses the release when the operator drags off the button
-  // before letting go, which would leave the scroll loop running.
-  useEffect(() => {
-    function onUp() { stopHoldScroll(); }
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('touchend', onUp);
-    window.addEventListener('touchcancel', onUp);
-    window.addEventListener('blur', onUp);
+    function onKey(event) {
+      if (event.key === 'Escape') { closeTaskMenu(); }
+    }
+    window.addEventListener('mousedown', onPress);
+    window.addEventListener('keydown', onKey);
     return () => {
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('touchend', onUp);
-      window.removeEventListener('touchcancel', onUp);
-      window.removeEventListener('blur', onUp);
-      stopHoldScroll();
+      window.removeEventListener('mousedown', onPress);
+      window.removeEventListener('keydown', onKey);
     };
-  }, [stopHoldScroll]);
+  }, [menuOpen]);
 
-  function bindHold(direction) {
-    return {
-      onMouseDown: () => startHoldScroll(direction),
-      onTouchStart: () => startHoldScroll(direction),
-      onMouseLeave: () => stopHoldScroll(),
-    };
-  }
-
-  const inSubtaskRow = new Set(subtaskStrip.map((s) => s.task_id));
   const draggedSession = drag.id
     ? orderedSessions.find((s) => s.task_id === drag.id) || null
     : null;
 
-  // One tab, in either row. The second row's tabs are full tabs (rename, pin,
-  // forget, drag among themselves): pinning one moves it up to the strip.
-  const renderTab = (session) => {
+  // One row. A sub-task's row is a full row too (rename, pin, forget, drag
+  // among its siblings): pinning one moves it up to the pins.
+  const renderTab = (session, nested = false) => {
     const isActive = session.task_id === activeTaskId;
-    const subtaskCount = (subtasksOf.get(session.task_id) || []).length;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
     const liveStatus = agentStatuses[session.task_id] || null;
     return (
@@ -400,14 +251,13 @@ export default function TabList({
         onTogglePin={handleTogglePin}
         displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
         onRename={handleRename}
-        subtaskCount={subtaskCount}
-        subtasksAsking={subtaskCount ? subtasksAsking(session.task_id) : false}
-        subtaskOpen={session.task_id === openFamily && !isActive}
+        nested={nested}
         dragging={drag.id === session.task_id}
         dropTarget={drag.over === session.task_id && drag.id !== session.task_id}
-        // Among its own row only: a sub-task dropped among the main tasks
-        // (or the reverse) would move somewhere the eye cannot follow.
-        canDrop={inSubtaskRow.has(drag.id) === inSubtaskRow.has(session.task_id) && canDropOn(
+        // Among its own level only: a sub-task dropped among the main tasks
+        // (or into another task's group) would move somewhere the eye cannot
+        // follow.
+        canDrop={levelOf(drag.id) === levelOf(session.task_id) && canDropOn(
           draggedSession, session,
           (s) => pinnedSet.has(s.task_id),
         )}
@@ -419,31 +269,24 @@ export default function TabList({
       />
     );
   };
-  const tabs = visibleSessions.map(renderTab);
+  const rows = topSessions.flatMap((session) => {
+    const children = childrenOf.get(session.task_id) || [];
+    if (!children.length) { return [renderTab(session)]; }
+    return [
+      renderTab(session),
+      <li key={`${session.task_id}::children`} className="tab-children" role="none">
+        <ul aria-label={`Sub-tasks of ${session.task_id}`}>
+          {children.map((child) => renderTab(child, true))}
+        </ul>
+      </li>,
+    ];
+  });
 
-  // NOTE: pinned tabs used to be ``position: sticky``, held against the left
-  // edge while the rest of the strip scrolled underneath, with a layout
-  // effect here measuring each one and publishing a ``--sticky-left`` offset
-  // (plus a ResizeObserver to keep those offsets fresh).
-  //
-  // It could not work once the pinned cluster grew wider than the strip:
-  // there is simply nowhere left to hold them, so they piled up and painted
-  // over each other. Two separate fixes went into the measuring — descending
-  // z-index, fractional widths — and neither touched that, because the
-  // problem was the premise rather than the arithmetic.
-  //
-  // Pinned tabs now just SORT to the front (``orderByPinned`` above) and
-  // scroll like every other tab. The whole mechanism is gone rather than
-  // repaired: no offsets to publish, no observer, and no way for two tabs to
-  // occupy the same space.
-
-  // Bring the ACTIVE task's tab into view — but ONLY when the reveal id
+  // Bring the ACTIVE task's row into view — but ONLY when the reveal id
   // changed. Deliberately NOT keyed on activeTaskId or on sessions: those
-  // change on every status poll and whenever the operator clicks a tab
-  // they can already see, and re-centring then would yank the strip back
-  // under their cursor while they were reaching for a different tab. A
-  // scroll is intent too, and it has to win. Same rule the file-tab strip
-  // follows.
+  // change on every status poll and whenever the operator clicks a row they
+  // can already see, and scrolling then would yank the menu out from under
+  // their cursor. A scroll is intent too, and it has to win.
   const lastRevealRef = useRef(revealRequestId);
   useEffect(() => {
     if (revealRequestId === lastRevealRef.current) { return; }
@@ -476,7 +319,7 @@ export default function TabList({
     emptyStateMessage = (
       <>
         Can’t reach kato right now — it may be starting up or stopped.
-        Your tasks and workspaces are untouched; this strip fills in as
+        Your tasks and workspaces are untouched; this list fills in as
         soon as kato answers.
       </>
     );
@@ -500,9 +343,7 @@ export default function TabList({
     );
   }
 
-  // Trailing actions live in their own pill so they stay visually
-  // separated from the segments (and don't get swallowed by the
-  // horizontal scroll).
+  // The actions head the menu, above the task rows.
   const trailingActions = (
     <div className="tabs-actions">
       {/* Go to task. The Ctrl/Cmd+Shift+P shortcut is the fast path, but a
@@ -567,62 +408,29 @@ export default function TabList({
     </div>
   );
 
-  if (tabs.length === 0) {
-    return (
-      <nav id="tabs-pane" className="tabs-pane-top is-empty">
+  const empty = rows.length === 0;
+  // Held open only once there is something to say: the first split second of
+  // a load says nothing yet (``useDelayedFlag``), and an empty panel must not
+  // flash open over the screen.
+  const heldOpen = empty && emptyStateMessage !== null;
+  return (
+    <nav
+      id="tabs-pane"
+      aria-label="Tasks"
+      className={cx('tabs-pane-side', (menuOpen || heldOpen) && 'is-open', empty && 'is-empty')}
+      onMouseEnter={openTaskMenu}
+      onMouseLeave={closeTaskMenuSoon}
+    >
+      {trailingActions}
+      {empty ? (
         <p id="empty-state" className="empty">
           {emptyStateMessage}
         </p>
-        {trailingActions}
-      </nav>
-    );
-  }
-  return (
-    <nav id="tabs-pane" className={cx('tabs-pane-top', subtaskStrip.length && 'has-subtask-strip')}>
-      <button
-        type="button"
-        className="tabs-nav-button tabs-nav-prev"
-        data-tooltip="Scroll tabs left (click) or hold to keep scrolling"
-        aria-label="Scroll tabs left"
-        onClick={() => scrollByPage('prev')}
-        disabled={!scrollState.canScrollLeft}
-        {...bindHold('prev')}
-      >
-        <Icon name="chevron-left" />
-      </button>
-      <div className="tabs-scroller" ref={wheelRef}>
+      ) : (
         <ul id="tab-list">
-          {tabs}
+          {rows}
         </ul>
-      </div>
-      <button
-        type="button"
-        className="tabs-nav-button tabs-nav-next"
-        data-tooltip="Scroll tabs right (click) or hold to keep scrolling"
-        aria-label="Scroll tabs right"
-        onClick={() => scrollByPage('next')}
-        disabled={!scrollState.canScrollRight}
-        {...bindHold('next')}
-      >
-        <Icon name="chevron-right" />
-      </button>
-      {trailingActions}
-      {subtaskStrip.length ? (
-        // The open task's family, as a second row of tabs. Inside the nav (a
-        // full-width flex line) rather than a grid row of its own, so the
-        // layout's rows and the task header below stay where they are.
-        <div className="subtask-strip" role="group" aria-label={`Sub-tasks of ${openFamily}`}>
-          <span className="subtask-strip-label" title={`Sub-tasks of ${openFamily}`}>
-            <Icon name="subtask" />
-            {openFamily}
-          </span>
-          <div className="tabs-scroller" ref={subtaskWheelRef}>
-            <ul className="subtask-strip-list">
-              {subtaskStrip.map(renderTab)}
-            </ul>
-          </div>
-        </div>
-      ) : null}
+      )}
     </nav>
   );
 }

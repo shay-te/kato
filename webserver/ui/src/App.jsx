@@ -45,6 +45,7 @@ import { useOpenRequests } from './hooks/useOpenRequests.js';
 import { planQueueView } from './components/planQueue/planQueueViewStore.js';
 import TabList from './components/TabList.jsx';
 import TaskPalette from './components/TaskPalette.jsx';
+import TaskSwitcher from './components/TaskSwitcher.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { fetchScanStatus, forgetTaskWorkspace, triggerScan } from './api.js';
 import { waitForScanToFinish } from './utils/scanProgress.js';
@@ -270,12 +271,12 @@ export default function App() {
     if (activeTaskId) { activateTaskCache(activeTaskId); }
   }, [activeTaskId]);
 
-  // Tab / Shift+Tab step through the task strip at the top (guards
-  // against text fields + open dialogs so normal focus tabbing still
-  // works there).
-  // The tab strip's own left-to-right arrangement (pins + drag order),
-  // reported up by TabList so Tab / Shift+Tab cycles what the operator can
-  // actually see rather than the raw session list.
+  // Tab / Shift+Tab (and Ctrl+Tab / Ctrl+Shift+Tab) step through the tasks,
+  // the menu open or not (guards against text fields + open dialogs so normal
+  // focus tabbing still works there).
+  // The tasks menu's own top-to-bottom order (pins, drag order, sub-tasks
+  // under their main task), reported up by TabList so the keys walk what the
+  // operator sees rather than the raw session list.
   const [visibleTabOrder, setVisibleTabOrder] = useState([]);
   useTaskTabShortcuts({
     sessions, activeTaskId, onSelect: setActiveTaskId,
@@ -1269,6 +1270,7 @@ export default function App() {
         onOpenUsage={openUsage}
         onOpenReleaseNotes={openReleaseNotes}
         lidAwake={lidAwake}
+        attentionCount={attentionTaskIds.size}
       />
       {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
       {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}
@@ -1300,6 +1302,14 @@ export default function App() {
         // not offer a time-boxed approval the backend would then decline to
         // honour, which would look exactly like a dead button.
         timedGrantOutsideWorkspace={!!safetyState?.timed_grant_outside_workspace}
+      />
+      {/* Cmd+Tab-style: where a Tab / Ctrl+Tab switch landed, for a moment. */}
+      <TaskSwitcher
+        sessions={sessions}
+        order={visibleTabOrder}
+        activeTaskId={activeTaskId}
+        agentStatuses={agentStatuses}
+        attentionTaskIds={attentionTaskIds}
       />
       {paletteOpen && (
         <TaskPalette

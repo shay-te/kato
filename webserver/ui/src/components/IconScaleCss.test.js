@@ -25,7 +25,6 @@ const EXEMPT = [
   /kato-btn-spinner/,        // 1.05em — tracks its host button's font-size
   /chat-sticky-prompt-toggle/, // full-width row, not a button box
   /settings-drawer-toggle/,  // a switch control
-  /tabs-pane:not\(\.tabs-pane-top\)/, // legacy sidebar layout, never rendered
   // Text buttons: their font-size is a LABEL, not a glyph.
   // ``files-tab-filter-toggle`` is the search field's Match case / Exact
   // pair — its "Aa" / "ab" are literal text, sized to read as labels.
@@ -38,6 +37,9 @@ const EXEMPT = [
   /review-loop-pane-action/, /review-loop-artifact-toggle/,
   // New task's "+ Attach files…": a label with a plus, not an icon box.
   /new-task-attach-btn/,
+  // The menu bars beside the kato logo: sized to the 22px logo they pair
+  // with (one handle), not an icon button of their own.
+  /kato-menu-glyph/,
   // Not a button: a 7px corner marker ON the actions trigger, flagging that
   // the task is pinned to a non-default model. It has to sit inside the 28px
   // trigger without covering the glyph, so neither icon box size fits — and

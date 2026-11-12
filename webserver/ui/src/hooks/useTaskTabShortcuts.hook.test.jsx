@@ -1,15 +1,17 @@
-// Tests for the Tab / Shift+Tab task-strip navigation hook.
+// Tests for the Tab / Ctrl+Tab task navigation hook.
 // Contract:
-//   - bare Tab → next task, Shift+Tab → previous, both wrapping;
+//   - Tab or Ctrl+Tab → next task, Shift (+Ctrl) +Tab → previous, wrapping;
 //   - no selection yet: Tab → first, Shift+Tab → last;
-//   - never hijacks Tab while typing (editable focus) or while a
-//     modal / settings drawer is open, or with Ctrl/Cmd/Alt held;
+//   - a bare Tab is never hijacked while typing (editable focus); Ctrl+Tab
+//     is (nobody moves focus with it); neither while a modal / settings
+//     drawer is open, nor with Cmd/Alt held;
 //   - claimed events get preventDefault so DOM focus doesn't also move.
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
 import { useTaskTabShortcuts } from './useTaskTabShortcuts.js';
+import * as taskSwitchStore from '../stores/taskSwitchStore.js';
 
 const SESSIONS = [
   { task_id: 'A' }, { task_id: 'B' }, { task_id: 'C' },
@@ -149,13 +151,47 @@ describe('useTaskTabShortcuts', () => {
   });
 
   test.each([
-    ['ctrl', { ctrl: true }],
     ['meta', { meta: true }],
     ['alt', { alt: true }],
   ])('Tab with %s held is left to the browser', (_label, mods) => {
     mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
     press('Tab', mods);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  test('a switch announces itself, so the switcher overlay can show where it landed', () => {
+    const seen = [];
+    const { unmount } = renderHook(() => taskSwitchStore.useTaskSwitcherVisible());
+    unmount();
+    const spy = vi.spyOn(taskSwitchStore, 'announceTaskSwitch');
+    try {
+      mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+      press('Tab');
+      seen.push(spy.mock.calls.length);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen).toEqual([1]);
+  });
+
+  test('Ctrl+Tab and Ctrl+Shift+Tab walk the tasks like Tab', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'B', onSelect });
+    const next = press('Tab', { ctrl: true });
+    expect(onSelect).toHaveBeenLastCalledWith('C');
+    expect(next.defaultPrevented).toBe(true);
+    press('Tab', { ctrl: true, shift: true });
+    expect(onSelect).toHaveBeenLastCalledWith('A');
+  });
+
+  test('Ctrl+Tab switches tasks even from a text field; a bare Tab there does not', () => {
+    const input = document.createElement('textarea');
+    document.body.appendChild(input);
+    input.focus();
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab', { target: input });
+    expect(onSelect).not.toHaveBeenCalled();
+    press('Tab', { ctrl: true, target: input });
+    expect(onSelect).toHaveBeenCalledWith('B');
   });
 
   test('non-Tab keys are ignored', () => {

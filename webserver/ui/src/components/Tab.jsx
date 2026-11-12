@@ -1,54 +1,21 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
-import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
-import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
-import { planStatusLine } from './planQueue/planQueueHelpers.js';
+import { buttonDot, buttonLabel, planStatusLine } from './planQueue/planQueueHelpers.js';
+import { planQueueView } from './planQueue/planQueueViewStore.js';
 import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
 import { parentOfTab } from '../utils/subtaskTabs.js';
-import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
+import {
+  REVIEW_LOOP_IDLE_TOOLTIP, isReviewLoopRunning, reviewLoopChip, reviewLoopSentence,
+} from './reviewLoop/reviewLoopHelpers.js';
+import { isReviewLoopSeen, reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
-import { useResizable } from '../hooks/useResizable.js';
-
-// Resize drives ``max-width``, NOT ``width``. A tab is inline-flex and sizes
-// to its content; ``max-width: 260px`` is the cap that ellipsises long names.
-// Raising the cap lets the tab grow to fit the name, lowering it shrinks
-// toward the id — which is exactly the requested behaviour, and it works WITH
-// the strip's layout instead of overriding width/flex-basis and fighting it
-// (that fought ``flex-shrink: 0`` and collapsed tabs to their id).
-const TAB_CAP_MIN = 132;   // roughly the task code alone
-// Headroom, not a design constraint: the strip scrolls horizontally, so a
-// wide tab costs nothing but the operator's own screen. 600 was too tight to
-// ever show a long ticket summary in full — a 58-character name needs ~590px
-// once the id, dot, three buttons and padding take their share, so the cap
-// was reached while the name was still ellipsised.
-const TAB_CAP_MAX = 1000;
-
-// Slack added to the measured natural width before it becomes the drag's
-// upper bound.
-//
-// Only enough to absorb sub-pixel rounding between the two measurements.
-//
-// This used to be 24px, compensating for a label reserve (100px) that was
-// LARGER than the chrome it reserves for (99px) — so at maximum width the
-// label came up short and the ellipsis returned. Padding the bound hid that,
-// but the padding is real empty pill: it sits between the × and the tab's
-// edge and reads as a gap nobody asked for. The reserve is now deliberately
-// 3px UNDER the true cost (see app.scss), which leaves the label with room
-// to spare instead of a deficit, so there is nothing left to compensate for.
-const NATURAL_WIDTH_SLACK_PX = 2;
-const TAB_CAP_DEFAULT = 260;  // the stylesheet's own cap
 import { MAX_TAB_NAME_LENGTH } from '../utils/taskTabNames.js';
-
-// Fallbacks used until the label has been measured (first paint, or a
-// browser that gives us zero widths). Generous enough that a tab is never
-// unusably narrow, and never narrower than its own id.
 import TabTooltip from './TabTooltip.jsx';
 
-// Delay before the hover card appears — long enough that scrubbing
-// across the strip to reach a far tab doesn't flash a card on every
-// tab it passes over.
+// Delay before the hover card appears — long enough that running down the
+// menu to reach a far task doesn't flash a card on every row it passes.
 const HOVER_DELAY_MS = 350;
 
 // Sub-pixel element width.
@@ -87,27 +54,17 @@ function Tab({
   // not wire it — the strip is the only one that does.
   dragging = false, dropTarget = false, canDrop = false,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
-  // A main task's folded sub-tasks (utils/subtaskTabs.js): how many, whether
-  // one is waiting for you, and whether one of them is the task open now (its
-  // tab is in the second row then, and this one is marked as its family).
-  subtaskCount = 0, subtasksAsking = false, subtaskOpen = false,
+  // A sub-task row in the tasks menu, drawn under its main task.
+  nested = false,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
   // (UNA-2492). liveStatus is read from agentStatusStore by App/TabList.
   const agent = deriveAgentStatus(session, liveStatus, needsAttention);
-  // NOTE: the pill's className is built further down, after useResizable —
-  // it needs that hook's ``hasCustomWidth``.
   const dotClass = agent.dotClass;
   // Local rename: the label shown is the operator's override when set, else
   // the ticket summary. Renaming never touches the ticket — see taskTabNames.
   const [renaming, setRenaming] = useState(false);
-  // Pixel width the pill had when the edit started, held for the duration.
-  // A tab is inline-block, so it sizes to its content — and renaming swaps
-  // the id + name for one input, which would otherwise resize the pill (and
-  // shove every tab after it) the moment you double-click. Editing a label
-  // must not move the thing you are editing.
-  const [renameWidth, setRenameWidth] = useState(0);
   // Width the LABEL occupied when the edit started, handed to the input as an
   // explicit pixel width. Sizing the input with percentages instead meant its
   // box ran on underneath the pin and × — which paint above it (z-index: 2),
@@ -127,7 +84,6 @@ function Tab({
   ).trim());
 
   function startRename() {
-    setRenameWidth(measureWidth(liRef.current));
     const labelWidth = measureWidth(labelRef.current);
     setRenameBoxWidth(
       labelWidth ? Math.max(0, labelWidth - RENAME_BOX_INSET_PX) : 0,
@@ -137,7 +93,6 @@ function Tab({
 
   function endRename() {
     setRenaming(false);
-    setRenameWidth(0);
     setRenameBoxWidth(0);
   }
 
@@ -168,13 +123,13 @@ function Tab({
     setAnchorRect(null);
   }
 
-  // Selecting is the <li>'s job, but the pill also carries controls (pin, ×,
-  // the resize handle, the rename box) that must NOT select. Each of those
+  // Selecting is the <li>'s job, but the row also carries controls (pencil,
+  // pin, ×, the rename box) that must NOT select. Each of those
   // stops propagation itself; this is the backstop, so a control added later
   // can't silently reintroduce "clicking the × opened the task" — and so a
   // click that lands on the pill while the pointer sits over a control still
   // does nothing rather than switching tasks under the operator.
-  const CONTROL_SELECTOR = 'button, input, .tab-resize-handle';
+  const CONTROL_SELECTOR = 'button, input';
 
   // Where the press STARTED. A click is dispatched at the nearest common
   // ancestor of the mousedown and mouseup targets, so a press that begins on
@@ -217,6 +172,28 @@ function Tab({
     closeTooltip();
     startRename();
   }
+  // The task's review loop and its split plan, opened from its own row (the
+  // menu has the room the header did not). Both switch to the task first:
+  // the views belong to the task they show. From the tab list's own data
+  // (``session.review_loop`` / ``plan_queue``) — no fetch per row.
+  const loop = session.review_loop || null;
+  const loopChip = reviewLoopChip(loop, 0);
+  const loopNews = !!loopChip && (loopChip.running || !isReviewLoopSeen(loop.loop_id));
+  const plan = session.plan_queue || null;
+  const planDot = buttonDot(plan);
+  const planLabel = buttonLabel(plan);
+  function handleOpenLoop(event) {
+    event.stopPropagation();
+    closeTooltip();
+    onSelect(session.task_id);
+    reviewLoopView.open(session.task_id);
+  }
+  function handleOpenPlan(event) {
+    event.stopPropagation();
+    closeTooltip();
+    onSelect(session.task_id);
+    planQueueView.open(session.task_id, planLabel);
+  }
   function handleTogglePin(event) {
     event.stopPropagation();
     closeTooltip();
@@ -237,89 +214,25 @@ function Tab({
   // the untruncated name + the rest of the detail.
   const summary = String(session?.task_summary || '').trim();
 
-  // The version suffix exists to abandon stored widths whose MEANING has
-  // changed, because a remembered width always beats auto-fit and there is
-  // no way to tell a deliberate choice from a stale artefact once it is in
-  // storage.
-  //
-  //   v1 → v2: useResizable persisted on MOUNT, so every tab wrote the 260px
-  //     default the first time it rendered. "Stored" did not imply "chosen",
-  //     so every tab in every browser was pinned narrow and ellipsised.
-  //   v2 → v3: widths written while the drag had no content-aware bound, so
-  //     they encode positions from a UI that behaved differently.
-  //
-  // Widths set from here on persist and survive.
-  const capKey = `kato.tab.cap.v3.${session.task_id}`;
-
-  // Widest this pill has any reason to be: the width it takes when left to
-  // size itself. Dragging past it only adds empty space, so it becomes the
-  // drag's upper bound rather than the fixed ceiling.
-  //
-  // Measured rather than derived. The obvious formula — current width plus
-  // the label's hidden overflow — reads 0 overflow once the tab is ALREADY
-  // too wide, so it would happily confirm whatever width it found. Instead
-  // the pill is briefly put back into auto-sizing mode (inline width off,
-  // ``has-custom-width`` off, so the label drops its percentage reserve) and
-  // measured there. It all happens inside one layout effect, before the
-  // browser paints, so nothing flickers.
-  const [naturalWidth, setNaturalWidth] = useState(0);
-  useLayoutEffect(() => {
-    const el = liRef.current;
-    // Skip mid-rename: the id is hidden and an input stands in for the
-    // label, so the pill's content is not what it will settle back to.
-    if (!el || renaming) { return; }
-    const previousWidth = el.style.width;
-    const wasCustom = el.classList.contains('has-custom-width');
-    el.style.width = 'auto';
-    el.classList.remove('has-custom-width');
-    const measured = Math.ceil(el.getBoundingClientRect().width);
-    if (wasCustom) { el.classList.add('has-custom-width'); }
-    el.style.width = previousWidth;
-    if (measured > 0) {
-      setNaturalWidth(measured + NATURAL_WIDTH_SLACK_PX);
-    }
-  }, [label, renaming, pinned, session.task_id]);
-
-  const { width: cap, hasCustomWidth, onPointerDown } = useResizable({
-    storageKey: capKey,
-    defaultWidth: TAB_CAP_DEFAULT,
-    minWidth: TAB_CAP_MIN,
-    // Never below the minimum, or the clamp would invert its own bounds on
-    // a very short name. Falls back to the ceiling until the first measure.
-    maxWidth: naturalWidth
-      ? Math.max(TAB_CAP_MIN, Math.min(TAB_CAP_MAX, naturalWidth))
-      : TAB_CAP_MAX,
-    // 'left' so dragging RIGHT widens. With 'right' the delta is inverted
-    // for a handle on the tab's right edge — pulling left grew the tab.
-    anchor: 'left',
-  });
-
   const className = cx(
     'tab',
     active && 'active',
     needsAttention && 'needs-attention',
     pinned && 'is-pinned',
-    // Until the operator drags this tab, it sizes to its own name rather than
-    // ellipsising against a fixed cap. The class is what switches the label
-    // between "no reserve, grow to fit" and "reserve room for the trailing
-    // controls inside a fixed width" — see app.scss.
-    hasCustomWidth && 'has-custom-width',
+    nested && 'is-nested',
     dragging && 'dragging',
     dropTarget && 'drop-target',
     // A running review loop rings the whole pill in its own colour. A
     // SEPARATE axis from the status dot (``dotClass``), which the single
     // agent-status derivation owns — this never touches that dot.
     isReviewLoopRunning(session.review_loop) && 'has-review-loop',
-    subtaskOpen && 'has-open-subtask',
   );
 
-  const model = buildTooltipModel(session, baseStatus, needsAttention, agent, {
-    count: subtaskCount, asking: subtasksAsking,
-  });
+  const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
 
   // Where the press that could become a drag started.
   //
-  // Every control on the pill (pin, rename, ×, the resize grip) is a plain
+  // Every control on the row (pencil, pin, ×) is a plain
   // child of a draggable <li>, and the HTML drag model picks the nearest
   // ancestor with ``draggable=true`` — a button is not a barrier, and
   // ``draggable={false}`` on the child is NOT one either: the ancestor walk
@@ -392,31 +305,6 @@ function Tab({
         // (the go-to-task palette, a notification). Cheaper and less
         // fragile than threading a ref down for one caller.
         data-task-id={session.task_id}
-        // Always applied: an untouched tab's cap equals the stylesheet's own
-        // 260px, so this is a no-op until dragged. Gating it behind state made
-        // pointerdown re-render mid-drag, which dropped pointer capture — the
-        // tab then resized on plain mouse MOVE, with no button held.
-        //
-        // A dragged tab gets a DEFINITE width, not a max-width. That matters:
-        // the pill is inline-block, so under a max-width it still sizes to
-        // its content whenever the content is narrower — and the label's
-        // ``calc(100% - 100px)`` reserve then resolves against a width
-        // derived from the label itself, leaving it ~1px short and
-        // ellipsising a name that had room. Expanding the tab could never
-        // clear it. Against a definite width the percentage has nothing to
-        // feed back into, so widening reveals more of the name until it fits.
-        //
-        // Untouched tabs get neither, and size to their own content (bounded
-        // by the stylesheet's ceiling) so the ticket name reads in full.
-        //
-        // ``width`` while renaming is the pill's own measured width, so
-        // swapping the label for an input doesn't resize the tab; it comes
-        // last because it must win for the duration of the edit.
-        style={{
-          ...(hasCustomWidth ? { width: `${cap}px` } : {}),
-          ...(renameWidth ? { width: `${renameWidth}px` } : {}),
-        }}
-        data-task-id={session.task_id}
         onClick={handleSelect}
         onMouseEnter={openTooltipSoon}
         onMouseLeave={closeTooltip}
@@ -427,23 +315,12 @@ function Tab({
         tabIndex={0}
       >
         <span className={dotClass} />
-        <ReviewLoopTabBadge loop={session.review_loop || null} />
-        <PlanQueueTabBadge plan={session.plan_queue || null} />
-        {subtaskCount ? (
-          // Not a button: a click here is a click on the tab, which opens
-          // the sub-tasks' row under the strip (and closes the hover card).
-          <span className={cx('tab-subtasks', subtasksAsking && 'needs-attention')} role="img"
-            aria-label={`${subtaskSentence(subtaskCount, session.task_id)}${subtasksAsking ? ' — one is waiting for you' : ''}`}>
-            <Icon name="subtask" />
-            {subtaskCount}
-          </span>
-        ) : null}
         <span
           ref={labelRef}
           className={cx('tab-label', renaming && 'is-renaming')}
         >
           <strong className="tab-label-id">{session.task_id}</strong>
-          {parentTaskId ? (
+          {parentTaskId && !nested ? (
             <span className="tab-label-subtask" role="img" aria-label={`Subtask of ${parentTaskId}`}>
               <Icon name="subtask" />
             </span>
@@ -499,6 +376,28 @@ function Tab({
             </span>
           ) : null}
         </span>
+        {/* Shown on hover like the pencil, and always while there is news:
+            a loop running or finished unseen, a plan split from the task. */}
+        <button
+          type="button"
+          className={cx('tab-view-btn', 'tab-loop-btn', loopNews && 'has-status')}
+          aria-label={`Review loop of ${session.task_id}`}
+          title={loop ? `Review loop — ${reviewLoopSentence(loop, Date.now() / 1000)}` : REVIEW_LOOP_IDLE_TOOLTIP}
+          onClick={handleOpenLoop}
+        >
+          <Icon name="loop" />
+          {loopNews ? <span className={cx('review-loop-dot', `is-${loopChip.tone}`)} aria-hidden="true" /> : null}
+        </button>
+        <button
+          type="button"
+          className={cx('tab-view-btn', 'tab-plan-btn', plan && 'has-status')}
+          aria-label={`${planLabel} of ${session.task_id}`}
+          title={plan ? `${planLabel} — ${planStatusLine(plan)}` : 'Split this task\'s plan into small tasks that run as a queue'}
+          onClick={handleOpenPlan}
+        >
+          <Icon name="board" />
+          {planDot ? <span className={`plan-queue-dot is-${planDot}`} aria-hidden="true" /> : null}
+        </button>
         {typeof onRename === 'function' && !renaming && (
           <button
             type="button"
@@ -515,7 +414,7 @@ function Tab({
           className={cx('tab-pin-btn', pinned && 'is-pinned')}
           aria-label={pinned ? 'Unpin this task' : 'Pin this task'}
           aria-pressed={pinned}
-          title={pinned ? 'Unpin tab' : 'Pin tab to the left'}
+          title={pinned ? 'Unpin task' : 'Pin task to the top'}
           onClick={handleTogglePin}
         >
           <Icon name="pin" />
@@ -531,26 +430,6 @@ function Tab({
         >
           <Icon name="xmark" />
         </button>
-        <span
-          className="tab-resize-handle"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={`Resize the ${session.task_id} tab`}
-          title="Drag to resize this tab"
-          // NOTE: no ``draggable={false}`` here. It reads like the fix and
-          // is inert — the drag model's ancestor walk looks only for
-          // ``draggable=true``, so a false on the child stops nothing.
-          // What actually keeps this a resize rather than a reorder is the
-          // mousedown-capture guard on the <li> (see ``pressedControlRef``),
-          // plus ``useResizable``'s own ``preventDefault`` on the press.
-          onClick={(e) => e.stopPropagation()}
-          // MOUSE down, not pointer down: useResizable ends the drag on a
-          // document ``mouseup``, and its ``preventDefault()`` on a
-          // pointerdown suppresses the compatibility mouse events — so the
-          // release was never seen and the tab kept resizing until the next
-          // click.
-          onMouseDown={(e) => { e.stopPropagation(); onPointerDown(e); }}
-        />
       </li>
       {anchorRect && (
         <TabTooltip anchorRect={anchorRect} model={model} />
@@ -563,7 +442,7 @@ function Tab({
 // Structured tooltip model — every fact the old ` · `-joined string
 // carried, now as discrete fields the card renders as a header +
 // labelled rows.
-function buildTooltipModel(session, baseStatus, needsAttention, agent, subtasks) {
+function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   const taskId = String(session?.task_id || '').trim() || 'Task';
   const summary = String(session?.task_summary || '').trim();
   const rows = [];
@@ -616,14 +495,6 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent, subtasks)
   // The plan split from this task, while it runs (its own axis, like the loop).
   const planLine = planStatusLine(session?.plan_queue || null);
   if (planLine) { rows.push({ label: 'Split plan', value: planLine }); }
-  if (subtasks?.count) {
-    rows.push({
-      label: 'Sub-tasks',
-      value: `${subtasks.count} — shown in the row below the strip while this task or one of them is open`
-        + (subtasks.asking ? '. One is waiting for you.' : ''),
-      ...(subtasks.asking ? { tone: 'warn' } : {}),
-    });
-  }
   const pushedPr = String(
     session?.pr_url || session?.pull_request_url || '',
   ).trim();
@@ -638,10 +509,6 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent, subtasks)
   };
 }
 
-
-function subtaskSentence(count, taskId) {
-  return `${count} sub-task${count === 1 ? '' : 's'} of ${taskId}`;
-}
 
 // Compact Claude liveness badge for the hover card — now derived from the
 // shared agent status (utils/agentStatus.js) so the card, the tab dot, and the

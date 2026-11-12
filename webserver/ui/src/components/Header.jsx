@@ -1,8 +1,12 @@
+import { useLayoutEffect, useRef } from 'react';
 import Icon, { BusyIcon } from './Icon.jsx';
 import LidAwakeChip from './LidAwakeChip.jsx';
 import ShutdownButton from './ShutdownButton.jsx';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { cx } from '../utils/cx.js';
+import {
+  closeTaskMenuSoon, openTaskMenu, useTaskMenuOpen,
+} from '../stores/taskMenuStore.js';
 
 /**
  * Top app bar. Carries:
@@ -30,7 +34,31 @@ export default function Header({
   onOpenUsage,
   onOpenReleaseNotes,
   lidAwake = null,
+  // How many tasks wait for the operator. The tasks menu is closed most of
+  // the time, so the icon that opens it carries this — a task asking for
+  // you must not hide behind a hover.
+  attentionCount = 0,
 }) {
+  const menuOpen = useTaskMenuOpen();
+  // The tasks menu hangs from the bottom of this bar, so it reads the bar's
+  // real height (``--app-header-height``) instead of a number that drifts
+  // the next time the bar changes.
+  const headerRef = useRef(null);
+  useLayoutEffect(() => {
+    const node = headerRef.current;
+    if (!node) { return undefined; }
+    const publish = () => {
+      const height = Math.round(node.getBoundingClientRect().height);
+      if (height > 0) {
+        document.documentElement.style.setProperty('--app-header-height', `${height}px`);
+      }
+    };
+    publish();
+    if (typeof ResizeObserver !== 'function') { return undefined; }
+    const observer = new ResizeObserver(publish);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   // Refresh re-scans tickets + reloads workspace state — show the thick
   // spinner on the button while that's in flight (and block a double-tap).
   const [refreshing, runRefresh] = useBusyAction(onRefresh, {
@@ -61,8 +89,31 @@ export default function Header({
   }
 
   return (
-    <header>
-      <img src="/logo.png" alt="Kato" id="kato-logo" />
+    <header ref={headerRef}>
+      {/* The tasks menu's handle (Chrome's vertical tabs, from the corner):
+          hover opens it, leaving it and the menu closes it. A click opens it
+          too — a touch screen has nothing to hover with. */}
+      <button
+        type="button"
+        id="kato-menu-trigger"
+        className={cx('kato-menu-trigger', menuOpen && 'is-open')}
+        aria-label={attentionCount
+          ? `Tasks — ${attentionCount} waiting for you`
+          : 'Tasks'}
+        aria-haspopup="true"
+        aria-expanded={menuOpen ? 'true' : 'false'}
+        aria-controls="tabs-pane"
+        onMouseEnter={openTaskMenu}
+        onMouseLeave={closeTaskMenuSoon}
+        onClick={openTaskMenu}
+      >
+        <img src="/logo.png" alt="" id="kato-logo" />
+        {/* The logo alone did not read as a menu: the bars say it is one. */}
+        <span className="kato-menu-glyph" aria-hidden="true"><Icon name="menu" /></span>
+        {attentionCount > 0 ? (
+          <span className="kato-menu-badge" aria-hidden="true">{attentionCount}</span>
+        ) : null}
+      </button>
       <h1>Kato</h1>
       <span className="subtitle">Planning UI</span>
       {/* Where "a task needs you" lands, filled by GlobalPermissionContainer.

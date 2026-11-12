@@ -493,6 +493,30 @@ conventions used to answer "restart required" though they never needed one.
   other katos read (`plan_record_on_tracker`), and several flows depend on theirs; one gate at `add_comment` would
   break them. Moving ticket states automatically — a task left Open is picked up again on the next scan.
 
+### The tasks menu (left edge, Chrome-style vertical tabs) and the task switcher
+There is no task strip at the top any more. Every task is a ROW in a vertical list (`TabList`, `#tabs-pane`
+`.tabs-pane-side`) that slides in from the left edge under the header. It opens while the pointer is over the
+kato icon (`#kato-menu-trigger` in `Header`, with menu bars beside the logo and an orange count of tasks waiting
+for you) or over the menu, and closes `TASK_MENU_CLOSE_GRACE_MS` after it leaves both (`stores/taskMenuStore.js`);
+Escape and a press outside close it; a click on the icon opens it (touch). It is `position: fixed`, z-index 900:
+ON TOP of everything on the page and it PUSHES NOTHING (the grid is two rows: task header, panels; it sits
+under its own header-height variable, `--app-header-height`, published by `Header`). Closed = `visibility:
+hidden`, out of the tab order. With no task it is held open (first run). Each row: status dot (the one
+derivation), id + name (capitalized for display only; the label is a flex row so the name is its own box — inline
+after the id the browser read "B-2admin" and skipped the first word), then the task's review loop and split-plan
+buttons (moved here from the header: more room; shown on hover, and always while a loop runs / finished unseen or
+a plan exists — from `session.review_loop` / `plan_queue`, no fetch per row), pencil, pin, ×. A row's view
+button SELECTS its task and opens the view; the plan view opens only for the task on screen, so
+`useOpenRequests` holds a request about another task for 3s and opens it once that task is active. The header
+keeps the loop's "finished" toast (`useReviewLoop(session, {announceFinish})` in `SessionHeader`). No width
+resizing, no scroll chevrons, no sub-task second row — removed with their code.
+**Task switcher (Cmd+Tab-style):** Tab / Shift+Tab and Ctrl+Tab / Ctrl+Shift+Tab move between tasks in the menu's
+order (`useTaskTabShortcuts`; Ctrl+Tab works even in a text field; in a plain browser the browser keeps Ctrl+Tab for
+itself, the desktop app does not). Each switch `announceTaskSwitch()`es; `TaskSwitcher` shows the tasks centred,
+the landed one highlighted, and fades `TASK_SWITCHER_HOLD_MS` after the last press. Proven in headless Chromium
+(Playwright) against a real kato webserver: the menu overlays, nothing moved, rows grouped, buttons in-row, a
+row's plan button switched + opened the plan tab, the switcher came and went.
+
 ### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
 Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan
 queue below: the orchestration layer owns BRANCH STATE and PUBLISHING only). So a developer's own
@@ -648,7 +672,8 @@ gets its OWN timeout — `KATO_REVIEW_LOOP_TIMEOUT_SECONDS` (default 7200, clamp
 per-call to `investigate(timeout_seconds=)` — NOT the transport's 1800s implementation default,
 which a big multi-repo task's review (slower on Windows) overruns, failing the whole loop. UI:
 `webserver/ui/src/components/reviewLoop/` —
-header button (opens the view; nothing starts from it) + "where is it now" chip, tab badge,
+a loop button on each task's row in the tasks menu (opens the view; nothing starts from it; a dot while a
+loop runs or finished unseen) + "where is it now" chip beside the header title,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.
 
@@ -690,7 +715,7 @@ who can tag the ticket can turn this on: it skips the operator's look before the
 
 ### Plan queue (split a plan into small dependent tasks)
 ```
-"Split plan" (task toolbar / plan pane) → the task's plan TAB in the centre strip
+"Split plan" (the task's row in the tasks menu / plan pane) → the task's plan TAB in the centre strip
   → POST /api/sessions/<task>/plan-queue
   → snapshot <workspace>/plan.md into the plan (DONE wipes the workspace) → PROPOSING
     — or {split_folder}: a split the operator already WROTE as files (split_folders.py: a folder
@@ -879,17 +904,17 @@ modal blocked the whole window. It shows the split folders found + "split plan.m
 proposal, then the board (Waiting / In progress / In review / Waiting for merge / Done; cards never
 move by hand: a ready card offers Start, a waiting one Count as done (confirmed — it moves the ticket to
 done and frees what waits on it), a stuck one Retry / Count as done; "Edit tasks" for the waiting ones; a
-card's code opens its task). Polled only while the tab shows; `planQueueChanges` refreshes the toolbar button at once. Its states are the QUEUE's
+card's code opens its task). Polled only while the tab shows; `planQueueChanges` refreshes its summary at once. Its states are the QUEUE's
 axis (`planQueueHelpers.js`) — never `session.working`, never `AGENT_STATUS_KIND` (a node test
-greps the folder). The task a plan was split from carries the board mark on its TAB while the plan
+greps the folder). The task a plan was split from shows it on its ROW's plan button while the plan
 is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`; no timer of
-its own); a sub-task's tab shows `Subtask of UNA-1:` as a fixed mark, not as its name, and a rename
-edits only the name (`subtaskLabel.js`, pinned to `step_footer.subtask_summary` by a test).
-**Sub-task tabs fold into their main task's tab** (`utils/subtaskTabs.js` `foldSubtaskTabs`, used by
-`TabList`): a split filled the strip. The main task's tab shows a count (`SubtaskTabMenu`) that lists
-them, each with `deriveAgentStatus`'s own dot, orange when one waits for you. The OPEN sub-task shows right
-after its main task; a pinned one keeps its place; one whose main task has no tab here keeps its own; a
-loop of parents folds nothing. Keyboard Tab walks the visible order. The parent comes from `plan_parent` on
+its own); a sub-task's row shows `Subtask of UNA-1:` as a fixed mark when it is NOT grouped under its main
+task, never as its name, and a rename edits only the name (`subtaskLabel.js`, pinned to
+`step_footer.subtask_summary` by a test).
+**Sub-task rows are grouped under their main task** in the tasks menu (`utils/subtaskTabs.js`
+`groupSubtaskTabs`, used by `TabList`): indented under it, each with `deriveAgentStatus`'s own dot. A pinned
+one keeps its place among the pins; one whose main task has no row here is a row of its own; a loop of
+parents groups nothing. Tab / Ctrl+Tab walk the menu's order (each task, then its sub-tasks). The parent comes from `plan_parent` on
 the tab list (`PlanQueueService.step_task_sources`, any plan state, previous task ids too — local steps
 are titled `UNA-1 · Task n:` and have no "Subtask of" to read), else the ticket's "Subtask of X:" title.
 
@@ -962,7 +987,8 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   "Kato is running — next steps" toast (`useSetupFinishedNote`).
 - **A configured kato that cannot connect** sets `SETUP_KIND=cannot_connect` → the gate says so ("Kato
   can't reach a service it needs"), not "Welcome". Setup errors are passed WHOLE (no `[:500]`), shown in `<pre>`.
-- **Empty task strip:** a "Create your first task" button; a tracker is named only when one is connected
+- **No task yet:** the tasks menu is held OPEN with a "Create your first task" button (it must not hide behind a
+  hover); a tracker is named only when one is connected
   (`/api/config-status` `issue_platform`, labels from `constants/ticketSystems.js`).
 
 ### New task (local tasks — no tracker)

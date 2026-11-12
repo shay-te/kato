@@ -29,13 +29,28 @@ test('the top-tabs shell puts an 8px gutter around and between the panels', () =
   assertDeclaration(body, 'padding', '0 8px 8px');
 });
 
-test('the tab strip and task header stay full-bleed above the cards', () => {
-  // Negative horizontal margins cancel the shell padding; the header
-  // also carries the vertical gutter down to the panel tops.
-  assertDeclaration(ruleBody('#layout.has-top-tabs > #tabs-pane'), 'margin', '0 -8px');
-  assertDeclaration(
-    ruleBody('#layout.has-top-tabs > #task-header-slot'), 'margin', '0 -8px 8px',
-  );
+test('the task header stays full-bleed above the cards, in the first row', () => {
+  // Negative horizontal margins cancel the shell padding; the header also
+  // carries the vertical gutter down to the panel tops.
+  const header = ruleBody('#layout.has-top-tabs > #task-header-slot');
+  assertDeclaration(header, 'margin', '0 -8px 8px');
+  assertDeclaration(header, 'grid-row', '1');
+  // Two rows only: the tasks menu left the grid.
+  assertDeclaration(ruleBody('#layout.has-top-tabs'), 'grid-template-rows', 'auto minmax\\(0, 1fr\\)');
+});
+
+test('the tasks menu slides in over the grid from the left edge, hidden when closed', () => {
+  // Out of the grid, so opening it moves nothing the operator is reading.
+  const menu = ruleBody('.tabs-pane-side');
+  assertDeclaration(menu, 'position', 'fixed');
+  assertDeclaration(menu, 'left', '0');
+  assertDeclaration(menu, 'top', 'var\\(--app-header-height, 52px\\)');
+  // Over everything on the page, pushing nothing; dialogs still cover it.
+  const z = Number(menu.match(/z-index:\s*(\d+)/)[1]);
+  assert.ok(z > 60 && z < 999, `menu z-index ${z} must clear page chrome and stay under dialogs`);
+  // Closed is hidden, not merely off-screen: out of the tab order too.
+  assertDeclaration(menu, 'visibility', 'hidden');
+  assertDeclaration(ruleBody('.tabs-pane-side.is-open'), 'visibility', 'visible');
 });
 
 test('every panel is an outlined, rounded card', () => {

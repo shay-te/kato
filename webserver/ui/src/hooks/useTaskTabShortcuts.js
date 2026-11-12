@@ -1,11 +1,17 @@
 import { useEffect } from 'react';
 import { modalOrDrawerOpen } from '../utils/modalOpen.js';
+import { announceTaskSwitch } from '../stores/taskSwitchStore.js';
 
 /**
- * Tab / Shift+Tab cycles the task navigation strip at the top.
+ * Tab / Shift+Tab — and Ctrl+Tab / Ctrl+Shift+Tab — cycle the tasks, in the
+ * tasks menu's order, whether the menu is open or not.
  *
- *   Tab        → next task    (wraps from last → first)
- *   Shift+Tab  → previous task (wraps from first → last)
+ *   Tab, Ctrl+Tab              → next task    (wraps from last → first)
+ *   Shift+Tab, Ctrl+Shift+Tab  → previous task (wraps from first → last)
+ *
+ * Ctrl+Tab is the browser's own "next browser tab" in a plain browser, which
+ * keeps it for itself — the page never sees it there. The desktop app has no
+ * browser tabs, so it arrives and switches tasks like Tab.
  *
  * Tab is also the browser's focus-traversal key, so we hand it back
  * to the browser whenever the operator is plausibly using it for
@@ -17,8 +23,8 @@ import { modalOrDrawerOpen } from '../utils/modalOpen.js';
  *    focus *within* that surface, and silently swapping the task
  *    underneath an open dialog would be disorienting.
  *
- * Only a bare Tab / Shift+Tab is claimed; any Ctrl/Cmd/Alt
- * combination is left alone so it can't shadow OS / browser
+ * Only Tab with no modifier or with Ctrl alone is claimed (Shift picks the
+ * direction); Cmd / Alt combinations are left alone so they can't shadow OS
  * shortcuts.
  */
 function isEditableTarget(el) {
@@ -36,9 +42,12 @@ export function useTaskTabShortcuts({
   useEffect(() => {
     function onKeyDown(event) {
       if (event.key !== 'Tab') { return; }
-      if (event.ctrlKey || event.metaKey || event.altKey) { return; }
-      if (isEditableTarget(event.target)
-          || isEditableTarget(document.activeElement)) {
+      if (event.metaKey || event.altKey) { return; }
+      // Ctrl+Tab is unambiguous — nobody moves focus with it — so it switches
+      // tasks even from inside a text field. A bare Tab there stays the
+      // field's own (focus traversal, indentation).
+      if (!event.ctrlKey && (isEditableTarget(event.target)
+          || isEditableTarget(document.activeElement))) {
         return;
       }
       if (modalOrDrawerOpen()) { return; }
@@ -70,6 +79,8 @@ export function useTaskTabShortcuts({
       const nextId = ids[nextIndex];
       if (nextId && nextId !== activeTaskId) {
         onSelect(nextId);
+        // The switcher overlay shows where this landed (Cmd+Tab-style).
+        announceTaskSwitch();
       }
     }
     window.addEventListener('keydown', onKeyDown);

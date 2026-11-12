@@ -28,15 +28,11 @@ function ruleBody(selector) {
   return bodies.join('\n');
 }
 
-test('the tab mark is laid over the pill, which is its positioning box', () => {
-  assert.match(ruleBody('.tab-review-loop-badge'), /position:\s*absolute;/);
-  assert.match(ruleBody('.tab-review-loop-badge'), /pointer-events:\s*none;/);
-  assert.match(ruleBody('.tabs-pane-top .tab'), /position:\s*relative;/);
-});
-
-test('the header dot is laid over its button, which keeps its own size', () => {
+test('the dot is laid over the row\'s loop button, which keeps its own size', () => {
   assert.match(ruleBody('.review-loop-dot'), /position:\s*absolute;/);
-  assert.match(ruleBody('.review-loop-button'), /position:\s*relative;/);
+  assert.match(ruleBody('.review-loop-dot'), /pointer-events:\s*none;/);
+  assert.match(css, /\.tabs-pane-side \.tab \.tab-view-btn,[^{]*\{[^}]*position:\s*relative;/);
+  assert.doesNotMatch(css, /tab-review-loop-badge|review-loop-button/);
 });
 
 test('the chip gives way inside the title area instead of pushing the actions', () => {
@@ -68,7 +64,7 @@ test('"Up to [N rounds]" reads on one line', () => {
 
 
 test('a running loop rings the whole task pill (overlay ::after, own axis)', () => {
-  const ring = ruleBody('.tabs-pane-top .tab.has-review-loop::after');
+  const ring = ruleBody('.tabs-pane-side .tab.has-review-loop::after');
   assert.match(ring, /position:\s*absolute;/);
   assert.match(ring, /border:\s*1\.5px solid/);
   assert.match(ring, /pointer-events:\s*none;/);

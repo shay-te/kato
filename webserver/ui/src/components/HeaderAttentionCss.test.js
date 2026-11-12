@@ -73,14 +73,14 @@ test('the status text truncates instead of spilling', () => {
 });
 
 test('the task id is not set in the smallest available type', () => {
-  // A task id ("UNA-2897") is read character by character, next to 26px
-  // title text. At 11px it read as noise rather than as a control.
+  // A task id ("UNA-2897") is read character by character, next to the
+  // header's title text. At 11px it read as noise rather than as a control.
   const body = rulesFor('.permission-roster-chip');
   const size = /font-size:\s*(\d+)px/.exec(body);
   assert.ok(size, 'the chip sets no font-size');
   assert.ok(
     Number(size[1]) >= 12,
-    `chip type is ${size[1]}px — too small to read a task id beside 26px text`,
+    `chip type is ${size[1]}px — too small to read a task id beside the title`,
   );
 });
 

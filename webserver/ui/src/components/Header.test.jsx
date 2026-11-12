@@ -5,9 +5,10 @@
 // the refresh button.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 
 import Header from './Header.jsx';
+import { closeTaskMenu } from '../stores/taskMenuStore.js';
 
 
 function _baseProps(overrides = {}) {
@@ -27,7 +28,29 @@ describe('Header', () => {
     render(<Header {..._baseProps()} />);
     expect(screen.getByText('Kato')).toBeInTheDocument();
     expect(screen.getByText('Planning UI')).toBeInTheDocument();
-    expect(screen.getByAltText('Kato')).toBeInTheDocument();
+    // The logo is the tasks menu's handle: a labelled button around it.
+    expect(document.querySelector('#kato-menu-trigger #kato-logo')).not.toBeNull();
+  });
+
+  test('the logo opens the tasks menu on hover, and says how many tasks wait', () => {
+    render(<Header {..._baseProps()} attentionCount={2} />);
+    const trigger = screen.getByRole('button', { name: 'Tasks — 2 waiting for you' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.mouseEnter(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(document.querySelector('.kato-menu-badge').textContent).toBe('2');
+    act(() => closeTaskMenu());
+  });
+
+  test('the logo carries menu bars, so it reads as the menu it opens', () => {
+    render(<Header {..._baseProps()} />);
+    expect(document.querySelector('#kato-menu-trigger .kato-menu-glyph [data-icon="menu"]')).not.toBeNull();
+  });
+
+  test('no task waiting: no badge', () => {
+    render(<Header {..._baseProps()} />);
+    expect(screen.getByRole('button', { name: 'Tasks' })).toBeInTheDocument();
+    expect(document.querySelector('.kato-menu-badge')).toBeNull();
   });
 
   test('no standalone notification bell button is rendered', () => {

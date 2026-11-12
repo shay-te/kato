@@ -129,28 +129,32 @@ header {
   display: flex;
   align-items: center;
   gap: 12px;
-  /* 10px, not 14px. With 28px buttons this bar is 48px tall. It carries
-   * a logo, a static label, a status line and two buttons — it was the
-   * tallest of the three stacked chrome bars while earning the least. */
-  padding: 10px 24px;
+  /* 4px top and bottom: the bar is as tall as its 28px controls plus a
+   * hair (36px + the border). It carries a logo, a label, a status line and
+   * a few buttons — chrome that earns no more height than that. (It was
+   * 48px, and the task header under it 44px: two tall bars for one line
+   * each.) */
+  padding: 4px 24px;
   border-bottom: 1px solid #2a2a2a;
   flex-shrink: 0;
 }
 
 header #kato-logo {
-  width: 28px;
-  height: 28px;
+  /* Smaller than the bar's 28px controls: it is the brand and the tasks
+   * menu's handle, not the loudest thing on screen. */
+  width: 22px;
+  height: 22px;
   border-radius: 4px;
   object-fit: cover;
   display: block;
 }
 
-/* "Kato" + "Planning UI" sit beside the 28px logo. Sized so the
- * text's cap height visually fills the logo's 28px square — bigger
- * than a typical h1 but the logo would dwarf anything smaller. */
+/* "Kato" + "Planning UI" beside the 22px logo: a label, not a headline.
+ * (They were 26px — the biggest type in the app, on its least useful
+ * line.) The 28px line box keeps them centred with the bar's controls. */
 header h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 16px;
   line-height: 28px;
   display: inline-flex;
   align-items: center;
@@ -165,7 +169,7 @@ header h1 {
 
 header .subtitle {
   color: #a3a3a3;
-  font-size: 26px;
+  font-size: 16px;
   line-height: 28px;
   font-weight: 400;
   display: inline-flex;
@@ -546,9 +550,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
    * it shrink all the way out — never from the centre. Keep this 360px in
    * sync with CENTER_PANE_MIN_WIDTH in App.jsx. */
   grid-template-columns: minmax(0, var(--left-pane-width, 320px)) minmax(360px, 1fr) minmax(0, var(--right-pane-width, 420px));
-  /* row 1: task tab strip · row 2: full-width task header bar ·
-   * row 3: the three panels */
-  grid-template-rows: auto auto minmax(0, 1fr);
+  /* row 1: full-width task header bar · row 2: the three panels. The tasks
+   * menu is not in the grid: it slides in over it from the left edge. */
+  grid-template-rows: auto minmax(0, 1fr);
   /* Floating-panel shell — the gutter between/around the three
    * panel cards (see "panel cards" below). Only the COLUMN gap is
    * set here: a row gap would also open a band between the tab
@@ -602,14 +606,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-width: 0;
 }
 
-#layout.has-top-tabs > #tabs-pane {
-  grid-column: 1/-1;
-  grid-row: 1;
-  /* Full-bleed: cancel the shell's horizontal padding so the tab
-   * strip still spans the whole window edge-to-edge. */
-  margin: 0 -8px;
-}
-
 /* The hoisted task header — spans every column, between the tab
  * strip and the panels. Kept as a grid item (NOT display:none when
  * empty) so the panels stay auto-placed in row 3; an empty div in
@@ -617,7 +613,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * the no-task screen. */
 #layout.has-top-tabs > #task-header-slot {
   grid-column: 1/-1;
-  grid-row: 2;
+  grid-row: 1;
   min-width: 0;
   /* Full-bleed like the tab strip above it, plus the vertical gutter
    * that separates the toolbar from the panel cards below. The
@@ -687,73 +683,224 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 /* The resize handles live in the gutter between two cards — see the
  * ``.pane-resizer`` rule further down for the geometry and states. */
-/* ───── task segmented controller (top of app) ───────────────────
+/* ───── the tasks menu (left edge, Chrome-style vertical tabs) ────────
  *
- * Horizontal pill row of task segments. Each ``.tab`` is one
- * segment; the active one lifts visually. The strip scrolls
- * horizontally when its content overflows the viewport; flanking
- * chevron buttons appear automatically (disabled when there's
- * nothing to scroll in that direction). Trailing slot holds the
- * Add-task / Scan-now actions.
+ * Every task is a row in a vertical list that slides in from the left edge,
+ * under the header. It opens while the pointer is over the kato icon or over
+ * the menu itself (``taskMenuStore``) and closes shortly after it leaves both.
+ * Out of the layout grid entirely (``position: fixed``): opening it overlays
+ * the files pane rather than moving anything (the operator is reading it).
+ * Closed, it is ``visibility: hidden`` — out of the tab order and the
+ * accessibility tree, not just off-screen.
  *
- * Material: same frosted-glass family as the composer + chat
- * search bar — keeps the floating-iOS theme consistent across
- * the top, middle, and bottom of the chat. */
-.tabs-pane-top {
+ * Material: the same frosted-glass family as the composer and the chat search
+ * bar. */
+.tabs-pane-side {
+  position: fixed;
+  top: var(--app-header-height, 52px);
+  left: 0;
+  bottom: 0;
+  /* On top of everything on the page — headers, panels, the safety banner
+   * (50), dropdowns (40) — and it pushes nothing. Only what is meant to
+   * cover the page sits above it: the settings drawer and dialogs (999+),
+   * its own rows' hover card (1200), toasts. */
+  z-index: 900;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  width: min(360px, 90vw);
+  box-sizing: border-box;
+  padding: 8px;
   gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   background: linear-gradient(180deg, rgba(28, 28, 30, 0.62) 0%, rgba(16, 16, 18, 0.75) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
-  /* ``backdrop-filter`` above makes this strip its own stacking
-   * context, trapping the trailing action buttons' hover tooltip
-   * (``::after``, z-index 1000) inside it. The sibling #session-header
-   * (z-index 20) was painted on top, so the tooltip's tail bled
-   * THROUGH session-header's action buttons (green/orange/red icons)
-   * — the reported bug. Lift the whole strip above the session
-   * header so its descendant tooltips overlay it correctly. Mirrors
-   * the same fix applied to ``.right-pane-tabs`` further down. */
-  position: relative;
-  z-index: 30;
-  min-width: 0;
-  max-width: 100vw;
-  /* On narrow widths we still need to fit chevrons + scroller +
-   * trailing actions on a single row. ``box-sizing: border-box``
-   * + ``min-width: 0`` keep the flex children honest; the inner
-   * scroller (``flex: 1; min-width: 0``) absorbs whatever space
-   * is left after the fixed-width chevrons and actions claim
-   * theirs. */
-  box-sizing: border-box;
+  box-shadow: -8px 0 32px rgba(28, 28, 30, 0.62);
+  transform: translateX(-100%);
+  visibility: hidden;
+  /* Visibility waits for the slide-out to finish, then hides. */
+  transition: transform 160ms ease-out, visibility 0s linear 160ms;
 }
 
-/* Below this width the segment summary text is more noise than
- * signal — the task ID alone is the operator's anchor. Hide the
- * summary and tighten internal padding so the strip still fits
- * a half-dozen segments + the trailing actions without the
- * chevrons getting clipped. */
-@media (max-width: 880px) {
-  .tabs-pane-top {
-    padding: 8px 8px;
-    gap: 6px;
+.tabs-pane-side.is-open {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 160ms ease-out, visibility 0s;
+}
+
+/* The task rows scroll; the actions above them stay put. */
+.tabs-pane-side #tab-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A split plan's sub-tasks, under their main task: indented, with a guide
+ * line so the group reads as one. */
+.tabs-pane-side .tab-children {
+  list-style: none;
+}
+
+.tabs-pane-side .tab-children > ul {
+  list-style: none;
+  margin: 0 0 0 14px;
+  padding: 0 0 0 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* The Cmd+Tab-style task switcher: while Tab / Ctrl+Tab move between tasks,
+ * the tasks show in the middle of the screen with the one just landed on
+ * highlighted, fading a moment after the last press (TaskSwitcher.jsx).
+ * Nothing to click — ``pointer-events: none`` — it only says where you are.
+ * Above the tasks menu, below dialogs and toasts. */
+.task-switcher {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 950;
+  transform: translate(-50%, -50%);
+  min-width: min(420px, 90vw);
+  max-width: min(560px, 92vw);
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  /* Nearly opaque: it sits over whatever the centre pane shows, and text
+   * bleeding through made the task names harder to read at a glance. */
+  background: rgba(13, 13, 15, 0.86);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: -8px 0 32px rgba(28, 28, 30, 0.62);
+  pointer-events: none;
+  animation: task-switcher-in 120ms ease-out;
+}
+
+@keyframes task-switcher-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
   }
-  .tabs-pane-top .tab {
-    /* Tighter padding on narrow viewports, but NO width cap — tabs keep
-     * their full content (id + icons) and the strip scrolls rather than
-     * compressing segments (flex-shrink:0 is inherited from the base
-     * rule). */
-    padding: 5px 12px 5px 8px;
-    max-width: none;
-  }
-  .tabs-pane-top .tab p {
-    display: none;
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
   }
 }
-.tabs-pane-top.is-empty {
-  padding-top: 14px;
-  padding-bottom: 14px;
+.task-switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-switcher-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: rgba(245, 245, 247, 0.65);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+/* A sub-task, under its main task as in the menu. */
+.task-switcher-item.is-nested {
+  margin-left: 16px;
+}
+
+/* Where the switch landed: the selected row's cyan, as in the menu. */
+.task-switcher-item.is-active {
+  background: linear-gradient(180deg, #0a84ff 0%, #0c66e4 100%);
+  color: #f5f5f7;
+}
+
+.task-switcher-id {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.task-switcher-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+}
+
+/* The kato icon in the header: the tasks menu's handle. */
+.kato-menu-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  /* No padding or border: the bar's height is set by its 28px controls, and
+   * a padded handle would make the whole header taller. The hover ring is a
+   * shadow, which takes no room. */
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.kato-menu-trigger:hover,
+.kato-menu-trigger.is-open {
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+}
+
+/* The bars beside the logo: what says "this opens a menu". */
+.kato-menu-glyph {
+  display: inline-flex;
+  color: #a3a3a3;
+  transition: color 120ms ease;
+}
+
+/* The logo's box, so the two read as one handle; the bars (Icon's ``menu``)
+   stay inside the logo's height, never level with its edges. */
+.kato-menu-glyph svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+
+.kato-menu-trigger:hover .kato-menu-glyph,
+.kato-menu-trigger.is-open .kato-menu-glyph {
+  color: #f5f5f7;
+}
+
+/* How many tasks wait for you, on the icon: the menu is closed most of the
+ * time, and a task asking for you must not hide behind a hover. */
+.kato-menu-badge {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #f59e0b;
+  color: #f5f5f7;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabs-pane-side.is-empty .empty {
+  padding: 8px 6px;
 }
 
 /* A model picker's "Other" box, under its dropdown. */
@@ -776,169 +923,37 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: #1d4ed8;
 }
 
-.tabs-scroller {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  /* Slim, always-visible custom scrollbar that matches the glass
-   * aesthetic. Sits just below the segment row; operators who
-   * prefer the scrollbar can drag it, the chevrons handle long
-   * hops, and the wheel-to-horizontal handler covers the
-   * scroll-wheel case. */
-  scrollbar-width: thin;
-  scrollbar-color: rgba(245, 245, 247, 0.42) rgba(255, 255, 255, 0.06);
-  /* Vertical padding gives the active tab's cyan glow ring + the
-   * pinned-tab background ring room to render before
-   * overflow-y:hidden clips them. Without it the glow is chopped off
-   * at the top/bottom of the pill — the pill looks decapitated. Sized
-   * for the active tab's ``0 0 12px`` glow (SHADOW-20). */
-  padding-top: 6px;
-  padding-bottom: 6px;
-  /* WebKit: slim horizontal (height-sized) bar with a bordered thumb. */
-}
-.tabs-scroller::-webkit-scrollbar {
-  height: 6px;
-}
-.tabs-scroller::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
-}
-.tabs-scroller::-webkit-scrollbar-thumb {
-  background: rgba(245, 245, 247, 0.42);
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-.tabs-scroller::-webkit-scrollbar-thumb:hover {
-  background: rgba(245, 245, 247, 0.42);
-}
-
-.tabs-scroller #tab-list,
-.subtask-strip-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  /* NOT flex. As flex items the tabs were governed by flex-basis /
-   * flex-shrink, which overrode any width or max-width set on them — a
-   * resizable tab fought the container and lost (tabs collapsed to their id
-   * instead of resizing). Laid out as inline-level boxes in a nowrap block,
-   * each tab simply honours its own max-width, which is what makes dragging
-   * one wider or narrower work at all. The tabs keep ``inline-flex`` for
-   * THEIR OWN internal row (dot, label, buttons) — that part was never the
-   * problem. */
-  display: block;
-  white-space: nowrap;
-  font-size: 0; /* kills the whitespace gaps between inline-block siblings */
-}
-
-/* The gap flex used to provide, restored for inline flow. */
-.tabs-scroller #tab-list > .tab + .tab,
-.subtask-strip-list > .tab + .tab {
-  margin-left: 6px;
-}
-
-.tabs-scroller #tab-list > .tab,
-.subtask-strip-list > .tab {
-  vertical-align: middle;
-}
-
-/* The open task's sub-tasks, as a second row of tabs under the strip
- * (utils/subtaskTabs.js). A full-width flex line of the nav, so wrapping is
- * switched on only while the row is there: the empty strip's long sentence
- * must keep shrinking beside the actions, not push them to a new line. */
-.tabs-pane-top.has-subtask-strip {
-  flex-wrap: wrap;
-  row-gap: 0;
-}
-
-.subtask-strip {
-  display: flex;
-  flex: 0 0 100%;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.subtask-strip-label {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  /* The parent tab's own violet (``.has-open-subtask``): row and parent
-   * read as one family. */
-  color: #a78bfa;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-/* Every tab in this row is a sub-task: the row's label already says whose,
- * so the per-tab mark would only repeat it. */
-.subtask-strip .tab-label-subtask {
-  display: none;
-}
-
-/* Children of a tab lay out as inline boxes now that the tab is not a flex
- * container — vertical-align replaces align-items, margins replace gap. */
-.tabs-pane-top .tab > * {
-  vertical-align: middle;
-}
-
-.tabs-pane-top .tab > * + * {
-  margin-left: 6px;
-}
-
 /* One segment. Pill-shaped, frosted, with the active segment
  * raised to a brighter background so it reads as the foreground
  * choice. `<li>` is kept (instead of <button>) for compatibility
  * with existing tests that match `li.tab` for class assertions. */
-.tabs-pane-top .tab {
-  /* NO flex, anywhere in the tab. As a flex item the tab ignored max-width
-   * (flex-basis/flex-shrink won), and as a flex CONTAINER its children fought
-   * the same constraint. Plain inline-block flow: the tab honours its own
-   * max-width, and its children line up with vertical-align like any other
-   * inline content. */
-  display: inline-block;
+.tabs-pane-side .tab {
+  /* A row: dot, badges, the label (which takes the room and ellipsises),
+   * then the pencil / pin / × at the end. */
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  width: 100%;
   white-space: nowrap;
   font-size: 12px;
-  /* Right padding is generous because the right edge holds TWO
-   * round buttons (pin + ×) whose hover rings would otherwise bleed
-   * past the pill's right rounded cap into the inter-tab gap (the
-   * "red X floating between tabs" regression). 14px clears both
-   * 16px discs on a ~28px-tall pill. */
-  padding: 6px 14px 6px 12px;
-  border-radius: var(--radius-pill);
+  padding: 6px 8px 6px 10px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.06);
   color: rgba(245, 245, 247, 0.85);
   cursor: pointer;
-  white-space: nowrap;
-  /* Tabs never COMPRESS when the strip is crowded — the strip scrolls
-   * horizontally instead (chevrons + wheel handle the overflow).
-   * ``flex-shrink: 0`` is the fix for the "every chip squeezed until
-   * only the dot showed" regression: the default flex-shrink:1 let a
-   * crowded #tab-list shrink each segment to nothing.
-   *
-   * This is a CEILING, not the working width. A 260px cap here meant every
-   * ticket summary longer than a few words was permanently ellipsised, and
-   * no amount of dragging helped past the old 600px limit — the operator
-   * could not read the name of their own task. The pill is inline-block, so
-   * with the ceiling raised it simply sizes to its content; the strip
-   * scrolls horizontally, so a wide tab costs screen space and nothing else.
-   * A tab the operator HAS dragged carries an inline ``max-width`` (its
-   * remembered cap) which overrides this. */
-  flex-shrink: 0;
-  max-width: 1000px;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 90ms ease;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
-.tabs-pane-top .tab:hover {
+.tabs-pane-side .tab:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.1);
   color: #f5f5f7;
 }
 
-.tabs-pane-top .tab.active {
+.tabs-pane-side .tab.active {
   /* Selected tab — a near-solid cyan fill (a hair of translucency is kept
    * by the gradient's darker stop, so it still reads as glass rather than
    * paint) plus a bright cyan rim and an all-around cyan glow ring. The
@@ -968,76 +983,35 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  *
  * A background change gives the same affordance and moves no geometry, so the
  * pointer stays over whatever it was pressed on. */
-.tabs-pane-top .tab:active {
+.tabs-pane-side .tab:active {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.tabs-pane-top .tab:focus {
+.tabs-pane-side .tab:focus {
   outline: none;
 }
 
-/* id + name group. ``min-width: 0`` lets the name child ellipsise inside
- * the flex row (a flex item's default min-width:auto would refuse to
- * shrink and overflow the pill instead). */
-/* Reserve room for the fixed-width chrome (changes indicator, pencil, pin, ×)
- * so the label ellipsises INSTEAD of pushing them past the pill's edge. With
- * the tab as an inline-block, nothing shrinks the label automatically the way
- * a flex row did — dragging a tab narrower simply overflowed the buttons out
- * of bounds.
+/* id + name: the part of the row that gives way. ``min-width: 0`` lets it
+ * shrink inside the row instead of pushing the buttons past the edge.
  *
- * This reserve applies ONLY to a tab the operator has resized, i.e. one with
- * a fixed width to fit inside. An auto-sized tab must not carry it: the tab
- * grows to its content, so the percentage resolves against a width that was
- * itself derived from the label, and the subtrahend then makes the label
- * ~1px too narrow — an ellipsis on a tab that had just sized itself to avoid
- * one. The px cap below bounds the auto case instead, with no circularity.
- *
- * The percentage resolves against the tab's CONTENT box, so the padding is
- * already excluded — do NOT add it here. The subtrahend is every sibling
- * that shares the row, plus the 6px `.tab > * + *` margin each one carries
- * (including the label's own):
- *
- *   10 dot + 6 label + 6+16 pencil + 6+16 pin + 6+16 × = 82
- *
- * and 17 more (6+11) when the changes indicator is present — which is why
- * this is split in two. A single figure covering the indicator over-reserves
- * on every tab without one, and the symptom is a pair that looks unrelated:
- * the name ellipsises early AND an unexplained gap opens between the × and
- * the pill's edge. They are the same pixels. Inline content packs left, so
- * whatever the label is wrongly denied resurfaces as dead space at the end
- * of the row.
- *
- * Both figures are rounded DOWN. Reserving the exact cost leaves the label a
- * pixel short of its own text at maximum width, so a tab dragged wide enough
- * to show its whole name ellipsised anyway; the error has to fall on the
- * generous side. The small overdraft comes out of the pill's 14px right
- * padding, which exists precisely so the trailing controls can breathe.
- *
- * Anything that adds or removes a trailing control has to move these with
- * it, staying just under the true cost. */
-.tabs-pane-top .tab.has-custom-width .tab-label {
-  max-width: calc(100% - 80px);
-}
-
-/* Auto-sizing tab: the name is shown in full. A plain px ceiling (not a
- * percentage, which would feed back into the tab's own shrink-to-fit width)
- * stops one pathological ticket summary from claiming the whole strip. Sized
- * so the pill lands under the 1000px ceiling below once the id, dot, three
- * buttons and padding take their ~127px. */
-.tabs-pane-top .tab .tab-label {
-  display: inline-block;
-  max-width: 860px;
+ * A flex row ITSELF, so the name is its own box: laid out inline after the
+ * id, the browser read "B-2" + "admin admin" as one word ("B-2admin"), and
+ * ``text-transform: capitalize`` then skipped the name's first word —
+ * "admin Admin". The name ellipsises on its own (.tab-label-title). */
+.tabs-pane-side .tab .tab-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
   overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
 }
 
-.tabs-pane-top .tab .tab-label > * + * {
+.tabs-pane-side .tab .tab-label > * + * {
   margin-left: 6px;
 }
 
-.tabs-pane-top .tab strong,
-.tabs-pane-top .tab .tab-label-id {
+.tabs-pane-side .tab strong,
+.tabs-pane-side .tab .tab-label-id {
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.01em;
@@ -1058,7 +1032,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* Capitalized for display only ("admin admin" reads "Admin Admin"): the
  * stored name, the rename box (.tab-label-rename) and every copy of the name
  * elsewhere keep exactly what was typed. */
-.tabs-pane-top .tab .tab-label-title {
+.tabs-pane-side .tab .tab-label-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1070,7 +1044,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   text-transform: capitalize;
 }
 
-.tabs-pane-top .tab p {
+.tabs-pane-side .tab p {
   margin: 0;
   color: rgba(245, 245, 247, 0.65);
   font-size: 11px;
@@ -1080,7 +1054,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   white-space: nowrap;
 }
 
-.tabs-pane-top .tab .tab-forget-btn {
+.tabs-pane-side .tab .tab-forget-btn {
   background: transparent;
   border: none;
   color: rgba(245, 245, 247, 0.42);
@@ -1105,14 +1079,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.tabs-pane-top .tab .tab-forget-btn svg {
+.tabs-pane-side .tab .tab-forget-btn svg {
   width: 10px;
   height: 10px;
   display: block;
 }
 
-.tabs-pane-top .tab:hover .tab-forget-btn,
-.tabs-pane-top .tab.active .tab-forget-btn {
+.tabs-pane-side .tab:hover .tab-forget-btn,
+.tabs-pane-side .tab.active .tab-forget-btn {
   visibility: visible;
   /* A faint enclosed disc so the × reads as a button that lives
    * INSIDE the pill, not a stray glyph hanging off the rounded
@@ -1121,7 +1095,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: rgba(245, 245, 247, 0.85);
 }
 
-.tabs-pane-top .tab .tab-forget-btn:hover {
+.tabs-pane-side .tab .tab-forget-btn:hover {
   background: rgba(220, 38, 38, 0.95);
   color: #f5f5f7;
 }
@@ -1133,7 +1107,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * (full opacity + brighter background) so the operator can scan
  * which tabs are pinned at a glance. Unpinned state shows the
  * thumbtack rotated 45° as a "tip up, not stuck" affordance. */
-.tabs-pane-top .tab .tab-pin-btn {
+.tabs-pane-side .tab .tab-pin-btn {
   background: transparent;
   border: none;
   color: rgba(245, 245, 247, 0.42);
@@ -1154,7 +1128,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: background 120ms ease, color 120ms ease, transform 120ms ease;
 }
 
-.tabs-pane-top .tab .tab-pin-btn svg {
+.tabs-pane-side .tab .tab-pin-btn svg {
   width: 10px;
   height: 10px;
   display: block;
@@ -1164,13 +1138,13 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: transform 120ms ease;
 }
 
-.tabs-pane-top .tab .tab-pin-btn.is-pinned svg {
+.tabs-pane-side .tab .tab-pin-btn.is-pinned svg {
   transform: rotate(0deg);
 }
 
-.tabs-pane-top .tab:hover .tab-pin-btn,
-.tabs-pane-top .tab.active .tab-pin-btn,
-.tabs-pane-top .tab .tab-pin-btn.is-pinned {
+.tabs-pane-side .tab:hover .tab-pin-btn,
+.tabs-pane-side .tab.active .tab-pin-btn,
+.tabs-pane-side .tab .tab-pin-btn.is-pinned {
   /* Pinned button is always visible — that's the whole point of
    * pinning ("I want to see this stays pinned across reloads"). */
   visibility: visible;
@@ -1178,14 +1152,14 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: rgba(245, 245, 247, 0.85);
 }
 
-.tabs-pane-top .tab .tab-pin-btn.is-pinned {
+.tabs-pane-side .tab .tab-pin-btn.is-pinned {
   /* Stronger fill for the "stuck" state so it reads as a toggle
    * that's currently ON rather than just a hovered button. */
   background: rgba(10, 132, 255, 0.4);
   color: #f5f5f7;
 }
 
-.tabs-pane-top .tab .tab-pin-btn:hover {
+.tabs-pane-side .tab .tab-pin-btn:hover {
   background: rgba(10, 132, 255, 0.55);
   color: #f5f5f7;
 }
@@ -1208,12 +1182,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * escape the pill — `.tab` has no `overflow: hidden` to trim it, and
  * a hit area bleeding into the inter-tab gap would resurrect the old
  * "red X floating between tabs" regression as an invisible one.
- *
- * z-index lifts both buttons above `.tab-resize-handle`: its ::after
- * arc is a circle as wide as the tab is tall, clipped to its right
- * half — still hit-testable (clip-path culls hits, opacity:0 does
- * not), positioned, and later in DOM order, so it painted over the
- * ×'s right edge and swallowed clicks there. */
+ */
 /* ───── tab-rename (pencil) button ────────────────────────────────
  *
  * Renaming used to be double-click-only. A gesture with no visible
@@ -1221,7 +1190,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * the feature may as well not have existed. Same 16px disc and same
  * hover/active reveal as the pin and × beside it. Double-click still works
  * for anyone who reaches for it. */
-.tabs-pane-top .tab .tab-rename-btn {
+.tabs-pane-side .tab .tab-view-btn,
+.tabs-pane-side .tab .tab-rename-btn {
   background: transparent;
   border: none;
   color: rgba(245, 245, 247, 0.42);
@@ -1240,34 +1210,43 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.tabs-pane-top .tab .tab-rename-btn svg {
+.tabs-pane-side .tab .tab-view-btn svg,
+.tabs-pane-side .tab .tab-rename-btn svg {
   width: 10px;
   height: 10px;
   display: block;
 }
 
-.tabs-pane-top .tab:hover .tab-rename-btn,
-.tabs-pane-top .tab.active .tab-rename-btn {
+/* The review loop and split-plan buttons also show while there is news on
+ * them (a loop running or finished unseen, a plan split from the task). */
+.tabs-pane-side .tab:hover .tab-view-btn,
+.tabs-pane-side .tab.active .tab-view-btn,
+.tabs-pane-side .tab .tab-view-btn.has-status,
+.tabs-pane-side .tab:hover .tab-rename-btn,
+.tabs-pane-side .tab.active .tab-rename-btn {
   visibility: visible;
   background: rgba(255, 255, 255, 0.1);
   color: rgba(245, 245, 247, 0.85);
 }
 
-.tabs-pane-top .tab .tab-rename-btn:hover {
+.tabs-pane-side .tab .tab-view-btn:hover,
+.tabs-pane-side .tab .tab-rename-btn:hover {
   background: rgba(10, 132, 255, 0.55);
   color: #f5f5f7;
 }
 
-.tabs-pane-top .tab .tab-rename-btn,
-.tabs-pane-top .tab .tab-pin-btn,
-.tabs-pane-top .tab .tab-forget-btn {
+.tabs-pane-side .tab .tab-view-btn,
+.tabs-pane-side .tab .tab-rename-btn,
+.tabs-pane-side .tab .tab-pin-btn,
+.tabs-pane-side .tab .tab-forget-btn {
   position: relative;
   z-index: 2;
 }
 
-.tabs-pane-top .tab .tab-rename-btn::before,
-.tabs-pane-top .tab .tab-pin-btn::before,
-.tabs-pane-top .tab .tab-forget-btn::before {
+.tabs-pane-side .tab .tab-view-btn::before,
+.tabs-pane-side .tab .tab-rename-btn::before,
+.tabs-pane-side .tab .tab-pin-btn::before,
+.tabs-pane-side .tab .tab-forget-btn::before {
   content: "";
   position: absolute;
   top: -6px;
@@ -1278,11 +1257,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 /* The × gets NO horizontal expansion, only the vertical one it shares above.
  *
- * Rightward, it would eat into the resize grip: the × sits over it
- * (z-index 2), so every pixel it borrows is a pixel the grip cannot be
- * grabbed by — and the grip is already the hardest thing on the pill to hit,
- * being on the rounded cap where the usable height tapers away.
- *
  * Leftward, it would claim the gap to the pin. That gap is 6px and the pin
  * already expands 3px into it, so the two targets meet exactly — and the ×,
  * painting later at the same z-index, took the whole thing. Aiming at the
@@ -1291,7 +1265,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  *
  * The vertical expansion is the one that mattered anyway: a 16px disc in a
  * ~30px pill is missed above and below, not beside. */
-.tabs-pane-top .tab .tab-forget-btn::before {
+.tabs-pane-side .tab .tab-forget-btn::before {
   left: 0;
   right: 0;
 }
@@ -1301,7 +1275,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * Sorted to the front of the strip by ``orderByPinned`` in TabList, and
  * scrolling with everything else. The opaque panel keeps them legible
  * against the strip's gradient. */
-.tabs-pane-top .tab.is-pinned {
+.tabs-pane-side .tab.is-pinned {
   /* Pinned tabs are SORTED to the front and scroll with everything else.
    *
    * They used to be ``position: sticky`` against the left edge. That cannot
@@ -1314,7 +1288,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-.tabs-pane-top .tab.is-pinned.active {
+.tabs-pane-side .tab.is-pinned.active {
   /* Active + pinned uses the SAME solid cyan fill + glow as a normal
    * selected tab, so the selection cue is identical whether pinned or not. */
   background: linear-gradient(180deg, #0a84ff 0%, #0c66e4 100%);
@@ -1322,32 +1296,20 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.4), 0 0 12px rgba(10, 132, 255, 0.55);
 }
 
-/* The main task of the sub-task that is open (its family's row shows under
- * the strip): violet, never the selected tab's cyan, so "which task is open"
- * and "whose sub-task it is" are told apart at a glance. After the pinned
- * rules on purpose — a pinned parent's dark fill hid an earlier, fainter
- * cyan mark entirely. ``needs-attention`` (orange, below) still wins. */
-.tabs-pane-top .tab.has-open-subtask,
-.tabs-pane-top .tab.is-pinned.has-open-subtask {
-  background: rgba(167, 139, 250, 0.55);
-  border-color: #a78bfa;
-  color: #f5f5f7;
-}
-
 /* Drag-to-reorder feedback, matching the file-tab strip's. */
-.tabs-pane-top .tab.dragging {
+.tabs-pane-side .tab.dragging {
   opacity: 0.4;
 }
 
 /* The tab the drop will land on. Only ever rendered for a LEGAL target —
  * TabList refuses a cross-group drop — so this doubles as the answer to
  * "can I put it here?". */
-.tabs-pane-top .tab.drop-target {
+.tabs-pane-side .tab.drop-target {
   outline: 2px solid #0a84ff;
   outline-offset: 1px;
 }
 
-.tabs-pane-top .tab.needs-attention {
+.tabs-pane-side .tab.needs-attention {
   background: rgba(245, 158, 11, 0.35);
   border-color: rgba(245, 158, 11, 0.65);
   color: #f5f5f7;
@@ -1365,7 +1327,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  *
  * Overriding here keeps the sidebar layout untouched while
  * forcing a true circle inside the segmented controller. */
-.tabs-pane-top .tab .status-dot {
+.task-switcher-item .status-dot,
+.tabs-pane-side .tab .status-dot {
   flex-shrink: 0;
   margin-top: 0;
   width: 10px;
@@ -1380,62 +1343,25 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * fix it, but we also tighten the ring offset to match the
  * smaller dot size so the orange halo doesn't extend past the
  * segment's vertical centre. */
-.tabs-pane-top .tab .status-dot.status-attention::after {
+.task-switcher-item .status-dot.status-attention::after,
+.tabs-pane-side .tab .status-dot.status-attention::after {
   inset: -4px;
 }
 
-.tabs-pane-top .tab .status-dot.is-loading::after {
+.task-switcher-item .status-dot.is-loading::after,
+.tabs-pane-side .tab .status-dot.is-loading::after {
   inset: -3px;
 }
 
-/* Chevron buttons that flank the scroller. Hidden state is just
- * disabled-style (operator still sees the affordance so they
- * learn the strip can scroll). */
-.tabs-nav-button {
-  /* Bare glyph, circle on hover — same treatment as .session-action and the
-   * files/changes toolbar buttons. Kept in step with them deliberately: a
-   * strip where some icons carry chrome and others do not reads as a
-   * mistake, not as a distinction. */
-  flex-shrink: 0;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  padding: 0;
-  border: 1px solid transparent;
-  background: transparent;
-  color: #f5f5f7;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  line-height: 1;
-  transition: background 120ms ease, opacity 120ms ease, transform 90ms ease;
-}
-
-.tabs-nav-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.tabs-nav-button:active:not(:disabled) {
-  transform: scale(0.92);
-}
-
-.tabs-nav-button:disabled {
-  opacity: 0.28;
-  cursor: not-allowed;
-}
-
-/* Trailing actions (Add task, Scan now). Same round-button family
- * as session-header actions so the visual language is consistent. */
+/* The menu's actions (go to task, new task, add task, delete, scan now),
+ * above the rows. Same round-button family as the session-header actions. */
 .tabs-actions {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-  padding-left: 6px;
-  border-left: 1px solid rgba(255, 255, 255, 0.06);
-  margin-left: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .tabs-action {
@@ -1499,7 +1425,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 /* Empty-state copy when no tabs exist yet — sits inline in the
  * tabs row so the operator still sees the Add-task button on the
  * right. */
-.tabs-pane-top .empty {
+.tabs-pane-side .empty {
   flex: 1;
   margin: 0;
   padding: 0 4px;
@@ -1508,93 +1434,19 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   white-space: normal;
 }
 
-.tabs-pane-top .empty code {
+.tabs-pane-side .empty code {
   background: rgba(255, 255, 255, 0.1);
   padding: 1px 5px;
   border-radius: 4px;
-}
-
-/* ── Legacy left-pane styles (kept for any consumer still using
- * the sidebar layout). When ``#layout.has-top-tabs`` is set, the
- * tab strip uses ``.tabs-pane-top`` rules above; the rules below
- * apply only to the original aside-style sidebar. */
-#tabs-pane:not(.tabs-pane-top) {
-  border-right: 1px solid #2a2a2a;
-  overflow-y: auto;
-  padding: 0 0 12px;
-  display: flex;
-  flex-direction: column;
-}
-
-#tabs-pane:not(.tabs-pane-top) #tab-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab {
-  padding: 10px 16px;
-  cursor: pointer;
-  border-left: 3px solid transparent;
-  display: grid;
-  grid-template-columns: 16px 1fr auto auto;
-  gap: 8px;
-  align-items: start;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab:hover {
-  background: #2a2a2a;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab:focus {
-  outline: none;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab.active {
-  background: #2a2a2a;
-  border-left-color: #f5f5f7;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab strong {
-  display: block;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab p {
-  margin: 2px 0 0;
-  color: #a3a3a3;
-  font-size: 12px;
-  grid-column: 2;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab-forget-btn {
-  grid-column: 4;
-  grid-row: 1/span 2;
-  align-self: center;
-  background: transparent;
-  border: none;
-  color: #2a2a2a;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  visibility: hidden;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab:hover .tab-forget-btn,
-#tabs-pane:not(.tabs-pane-top) .tab.active .tab-forget-btn {
-  visibility: visible;
-}
-
-#tabs-pane:not(.tabs-pane-top) .tab-forget-btn:hover {
-  background: #b91c1c;
-  color: #f5f5f7;
 }
 
 .status-dot {
   position: relative;
   width: 12px;
   height: 12px;
+  /* A dot never gives way in a flex row: shrunk, it was drawn as an ellipse
+   * (the task switcher's, beside a long task name). Inert outside a flex row. */
+  flex-shrink: 0;
   border-radius: 50%;
   display: inline-block;
   margin-top: 4px;
@@ -1781,7 +1633,8 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   gap: 16px;
   min-width: 0;
   overflow: visible;
-  padding: 8px 24px;
+  /* As tall as its 28px actions plus a hair, like the app header above. */
+  padding: 4px 24px;
   border-bottom: 1px solid #2a2a2a;
   position: relative;
   z-index: 20;
@@ -10894,7 +10747,7 @@ button.settings-prompt-editor-head {
 }
 
 /* ===== Task-tab hover card (TabTooltip) =========================
- * Portal-rendered into <body> so .tabs-scroller's overflow:hidden
+ * Portal-rendered into <body> so the tasks menu's scrolling list
  * can't clip it. position:fixed; coords come from JS. Never takes
  * pointer events — it mirrors the tab's hover, no dismiss logic. */
 .tab-tooltip {
@@ -10921,12 +10774,12 @@ button.settings-prompt-editor-head {
   animation: none;
 }
 
-.tab-tooltip.is-above {
-  transform-origin: bottom left;
+.tab-tooltip.is-right {
+  transform-origin: top left;
 }
 
-.tab-tooltip.is-below {
-  transform-origin: top left;
+.tab-tooltip.is-left {
+  transform-origin: top right;
 }
 
 .tab-tooltip-head {
@@ -12298,41 +12151,15 @@ button.settings-prompt-editor-head {
  * value it APPENDS instead of replacing. ``onFocus`` select-all in Tab.jsx
  * is the other half of that fix. The tab still identifies itself: the input
  * is labelled "Rename the <id> tab". */
-.tabs-pane-top .tab .tab-label.is-renaming .tab-label-id {
+.tabs-pane-side .tab .tab-label.is-renaming .tab-label-id {
   display: none;
 }
 
 /* A plan's sub-task: a fixed mark between the id and the name, in place of
  * the "Subtask of UNA-3267:" words (the hover card still says them). Out of
  * the way while renaming, like the id: the box gets the label to itself. */
-.tabs-pane-top .tab .tab-label.is-renaming .tab-label-subtask {
+.tabs-pane-side .tab .tab-label.is-renaming .tab-label-subtask {
   display: none;
-}
-
-/* The count of a split plan's sub-tasks, folded into their main task's tab
- * (utils/subtaskTabs.js). Not a control: a click on it is a click on the tab,
- * which opens the sub-tasks' row. Orange when one is waiting for you, like the
- * tab of a task that is. */
-.tab-subtasks {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 2px;
-  height: 18px;
-  padding: 0 6px;
-  background: #2a2a2a;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 999px;
-  color: #c8c8cd;
-  font: inherit;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.tab-subtasks.needs-attention {
-  background: rgba(245, 158, 11, 0.35);
-  border-color: rgba(245, 158, 11, 0.65);
-  color: #f5f5f7;
 }
 
 /* The Docker containers a task's agent started: a chip in the header's title
@@ -12458,7 +12285,7 @@ button.settings-prompt-editor-head {
  * which is what "the text field is cut off on the right" was. The box is
  * measured and inset 2px (Tab.jsx → RENAME_BOX_INSET_PX), so dropping the
  * clip cannot let it reach the buttons. */
-.tabs-pane-top .tab .tab-label.is-renaming {
+.tabs-pane-side .tab .tab-label.is-renaming {
   overflow: visible;
 }
 
@@ -12468,7 +12295,7 @@ button.settings-prompt-editor-head {
  * the pill does not move. Percentage sizing here is what let the field run
  * on underneath the pin and × — they paint above it (z-index: 2), so the
  * overflowing box was invisible rather than obviously wrong. */
-.tabs-pane-top .tab .tab-label-rename {
+.tabs-pane-side .tab .tab-label-rename {
   min-width: 0;
   /* Fallback only, for the case where the measurement came back 0 (no
    * layout yet). Never lets the box exceed the label that contains it. */
@@ -12481,67 +12308,6 @@ button.settings-prompt-editor-head {
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-}
-
-/* Tab resize grip. The <span> is an invisible grab area on the tab's very
- * edge; ``::after`` draws the visible line, rounded so it matches the pill's
- * soft geometry rather than reading as a hard rule. */
-.tabs-pane-top .tab {
-  position: relative;
-}
-
-.tabs-pane-top .tab .tab-resize-handle {
-  position: absolute;
-  top: 50%;
-  right: 0;
-  transform: translateY(-50%);
-  /* 16px, not 12: the grip lives on the pill's rounded cap, where the
-   * usable height tapers to nothing at the corners, so the honest target is
-   * much smaller than the strip suggests. The × beside it claims the first
-   * 3px back via its own hit area, which left ~9px to hit. */
-  width: 16px;
-  height: 100%;
-  cursor: col-resize;
-  touch-action: none;
-  /* Below the pin / × buttons (z-index: 2). This element is positioned and
-   * last in DOM order, so it — and the wider ::after arc below — would
-   * otherwise take the clicks meant for the × next to it. */
-  z-index: 1;
-}
-
-/* A uniform-thickness ARC on the pill's right cap. A bordered circle clipped
- * to its right half traces the same curve as the tab's border-radius at a
- * CONSTANT stroke width — a plain ``border-right`` on a rounded box tapers at
- * the ends, which is what read as a crescent/moon. Hidden until the tab is
- * hovered. */
-.tabs-pane-top .tab .tab-resize-handle::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  /* The pill's right cap is a semicircle of radius = tab height / 2, so the
-   * arc only matches its curvature if the circle's DIAMETER equals the tab
-   * height. A fixed size (18px) traced a tighter curve than the pill and
-   * read as a separate blob rather than its edge. */
-  height: 100%;
-  aspect-ratio: 1;
-  box-sizing: border-box;
-  border: 2px solid rgba(245, 245, 247, 0.65);
-  border-radius: 50%;
-  /* Keep only the right half → an arc. */
-  clip-path: inset(0 0 0 50%);
-  opacity: 0;
-  transition: opacity 120ms ease-out, border-color 120ms ease-out;
-}
-
-.tabs-pane-top .tab:hover .tab-resize-handle::after {
-  opacity: 1;
-}
-
-.tabs-pane-top .tab .tab-resize-handle:hover::after,
-.tabs-pane-top .tab .tab-resize-handle.is-dragging::after {
-  opacity: 1;
-  border-color: #0a84ff;
 }
 
 /* --- Ctrl/Cmd+P task palette --------------------------------------------
@@ -13635,12 +13401,8 @@ button.settings-prompt-editor-head {
     transform: rotate(360deg);
   }
 }
-/* Header button: a dot over its corner, never extra width. */
-.plan-queue-button,
-.review-loop-button {
-  position: relative;
-}
-
+/* A row's review loop / split-plan button: its status as a dot over the
+ * button's corner, never extra width. */
 .plan-queue-dot,
 .review-loop-dot {
   position: absolute;
@@ -13650,25 +13412,6 @@ button.settings-prompt-editor-head {
   height: 7px;
   border-radius: 50%;
   background: #a3a3a3;
-  pointer-events: none;
-}
-
-/* Tab: a mark over the pill's corner, never extra width. The split's mark
- * takes the other corner, so a task with both shows both. */
-.tab-plan-queue-badge,
-.tab-review-loop-badge {
-  position: absolute;
-  top: -3px;
-  left: -3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 999px;
-  background: #2a2a2a;
-  color: #a3a3a3;
-  font-size: 9px;
   pointer-events: none;
 }
 
@@ -13690,45 +13433,12 @@ button.settings-prompt-editor-head {
   background: #ef4444;
 }
 
-/* Running = indigo, the review-loop accent (same as the chat label and the
- * pill ring below) — NOT cyan, which is the active-tab fill the corner badge
- * would vanish against. */
-.tab-review-loop-badge.is-running {
-  color: #a78bfa;
-}
-
-.tab-review-loop-badge.is-good {
-  color: #34d399;
-}
-
-.tab-review-loop-badge.is-warn {
-  color: #f59e0b;
-}
-
-.tab-review-loop-badge.is-bad {
-  color: #ef4444;
-}
-
-.tab-plan-queue-badge {
-  left: auto;
-  right: -3px;
-}
-
-/* Amber, the plan split's own accent (its chat prompt is amber too). */
-.tab-plan-queue-badge.is-running {
-  color: #fde68a;
-}
-
-.tab-plan-queue-badge.is-warn {
-  color: #f59e0b;
-}
-
 /* A running review loop rings the whole task pill in indigo, so an active loop
  * is visible from any tab — a SEPARATE axis from the status dot. Drawn as an
  * overlay ring (::after) so it layers over the active-tab cyan fill and the
  * orange needs-attention state without fighting their own box-shadows. The
  * pill is already ``position: relative`` for the corner badge. */
-.tabs-pane-top .tab.has-review-loop::after {
+.tabs-pane-side .tab.has-review-loop::after {
   content: "";
   position: absolute;
   inset: -2px;
@@ -13810,7 +13520,7 @@ button.settings-prompt-editor-head {
 @media (prefers-reduced-motion: reduce) {
   .review-loop-step.is-current .review-loop-step-mark,
   .review-loop-chip.is-running svg,
-  .tabs-pane-top .tab.has-review-loop::after {
+  .tabs-pane-side .tab.has-review-loop::after {
     animation: none;
   }
 }

@@ -6,12 +6,12 @@ import { createPortal } from 'react-dom';
 // + id + Claude badge), the summary, then a labelled row per fact
 // (status / branch / repos / pending permission / changes / PR).
 //
-// Why a portal: the tab strip lives inside ``.tabs-scroller`` which
-// has ``overflow: hidden`` to clip sideways-scrolled segments —
-// that same clip eats any in-flow absolute tooltip. Rendering into
-// ``document.body`` with ``position: fixed`` escapes the clip; we
-// compute the position from the trigger's bounding rect and flip
-// above / clamp horizontally so it never leaves the viewport.
+// Why a portal: the task rows live inside the tasks menu, which scrolls
+// (``overflow-y: auto``) — that same clip eats any in-flow absolute
+// tooltip. Rendering into ``document.body`` with ``position: fixed``
+// escapes it; the card sits BESIDE the row (the menu is on the left
+// edge, so beside means to its right), flips to the left when there is
+// no room, and is clamped vertically so it never leaves the viewport.
 //
 // ``pointer-events: none`` on the card (set in CSS) means the
 // tooltip never steals hover and never needs its own dismiss logic
@@ -33,20 +33,20 @@ export default function TabTooltip({ anchorRect, model }) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    let top = anchorRect.bottom + GAP;
-    let placement = 'below';
-    // Flip above if it would overflow the bottom edge.
-    if (top + card.height + VIEWPORT_PAD > vh) {
-      top = anchorRect.top - GAP - card.height;
-      placement = 'above';
-    }
-    top = Math.max(VIEWPORT_PAD, top);
-
-    let left = anchorRect.left;
+    let left = anchorRect.right + GAP;
+    let placement = 'right';
+    // Flip to the left of the row if it would overflow the right edge.
     if (left + card.width + VIEWPORT_PAD > vw) {
-      left = vw - card.width - VIEWPORT_PAD;
+      left = anchorRect.left - GAP - card.width;
+      placement = 'left';
     }
     left = Math.max(VIEWPORT_PAD, left);
+
+    let top = anchorRect.top;
+    if (top + card.height + VIEWPORT_PAD > vh) {
+      top = vh - card.height - VIEWPORT_PAD;
+    }
+    top = Math.max(VIEWPORT_PAD, top);
 
     setPos({ top, left, placement });
   }, [anchorRect, model]);
