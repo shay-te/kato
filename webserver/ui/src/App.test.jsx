@@ -1250,9 +1250,11 @@ describe('App — the "New task" draft in the centre strip', () => {
     await screen.findByRole('option', { name: 'Opus' });
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
     await waitFor(() => expect(screen.getByText('active=LOCAL-1')).toBeInTheDocument());
+    // Second argument: the attached files (none here) — New task takes
+    // attachments since the pane learned to hand documents over at creation.
     expect(createLocalTask).toHaveBeenCalledWith(expect.objectContaining({
       summary: 'Add retry', repositories: ['api'], start_mode: 'plan', model: 'opus', effort: 'high',
-    }));
+    }), []);
     expect(refresh).toHaveBeenCalled();
     expect(document.querySelector('.file-tab.is-new-task')).toBeNull();
     expect(screen.getByTestId('session-detail').textContent).toContain('LOCAL-1');

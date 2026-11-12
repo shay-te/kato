@@ -1209,6 +1209,7 @@ export default function App() {
         <RightPane
           activeTaskId={activeTaskId}
           activeTaskSummary={activeSession?.task_summary || ''}
+          activeTaskBranch={activeSession?.branch_name || ''}
           workspaceVersion={activeWorkspaceVersion}
           focusFileTarget={fileTreeFocusTarget}
           // The plan board's tab is no file: nothing to reveal in the tree.

@@ -106,6 +106,9 @@ const TREE_LOADER_GRACE_MS = 300;
 
 export default function FilesTab({
   taskId,
+  // The branch the task works on (the tab list's ``branch_name``) — not
+  // always the task id: see branchWorthShowing.
+  taskBranch = '',
   taskSummary = '',
   workspaceVersion = 0,
   focusFilterSignal = 0,
@@ -586,6 +589,7 @@ export default function FilesTab({
           cwd={repo.cwd}
           branch={repo.branch}
           taskId={taskId}
+          taskBranch={taskBranch}
           busy={showLoader}
         />
       ))
@@ -649,6 +653,7 @@ export default function FilesTab({
           commentMeta={commentMeta}
           showAllFiles={showAllFiles}
           taskId={taskId}
+          taskBranch={taskBranch}
           focusFileTarget={focusFileTarget}
           openFile={selectionRepoKey === repoKey ? openFile : null}
         />
@@ -995,7 +1000,7 @@ function collectFileRelativePaths(nodes, out = []) {
 // chrome) so nothing shifts when the real tree replaces it — the pane fills
 // in, it does not re-lay-out. See ``taskRepoMemory`` for where the names come
 // from and why they are trusted for display only.
-function RepoTreeSkeleton({ repoId, cwd, branch, taskId, busy = true }) {
+function RepoTreeSkeleton({ repoId, cwd, branch, taskId, taskBranch = '', busy = true }) {
   const heading = repoId || cwd || 'repository';
   return (
     <section className="files-tab-repo is-loading">
@@ -1014,7 +1019,7 @@ function RepoTreeSkeleton({ repoId, cwd, branch, taskId, busy = true }) {
             <Icon name="chevron-down" />
           </span>
           <span className="files-tab-repo-name" data-tooltip={cwd}>{heading}</span>
-          {branchWorthShowing(branch, taskId) && (
+          {branchWorthShowing(branch, taskId, taskBranch) && (
             <span className="files-tab-repo-branch">{branch}</span>
           )}
           {/* Where the +N/-N stats land. The shared button spinner — the same
@@ -1075,7 +1080,7 @@ function RepoTree({
   searchTerm = '', searchPrefs = undefined, searchMatch = matchTreeNode,
   conflictedFiles, changedFiles, diffMeta = EMPTY_DIFF_META,
   commentMeta = EMPTY_COMMENT_META,
-  showAllFiles = false, taskId = '', focusFileTarget = null,
+  showAllFiles = false, taskId = '', taskBranch = '', focusFileTarget = null,
   openFile = null,
 }) {
   const repoRef = useRef(null);
@@ -1505,7 +1510,7 @@ function RepoTree({
           {/* Only when it is NOT the task branch — see branchWorthShowing.
               Repeating the task code on all twenty-five rows says nothing the
               tab header does not, and buries the one repo that is on master. */}
-          {branchWorthShowing(repoBranch, taskId) && (
+          {branchWorthShowing(repoBranch, taskId, taskBranch) && (
             <span
               className="files-tab-repo-branch"
               data-tooltip={`${heading} is on branch ${repoBranch}`}

@@ -23,6 +23,7 @@ import threading
 from container_core_lib.container_core_lib import DockerCli, DockerUnavailable, FolderContainers, Outcome
 from sandbox_core_lib.sandbox_core_lib.manager import SANDBOX_CONTAINER_LABEL
 
+from kato_core_lib.helpers.automation_switches_utils import stop_containers_on_done
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
@@ -61,7 +62,10 @@ class TaskContainers(object):
 
     def task_done(self, task_id: str) -> None:
         """A task reached Done: its running containers are stopped, off the
-        done's own path (Docker can take seconds per container)."""
+        done's own path (Docker can take seconds per container) — unless the
+        operator switched that off (Settings → Automation, read fresh)."""
+        if not stop_containers_on_done():
+            return
         self._run_later(lambda: self._stop_after_done(task_id))
 
     def _stop_after_done(self, task_id: str) -> None:

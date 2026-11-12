@@ -115,6 +115,11 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
               {' '}· sub-tasks of {plan.source_task_id}, driven by {followed ? `${plan.driver_user}'s kato` : 'this kato'}
             </span>
           ) : null}
+          {plan.merge_branch ? (
+            <span className="plan-board-driver" data-tooltip="Each task's pull request goes into this branch, the main task's.">
+              {' '}· merges into <code>{plan.merge_branch}</code>
+            </span>
+          ) : null}
         </p>
         <div className="plan-board-controls">
           {canEditPlan(plan) && !editing ? (

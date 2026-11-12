@@ -27,6 +27,16 @@ const ALLOWED_MEDIA_TYPES = new Set([
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES_PER_MESSAGE = 10;
 
+// An image that can ride in the message itself (a thumbnail the model sees).
+// Anything else the operator attaches — a PDF, a spreadsheet, a zip, an image
+// past the cap or in a format the API rejects — is saved into the task folder
+// and named in the message instead of being refused.
+export function isInlineImage(file) {
+  if (!file) { return false; }
+  const mediaType = String(file.type || '').toLowerCase();
+  return ALLOWED_MEDIA_TYPES.has(mediaType) && Number(file.size || 0) <= MAX_IMAGE_BYTES;
+}
+
 export const IMAGE_REJECT_REASON = {
   UNSUPPORTED_TYPE: 'unsupported_type',
   TOO_LARGE: 'too_large',

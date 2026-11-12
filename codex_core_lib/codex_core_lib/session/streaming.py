@@ -214,6 +214,24 @@ class StreamingCodexSession(object):
         except Exception:  # noqa: BLE001 - an unreadable setting means strict
             return normalized_git_access('')
 
+    def _writable_roots(self) -> list[str]:
+        """Every directory beyond ``cwd`` this turn may write to, on EVERY turn.
+
+        ``--add-dir`` reaches only a FRESH turn: ``codex exec resume`` rejects
+        it, and a resumed turn does not keep the first turn's either — proven on
+        codex-cli 0.166 with the repositories outside every temp folder (which
+        the sandbox lets anyone write): turn one wrote into the task's second
+        repository, the resumed turn two could not. Every chat after its first
+        message lost its sibling repositories that way. A config override is
+        accepted by both, so the extra directories — and, at local git access,
+        each repository's ``.git`` — ride in one. It replaces any
+        ``writable_roots`` in the user's own Codex config for the turn.
+        """
+        roots = [directory for directory in self._additional_dirs if directory]
+        if self._turn_git_access == GIT_ACCESS_LOCAL:
+            roots += [git_dir for git_dir in self._git_writable_roots() if git_dir not in roots]
+        return roots
+
     def _git_writable_roots(self) -> list[str]:
         """Each workspace root's own ``.git``, which the sandbox keeps read-only.
 
@@ -324,24 +342,18 @@ class StreamingCodexSession(object):
         command = [self._binary, 'exec']
         if resume_id:
             # A sub-subcommand, not a flag — and it accepts a RESTRICTED
-            # option set: --sandbox / -C / --add-dir are rejected here because
-            # the resumed turn inherits them from the original spawn.
+            # option set: --sandbox / -C / --add-dir are rejected here. A
+            # resumed turn does NOT inherit the first turn's --add-dir, though
+            # (see ``_writable_roots``), so those go in a config override.
             command.extend(['resume', resume_id])
         command.extend(['--json', '--skip-git-repo-check'])
         if self._model:
             command.extend(['-m', self._model])
-        if self._turn_git_access == GIT_ACCESS_LOCAL:
-            # ``-c``, not ``--add-dir``: a resumed turn rejects ``--add-dir``
-            # and does NOT inherit the first turn's (proven on codex-cli
-            # 0.166 — a chat started with its .git writable could not commit
-            # on its next turn), while a config override applies to both.
-            git_roots = self._git_writable_roots()
-            if git_roots:
-                command.extend([
-                    '-c',
-                    'sandbox_workspace_write.writable_roots='
-                    + json.dumps(git_roots),
-                ])
+        writable = self._writable_roots()
+        if writable:
+            command.extend([
+                '-c', 'sandbox_workspace_write.writable_roots=' + json.dumps(writable),
+            ])
         if not resume_id:
             command.extend(['--sandbox', self._sandbox_mode])
             if self._cwd:

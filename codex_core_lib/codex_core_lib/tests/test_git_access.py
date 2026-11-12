@@ -90,17 +90,16 @@ class CommandTests(_Repos):
         session._turn_git_access = session._current_git_access()
         return session._default_command(prompt='x', resume_id=resume_id)
 
-    def test_strict_leaves_the_sandbox_as_it_is(self) -> None:
+    def test_strict_opens_no_git_only_the_extra_directories(self) -> None:
         command = self._command(self._session())
-        self.assertEqual(self._writable_roots(command), [])
-        self.assertNotIn('-c', command)
+        self.assertEqual(self._writable_roots(command), [str(self.web), str(self.notes)])
 
-    def test_local_opens_each_repositorys_git_and_nothing_else(self) -> None:
+    def test_local_also_opens_each_repositorys_git_and_nothing_else(self) -> None:
         self.level = 'local'
         command = self._command(self._session())
         self.assertEqual(
             self._writable_roots(command),
-            [str(self.api / '.git'), str(self.web / '.git')],
+            [str(self.web), str(self.notes), str(self.api / '.git'), str(self.web / '.git')],
         )
         self.assertIn('workspace-write', command)
 
@@ -111,7 +110,18 @@ class CommandTests(_Repos):
         command = self._command(self._session(), resume_id='thread-9')
         self.assertEqual(command[:4], ['codex', 'exec', 'resume', 'thread-9'])
         self.assertNotIn('--add-dir', command)
-        self.assertEqual(len(self._writable_roots(command)), 2)
+        self.assertEqual(len(self._writable_roots(command)), 4)
+
+    def test_a_resumed_turn_keeps_the_tasks_other_repositories(self) -> None:
+        # The bug this fixed: --add-dir reaches only a fresh turn, so from the
+        # second message on a chat could no longer write to the task's other
+        # repositories (proven on codex-cli 0.166).
+        command = self._command(self._session(), resume_id='thread-9')
+        self.assertEqual(self._writable_roots(command), [str(self.web), str(self.notes)])
+
+    def test_a_chat_with_no_extra_directory_adds_no_override_at_strict(self) -> None:
+        plain = StreamingCodexSession(task_id='PROJ-1', cwd=str(self.api))
+        self.assertNotIn('-c', self._command(plain))
 
     def test_no_source_or_a_failing_one_is_strict(self) -> None:
         plain = StreamingCodexSession(task_id='PROJ-1', cwd=str(self.api))
@@ -128,7 +138,9 @@ class CommandTests(_Repos):
 
     def test_an_unknown_level_is_strict(self) -> None:
         self.level = 'full'
-        self.assertEqual(self._writable_roots(self._command(self._session())), [])
+        self.assertEqual(
+            self._writable_roots(self._command(self._session())), [str(self.web), str(self.notes)],
+        )
 
 
 class TurnTests(_Repos):

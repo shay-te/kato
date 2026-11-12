@@ -31,6 +31,7 @@ from claude_core_lib.claude_core_lib.session.streaming import (
     TURN_ACK_GRACE_SECONDS as SEND_ACK_GRACE_SECONDS,
 )
 
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.workspace_repo_utils import sibling_repository_dirs
@@ -298,10 +299,17 @@ class MainChatDelivery(object):
         summary = ''
         description = ''
         workspace_root = ''
+        branch_name = ''
         if self._workspace_manager is not None:
             workspace = self._workspace_manager.get(task_id)
             summary = str(getattr(workspace, 'task_summary', '') or '')
             description = str(getattr(workspace, 'task_description', '') or '')
+            # The task's branch — the ONE answer, the same the checkout used.
+            # Without it this spawn named no branch in its opener and recorded
+            # an empty ``expected_branch``, so a task on a branch of its own
+            # was talked about as if it had none.
+            if workspace is not None:
+                branch_name = task_branch(task_id, getattr(workspace, 'tags', None))
             # Task folder: scopes the prompt boundary and the docker mount.
             try:
                 workspace_root = str(
@@ -331,6 +339,7 @@ class MainChatDelivery(object):
             task_description=description,
             workspace_root=workspace_root,
             additional_dirs=additional_dirs,
+            branch_name=branch_name,
         )
         return True
 

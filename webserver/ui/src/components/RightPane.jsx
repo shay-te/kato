@@ -6,6 +6,7 @@ import { useGlobalSearchShortcut } from '../hooks/useGlobalSearchShortcut.js';
 export default function RightPane({
   activeTaskId,
   activeTaskSummary = '',
+  activeTaskBranch = '',
   workspaceVersion = 0,
   focusFileTarget = null,
   openFile = null,
@@ -61,6 +62,7 @@ export default function RightPane({
       <div className="right-pane-body">
         <FilesTab
           taskId={activeTaskId}
+          taskBranch={activeTaskBranch}
           taskSummary={activeTaskSummary}
           workspaceVersion={workspaceVersion}
           focusFilterSignal={focusFilterSignal}

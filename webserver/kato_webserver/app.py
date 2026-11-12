@@ -395,7 +395,23 @@ def _live_settings_keys() -> frozenset[str]:
         })
         | RELEASE_NOTES_KEYS
         | SLACK_DONE_KEYS
+        | _read_fresh_switch_keys()
     )
+
+
+def _read_fresh_switch_keys() -> frozenset[str]:
+    """Switches every use reads straight from settings.json — saving one
+    already applied it. They used to answer "restart required" anyway."""
+    from kato_core_lib.helpers.agent_git_access_utils import AGENT_GIT_STRICT_KEY
+    from kato_core_lib.helpers.automation_switches_utils import AUTOMATION_SWITCH_KEYS
+    from kato_core_lib.helpers.publish_conventions_gate_utils import (
+        PUBLISH_FOLLOWS_PROJECT_CONVENTIONS_KEY,
+    )
+    from kato_core_lib.helpers.push_approval_gate_utils import AUTO_PUSH_ENABLED_KEY
+
+    return AUTOMATION_SWITCH_KEYS | frozenset({
+        AGENT_GIT_STRICT_KEY, AUTO_PUSH_ENABLED_KEY, PUBLISH_FOLLOWS_PROJECT_CONVENTIONS_KEY,
+    })
 
 
 def _apply_live_settings(app: Flask, updates: dict) -> str:
@@ -429,6 +445,8 @@ def _apply_live_settings(app: Flask, updates: dict) -> str:
             'Saved. Standing instructions apply to the next chat kato starts; '
             'a chat already running keeps the ones it started with.'
         )
+    if _read_fresh_switch_keys() & set(updates):
+        messages.append('Saved. It applies from now on — no restart needed.')
     return ' '.join(message for message in messages if message)
 
 
@@ -7594,6 +7612,14 @@ def _workspace_record_to_dict(
     plan_parent_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
+    # The branch the task works on — the ONE answer (``task_branch``: a
+    # ``kato:branch:`` tag in kato's own tags, else the task id). The UI had
+    # only the task id, so a New task created on its own branch showed
+    # ``LOCAL-n`` everywhere and its branch nowhere.
+    try:
+        payload['branch_name'] = task_branch(record.task_id, getattr(record, 'tags', None))
+    except Exception:
+        payload['branch_name'] = str(getattr(record, 'task_id', '') or '')
     payload['review_loop'] = (review_loop_by_task or {}).get(record.task_id)
     payload['plan_queue'] = (plan_queue_by_task or {}).get(record.task_id)
     # The task this one's plan was split from ('' = no plan's sub-task).

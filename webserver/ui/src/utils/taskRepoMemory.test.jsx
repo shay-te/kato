@@ -3,7 +3,7 @@
 
 import { describe, test, expect, beforeEach } from 'vitest';
 import {
-  rememberRepos, rememberedRepos,
+  branchWorthShowing, rememberRepos, rememberedRepos,
 } from './taskRepoMemory.js';
 
 beforeEach(() => { localStorage.clear(); });
@@ -71,5 +71,26 @@ describe('taskRepoMemory', () => {
       T1: { repos: [null, {}, { repo_id: 'real', cwd: '/ws/real' }], at: 1 },
     }));
     expect(rememberedRepos('T1').map((r) => r.repo_id)).toEqual(['real']);
+  });
+});
+
+describe('branchWorthShowing — the repo chip appears only off the task branch', () => {
+  test('a task named after its id: the old convention', () => {
+    expect(branchWorthShowing('UNA-1', 'UNA-1')).toBe(false);
+    expect(branchWorthShowing('feature/UNA-1', 'UNA-1')).toBe(false);
+    expect(branchWorthShowing('master', 'UNA-1')).toBe(true);
+    expect(branchWorthShowing('UNA-1', 'UNA-1', 'UNA-1')).toBe(false);
+  });
+
+  test('a task on a branch of its own: the exact branch counts', () => {
+    // It used to compare against the task id, so EVERY repo of such a task
+    // got a chip and the one really elsewhere did not stand out.
+    expect(branchWorthShowing('feature/retry', 'LOCAL-3', 'feature/retry')).toBe(false);
+    expect(branchWorthShowing('master', 'LOCAL-3', 'feature/retry')).toBe(true);
+    expect(branchWorthShowing('LOCAL-3', 'LOCAL-3', 'feature/retry')).toBe(true);
+  });
+
+  test('no branch read is no chip', () => {
+    expect(branchWorthShowing('', 'LOCAL-3', 'feature/retry')).toBe(false);
   });
 });

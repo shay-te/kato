@@ -6639,7 +6639,8 @@ body.kato-resizing {
  * — it is reference information, not a state to act on — but present, because
  * a clone stranded on the default branch looks identical to a healthy one
  * until its work fails to push. */
-.files-tab-repo-branch {
+.files-tab-repo-branch,
+#session-task-branch {
   flex-shrink: 0;
   max-width: 140px;
   overflow: hidden;

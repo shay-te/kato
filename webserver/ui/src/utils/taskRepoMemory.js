@@ -65,10 +65,18 @@ export function rememberRepos(taskId, trees) {
 // So: shown only when it does NOT match the task. A repo on master, or on
 // some other branch, still stands out — and now it is the only chip on
 // screen, which is the whole point.
-export function branchWorthShowing(branch, taskId) {
+//
+// ``taskBranch`` is the task's OWN branch (the tab list's ``branch_name``).
+// A task created on a branch of its own (New task's "Branch name", or a
+// rename) is not named after its id, so matching the id put a chip on EVERY
+// repo and hid the one that really was elsewhere; there the exact branch is
+// what counts.
+export function branchWorthShowing(branch, taskId, taskBranch = '') {
   const name = String(branch || '').trim();
   const task = String(taskId || '').trim();
+  const own = String(taskBranch || '').trim();
   if (!name) { return false; }
+  if (own && own !== task) { return name !== own; }
   if (!task) { return true; }
   // ``UNA-1234``, ``feature/UNA-1234``, ``kato/UNA-1234-thing`` all count as
   // "on the task branch" — the prefix is a convention, not a difference.

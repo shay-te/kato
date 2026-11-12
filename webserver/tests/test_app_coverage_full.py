@@ -1146,6 +1146,22 @@ class WorkspaceRecordToDictTests(unittest.TestCase):
         )
         self.assertFalse(payload['has_changes_pending'])
 
+    def test_carries_the_branch_the_task_works_on(self):
+        # The UI had only the task id: a New task created on its own branch
+        # showed LOCAL-n everywhere and its branch nowhere (tab tooltip,
+        # header, Files tab chips).
+        from kato_webserver.app import _workspace_record_to_dict
+
+        def branch_of(tags):
+            record = SimpleNamespace(
+                task_id='LOCAL-3', tags=tags, to_dict=lambda: {'task_id': 'LOCAL-3'},
+            )
+            return _workspace_record_to_dict(record, live_session_ids=set())['branch_name']
+
+        self.assertEqual(branch_of(['kato:branch:feature/retry', 'kato:repo:api']), 'feature/retry')
+        self.assertEqual(branch_of(['kato:repo:api']), 'LOCAL-3')
+        self.assertEqual(branch_of(None), 'LOCAL-3')
+
 
 # --------------------------------------------------------------------------
 # _record_to_dict: dict + bare-object branches (3222-3224)

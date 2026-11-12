@@ -47,6 +47,7 @@ from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
 from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
 from kato_core_lib.helpers.autopilot_guidance_utils import with_autopilot_guidance
 from kato_core_lib.helpers.planning_hold_store import held_permission_mode
+from kato_core_lib.helpers.run_tests_utils import with_test_policy
 from kato_core_lib.helpers.remote_control_store import (
     schedule_remote_control_for_spawn,
 )
@@ -881,8 +882,10 @@ class PlanningSessionRunner(object):
             # Kato's guidance + the operator's standing instructions (Settings
             # → Prompts), read fresh so a save reaches the next spawn.
             # A task on autopilot is also told to finish by itself.
+            # "Run tests" off (Settings → Automation) adds its section before
+            # the operator's own text, which keeps the last word.
             extra_system_prompt=with_autopilot_guidance(task_id, with_standing_instructions(
-                defaults.extra_system_prompt,
+                with_test_policy(defaults.extra_system_prompt),
             )),
             # The docker sandbox mounts THIS, not cwd: cwd is one repo
             # clone, so mounting it hides every sibling repo in the same

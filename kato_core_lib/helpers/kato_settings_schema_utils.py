@@ -31,6 +31,10 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
     CommandPolicy,
 )
 from kato_core_lib.helpers.agent_git_access_utils import AGENT_GIT_STRICT_KEY
+from kato_core_lib.helpers.automation_switches_utils import (
+    RUN_TESTS_KEY,
+    STOP_CONTAINERS_ON_DONE_KEY,
+)
 from kato_core_lib.helpers.plan_mode_store import DEFAULT_MODE_CHOICES
 from kato_core_lib.helpers.standing_instructions_utils import (
     STANDING_INSTRUCTIONS_KEY,
@@ -47,6 +51,12 @@ LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 # reflects what kato will really do.
 DEFAULT_ON_BOOL_KEYS: frozenset[str] = frozenset({
     AGENT_GIT_STRICT_KEY,
+    RUN_TESTS_KEY,
+    STOP_CONTAINERS_ON_DONE_KEY,
+    # On unless switched off in the code that reads them — they used to draw
+    # an unchecked switch while kato ran them.
+    'KATO_RELEASE_NOTES_ENABLED',
+    'KATO_SECURITY_SCANNER_ENABLED',
     'KATO_ALLOW_CLI_UPGRADE',
     'KATO_REVIEW_COMMENTS_ENABLED',
     'KATO_REVIEW_COMMENTS_REQUIRE_MENTION',
@@ -240,7 +250,21 @@ SETTINGS_SCHEMA: list[dict] = [
              'waits for the push button — it never pushes a branch or '
              'opens a pull request on its own. Turn ON to let the scan '
              'loop publish without asking. The UI Push / Done buttons '
-             'are operator actions and are never affected.', {}),
+             'are operator actions and are never affected.', {'panel': 'automation'}),
+            # Settings → Automation: what kato does on its own in a task.
+            (RUN_TESTS_KEY, 'bool', 'Run tests',
+             'On by default. Off: kato skips its testing step after the agent '
+             'finishes, tells every chat it starts not to run the tests (unless '
+             'you ask in the chat), and the review loop runs no tests. Writing '
+             'tests is still allowed. Kato\'s own step stops at once; a chat '
+             'already running keeps the instructions it started with.',
+             {'panel': 'automation'}),
+            (STOP_CONTAINERS_ON_DONE_KEY, 'bool', 'Stop the task\'s containers on Done',
+             'On by default. When a task reaches Done, kato stops the Docker '
+             'containers its agent started in the task folder (a database, a dev '
+             'server). Stopped, not removed: one command starts them again. Off: '
+             'they keep running until you stop them from the task header.',
+             {'panel': 'automation'}),
             # Shown in its OWN tab (Settings → Strict git), which explains it.
             (AGENT_GIT_STRICT_KEY, 'bool', 'Strict git',
              'On by default: the agent edits files and kato makes every commit. '
@@ -281,7 +305,7 @@ SETTINGS_SCHEMA: list[dict] = [
              'wrote one) still wins over this either way. With Strict git '
              'off, commits the agent made itself keep their own messages '
              '(it reads CLAUDE.md anyway); this shapes kato\'s commit of '
-             'what is left uncommitted, and the pull request.', {}),
+             'what is left uncommitted, and the pull request.', {'panel': 'automation'}),
             ('KATO_LID_AWAKE_ENABLED', 'bool',
              'Keep running with the lid closed',
              'Off by default. Kato keeps this computer awake with the lid closed: '
@@ -296,26 +320,26 @@ SETTINGS_SCHEMA: list[dict] = [
              'Read ticket comments',
              'Off by default. When on, comments on the ticket '
              '(YouTrack/Jira/…) are added to the task the agent works '
-             'from. Off = the agent sees only the description.', {}),
+             'from. Off = the agent sees only the description.', {'panel': 'automation'}),
             ('KATO_TASK_COMMENTS_REQUIRE_MENTION', 'bool',
              'Only @-mentioned comments',
              'Requires the above. Takes a ticket comment ONLY when it '
              '@-mentions the kato user — untagged chatter between people '
-             'never becomes instructions. Leave on.', {}),
+             'never becomes instructions. Leave on.', {'panel': 'automation'}),
             ('KATO_REVIEW_COMMENTS_ENABLED', 'bool',
              'Pull PR review comments',
              'On by default. Turn OFF to stop kato polling Bitbucket / '
              'GitHub / GitLab / Azure DevOps for new pull-request review '
              'comments — and '
              'to stop any review-comment run already in flight. Applies '
-             'immediately, no restart. Ticket pickup is unaffected.', {}),
+             'immediately, no restart. Ticket pickup is unaffected.', {'panel': 'automation'}),
             ('KATO_REVIEW_COMMENTS_REQUIRE_MENTION', 'bool',
              'Only @-mentioned PR comments',
              'On by default. Kato answers ONLY pull-request comments that '
              '@-mention its own user and ignores the rest — including '
              'reviewer-to-reviewer chatter that tags nobody. Turn OFF to '
              'act on everything except comments tagging someone else. '
-             'Applies immediately, no restart.', {}),
+             'Applies immediately, no restart.', {'panel': 'automation'}),
             ('KATO_WORKSPACE_REVIEW_TTL_SECONDS', 'number',
              'Workspace review TTL (s)',
              'How long a review-state workspace survives before '
@@ -361,7 +385,7 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_RELEASE_NOTES_ENABLED', 'bool', 'Keep release notes',
              'Add a dated line for each task that reaches Done — "Finish & forget" '
              'with done ticked, the plan board\'s "Count as done", or a ticket closed '
-             'in YouTrack / Jira. On unless switched off.', {}),
+             'in YouTrack / Jira. On unless switched off.', {'panel': 'automation'}),
             ('KATO_RELEASE_NOTES_PATH', 'text', 'Release notes file',
              'The markdown file the notes are kept in. Empty = '
              '~/.kato/release-notes.md. It must be outside the workspaces folder '
@@ -578,10 +602,10 @@ SETTINGS_SCHEMA: list[dict] = [
                        'Blocks on CRITICAL by default.',
         'fields': [
             ('KATO_SECURITY_SCANNER_ENABLED', 'bool',
-             'Scanner enabled',
+             'Security scan before the agent starts',
              'Master switch. OFF is NOT recommended for teams that '
              'ship to production.',
-             {'warning': 'Disabling removes the committed-secret / '
+             {'panel': 'automation', 'warning': 'Disabling removes the committed-secret / '
                          'vulnerable-dep gate entirely.'}),
             ('KATO_SECURITY_RUNNER_ENV_FILE', 'bool',
              'Runner: .env / secret scan',
@@ -627,7 +651,7 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_FAILURE_EMAIL_ENABLED', 'bool',
              'Failure email enabled',
              'Send an email when a task fails. Requires Brevo API key '
-             'and sender/recipient fields below.', {}),
+             'and sender/recipient fields below.', {'panel': 'automation'}),
             ('KATO_FAILURE_EMAIL_TEMPLATE_ID', 'number',
              'Failure template id',
              'Brevo transactional template ID used for failure emails.', {}),
@@ -641,7 +665,7 @@ SETTINGS_SCHEMA: list[dict] = [
              'From address for failure notification emails.', {}),
             ('KATO_COMPLETION_EMAIL_ENABLED', 'bool',
              'Completion email enabled',
-             'Send an email when a task completes successfully.', {}),
+             'Send an email when a task completes successfully.', {'panel': 'automation'}),
             ('KATO_COMPLETION_EMAIL_TEMPLATE_ID', 'number',
              'Completion template id',
              'Brevo transactional template ID for completion emails.', {}),

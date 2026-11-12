@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import ActionGuardSettingsPanel from './ActionGuardSettingsPanel.jsx';
+import AutomationSettingsPanel from './AutomationSettingsPanel.jsx';
 import ChatSettingsPanel from './ChatSettingsPanel.jsx';
 import ClaudePermissionsSettingsPanel from './ClaudePermissionsSettingsPanel.jsx';
 import PromptsSettingsPanel from './PromptsSettingsPanel.jsx';
@@ -31,6 +32,7 @@ const TAB_ACTION_GUARD = 'action-guard';
 const TAB_PROMPTS = 'prompts';
 // Equal to the schema field's ``panel`` — that is how settings search finds it.
 const TAB_STRICT_GIT = 'strict-git';
+const TAB_AUTOMATION = 'automation';
 const TAB_TASK_PROVIDER = 'task-provider';
 const TAB_GIT_PROVIDER = 'git-provider';
 const TAB_NOTIFICATIONS = 'notifications';
@@ -65,6 +67,13 @@ const BESPOKE_TABS = [
     description: 'What the agent is blocked from doing regardless of '
       + 'permission mode — the always-blocked floor and the per-category '
       + 'postures above it.',
+  },
+  {
+    id: TAB_AUTOMATION,
+    label: 'Automation',
+    description: 'What kato does on its own in a task — running tests, the '
+      + 'security scan, pushing, release notes, emails, stopping containers, '
+      + 'answering comments — each one a switch.',
   },
   {
     id: TAB_STRICT_GIT,
@@ -199,6 +208,8 @@ export default function SettingsDrawer({
     panel = <PromptsSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_STRICT_GIT) {
     panel = <StrictGitSettingsPanel highlightKey={highlightKey} />;
+  } else if (tab === TAB_AUTOMATION) {
+    panel = <AutomationSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_TASK_PROVIDER) {
     panel = <TaskProviderSettingsPanel />;
   } else if (tab === TAB_GIT_PROVIDER) {

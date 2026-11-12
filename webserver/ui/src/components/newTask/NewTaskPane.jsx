@@ -7,7 +7,7 @@ import { toast, toastResult } from '../../stores/toastStore.js';
 import Icon, { BusyIcon } from '../Icon.jsx';
 import MarkdownContent from '../MarkdownContent.jsx';
 import NewTaskAgentPickers from './NewTaskAgentPickers.jsx';
-import NewTaskAttachments from './NewTaskAttachments.jsx';
+import NewTaskAttachments, { attachFiles } from './NewTaskAttachments.jsx';
 import NewTaskRepositories from './NewTaskRepositories.jsx';
 import NewTaskStartMode from './NewTaskStartMode.jsx';
 import { discardNewTaskDraft, updateNewTaskDraft, useNewTaskDraft } from './newTaskDraftStore.js';
@@ -77,6 +77,45 @@ export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }
     onCreated(taskId);
   }, { enabled: problems.length === 0 });
 
+  // The description IS the task's prompt, so a screenshot or a document
+  // pasted or dropped there has to land as an attachment — it used to do
+  // nothing (paste) or make the browser open the file over the draft (drop).
+  // Dropping anywhere on the pane counts; a drop the Attachments section
+  // already took (it calls preventDefault) is not added twice.
+  function addFiles(picked) {
+    const added = attachFiles(files, picked, handleFilesChange);
+    if (added > 0) {
+      toast.show({
+        kind: 'success',
+        title: added === 1 ? 'Attached 1 file' : `Attached ${added} files`,
+        message: 'Listed under Attachments — the agent reads them from the start.',
+        durationMs: 4000,
+      });
+    }
+  }
+  function carriesFiles(event) {
+    return Array.from(event.dataTransfer?.types || []).includes('Files');
+  }
+  function handlePaneDragOver(event) {
+    if (carriesFiles(event)) { event.preventDefault(); }
+  }
+  function handlePaneDrop(event) {
+    if (event.defaultPrevented) { return; }
+    const picked = Array.from(event.dataTransfer?.files || []);
+    if (picked.length === 0) { return; }
+    event.preventDefault();
+    addFiles(picked);
+  }
+  function handleDescriptionPaste(event) {
+    const picked = Array.from(event.clipboardData?.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => (typeof item.getAsFile === 'function' ? item.getAsFile() : null))
+      .filter(Boolean);
+    if (picked.length === 0) { return; }  // plain text pastes as usual
+    event.preventDefault();
+    addFiles(picked);
+  }
+
   const editor = previewing ? (
     <div className="new-task-preview"><MarkdownContent>{draft.description || '_Nothing written yet._'}</MarkdownContent></div>
   ) : (
@@ -86,12 +125,18 @@ export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }
       placeholder="What should be done? Paste the spec, acceptance criteria, links… (markdown)"
       value={draft.description}
       onChange={(event) => updateNewTaskDraft({ description: event.target.value })}
+      onPaste={handleDescriptionPaste}
     />
   );
   const createIcon = creating ? <BusyIcon /> : <Icon name="play" />;
   const blockedHint = problems.length ? <p className="new-task-problems">{problems.join(' · ')}</p> : null;
   return (
-    <section id="new-task-pane" aria-label="New task">
+    <section
+      id="new-task-pane"
+      aria-label="New task"
+      onDragOver={handlePaneDragOver}
+      onDrop={handlePaneDrop}
+    >
       <header className="new-task-header">
         <Icon name="edit" />
         <h3 className="new-task-heading">New task</h3>

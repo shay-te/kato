@@ -22,12 +22,14 @@ import {
 import {
   collectImageParts,
   IMAGE_REJECT_REASON,
+  isInlineImage,
 } from '../utils/imageAttachment.js';
 import {
   looksLikeTextFile,
   readTextAttachment,
   formatTextAttachment,
   formatSavedAttachment,
+  formatSavedFile,
   MAX_TEXT_ATTACHMENT_BYTES,
   TEXT_REJECT_REASON,
 } from '../utils/textAttachment.js';
@@ -556,11 +558,18 @@ const MessageForm = forwardRef(function MessageForm({
     if (disabled) { return; }
     const items = Array.from(event.clipboardData?.items || []);
     const imageItems = items.filter((it) => it.type && it.type.startsWith('image/'));
-    if (imageItems.length === 0) { return; }
+    // A file copied in the file manager (a PDF, a spreadsheet) arrives as a
+    // non-image FILE item: it goes the same way as a dropped one.
+    const otherFiles = items
+      .filter((it) => it.kind === 'file' && !(it.type && it.type.startsWith('image/')))
+      .map((it) => (typeof it.getAsFile === 'function' ? it.getAsFile() : null))
+      .filter(Boolean);
+    if (imageItems.length === 0 && otherFiles.length === 0) { return; }
     // Stop the textarea from inserting a "filename"/blob placeholder
     // when the clipboard has both text and an image.
     event.preventDefault();
-    await ingestImages(imageItems);
+    if (imageItems.length > 0) { await ingestImages(imageItems); }
+    if (otherFiles.length > 0) { await ingestFiles(otherFiles); }
   }
 
   async function handleFilePickerChange(event) {
@@ -595,24 +604,69 @@ const MessageForm = forwardRef(function MessageForm({
     await ingestFiles(files);
   }
 
-  // Route dropped / picked files: images become attachment thumbnails,
-  // text-based files (xml, json, yaml, plain/extensionless text…) get their
-  // content inlined into the composer as a fenced block. Everything else is
-  // rejected. Keeps the operator from hitting "Only PNG… supported" for a
-  // config/data file they legitimately want to hand the agent.
+  // Route dropped / picked / pasted files: images the model can see become
+  // thumbnails, text-based files (xml, json, yaml, plain/extensionless text…)
+  // are inlined as a fenced block, and EVERY other file — a PDF, a
+  // spreadsheet, a zip, an image past the cap — is saved into the task folder
+  // and named in the message. It used to be refused ("Only PNG… supported"),
+  // so a document could not be handed to the agent from the chat at all.
   async function ingestFiles(files) {
     const images = [];
     const textFiles = [];
+    const documents = [];
     for (const file of files || []) {
       if (looksLikeTextFile(file)) { textFiles.push(file); }
-      else { images.push(file); }
+      else if (isInlineImage(file)) { images.push(file); }
+      else { documents.push(file); }
     }
     if (images.length > 0) { await ingestImages(images); }
     if (textFiles.length > 0) { await ingestTextFiles(textFiles); }
+    if (documents.length > 0) { await saveDocuments(documents); }
+  }
+
+  async function saveDocuments(files) {
+    const blocks = [];
+    for (const file of files) {
+      // eslint-disable-next-line no-await-in-loop
+      const saved = await uploadAttachment(taskId, file);
+      if (saved?.ok) {
+        blocks.push(formatSavedFile(file.name, saved.path, saved.bytes));
+      } else {
+        toast.show({
+          kind: 'error',
+          title: 'File attachment failed',
+          message: `${file.name} could not be saved: ${saved?.error || 'unknown error'}`,
+          durationMs: 6000,
+        });
+      }
+    }
+    if (blocks.length > 0) {
+      toast.show({
+        kind: 'success',
+        title: blocks.length === 1 ? 'File saved to the task folder' : `${blocks.length} files saved to the task folder`,
+        message: 'Named in your message — the agent reads them from there.',
+        durationMs: 5000,
+      });
+    }
+    appendBlocks(blocks);
+  }
+
+  // Inline via the same fragment path as "Place in chat" — the live state
+  // now owns the draft, so a still-in-flight hydrate can't clobber it.
+  function appendBlocks(blocks) {
+    if (blocks.length === 0) { return; }
+    markDraftSettled();
+    setValue((current) => {
+      let next = current;
+      for (const block of blocks) { next = appendComposerFragment(next, block); }
+      pendingCaretRef.current = next.length;
+      return next;
+    });
   }
 
   async function ingestTextFiles(files) {
     const blocks = [];
+    const binaries = [];
     for (const file of files) {
       // Too big to inline: save it into the task workspace and reference the
       // path. Truncating used to be the answer, which handed the agent a log
@@ -642,25 +696,20 @@ const MessageForm = forwardRef(function MessageForm({
       const { text, truncated, reason } = await readTextAttachment(file);
       if (text != null) {
         blocks.push(formatTextAttachment(file.name, text, { truncated }));
+      } else if (reason === TEXT_REJECT_REASON.BINARY) {
+        // Named like text, holds bytes: hand it over as a file instead.
+        binaries.push(file);
       } else {
         toast.show({
-          kind: reason === TEXT_REJECT_REASON.BINARY ? 'warning' : 'error',
+          kind: 'error',
           title: 'File attachment rejected',
           message: _textRejectionMessage(reason, file.name),
           durationMs: 6000,
         });
       }
     }
-    if (blocks.length === 0) { return; }
-    // Inline via the same fragment path as "Place in chat" — the live state
-    // now owns the draft, so a still-in-flight hydrate can't clobber it.
-    markDraftSettled();
-    setValue((current) => {
-      let next = current;
-      for (const block of blocks) { next = appendComposerFragment(next, block); }
-      pendingCaretRef.current = next.length;
-      return next;
-    });
+    appendBlocks(blocks);
+    if (binaries.length > 0) { await saveDocuments(binaries); }
   }
 
   async function ingestImages(items) {
@@ -751,7 +800,7 @@ const MessageForm = forwardRef(function MessageForm({
           id="message-input"
           placeholder={placeholder}
           rows={1}
-          title="Shift+Enter for newline. Type @ to tag a workspace file. Paste or drop images to attach."
+          title="Shift+Enter for newline. Type @ to tag a workspace file. Paste or drop images and files to attach."
           value={value || ''}
           disabled={disabled}
           onChange={handleChange}
@@ -766,7 +815,7 @@ const MessageForm = forwardRef(function MessageForm({
             type="button"
             id="message-attach"
             className="tooltip-above tooltip-start"
-            data-tooltip="Attach files — images (PNG/JPEG/GIF/WebP) show as thumbnails; text files (json, xml, yaml, logs, or any plain-text/extensionless file) are inlined into your message. Paste, drop, or click to pick."
+            data-tooltip="Attach files — images (PNG/JPEG/GIF/WebP) show as thumbnails; text files (json, xml, yaml, logs, or any plain-text/extensionless file) are inlined into your message; any other file (PDF, spreadsheet, zip…) is saved in the task folder and named in your message. Paste, drop, or click to pick."
             disabled={disabled}
             onClick={() => fileInputRef.current?.click()}
             aria-label="Attach files"
@@ -948,8 +997,6 @@ function _rejectionMessage(reason) {
 function _textRejectionMessage(reason, name) {
   const label = name ? `"${name}"` : 'This file';
   switch (reason) {
-    case TEXT_REJECT_REASON.BINARY:
-      return `${label} looks like a binary file — attach images as PNG/JPEG/GIF/WebP, or paste text directly.`;
     case TEXT_REJECT_REASON.EMPTY:
       return `${label} is empty.`;
     case TEXT_REJECT_REASON.READ_FAILED:

@@ -451,8 +451,10 @@ OFF (local):  the agent may also run commit / merge / rebase / reset / cherry-pi
   0.166, a resumed turn does not keep the first turn's `--add-dir` (and rejects the flag), while `-c` works on both.
   The rules ride in front of the message on stdin, only when the level changed (`git_access_change_text`, incl.
   "STRICT again"); the transcript keeps what the operator typed. Leaving the branch / pushing are prompt-only for
-  Codex — there is no per-command block. (Side finding, not fixed: the same means a resumed Codex turn also loses
-  the sibling repos' `--add-dir`.)
+  Codex — there is no per-command block. The same `-c` carries the task's OTHER repositories on every turn
+  (`_writable_roots`): a resumed turn dropped `--add-dir` too, so from its second message a Codex chat could no
+  longer write to them. Proven on the real CLI with the repositories OUTSIDE every temp folder — Codex lets anything
+  write to `$TMPDIR`, so a repro there passes with or without the fix.
 - Push stays kato's in BOTH modes: `KATO_AUTO_PUSH_ENABLED`, "kato never publishes on its own", the plan queue's
   merge checks and the remote check before every push all depend on it. Do not add an "agent may push" level.
 - Kato's publish path already handled agent commits: a clean tree skips kato's commit and pushes what is ahead;
@@ -468,6 +470,28 @@ OFF (local):  the agent may also run commit / merge / rebase / reset / cherry-pi
 - The field sits in General with `panel: 'strict-git'` → its own tab (`StrictGitSettingsPanel`: what it is, why it is
   recommended, what off changes, what never happens). The UI asks before the switch goes OFF: the schema field's
   `confirm` → `SettingConfirmDialog` (portalled to `<body>`, Escape closes only the popup). Any field can carry one.
+
+### Automation (Settings → its own "Automation" tab): what kato does on its own in a task
+One switch per behaviour, grouped by when a task meets it (`AutomationSettingsPanel`): security scan → run tests →
+auto push, PR conventions, stop containers on Done, release notes, emails → answering ticket / PR comments. The
+switches are schema fields tagged `panel: 'automation'` (lifted out of General, Security scanner, Release notes,
+Email); `SchemaFieldGroup keys=[…]` puts one section's switches under several headings. Every "on by default"
+switch is in `DEFAULT_ON_BOOL_KEYS` (release notes and the security scan were drawn OFF while kato ran them).
+Read-fresh switches are in `_live_settings_keys` (`_read_fresh_switch_keys`): Strict git, auto push and PR
+conventions used to answer "restart required" though they never needed one.
+- **`KATO_RUN_TESTS`** (`automation_switches_utils`, default ON, read fresh). Off: (1) kato's testing step is skipped
+  at its one gate, `AgentService._run_task_testing_validation` — the old `OPENHANDS_SKIP_TESTING` (boot-read,
+  mislabelled: it always applied to every backend) still works beside it; (2) every chat kato starts gets
+  `run_tests_utils.NO_TESTS_GUIDANCE` in its system prompt (`with_test_policy` at the `start_session` funnel, before
+  the standing instructions) — it says it overrides later instructions to run tests, because the review loop's fixer
+  rules ("run the tests that cover it") arrive as a chat message and its `findings_guidance` is fixed at boot;
+  (3) autopilot's section drops "and its tests pass" (`AUTOPILOT_GUIDANCE_NO_TESTS`); (4) every review loop start
+  forces `verify_tests` off (`review_loop_routes._with_test_policy`). A running chat keeps the prompt it started
+  with; a RESUMED loop keeps the stages it was started with. Codex chats get no system prompt, so (2) is Claude-only.
+- **`KATO_STOP_CONTAINERS_ON_DONE`** (default ON): `TaskContainers.task_done` returns early when off.
+- **Not offered, on purpose:** a switch for kato's own ticket comments — the shared plan's record IS a ticket comment
+  other katos read (`plan_record_on_tracker`), and several flows depend on theirs; one gate at `add_comment` would
+  break them. Moving ticket states automatically — a task left Open is picked up again on the next scan.
 
 ### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
 Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan
@@ -983,6 +1007,14 @@ then lists that folder (`list_attachment_paths`) and prepends `agent_prompt_util
 generic cousin of `task_attachments_block` — these can be any document type, not only images, so the wording never
 assumes a screenshot) ahead of the opening message. Only for Plan/Implement: "Just open the chat" sends nothing on
 purpose, so an attached file there is saved but not auto-mentioned — the operator's own first message covers it.
+**Pasted or dropped anywhere on the pane counts** (report: "the chat does not let me upload any files or images in the
+prompt of the task"): the description box's paste (a screenshot, a file copied in the file manager) and a drop anywhere
+on `#new-task-pane` go through the same `attachFiles` as the picker; a drop the Attachments section already took is not
+added twice (it calls `preventDefault`, the pane skips a prevented drop). A drop used to let the browser open the file
+over the draft. **The chat composer saves any other file too:** an image the model can see (`isInlineImage`: type +
+5 MB) is a thumbnail, text is inlined, and EVERYTHING else — a PDF, a spreadsheet, a zip, an oversized image, "text"
+that turns out binary — goes through `uploadAttachment` into `attachments/` and is named in the message
+(`formatSavedFile`). It used to be refused ("Only PNG… supported").
 
 **A chat needs git, not a pull request API.** Preparing a chat's repositories (`WaitPlanningService._prepare_repositories`,
 so wait-planning and every local task) passes `pull_requests_required=False`. It used to require a known host and a
@@ -1000,6 +1032,14 @@ only for building addresses: **`repository.remote_url` is never rewritten**, bec
 compares it before every push. The stub `_resolve_publish_context` builds for a repository out of the list has no remote, and
 **must not read one from the clone**: `.git/config` is agent-writable, and the provider token goes to whatever that names. The
 error names the host, or says the repository left the list: they read alike in a log and need different fixes.
+
+**The UI shows that branch, not the id** (report: "the branch name is not reflected anywhere"): the tab list sends
+`branch_name` (`_workspace_record_to_dict` → `task_branch`) — the tab tooltip's Branch row, the header chip
+(`#session-task-branch`, only when the branch is not the task id — `utils/taskBranch.js`), and the Files tab's repo
+chips, which compare against it (`branchWorthShowing(branch, taskId, taskBranch)`: they matched the task id, so every
+repo of a custom-branch task got a chip). The plan board says what its sub-tasks merge into (`merge_branch` on the
+plan payload). A chat respawned by `MainChatDelivery.spawn` (review loop, comment runs) now names the branch too —
+it passed none, so its opener named no branch and `expected_branch` was recorded empty, for every task.
 
 **A task's branch has ONE answer: `kato_tag_utils.task_branch(task_id, kato_tags)`** (reached as
 `RepositoryService.task_branch_name` / `build_branch_name`): the name in a `kato:branch:<name>` tag in kato's

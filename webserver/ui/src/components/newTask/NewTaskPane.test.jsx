@@ -255,3 +255,64 @@ describe('NewTaskPane', () => {
     expect(await readNewTaskAttachmentDraft()).toEqual([]);
   });
 });
+
+describe('NewTaskPane — files pasted or dropped on the task itself', () => {
+  function pngFile(name = 'image.png') {
+    return new File(['png'], name, { type: 'image/png' });
+  }
+  function attachedNames() {
+    return Array.from(document.querySelectorAll('.new-task-attachment-name')).map((el) => el.textContent);
+  }
+
+  test('a screenshot pasted into the description is attached', async () => {
+    fakeKato();
+    renderPane();
+    const box = screen.getByLabelText('Description');
+    fireEvent.paste(box, { clipboardData: { items: [
+      { kind: 'file', type: 'image/png', getAsFile: () => pngFile() },
+    ] } });
+    await waitFor(() => expect(attachedNames()).toEqual(['image.png']));
+  });
+
+  test('pasting plain text still just types the text', () => {
+    fakeKato();
+    renderPane();
+    const box = screen.getByLabelText('Description');
+    const event = fireEvent.paste(box, { clipboardData: { items: [
+      { kind: 'string', type: 'text/plain', getAsFile: () => null },
+    ] } });
+    expect(event).toBe(true); // not prevented: the browser inserts the text
+    expect(attachedNames()).toEqual([]);
+  });
+
+  test('a file dropped on the description is attached, not opened over the draft', async () => {
+    fakeKato();
+    renderPane();
+    const box = screen.getByLabelText('Description');
+    const over = fireEvent.dragOver(box, { dataTransfer: { types: ['Files'] } });
+    expect(over).toBe(false); // prevented: the browser would open the file
+    fireEvent.drop(box, { dataTransfer: { types: ['Files'], files: [textFile('spec.pdf')] } });
+    await waitFor(() => expect(attachedNames()).toEqual(['spec.pdf']));
+  });
+
+  test('a drop on the Attachments section is added once, not twice', async () => {
+    fakeKato();
+    renderPane();
+    const section = screen.getByText('Attachments').closest('section');
+    fireEvent.drop(section, { dataTransfer: { types: ['Files'], files: [textFile('a.csv')] } });
+    await waitFor(() => expect(attachedNames()).toEqual(['a.csv']));
+  });
+
+  test('a pasted file goes out with the task, multipart', async () => {
+    const kato = fakeKato();
+    const { onCreated } = renderPane();
+    await fillIn();
+    fireEvent.paste(screen.getByLabelText('Description'), { clipboardData: { items: [
+      { kind: 'file', type: 'image/png', getAsFile: () => pngFile('shot.png') },
+    ] } });
+    await waitFor(() => expect(attachedNames()).toEqual(['shot.png']));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create/ })); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(kato.created[0].attachments).toEqual(['shot.png']);
+  });
+});

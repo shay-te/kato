@@ -336,6 +336,19 @@ describe('UsageDialog', () => {
   });
 
   test('the table shows each model, when it ran, how much it did and what that cost', async () => {
+    // "Used" is relative ("3d ago") only within 30 days, then a date: the
+    // fixture's October dates aged out and this started failing on its own.
+    // Only Date is frozen — the renders and waits still run on real timers.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-16T12:00:00Z'));
+    try {
+      await assertSwitchedTable();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  async function assertSwitchedTable() {
     await open([SWITCHED]);
     fireEvent.click(screen.getByRole('button', { name: /UNA-7/ }));
     const rows = within(screen.getByRole('table')).getAllByRole('row').slice(1);
@@ -349,7 +362,7 @@ describe('UsageDialog', () => {
     expect(document.querySelector('.usage-cost')).toHaveTextContent('Estimated cost $8.00');
     // "Used" is a span, in the same relative terms the rest of the dialog uses.
     expect(rows[0].cells[1].textContent).toMatch(/ago/);
-  });
+  }
 
   test('a model with no price is marked in the details, costs "—", and makes the cost a minimum', async () => {
     const odd = task('UNA-8', 'Unknown model', {

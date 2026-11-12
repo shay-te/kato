@@ -14,8 +14,11 @@ import SchemaFieldsBlock from './SchemaFieldsBlock.jsx';
 // diffs against the loaded values), so it can never clobber the rest of
 // the section it was lifted out of.
 
+// ``keys`` (optional) narrows the group to those fields, in that order: a tab
+// that groups one section's switches under several headings (Automation)
+// renders one group per heading.
 export default function SchemaFieldGroup({
-  sectionId, panel, title, description, highlightKey = '',
+  sectionId, panel, title, description, highlightKey = '', keys = null,
 }) {
   const fieldsRef = useRef(null);
   const {
@@ -23,7 +26,10 @@ export default function SchemaFieldGroup({
     restartRequired, dirtyKeys,
   } = useSchemaSectionDraft(sectionId);
 
-  const fields = (section?.fields || []).filter((f) => f.panel === panel);
+  const tagged = (section?.fields || []).filter((f) => f.panel === panel);
+  const fields = keys
+    ? keys.map((key) => tagged.find((f) => f.key === key)).filter(Boolean)
+    : tagged;
   useFieldHighlight(fieldsRef, highlightKey, [section]);
 
   if (loading) {

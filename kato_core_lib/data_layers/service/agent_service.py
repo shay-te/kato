@@ -16,6 +16,7 @@ from kato_core_lib.validation.repository_connections import (
 from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
+from kato_core_lib.helpers.automation_switches_utils import run_tests_enabled
 from kato_core_lib.helpers.kato_tag_utils import (
     is_review_loop_tag,
     review_rounds_from_tag,
@@ -1447,7 +1448,10 @@ class AgentService(MissionStepLoggerMixin, Service):
         prepared_task: PreparedTaskContext,
         execution: dict[str, str | bool],
     ) -> tuple[bool, dict | None, dict[str, str | bool]]:
-        if self._skip_testing:
+        # Settings → Automation → "Run tests" (read fresh), or the older
+        # OPENHANDS_SKIP_TESTING (read at boot; despite its name it always
+        # applied to every backend).
+        if self._skip_testing or not run_tests_enabled():
             execution = dict(execution)
             execution.pop(ImplementationFields.MESSAGE, None)
             self._log_task_step(task.id, 'testing validation skipped by configuration')

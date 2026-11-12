@@ -552,6 +552,26 @@ class SpawnCommentAgentWorkspaceSummaryTests(unittest.TestCase):
         # get() is read for BOTH the summary and the sibling-repo set.
         wm.get.assert_called_with('PROJ-1')
 
+    def test_the_respawn_names_the_tasks_own_branch(self) -> None:
+        # A task on a branch of its own (New task's "Branch name", a rename)
+        # carries it as a ``kato:branch:`` tag. This spawn path used to name no
+        # branch at all, and recorded an empty expected_branch.
+        for tags, expected in (
+            (['kato:branch:feature/retry'], 'feature/retry'),
+            ([], 'PROJ-1'),
+        ):
+            with self.subTest(tags=tags):
+                runner = SimpleNamespace(resume_session_for_chat=MagicMock())
+                workspace = SimpleNamespace(task_summary='s', tags=tags)
+                wm = SimpleNamespace(get=MagicMock(return_value=workspace))
+                service = _bare_service(planning_session_runner=runner, workspace_manager=wm)
+                service.logger = MagicMock()
+                service.comment_runs.chat_delivery.spawn(
+                    'PROJ-1', 'prompt text', label='comment c1', cwd_for=lambda: '/tmp/ws',
+                )
+                kwargs = runner.resume_session_for_chat.call_args.kwargs
+                self.assertEqual(kwargs['branch_name'], expected)
+
     def test_no_workspace_manager_leaves_summary_blank(self) -> None:
         # 1954->1957 false arc: workspace_manager is None, so the summary
         # lookup is skipped and stays ''.

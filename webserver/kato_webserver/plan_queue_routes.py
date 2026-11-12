@@ -38,6 +38,7 @@ from kato_core_lib.data_layers.service.plan_queue.split_folders import (
     read_split_folder,
 )
 from kato_core_lib.helpers.done_states_utils import add_done_state, unrecognized_states
+from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.plan_writer import read_task_plan
 from kato_core_lib.helpers.workspace_repo_utils import task_workspace_root
 from kato_webserver.model_request_utils import requested_model
@@ -82,6 +83,7 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         payload = plan.to_dict()
         if 'steps' not in payload:
             return payload
+        payload['merge_branch'] = main_task_branch(plan)
         payload['unknown_states'] = []
         task_states = getattr(app.config.get('AGENT_SERVICE'), 'task_states', None)
         if getattr(plan, 'mode', '') == 'local' or task_states is None:
@@ -94,6 +96,21 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             (step.task_state for step in plan.steps if step.status.is_released), known,
         )
         return payload
+
+    def main_task_branch(plan) -> str:
+        """The branch the plan's sub-tasks merge into: the main task's own
+        (``task_branch`` — a ``kato:branch:`` tag in its workspace, else its
+        id). The board only ever named the task id, so a task created on a
+        branch of its own looked as if its plan merged somewhere else."""
+        source = str(getattr(plan, 'source_task_id', '') or '')
+        workspace_manager = app.config.get('WORKSPACE_MANAGER')
+        record = None
+        if workspace_manager is not None and source:
+            try:
+                record = workspace_manager.get(source)
+            except Exception:
+                record = None
+        return task_branch(source, getattr(record, 'tags', None)) if source else ''
 
     @app.get('/api/plan-queues')
     def list_plan_queues():

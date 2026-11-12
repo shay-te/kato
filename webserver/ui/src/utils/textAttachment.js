@@ -161,6 +161,16 @@ export function humanSize(bytes) {
 // workspace, so hand the agent the PATH. Inlining a multi-megabyte log wastes
 // context on the parts nobody asked about and truncates the rest — reading it
 // from disk lets the agent grep for what the question actually needs.
+// A document handed over as a file (a PDF, a spreadsheet, a zip): saved in
+// the task folder and named here, because it cannot ride in the message.
+export function formatSavedFile(name, path, bytes) {
+  const safeName = baseName(name).trim() || 'attachment';
+  return (
+    `Attached \`${safeName}\` (${humanSize(bytes)}), saved in this task's `
+    + `workspace at:\n\`${path}\`\nRead it from there.`
+  );
+}
+
 export function formatSavedAttachment(name, path, bytes) {
   const safeName = baseName(name).trim() || 'attachment';
   return (

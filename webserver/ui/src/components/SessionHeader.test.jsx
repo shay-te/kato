@@ -128,6 +128,28 @@ describe('SessionHeader — null guard', () => {
 
 describe('SessionHeader — task summary + status dot', () => {
 
+  test('a task on a branch of its own shows the branch beside its id', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session({ task_id: 'LOCAL-3', branch_name: 'feature/retry' })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    const chip = container.querySelector('#session-task-branch');
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toBe('feature/retry');
+  });
+
+  test('a branch named after the task is not repeated', () => {
+    const { container } = render(
+      <SessionHeader
+        session={_session({ task_id: 'LOCAL-3', branch_name: 'LOCAL-3' })}
+        streamLifecycle={SESSION_LIFECYCLE.STREAMING}
+      />,
+    );
+    expect(container.querySelector('#session-task-branch')).toBeNull();
+  });
+
   test('renders the task summary', () => {
     render(<SessionHeader session={_session()} streamLifecycle={SESSION_LIFECYCLE.STREAMING} />);
     expect(screen.getByText('Fix the login bug')).toBeInTheDocument();

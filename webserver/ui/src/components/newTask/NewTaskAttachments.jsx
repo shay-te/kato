@@ -3,6 +3,22 @@ import { toast } from '../../stores/toastStore.js';
 import { humanSize } from '../../utils/textAttachment.js';
 import { addAttachments, removeAttachmentAt } from './newTaskHelpers.js';
 
+// Adds ``picked`` to the draft's files, warning about any over the size cap.
+// Shared by this section's picker / drop and the pane's own paste / drop.
+export function attachFiles(files, picked, onChange) {
+  const { files: next, rejected } = addAttachments(files, picked);
+  onChange(next);
+  if (rejected.length > 0) {
+    toast.show({
+      kind: 'warning',
+      title: 'Some files were too large',
+      message: `${rejected.join(', ')} — max 64 MB per file.`,
+      durationMs: 6000,
+    });
+  }
+  return next.length - (files || []).length;
+}
+
 // Documents handed over while drafting — a spec, a CSV, a PDF. Creating the
 // task IS its first prompt (the opener runs as soon as the clone is ready),
 // so this is the one chance to attach them before the agent's first turn,
@@ -13,16 +29,7 @@ export default function NewTaskAttachments({ files, onChange }) {
   const inputRef = useRef(null);
 
   function ingest(picked) {
-    const { files: next, rejected } = addAttachments(files, picked);
-    onChange(next);
-    if (rejected.length > 0) {
-      toast.show({
-        kind: 'warning',
-        title: 'Some files were too large',
-        message: `${rejected.join(', ')} — max 64 MB per file.`,
-        durationMs: 6000,
-      });
-    }
+    attachFiles(files, picked, onChange);
   }
 
   function handlePick(event) {
@@ -97,7 +104,8 @@ export default function NewTaskAttachments({ files, onChange }) {
         aria-label="Attach files"
       />
       <p className="new-task-attachments-hint">
-        Documents the agent should read from the start — a spec, a CSV, a PDF. Drop files here or click to pick.
+        Documents and images the agent should read from the start — a spec, a CSV, a PDF, a
+        screenshot. Drop them anywhere on this page, paste them into the description, or click to pick.
       </p>
     </section>
   );

@@ -139,6 +139,15 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.queue._registry.mutate(plan_id, lambda plan: setattr(plan, 'mode', PlanMode.TRACKER))
         self.assertEqual(self.client.get(f'/api/plan-queues/{plan_id}').get_json()['unknown_states'], [])
 
+    def test_the_board_names_the_branch_the_plan_merges_into(self) -> None:
+        # The main task's own branch: a task created on a branch of its own
+        # (New task's "Branch name") is not merged into by its id.
+        plan_id = self._proposed()
+        board = lambda: self.client.get(f'/api/plan-queues/{plan_id}').get_json()
+        self.assertEqual(board()['merge_branch'], 'T-1')
+        self.workspaces.add_tag('T-1', 'kato:branch:feature/discounts')
+        self.assertEqual(board()['merge_branch'], 'feature/discounts')
+
     def test_deleting_a_sub_task_declines_its_pull_requests_then_takes_it_out(self) -> None:
         repos = Mock()
         repos.task_branch_name.side_effect = lambda task_id: task_id

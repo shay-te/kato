@@ -30,6 +30,7 @@ import { toast, toastResult } from '../stores/toastStore.js';
 import { backendLabel } from './AgentBackendChip.jsx';
 import { useActiveBackend } from '../stores/activeBackendStore.js';
 import Icon, { BusyIcon } from './Icon.jsx';
+import { taskBranchOfItsOwn } from '../utils/taskBranch.js';
 import {
   formatFinishResult,
   formatMergeResult,
@@ -245,7 +246,8 @@ export default function SessionHeader({
     const conflicted = (result?.ok && result.body?.conflicted_repositories) || [];
     let chatDelivered = false;
     if (conflicted.length > 0) {
-      const branch = conflicted[0]?.branch || session.task_id;
+      const branch = conflicted[0]?.branch || taskPublish.branch
+        || session.branch_name || session.task_id;
       const sent = await postChatMessage(
         session.task_id, mergeConflictInstruction(conflicted, `origin/${branch}`),
       );
@@ -418,6 +420,17 @@ export default function SessionHeader({
             title={agent.title}
           />
           <strong id="session-task-id">{session.task_id}</strong>
+          {/* The branch, when the task has one of its own (New task's
+              "Branch name", or a rename). Named after the task id it says
+              nothing, so it is left out — the id is right beside it. */}
+          {taskBranchOfItsOwn(session) && (
+            <span
+              id="session-task-branch"
+              title={`Works on branch ${session.branch_name}`}
+            >
+              {session.branch_name}
+            </span>
+          )}
           {/* The title opens the task's own definition — its description,
               what the agent was given — as a tab: there was no way to read
               it again once the task started. */}

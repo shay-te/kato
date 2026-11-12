@@ -69,7 +69,7 @@ class AutopilotFinisher(object):
         if self._runner_in_flight(task_id):
             # A task kato runs by itself still has its tests to pass; it
             # parks after them, and that is where Done is pressed.
-            self._say(task_id, 'autopilot: the agent is done; Done is pressed once its tests pass')
+            self._say(task_id, 'autopilot: the agent is done; Done is pressed once kato\'s own run parks')
             return True
         try:
             task = self._read_task(task_id)

@@ -149,7 +149,7 @@ def start_task_review_loop(
         task_description=description,
         max_rounds=max_rounds,
         model=model,
-        **(_STAGE_DEFAULTS if stages is None else stages),
+        **_with_test_policy(_STAGE_DEFAULTS if stages is None else stages),
     )
 
 
@@ -185,6 +185,16 @@ _STAGE_DEFAULTS = {
     'confirm_clean': True,
     'extra_sweep': True,
 }
+
+
+def _with_test_policy(stages: dict[str, bool]) -> dict[str, bool]:
+    """No test stage while "Run tests" is off (Settings → Automation): the
+    operator said kato runs no tests in a task, the loop's included."""
+    from kato_core_lib.helpers.automation_switches_utils import run_tests_enabled
+
+    if run_tests_enabled():
+        return dict(stages)
+    return {**stages, 'verify_tests': False}
 
 
 def _requested_stages(body: object) -> dict[str, bool]:
