@@ -52,6 +52,7 @@ from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     sandbox_mount_for,
     wrap_spawn_for_docker,
 )
+from agent_core_lib.agent_core_lib.helpers.command_floor import effective_git_access
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
 )
@@ -263,6 +264,7 @@ class StreamingClaudeSession(object):
         extra_system_prompt: str = '',
         done_callback=None,
         done_sentinel: str = '',
+        git_access: str = '',
     ) -> None:
         if not str(task_id or '').strip():
             raise ValueError('task_id is required for a streaming session')
@@ -312,6 +314,13 @@ class StreamingClaudeSession(object):
             self._permission_prompt_tool = self.DEFAULT_PERMISSION_PROMPT_TOOL
         self._allowed_tools = normalized_text(allowed_tools)
         self._disallowed_tools = normalized_text(disallowed_tools)
+        # The git access this subprocess runs at, decided ONCE here and read by
+        # both the deny list and the system prompt, so the two cannot disagree.
+        # Withdrawn to strict in bypassPermissions (nobody sees a prompt there).
+        self._git_access = effective_git_access(
+            git_access,
+            unsupervised=self._permission_mode == 'bypassPermissions',
+        )
         self._max_turns = max_turns
         # Route through the one-shot client's coercion so streaming and
         # one-shot validate ``--effort`` against the same level set
@@ -927,6 +936,16 @@ class StreamingClaudeSession(object):
         for waiter in waiters:
             waiter['error'] = reason
             waiter['event'].set()
+
+    @property
+    def git_access(self) -> str:
+        """The git access level this subprocess was spawned at (``command_floor``).
+
+        Baked at spawn like ``disallowed_tools``. The host reads it to judge
+        the agent's git commands at the same level the CLI refuses them, and
+        to know whether the agent may be running git in its clone right now.
+        """
+        return self._git_access
 
     @property
     def disallowed_tools(self) -> str:
@@ -1653,6 +1672,7 @@ class StreamingClaudeSession(object):
             # operator review that makes it safe to permit. See
             # ``UNSUPERVISED_DENY_PATTERNS``.
             bypass_permissions=self._permission_mode == 'bypassPermissions',
+            git_access=self._git_access,
         )
         command.extend(['--disallowedTools', merged_disallowed])
         # When ``the docker setting=true`` the agent gets a short
@@ -1671,6 +1691,7 @@ class StreamingClaudeSession(object):
             # spawn may be a resume, which never sees the first message.
             cwd=self._cwd,
             extra_system_prompt=self._extra_system_prompt,
+            git_access=self._git_access,
         )
         if appended_system_prompt:
             # The one multiline, unbounded-length value — deliberately

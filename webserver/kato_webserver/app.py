@@ -109,6 +109,7 @@ from claude_core_lib.claude_core_lib.session.wire_protocol import (
     SSE_EVENT_STATUS_DISABLED,
     SSE_EVENT_STATUS_ENTRY,
 )
+from kato_webserver.agent_git_busy import agent_git_busy_reason
 from kato_webserver.file_tree_cache import (
     CACHE_HIT_HEADER,
     CACHE_HIT_VALUE,
@@ -1089,6 +1090,19 @@ def _resolve_agent_method(
         )
         return None, (jsonify({'error': message}), 501)
     return method, None
+
+
+def _agent_git_busy_response(app: Flask, task_id: str):
+    """409 while the task's agent may be running git itself, else ``None``.
+
+    For the routes where kato runs git in the task's clones on the operator's
+    behalf (push, pull, merge, update source, pull request, approve, Done).
+    See ``agent_git_busy`` for why only a local-git session mid-turn counts.
+    """
+    reason = agent_git_busy_reason(app.config.get('SESSION_MANAGER'), task_id)
+    if not reason:
+        return None
+    return jsonify({'error': reason, 'agent_busy': True, 'task_id': task_id}), 409
 
 
 def _envelope_response(result, success_key: str, *, missing_key: str = 'no workspace'):
@@ -3626,6 +3640,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         result = approve(task_id)
         if result is None:
             return jsonify({
@@ -3658,6 +3675,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         return _envelope_response(push(task_id), 'pushed')
 
     @app.post('/api/sessions/<task_id>/pull')
@@ -3670,6 +3690,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         return _envelope_response(pull(task_id), 'pulled')
 
     @app.post('/api/sessions/<task_id>/merge-default-branch')
@@ -3687,6 +3710,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         result = merge(task_id) or {}
         # A conflicted merge is a SUCCESSFUL outcome of this button —
         # the operator wanted the default branch in so the agent can
@@ -3706,6 +3732,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         return _envelope_response(create(task_id), 'created')
 
     @app.post('/api/sessions/<task_id>/update-source')
@@ -3720,6 +3749,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         # ``{repository_id}`` / ``{repository_ids: [...]}``: only those — the
         # Changes tab's per-repository button. No body: every repository.
         body = request.get_json(silent=True) or {}
@@ -4065,6 +4097,9 @@ def _register_http_routes(app: Flask) -> None:
         )
         if err:
             return err
+        busy = _agent_git_busy_response(app, task_id)
+        if busy:
+            return busy
         result = finish(task_id, by_operator=True) or {}
         if result.get('error') and not result.get('finished'):
             return jsonify(result), 500
@@ -5847,6 +5882,9 @@ def _classify_action_for(session, tool_name: str, tool_input: dict):
             policy=resolve_action_guard_policy(),
             command_sandbox_classifier=classify_command_sandbox,
             tool_input_sandbox_classifier=classify_tool_input_sandbox,
+            # The level this session's CLI floor was built at — a session
+            # with no such attribute (Codex, an older object) is strict.
+            git_access=str(getattr(session, 'git_access', '') or ''),
         )
     except Exception:
         return None
@@ -5999,9 +6037,13 @@ def _tool_floor_change_needs_respawn(app: Flask, manager, task_id: str, images) 
         return False
     try:
         from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
+        from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
         expected = ClaudeCliClient._merge_disallowed_with_floor(
             _configured_disallowed_tools(app),
             bypass_permissions=_session_is_bypass(session),
+            # Strict git switched on or off since this chat spawned: the next
+            # spawn uses the new level, so the sets differ and it respawns.
+            git_access=agent_git_access(),
         )
     except Exception:
         return False

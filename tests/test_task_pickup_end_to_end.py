@@ -30,6 +30,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -621,7 +622,12 @@ class ForcedRestoreParksWorkFirstTests(TaskPickupEndToEndTests):
         # this stash turned a recoverable restore into a hard abort.
         with self.env:
             provisioned, clone = self._worked_on_task()
-            (clone / '.git' / 'index.lock').write_text('stale\n', encoding='utf-8')
+            lock = clone / '.git' / 'index.lock'
+            lock.write_text('stale\n', encoding='utf-8')
+            # Stale = left by a git killed long ago; a fresh lock may still be
+            # held by a git run from inside the clone, and is left alone.
+            stale = time.time() - _Service.GIT_INDEX_LOCK_LIVE_SECONDS - 60
+            os.utime(lock, (stale, stale))
             self.service.restore_task_repositories(provisioned, force=True)
         self.assertEqual(_current_branch(clone), 'master')
         self.assertFalse((clone / '.git' / 'index.lock').exists())

@@ -30,6 +30,7 @@ clean.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
@@ -37,6 +38,11 @@ from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Any
 
+from agent_core_lib.agent_core_lib.helpers.command_floor import (
+    GIT_ACCESS_LOCAL,
+    git_access_change_text,
+    normalized_git_access,
+)
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from utils_core_lib.utils_core_lib.text_utils import normalized_text
 
@@ -114,6 +120,7 @@ class StreamingCodexSession(object):
         build_command=None,
         build_env=None,
         logger=None,
+        git_access_source=None,
     ) -> None:
         self._task_id = str(task_id or '')
         self._cwd = str(cwd or '')
@@ -127,6 +134,15 @@ class StreamingCodexSession(object):
         self._build_command = build_command or self._default_command
         self._build_env = build_env
         self.logger = logger or configure_logger('StreamingCodexSession')
+        # Git access (``command_floor``) is asked for at the START OF EVERY
+        # TURN — a turn is its own process here, so a changed setting applies
+        # to the next message with no respawn. ``None`` = strict. What the
+        # sandbox enforces and what the agent is told both follow the level of
+        # the turn; ``_told_git_access`` is what it was last told (None =
+        # never), so the rules are repeated only when the level changes.
+        self._git_access_source = git_access_source
+        self._turn_git_access = ''
+        self._told_git_access: str | None = None
 
         self._events: list[SessionEvent] = []
         self._events_lock = threading.Lock()
@@ -177,6 +193,41 @@ class StreamingCodexSession(object):
 
     def allowed_additional_dirs(self) -> list[str]:
         return list(self._additional_dirs)
+
+    @property
+    def git_access(self) -> str:
+        """The git access level of the running (or last) turn.
+
+        Between turns, the level the NEXT turn would get. The host reads this
+        to know whether the agent may be running git in its clones right now.
+        """
+        if self.is_working and self._turn_git_access:
+            return self._turn_git_access
+        return self._current_git_access()
+
+    def _current_git_access(self) -> str:
+        source = self._git_access_source
+        if not callable(source):
+            return normalized_git_access('')
+        try:
+            return normalized_git_access(source())
+        except Exception:  # noqa: BLE001 - an unreadable setting means strict
+            return normalized_git_access('')
+
+    def _git_writable_roots(self) -> list[str]:
+        """Each workspace root's own ``.git``, which the sandbox keeps read-only.
+
+        Codex's workspace-write sandbox makes ``<root>/.git`` read-only in every
+        writable root — staging, let alone committing, fails there with
+        "Unable to create .git/index.lock: Operation not permitted". Local git
+        access hands exactly those directories back, nothing wider.
+        """
+        roots: list[str] = []
+        for root in (self._cwd, *self._additional_dirs):
+            git_dir = os.path.join(root, '.git') if root else ''
+            if git_dir and os.path.isdir(git_dir) and git_dir not in roots:
+                roots.append(git_dir)
+        return roots
 
     # ----- lifecycle ------------------------------------------------------
 
@@ -279,6 +330,18 @@ class StreamingCodexSession(object):
         command.extend(['--json', '--skip-git-repo-check'])
         if self._model:
             command.extend(['-m', self._model])
+        if self._turn_git_access == GIT_ACCESS_LOCAL:
+            # ``-c``, not ``--add-dir``: a resumed turn rejects ``--add-dir``
+            # and does NOT inherit the first turn's (proven on codex-cli
+            # 0.166 — a chat started with its .git writable could not commit
+            # on its next turn), while a config override applies to both.
+            git_roots = self._git_writable_roots()
+            if git_roots:
+                command.extend([
+                    '-c',
+                    'sandbox_workspace_write.writable_roots='
+                    + json.dumps(git_roots),
+                ])
         if not resume_id:
             command.extend(['--sandbox', self._sandbox_mode])
             if self._cwd:
@@ -307,9 +370,16 @@ class StreamingCodexSession(object):
         })
 
     def _start_turn_locked(self, message: str) -> None:
+        # The transcript keeps what the operator typed; the git rules, when
+        # the level changed since the agent was last told, travel in front of
+        # it on stdin only (Codex has no system prompt to carry them).
         self._record_user_message(message)
+        self._turn_git_access = self._current_git_access()
+        notice = git_access_change_text(self._turn_git_access, self._told_git_access)
+        self._told_git_access = self._turn_git_access
+        delivered = f'{notice}\n{message}' if notice else message
         command = self._build_command(
-            prompt=message, resume_id=self._agent_session_id,
+            prompt=delivered, resume_id=self._agent_session_id,
         )
         self.logger.info(
             'task %s: starting a %s turn',
@@ -340,7 +410,7 @@ class StreamingCodexSession(object):
             return
         self._proc = proc
         self._turn_thread = threading.Thread(
-            target=self._run_turn, args=(proc, message), daemon=True,
+            target=self._run_turn, args=(proc, delivered), daemon=True,
             name=f'codex-turn-{self._task_id}',
         )
         self._turn_thread.start()

@@ -1,7 +1,9 @@
 from pathlib import Path
+import os
 import re
 import subprocess
 import tempfile
+import time
 import types
 import unittest
 import base64
@@ -372,6 +374,10 @@ class RepositoryServiceTests(unittest.TestCase):
             (build_dir / 'main.js').write_text('compiled\n', encoding='utf-8')
             lock_path = repo_path / '.git' / 'index.lock'
             lock_path.write_text('stale lock\n', encoding='utf-8')
+            # Stale = left behind long ago. A fresh lock may still belong to a
+            # git run from inside the clone, and is left alone on purpose.
+            stale = time.time() - RepositoryService.GIT_INDEX_LOCK_LIVE_SECONDS - 60
+            os.utime(lock_path, (stale, stale))
 
             repository = types.SimpleNamespace(
                 id='client',
@@ -1823,6 +1829,9 @@ class RepositoryServiceTests(unittest.TestCase):
                     stdout='https://bitbucket.org/workspace/repo.git\n',
                     stderr='',
                 ),
+                # Then what this clone last pushed: nothing yet, so there is
+                # no rewritten history to refuse.
+                Mock(returncode=1, stdout='', stderr=''),
                 Mock(
                     returncode=1,
                     stdout='',
@@ -1844,6 +1853,9 @@ class RepositoryServiceTests(unittest.TestCase):
             [call.args[0] for call in mock_run.call_args_list],
             [
                 build_safe_git_command('.', ['ls-remote', '--get-url', 'origin']),
+                build_safe_git_command(
+                    '.', ['rev-parse', '-q', '--verify', 'refs/remotes/origin/UNA-2265^{commit}'],
+                ),
                 build_safe_git_command('.', ['push', '-u', 'origin', 'UNA-2265']),
                 build_safe_git_command('.', ['fetch', 'origin', 'UNA-2265:refs/remotes/origin/UNA-2265']),
                 # ``core.hooksPath=/dev/null`` security hardening for risk #24

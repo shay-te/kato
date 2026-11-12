@@ -44,7 +44,7 @@ _TRANSPORT_ONLY_METHODS = {
     # Claude: a tool-permission model and a single JSON payload.
     '_permission_mode', '_parse_json_payload', '_extract_first_json_object',
     '_merge_allowed_with_read_only_allowlist', '_merge_disallowed_with_floor',
-    '_merge_disallowed_with_git_deny', '_union_disallowed',
+    '_merge_disallowed_with_git_deny', '_git_deny_patterns', '_union_disallowed',
     # Codex: no system-prompt channel, and a JSONL event stream.
     '_system_prompt_addendum', '_parse_jsonl_payload',
     # Codex only: the CLI was rewritten (Node → Rust) and the old build has

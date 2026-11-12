@@ -44,6 +44,10 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from agent_core_lib.agent_core_lib.helpers.command_floor import (
+    GIT_ACCESS_STRICT,
+    git_denied_subcommands,
+)
 from agent_core_lib.agent_core_lib.helpers.command_introspection import (
     classify_command_escape,
     deobfuscate_command,
@@ -485,29 +489,23 @@ _GIT_WORKTREE_WIPE_SUBCOMMANDS = frozenset({'rm', 'clean'})
 # ``sh -c``/``eval`` payloads, then looks at the actual subcommand. Floor
 # severity — the operator can loosen a lot of this module, but not who owns
 # the branch, which is the same stance the transport floor takes.
-_GIT_ORCHESTRATOR_OWNED = frozenset({
-    # refs + commits
-    'commit', 'merge', 'rebase', 'reset', 'checkout', 'switch', 'branch',
-    'cherry-pick', 'revert', 'am', 'tag', 'bisect',
-    # remotes
-    'push', 'pull', 'fetch', 'clone', 'remote', 'send-pack', 'receive-pack',
-    # history rewriting
-    'filter-branch', 'filter-repo', 'fast-import', 'replace',
-    # code execution + reach outside the clone
-    'config', 'worktree', 'submodule', 'sparse-checkout',
-    # plumbing that composes back into a commit or a ref
-    'commit-tree', 'write-tree', 'read-tree', 'mktree', 'hash-object',
-    'update-ref', 'update-index', 'symbolic-ref', 'checkout-index',
-})
+#
+# WHICH subcommands is ``command_floor.git_denied_subcommands`` — the same
+# list the transport floor renders, at the session's git access level. This
+# used to be a second hand-kept set that had drifted from the floor (it
+# lacked ``gc``, ``prune``, ``init``, ``bundle`` …, so a transport with no
+# deny flag permitted what the other refused); a level that loosened one
+# list but not the other would have been the same drift on purpose.
 
 
-def _detect_git_orchestrator_owned(segments) -> list:
+def _detect_git_orchestrator_owned(segments, git_access: str = GIT_ACCESS_STRICT) -> list:
+    owned = frozenset(git_denied_subcommands(git_access))
     for segment in segments:
         head = _git_subcommand_head(segment)
         if head is None:
             continue
         subcommand, _rest = head
-        if subcommand in _GIT_ORCHESTRATOR_OWNED:
+        if subcommand in owned:
             return [_Candidate(
                 RiskCategory.OUT_OF_SCOPE, True,
                 f'git {subcommand} belongs to the orchestrator, which owns '
@@ -642,6 +640,35 @@ def _detect_git_destructive_form(segments) -> list:
                     f'fs.git_{subcommand}_destructive',
                 )]
             break
+    return []
+
+
+def is_git_hard_reset(segment: str) -> bool:
+    """True for ``git reset --hard …`` (any position, through wrappers).
+
+    Public for the remembered-approval key: when the agent may reset (local
+    git access), "always allow ``git reset``" given for a ``--soft`` undo of
+    the last commit must not also pre-approve ``--hard``, which throws away
+    every uncommitted change in the clone.
+    """
+    head = _git_subcommand_head(segment)
+    if head is None:
+        return False
+    subcommand, rest = head
+    return subcommand == 'reset' and '--hard' in rest
+
+
+def _detect_git_hard_reset(segments) -> list:
+    # Only reachable where reset is not already owned by the orchestrator
+    # (local git access) — at strict access the floor BLOCK outranks this.
+    for segment in segments:
+        if is_git_hard_reset(segment):
+            return [_Candidate(
+                RiskCategory.DESTRUCTIVE_FS, False,
+                'git reset --hard discards every uncommitted change in the '
+                'repository, with no commit behind it to recover from',
+                'fs.git_reset_hard',
+            )]
     return []
 
 
@@ -1082,7 +1109,8 @@ def _out_of_scope_candidate(classifier, subject, cwd, additional_dirs,
 
 
 def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
-                       command_sandbox_classifier) -> list:
+                       command_sandbox_classifier,
+                       git_access: str = GIT_ACCESS_STRICT) -> list:
     deob = deobfuscate_command(command)
     segments = split_command_segments(deob)
     # Order = severity priority (earlier wins ties among equal decisions).
@@ -1094,7 +1122,8 @@ def _detect_in_command(command, cwd, additional_dirs, allowed_paths,
     candidates += _detect_git_whole_tree_revert(segments)
     candidates += _detect_git_destructive_form(segments)
     candidates += _detect_git_worktree_wipe(segments)
-    candidates += _detect_git_orchestrator_owned(segments)
+    candidates += _detect_git_hard_reset(segments)
+    candidates += _detect_git_orchestrator_owned(segments, git_access)
     candidates += _detect_credential_read(deob, cwd)
     candidates += _detect_persistence_command(deob)
     candidates += _out_of_scope_candidate(
@@ -1155,8 +1184,12 @@ def classify_action(
     policy: CommandPolicy,
     command_sandbox_classifier=None,
     tool_input_sandbox_classifier=None,
+    git_access: str = GIT_ACCESS_STRICT,
 ) -> GuardVerdict:
     """Return the :class:`GuardVerdict` for one tool call.
+
+    ``git_access`` is the session's level (``command_floor``): which git
+    subcommands are the orchestrator's. Unknown or omitted → strict.
 
     ``command_sandbox_classifier`` / ``tool_input_sandbox_classifier`` are the
     workspace out-of-scope classifiers from ``sandbox_scope``,
@@ -1177,7 +1210,7 @@ def classify_action(
     if command.strip():
         candidates += _detect_in_command(
             command, cwd, additional_dirs, allowed_paths,
-            command_sandbox_classifier,
+            command_sandbox_classifier, git_access,
         )
     else:
         candidates += _detect_in_paths(

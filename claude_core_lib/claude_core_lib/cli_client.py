@@ -15,9 +15,12 @@ from agent_core_lib.agent_core_lib.helpers.cancellable_process import (
 )
 from agent_core_lib.agent_core_lib.helpers.command_floor import (
     FLOOR_DENY_PROGRAMS,
+    GIT_ACCESS_STRICT,
     GIT_MUTATING_SUBCOMMANDS,
     UNSUPERVISED_DENY_SUBCOMMANDS,
     cli_deny_patterns,
+    effective_git_access,
+    git_denied_subcommands,
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
 from agent_core_lib.agent_core_lib.helpers.read_only_tools import (
@@ -706,21 +709,34 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         return ','.join(existing)
 
     @classmethod
-    def _merge_disallowed_with_git_deny(cls, operator_disallowed: str) -> str:
+    def _merge_disallowed_with_git_deny(
+        cls, operator_disallowed: str, git_access: str = GIT_ACCESS_STRICT,
+    ) -> str:
         """Always include the git denylist, regardless of operator config.
 
         The operator can extend the denylist via ``the disallowed-tools setting``
-        but cannot remove the git patterns. the orchestrator is the sole component that
-        runs git operations.
+        but cannot remove the git patterns. The orchestrator is the sole component
+        that runs git operations outside the level ``git_access`` releases.
         """
-        return cls._union_disallowed(operator_disallowed, cls.GIT_DENY_PATTERNS)
+        return cls._union_disallowed(operator_disallowed, cls._git_deny_patterns(git_access))
+
+    @classmethod
+    def _git_deny_patterns(cls, git_access: str = GIT_ACCESS_STRICT) -> tuple[str, ...]:
+        """The git part of the floor at ``git_access`` (strict = ``GIT_DENY_PATTERNS``)."""
+        return cli_deny_patterns(git_denied_subcommands(git_access), program='git')
 
     @classmethod
     def _merge_disallowed_with_floor(
         cls, operator_disallowed: str, *, bypass_permissions: bool = False,
+        git_access: str = GIT_ACCESS_STRICT,
     ) -> str:
         """Apply BOTH non-overridable floors — git mutations and the Action
         Guard no-legit-use programs — to the operator's disallowed list.
+
+        ``git_access`` loosens only the git part, and only to the level
+        ``command_floor`` defines (local = the history of the checked-out
+        branch). It is withdrawn back to strict under ``bypass_permissions``
+        by ``effective_git_access`` — the operator cannot widen it there.
 
         This is the single floor every spawn ships (one-shot AND streaming),
         so the CLI refuses these tools in every permission mode.
@@ -735,7 +751,8 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         supervise it. Scoped reverts stay available in every attended mode,
         which is where the operator asked for them.
         """
-        merged = cls._merge_disallowed_with_git_deny(operator_disallowed)
+        access = effective_git_access(git_access, unsupervised=bypass_permissions)
+        merged = cls._merge_disallowed_with_git_deny(operator_disallowed, access)
         merged = cls._union_disallowed(merged, cls.ACTION_GUARD_DENY_PATTERNS)
         if bypass_permissions:
             merged = cls._union_disallowed(merged, cls.UNSUPERVISED_DENY_PATTERNS)

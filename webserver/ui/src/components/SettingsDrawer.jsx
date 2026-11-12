@@ -7,6 +7,7 @@ import GitProvidersSettingsPanel from './GitProvidersSettingsPanel.jsx';
 import NotificationsSettingsPanel from './NotificationsSettingsPanel.jsx';
 import RepositoriesSettingsPanel from './RepositoriesSettingsPanel.jsx';
 import SchemaSettingsPanel from './SchemaSettingsPanel.jsx';
+import StrictGitSettingsPanel from './StrictGitSettingsPanel.jsx';
 import TaskProviderSettingsPanel from './TaskProviderSettingsPanel.jsx';
 import {
   loadAllSettings,
@@ -28,6 +29,8 @@ const TAB_REPOS = SETTINGS_TAB_REPOSITORIES;
 const TAB_PERMISSIONS = 'claude-permissions';
 const TAB_ACTION_GUARD = 'action-guard';
 const TAB_PROMPTS = 'prompts';
+// Equal to the schema field's ``panel`` — that is how settings search finds it.
+const TAB_STRICT_GIT = 'strict-git';
 const TAB_TASK_PROVIDER = 'task-provider';
 const TAB_GIT_PROVIDER = 'git-provider';
 const TAB_NOTIFICATIONS = 'notifications';
@@ -62,6 +65,12 @@ const BESPOKE_TABS = [
     description: 'What the agent is blocked from doing regardless of '
       + 'permission mode — the always-blocked floor and the per-category '
       + 'postures above it.',
+  },
+  {
+    id: TAB_STRICT_GIT,
+    label: 'Strict git',
+    description: 'Whether the agent may commit, squash and rebase on its own '
+      + 'task branch, or only kato commits. On, and recommended, by default.',
   },
   {
     id: TAB_PROMPTS,
@@ -188,6 +197,8 @@ export default function SettingsDrawer({
     panel = <ActionGuardSettingsPanel />;
   } else if (tab === TAB_PROMPTS) {
     panel = <PromptsSettingsPanel highlightKey={highlightKey} />;
+  } else if (tab === TAB_STRICT_GIT) {
+    panel = <StrictGitSettingsPanel highlightKey={highlightKey} />;
   } else if (tab === TAB_TASK_PROVIDER) {
     panel = <TaskProviderSettingsPanel />;
   } else if (tab === TAB_GIT_PROVIDER) {

@@ -51,6 +51,7 @@ class CodexSessionManager(object):
         record_sink=None,
         record_source=None,
         logger=None,
+        git_access_source=None,
     ) -> None:
         self._state_dir = Path(state_dir)
         self._state_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,11 @@ class CodexSessionManager(object):
         # its previous_session_ids and its context counters.
         self._record_source = record_source
         self.logger = logger or configure_logger('CodexSessionManager')
+        # A zero-argument callable answering the git access level
+        # (``command_floor``) — asked by each chat at the start of every turn,
+        # so a changed setting reaches a running chat on its next message.
+        # ``None`` keeps every chat strict.
+        self._git_access_source = git_access_source
         self._sessions: dict[str, StreamingCodexSession] = {}
         self._lock = threading.RLock()
 
@@ -128,6 +134,10 @@ class CodexSessionManager(object):
                 if initial_prompt:
                     existing.send_user_message(initial_prompt)
                 return existing
+            extra = (
+                {'git_access_source': self._git_access_source}
+                if self._git_access_source is not None else {}
+            )
             session = self._session_factory(
                 task_id=str(task_id).strip(),
                 cwd=cwd,
@@ -136,6 +146,7 @@ class CodexSessionManager(object):
                 agent_session_id=resume_id,
                 additional_dirs=tuple(additional_dirs or ()),
                 logger=self.logger,
+                **extra,
             )
             self._sessions[key] = session
         record = self._record_for_spawn(

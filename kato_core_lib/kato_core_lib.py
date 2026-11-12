@@ -470,6 +470,7 @@ class KatoCoreLib(CoreLib):
             from codex_core_lib.codex_core_lib.session.manager import (
                 CodexSessionManager,
             )
+            from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
             managers[AgentBackend.CODEX.value] = CodexSessionManager(
                 state_dir=state_dir,
                 record_sink=record_owner.save_record,
@@ -477,6 +478,9 @@ class KatoCoreLib(CoreLib):
                 # adopted and can update the task's existing record instead
                 # of overwriting it.
                 record_source=record_owner.get_record,
+                # Strict git (Settings → Strict git) is global: each Codex turn
+                # asks it fresh, the same setting Claude's spawns read.
+                git_access_source=agent_git_access,
             )
         elif backend is AgentBackend.CODEX:
             # Configured for Codex with no Codex block: nothing can spawn.

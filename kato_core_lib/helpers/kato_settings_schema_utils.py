@@ -30,6 +30,7 @@ from agent_core_lib.agent_core_lib.helpers.command_policy import (
     CONFIGURABLE_CATEGORIES,
     CommandPolicy,
 )
+from kato_core_lib.helpers.agent_git_access_utils import AGENT_GIT_STRICT_KEY
 from kato_core_lib.helpers.plan_mode_store import DEFAULT_MODE_CHOICES
 from kato_core_lib.helpers.standing_instructions_utils import (
     STANDING_INSTRUCTIONS_KEY,
@@ -45,6 +46,7 @@ LOG_LEVELS = ['debug', 'info', 'warning', 'error', 'critical']
 # these with ``"true"`` when nothing is stored so the picker always
 # reflects what kato will really do.
 DEFAULT_ON_BOOL_KEYS: frozenset[str] = frozenset({
+    AGENT_GIT_STRICT_KEY,
     'KATO_ALLOW_CLI_UPGRADE',
     'KATO_REVIEW_COMMENTS_ENABLED',
     'KATO_REVIEW_COMMENTS_REQUIRE_MENTION',
@@ -239,6 +241,36 @@ SETTINGS_SCHEMA: list[dict] = [
              'opens a pull request on its own. Turn ON to let the scan '
              'loop publish without asking. The UI Push / Done buttons '
              'are operator actions and are never affected.', {}),
+            # Shown in its OWN tab (Settings → Strict git), which explains it.
+            (AGENT_GIT_STRICT_KEY, 'bool', 'Strict git',
+             'On by default: the agent edits files and kato makes every commit. '
+             'Turn OFF to let the agent also commit, amend, squash, rebase, '
+             'reset, merge, cherry-pick and tag on its own task branch when you '
+             'ask. In both modes only kato pushes, and only when you press '
+             'Push / Done; the agent never switches branch, talks to the remote '
+             'or changes git config. Claude and Codex chats alike; never in '
+             'Auto. A running chat switches on its next message.',
+             {'panel': 'strict-git',
+              # Asked in a popup before the switch goes OFF (SettingConfirmDialog).
+              'confirm': {
+                  'when': 'false',
+                  'title': 'Turn strict git off?',
+                  'lead': 'The agent will be able to change the history of its own '
+                          'task branch when you ask it to.',
+                  'effects': [
+                      'It may commit, amend, squash, rebase, reset, merge, '
+                      'cherry-pick and tag on the task branch.',
+                      'It still cannot push, pull, switch branch or change git '
+                      'config. Only kato pushes, when you press Push or Done.',
+                      'While the agent is working, kato\'s git buttons wait for '
+                      'its turn to end.',
+                      'If it rewrites commits that were already pushed, kato will '
+                      'not push the branch until they are put back.',
+                      'Claude and Codex chats alike, never in Auto mode. Running '
+                      'chats switch on their next message.',
+                  ],
+                  'confirm_label': 'Turn strict git off',
+              }}),
             ('KATO_PUBLISH_FOLLOWS_PROJECT_CONVENTIONS', 'bool',
              'Commits/PRs follow the repo\'s own conventions',
              'Off by default. When on, kato reads the repository\'s own '
@@ -246,7 +278,10 @@ SETTINGS_SCHEMA: list[dict] = [
              'commit message, pull request title and description to match '
              'it. No such file, or the extra call fails: kato\'s own plain '
              'text, unchanged. The agent\'s own PR description (when it '
-             'wrote one) still wins over this either way.', {}),
+             'wrote one) still wins over this either way. With Strict git '
+             'off, commits the agent made itself keep their own messages '
+             '(it reads CLAUDE.md anyway); this shapes kato\'s commit of '
+             'what is left uncommitted, and the pull request.', {}),
             ('KATO_LID_AWAKE_ENABLED', 'bool',
              'Keep running with the lid closed',
              'Off by default. Kato keeps this computer awake with the lid closed: '

@@ -177,6 +177,16 @@ def _task_id_of_clone(repository) -> str:
     return Path(str(getattr(repository, 'local_path', '') or '').strip()).parent.name
 
 
+def _in_progress_reason(operation: str) -> str:
+    """What to tell the operator about a half-done ``git <operation>`` in a clone."""
+    finish = 'git bisect reset' if operation == 'bisect' else f'git {operation} --continue'
+    stop = 'git bisect reset' if operation == 'bisect' else f'git {operation} --abort'
+    return (
+        f'a git {operation} is in progress in the clone. Kato leaves it alone: '
+        f'finish it ({finish}) or stop it ({stop}) first.'
+    )
+
+
 class RepositoryHasNoChangesError(RuntimeError):
     """Raised when a task branch has nothing to publish in a given repo.
 
@@ -1160,6 +1170,11 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         local_path, current_branch = state
         if current_branch == normalized_branch:
             return ''
+        # Mid-rebase HEAD is detached, so the clone LOOKS like it is on the
+        # wrong branch. Moving it now would abandon the half-applied rebase.
+        in_progress = self._detached_operation_in_progress(local_path, current_branch)
+        if in_progress:
+            return _in_progress_reason(in_progress)
         # Same refusal ``prepare_task_branches`` makes, repeated here because
         # this method creates a branch WITHOUT going through it — a caller
         # holding an inventory object would otherwise branch the operator's
@@ -2508,10 +2523,28 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         )
         return validation_report_description
 
+    def _detached_operation_in_progress(self, local_path: str, current_branch: str) -> str:
+        """A half-done rebase / am / bisect, asked only when HEAD is detached.
+
+        Those three are what detach HEAD mid-operation, which is how a clone
+        comes to look like it is "not on its branch" to the paths that then
+        move it. A merge / cherry-pick / revert keeps HEAD on the task branch,
+        so those paths return before they get here; and on any other branch an
+        unfinished one with conflicts makes the stash before the wipe fail,
+        which already refuses. Asking only when detached keeps the every-tick
+        branch-prep path at the git calls it always made.
+        """
+        if current_branch not in ('', 'HEAD'):
+            return ''
+        return self.git_operation_in_progress(local_path)
+
     def _assert_branch_checked_out(self, local_path: str, branch_name: str) -> None:
         current_branch = self._current_branch(local_path)
         if current_branch == branch_name:
             return
+        in_progress = self.git_operation_in_progress(local_path)
+        if in_progress:
+            raise RuntimeError(f'{local_path}: {_in_progress_reason(in_progress)}')
         raise RuntimeError(
             f'expected repository at {local_path} to be on branch {branch_name}, '
             f'but found {current_branch or "<unknown>"}'
@@ -2897,6 +2930,12 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                     local_path, status_output, current_branch,
                 )
             return
+        in_progress = self._detached_operation_in_progress(local_path, current_branch)
+        if in_progress:
+            # Everything below is checkout -f / reset --hard territory. A
+            # rebase the agent (or the operator) is halfway through is not a
+            # stranded clone to tidy up — it is work in flight.
+            raise RuntimeError(f'{local_path}: {_in_progress_reason(in_progress)}')
         if self._working_tree_status(local_path):
             # Park the tree before the wipe.
             #

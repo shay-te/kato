@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -235,6 +236,9 @@ class GitClientMixinRealRepoTests(unittest.TestCase):
     def test_clear_stale_git_index_lock_removes_lockfile(self) -> None:
         lock = self.work / '.git' / 'index.lock'
         lock.write_text('stale', encoding='utf-8')
+        # Stale = left behind long ago; a fresh lock may belong to a live git.
+        old = time.time() - GitClientMixin.GIT_INDEX_LOCK_LIVE_SECONDS - 60
+        os.utime(lock, (old, old))
         self.assertTrue(lock.is_file())
         cleared = self.client._clear_stale_git_index_lock(str(self.work))
         self.assertTrue(cleared)

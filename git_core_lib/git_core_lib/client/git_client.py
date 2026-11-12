@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from git_core_lib.git_core_lib.helpers.git_command_utils import (
@@ -30,6 +31,24 @@ class GitClientMixin:
     """
 
     GIT_SUBPROCESS_TIMEOUT_SECONDS = 300
+    # An ``index.lock`` younger than this is treated as held by a live git,
+    # whoever runs it. The process check below only recognises git started
+    # the way this client starts it (``-C <path>``); a git run from inside the
+    # clone — by an agent, a hook, an IDE — looks like nobody, and deleting
+    # its lock mid-write corrupts the index. ``git commit`` holds the lock for
+    # as long as its hooks run, so this is minutes, not seconds.
+    GIT_INDEX_LOCK_LIVE_SECONDS = 120
+    # ``(marker under the git dir, what it means)`` — checked in this order,
+    # because ``git am`` and ``git rebase`` both use ``rebase-apply``.
+    IN_PROGRESS_OPERATION_MARKERS = (
+        ('rebase-merge', 'rebase'),
+        ('rebase-apply/applying', 'am'),
+        ('rebase-apply', 'rebase'),
+        ('MERGE_HEAD', 'merge'),
+        ('CHERRY_PICK_HEAD', 'cherry-pick'),
+        ('REVERT_HEAD', 'revert'),
+        ('BISECT_LOG', 'bisect'),
+    )
     NON_FAST_FORWARD_PUSH_REJECTION_MARKERS = (
         'fetch first',
         'non-fast-forward',
@@ -583,6 +602,66 @@ class GitClientMixin:
 
     # ----- reference / status queries -----
 
+    def git_operation_in_progress(self, local_path: str) -> str:
+        """``'rebase'`` / ``'merge'`` / ``'am'`` / … left half-done in the clone, else ``''``.
+
+        Between a conflict and its ``--continue`` the repository is in a state
+        nothing else should touch: mid-rebase HEAD is not even on the branch,
+        so "put the clone back on its branch" or "push the branch" would act on
+        a half-applied history. Callers check this first and say what is going
+        on instead of failing with a git error that does not.
+        """
+        result = self._run_capture(self._git_command(local_path, ['rev-parse', '--git-dir']))
+        output = result.stdout if isinstance(result.stdout, str) else ''
+        if result.returncode != 0 or not output.strip():
+            return ''
+        git_dir = Path(output.strip())
+        if not git_dir.is_absolute():
+            git_dir = Path(local_path) / git_dir
+        for marker, operation in self.IN_PROGRESS_OPERATION_MARKERS:
+            if (git_dir / marker).exists():
+                return operation
+        return ''
+
+    def rewritten_pushed_commit(self, local_path: str, branch_name: str) -> str:
+        """The commit last pushed from this clone that ``branch_name`` dropped, else ``''``.
+
+        ``refs/remotes/origin/<branch>`` is what this clone last pushed or
+        fetched. When the branch no longer contains it, either the remote moved
+        on (a fetch brought commits the branch never had — a normal rejection,
+        fixed by rebasing onto them) or the branch was REWRITTEN after it was
+        pushed (``commit --amend``, ``rebase``, ``reset``). The reflog tells
+        them apart: a pushed commit was the branch's tip once, a fetched one
+        never was. Only the rewritten case answers non-empty — rebasing that
+        onto origin would replay the same changes a second time.
+        """
+        tracking = self._run_capture(self._git_command(
+            local_path, ['rev-parse', '-q', '--verify', f'refs/remotes/origin/{branch_name}^{{commit}}'],
+        ))
+        pushed = (tracking.stdout or '').strip() if tracking.returncode == 0 else ''
+        if not pushed or self.branch_contains(local_path, branch_name, pushed):
+            return ''
+        reflog = self._run_capture(self._git_command(
+            local_path, ['reflog', 'show', '--format=%H', f'refs/heads/{branch_name}', '--'],
+        ))
+        if reflog.returncode != 0:
+            return ''
+        former_tips = {line.strip() for line in (reflog.stdout or '').splitlines()}
+        return pushed if pushed in former_tips else ''
+
+    def _refuse_push_over_rewritten_history(self, local_path: str, branch_name: str) -> None:
+        dropped = self.rewritten_pushed_commit(local_path, branch_name)
+        if not dropped:
+            return
+        raise RuntimeError(
+            f'{branch_name} no longer contains {dropped[:12]}, which is already on '
+            f'origin/{branch_name}: its history was rewritten after the last push '
+            '(commit --amend, rebase or reset). It is not pushed — that would need '
+            'a force push, and rebasing it onto origin would apply the same changes '
+            f'twice. Put the pushed commits back (git rebase origin/{branch_name} in '
+            'the clone), or force-push it yourself with --force-with-lease.'
+        )
+
     def _git_reference_exists(self, local_path: str, reference: str) -> bool:
         result = self._run_capture(
             self._git_command(local_path, ['rev-parse', '--verify', reference]),
@@ -677,12 +756,27 @@ class GitClientMixin:
                 lock_path,
             )
             return False
+        if self._index_lock_is_recent(lock_path):
+            self.logger.warning(
+                'leaving git index lock in place at %s because it was written in the last '
+                '%s seconds — a git run from inside the clone may still hold it',
+                lock_path, self.GIT_INDEX_LOCK_LIVE_SECONDS,
+            )
+            return False
         try:
             lock_path.unlink()
         except FileNotFoundError:
             return False
         self.logger.warning('removed stale git index lock at %s', lock_path)
         return True
+
+    @classmethod
+    def _index_lock_is_recent(cls, lock_path: Path) -> bool:
+        try:
+            written = lock_path.stat().st_mtime
+        except OSError:
+            return False
+        return (time.time() - written) < cls.GIT_INDEX_LOCK_LIVE_SECONDS
 
     @staticmethod
     def _has_running_git_process(local_path: str) -> bool:
@@ -723,6 +817,8 @@ class GitClientMixin:
         # provider token, and an approved push to a redirected remote
         # hands that token to whoever owns it.
         self._assert_remote_is_the_configured_one(local_path, repository)
+        if not dry_run:
+            self._refuse_push_over_rewritten_history(local_path, branch_name)
         push_args = ['push']
         if dry_run:
             push_args.append('--dry-run')

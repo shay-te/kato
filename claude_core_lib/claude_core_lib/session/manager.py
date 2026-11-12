@@ -215,6 +215,7 @@ class ClaudeSessionManager(object):
         sandbox_root: str = '',
         additional_dirs: list[str] | None = None,
         extra_system_prompt: str = '',
+        git_access: str = '',
     ) -> StreamingClaudeSession:
         """Spawn (or rehydrate) the streaming session bound to ``task_id``.
 
@@ -245,6 +246,9 @@ class ClaudeSessionManager(object):
             # The host's standing system-prompt guidance; see
             # StreamingClaudeSession._extra_system_prompt.
             'extra_system_prompt': extra_system_prompt,
+            # The git access level (command_floor) — the session withdraws it
+            # to strict itself under bypassPermissions.
+            'git_access': git_access,
             'done_callback': self._done_callback,
             'done_sentinel': self._done_sentinel,
         }

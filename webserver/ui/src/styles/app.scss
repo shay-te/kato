@@ -1093,6 +1093,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * and the name is what the operator scans for once the ids blur together.
  * One legible treatment across the whole tab beats a hierarchy nobody can
  * read. */
+/* Capitalized for display only ("admin admin" reads "Admin Admin"): the
+ * stored name, the rename box (.tab-label-rename) and every copy of the name
+ * elsewhere keep exactly what was typed. */
 .tabs-pane-top .tab .tab-label-title {
   min-width: 0;
   overflow: hidden;
@@ -1102,6 +1105,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   font-weight: 600;
   letter-spacing: 0.01em;
   color: $C-NEUTRAL-96;
+  text-transform: capitalize;
 }
 
 .tabs-pane-top .tab p {
@@ -5039,7 +5043,8 @@ code {
   overflow-wrap: anywhere;
 }
 
-.forget-task-lead {
+.forget-task-lead,
+.setting-confirm-lead {
   margin: 0;
   font-size: $TEXT-13;
   color: $C-NEUTRAL-96;
@@ -5050,7 +5055,9 @@ code {
   color: $C-NEUTRAL-96;
 }
 
-.forget-task-effects {
+.forget-task-effects,
+.setting-confirm-effects,
+.strict-git-points {
   margin: 0;
   padding-left: $SPACE-18;
   display: flex;
@@ -5062,11 +5069,14 @@ code {
   overflow-y: auto;
 }
 
-.forget-task-effects li::marker {
+.forget-task-effects li::marker,
+.setting-confirm-effects li::marker,
+.strict-git-points li::marker {
   color: $C-NEUTRAL-32;
 }
 
-.forget-task-effects strong {
+.forget-task-effects strong,
+.strict-git-points strong {
   color: $C-NEUTRAL-96;
 }
 

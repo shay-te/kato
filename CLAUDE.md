@@ -428,6 +428,47 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   Opt-in (titles leave the machine). Failures are kept in `~/.kato/release_notes_sync.json` and shown in the
   header's Release notes dialog with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
 
+### Strict git (Settings → its own "Strict git" tab, `KATO_AGENT_GIT_STRICT`, default ON, GLOBAL: Claude + Codex)
+```
+ON  (strict): the agent owns the INDEX + WORKING TREE; kato owns refs, commits, remotes, history, config
+OFF (local):  the agent may also run commit / merge / rebase / reset / cherry-pick / revert / am / tag
+              on the branch that is checked out. Still kato's: push/pull/fetch/clone/remote, leaving the
+              branch (checkout/switch/branch/bisect/symbolic-ref), config/worktree/submodule, plumbing
+```
+**ONE list per level: `agent_core_lib/helpers/command_floor.py`** (`git_denied_subcommands`, `GIT_LOCAL_HISTORY_SUBCOMMANDS`,
+`git_access_prompt_text`). Both enforcement layers read it — Claude's `--disallowedTools`
+(`ClaudeCliClient._merge_disallowed_with_floor(git_access=)`) and the Action Guard's `git.orchestrator_owned`
+(`classify_action(git_access=)`, which used to keep its own drifted set). Never add a second list.
+- Read fresh at the one spawn funnel (`PlanningSessionRunner.start_session` → `agent_git_access()`); the session decides
+  its level ONCE (`StreamingClaudeSession.git_access`, `effective_git_access`: **Auto/bypassPermissions is always strict**)
+  and the deny list + the system prompt's git block both read it. `_tool_floor_change_needs_respawn` respawns a chat whose
+  floor no longer matches, so flipping the switch reaches a running chat on its next message. One-shot runs
+  (`claude -p`, the reviewer) stay strict.
+- **Codex** has no deny flag and no system prompt; its own `workspace-write` sandbox is the wall, and it makes every
+  root's `.git` READ-ONLY (strict: even `git add` fails, "Unable to create .git/index.lock"). `StreamingCodexSession`
+  asks `git_access_source` (kato: `agent_git_access`, wired in `kato_core_lib.py`) at the START OF EVERY TURN; at local
+  it adds `-c sandbox_workspace_write.writable_roots=[<root>/.git …]` — `-c`, NOT `--add-dir`: proven on codex-cli
+  0.166, a resumed turn does not keep the first turn's `--add-dir` (and rejects the flag), while `-c` works on both.
+  The rules ride in front of the message on stdin, only when the level changed (`git_access_change_text`, incl.
+  "STRICT again"); the transcript keeps what the operator typed. Leaving the branch / pushing are prompt-only for
+  Codex — there is no per-command block. (Side finding, not fixed: the same means a resumed Codex turn also loses
+  the sibling repos' `--add-dir`.)
+- Push stays kato's in BOTH modes: `KATO_AUTO_PUSH_ENABLED`, "kato never publishes on its own", the plan queue's
+  merge checks and the remote check before every push all depend on it. Do not add an "agent may push" level.
+- Kato's publish path already handled agent commits: a clean tree skips kato's commit and pushes what is ahead;
+  the diff/review loop read from the merge-base; a review fix counts a moved HEAD.
+- What strict-off needed (and has): `_push_branch` refuses a branch whose PUSHED commits were rewritten
+  (`rewritten_pushed_commit`: the tracking ref is no longer contained AND was once the branch tip in its reflog —
+  a fetched commit never was, so "the remote moved" still gets the old fetch + rebase); `git_operation_in_progress`
+  (rebase/merge/am/cherry-pick/revert/bisect) stops self-heal, branch prep and publish from touching a half-done
+  rebase; an `index.lock` younger than `GIT_INDEX_LOCK_LIVE_SECONDS` is never deleted (the process check only
+  recognises kato's own `-C` git); the git routes (push, pull, merge, update source, PR, approve, Done) answer 409
+  while a LOCAL session is mid-turn (`kato_webserver/agent_git_busy.py`); `git reset --hard` asks
+  (`fs.git_reset_hard`) and is remembered apart from `git reset`.
+- The field sits in General with `panel: 'strict-git'` → its own tab (`StrictGitSettingsPanel`: what it is, why it is
+  recommended, what off changes, what never happens). The UI asks before the switch goes OFF: the schema field's
+  `confirm` → `SettingConfirmDialog` (portalled to `<body>`, Escape closes only the popup). Any field can carry one.
+
 ### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
 Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan
 queue below: the orchestration layer owns BRANCH STATE and PUBLISHING only). So a developer's own

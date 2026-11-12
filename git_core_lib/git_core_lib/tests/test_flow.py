@@ -158,6 +158,7 @@ class F1_DiscoverSyncInspectPush(unittest.TestCase):
                 'rebase',        # E
                 'status',        # F
                 'grep',          # G
+                'rev-parse',     # H — what this clone last pushed (rewritten-history check)
                 'push',          # H
             ],
         )
@@ -253,10 +254,12 @@ class F2_PushRejectedThenRebaseAndRetry(unittest.TestCase):
              patch(RUN_TARGET, side_effect=double):
             client._push_branch(REPO_PATH, FEATURE_BRANCH)
 
-        # The recovery sequence: push(reject) → fetch → rev-parse → rebase → push(ok).
+        # The recovery sequence: (rewritten-history check) → push(reject) →
+        # fetch → rev-parse → rebase → push(ok). The check runs once, before
+        # the first attempt: the retry pushes the rebase the client just made.
         self.assertEqual(
             double.issued(),
-            ['push', 'fetch', 'rev-parse', 'rebase', 'push'],
+            ['rev-parse', 'push', 'fetch', 'rev-parse', 'rebase', 'push'],
         )
 
     def test_unrelated_push_failure_is_not_retried(self) -> None:
@@ -274,8 +277,9 @@ class F2_PushRejectedThenRebaseAndRetry(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'failed to push branch'):
                 client._push_branch(REPO_PATH, FEATURE_BRANCH)
 
-        # Only the single push was attempted; no recovery commands ran.
-        self.assertEqual(double.issued(), ['push'])
+        # Only the single push was attempted (after the rewritten-history
+        # check); no recovery commands ran.
+        self.assertEqual(double.issued(), ['rev-parse', 'push'])
 
 
 # ---------------------------------------------------------------------------

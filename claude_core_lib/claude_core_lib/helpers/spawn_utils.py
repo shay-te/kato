@@ -67,6 +67,7 @@ def build_appended_system_prompt(
     logger,
     cwd: str = '',
     extra_system_prompt: str = '',
+    git_access: str = '',
 ) -> str:
     """Compose the single ``--append-system-prompt`` value.
 
@@ -85,7 +86,17 @@ def build_appended_system_prompt(
     ``extra_system_prompt`` is the host's own standing guidance, appended
     last. It rides here for the same reason as the boundary: a rule that must
     hold for the whole task cannot live in a first message.
+
+    ``git_access`` is the level the spawn's deny list was built at (already
+    effective — see ``command_floor.effective_git_access``). At local access
+    the agent is told what it may now run, rendered from the same tuples as
+    the deny list, so the prompt can never promise what the floor refuses.
+    It sits BEFORE the host's guidance so the operator's own standing text
+    still has the last word.
     """
+    from agent_core_lib.agent_core_lib.helpers.command_floor import (
+        git_access_prompt_text,
+    )
     from agent_core_lib.agent_core_lib.helpers.agent_prompt_utils import (
         task_boundary_system_block,
         task_folder_for,
@@ -110,8 +121,9 @@ def build_appended_system_prompt(
         lessons=lessons_text,
         task_boundary=task_boundary,
     )
+    git_rules = git_access_prompt_text(git_access).strip()
     extra = str(extra_system_prompt or '').strip()
-    return '\n\n'.join(part for part in (composed, extra) if part)
+    return '\n\n'.join(part for part in (composed, git_rules, extra) if part)
 
 
 def append_additional_dirs(command: list[str], additional_dirs) -> None:

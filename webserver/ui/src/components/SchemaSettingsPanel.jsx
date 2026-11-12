@@ -8,6 +8,7 @@ import { fieldPlaceholder } from '../utils/fieldHelp.js';
 import FieldInfoTip from './settings/FieldInfoTip.jsx';
 import PanelMessage from './settings/PanelMessage.jsx';
 import SchemaFieldsBlock from './settings/SchemaFieldsBlock.jsx';
+import SettingConfirmDialog from './settings/SettingConfirmDialog.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 
 // Generic, schema-driven settings panel. One instance renders ONE
@@ -158,6 +159,17 @@ export function SchemaField({ field, value, onChange }) {
   }, [listSource]);
   const datalistId = field.datalist ? `datalist-${field.key}` : undefined;
 
+  // A value the schema wants confirmed first (``field.confirm.when``) waits
+  // here until the operator says yes; Cancel leaves the setting as it was.
+  const [pendingValue, setPendingValue] = useState(null);
+  function change(next) {
+    if (field.confirm && next === field.confirm.when) {
+      setPendingValue(next);
+      return;
+    }
+    onChange(next);
+  }
+
   // The ⓘ tooltip carries the explanation AND the env-var name — the raw
   // key is not printed next to the label.
   const tipText = [
@@ -192,7 +204,7 @@ export function SchemaField({ field, value, onChange }) {
           type="checkbox"
           className="settings-drawer-toggle"
           checked={boolChecked}
-          onChange={(e) => onChange(e.target.checked ? 'true' : 'false')}
+          onChange={(e) => change(e.target.checked ? 'true' : 'false')}
         />
       ) : isSelect ? (
         <select
@@ -259,6 +271,15 @@ export function SchemaField({ field, value, onChange }) {
         <span className="settings-drawer-field-danger">⛔ {field.danger}</span>
       )}
     </label>
+    {/* Outside the <label>: a click inside the popup must not reach the
+        label and toggle the checkbox it wraps. */}
+    {pendingValue !== null && (
+      <SettingConfirmDialog
+        field={field}
+        onConfirm={() => { onChange(pendingValue); setPendingValue(null); }}
+        onCancel={() => setPendingValue(null)}
+      />
+    )}
     </>
   );
 }

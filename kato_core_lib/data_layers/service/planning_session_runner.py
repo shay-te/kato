@@ -44,6 +44,7 @@ from kato_core_lib.helpers.explain_mode_utils import (
 )
 from kato_core_lib.helpers.plan_mode_store import task_permission_mode
 from kato_core_lib.helpers.plan_writer import PLAN_PROGRESS_GUIDANCE
+from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
 from kato_core_lib.helpers.autopilot_guidance_utils import with_autopilot_guidance
 from kato_core_lib.helpers.planning_hold_store import held_permission_mode
 from kato_core_lib.helpers.remote_control_store import (
@@ -888,6 +889,10 @@ class PlanningSessionRunner(object):
             # task. Empty ⇒ previous cwd-only mount.
             sandbox_root=workspace_root,
             additional_dirs=additional_dirs,
+            # Strict git (default) or local git (Settings → Claude agent),
+            # read fresh. The session itself withdraws local in
+            # bypassPermissions, and a backend with no deny flag ignores it.
+            git_access=agent_git_access(),
         )
         # Remote Control, applied HERE for the same reason the mode lock is:
         # this is the single funnel every spawn goes through. The bridge that

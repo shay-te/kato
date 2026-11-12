@@ -19,6 +19,7 @@ from agent_core_lib.agent_core_lib.helpers.command_introspection import (
 from agent_core_lib.agent_core_lib.helpers.command_policy import (
     git_revert_breadth,
     git_subcommand_of,
+    is_git_hard_reset,
 )
 
 # Tools whose remembered decision is keyed by the COMMAND, not the tool
@@ -172,6 +173,10 @@ def _git_signature(segment: str, prog: str) -> str:
     subcommand = git_subcommand_of(segment)
     if not subcommand:
         return prog
+    # Same line for reset, once the agent may run it (strict git off): "always
+    # allow" on ``git reset --soft HEAD~1`` must not cover ``--hard``.
+    if is_git_hard_reset(segment):
+        return f'{prog} reset --hard'
     breadth = git_revert_breadth(segment)
     if breadth == 'whole-tree':
         return f'{prog} {subcommand} (whole tree)'
