@@ -1,4 +1,5 @@
-// The "a task needs you" pill must stay readable in the header.
+// The "a task needs you" pill must stay readable (now in the tasks rail's foot;
+// it was in the app header, which is gone).
 //
 // Reported as "fix this pill on top for tasks waiting to be answered, it's
 // not readable at all", with a screenshot showing the app title running
@@ -36,11 +37,10 @@ function rulesFor(selector) {
   return found.join(';');
 }
 
-// Every item that shares the header row with the attention pill. If any one
-// of them can shrink, it is the one that collides with its neighbour.
+// The chips moved to the tasks rail's foot (there is no app bar), but the
+// rule stands: a nowrap item that can shrink overlaps its neighbour.
 const NON_SHRINKING = [
-  'header h1',
-  'header .subtitle',
+  '.task-menu-title',
   '.permission-roster',
   '.permission-roster-chip',
 ];
@@ -57,56 +57,26 @@ for (const selector of NON_SHRINKING) {
   });
 }
 
-test('the status pill is the one thing allowed to give up space', () => {
-  // Something has to absorb the slack or the row cannot fit at all. The
-  // status line is the right victim: it already ellipsises, so losing width
-  // degrades it gracefully instead of overlapping anything.
-  const body = rulesFor('header .header-status');
-  assert.match(body, /flex:\s*1/);
-});
-
 test('the status text truncates instead of spilling', () => {
-  const body = rulesFor('header .header-status-text');
+  const body = rulesFor('.task-menu-footer .header-status-text');
   assert.match(body, /text-overflow:\s*ellipsis/);
   assert.match(body, /overflow:\s*hidden/);
   assert.match(body, /min-width:\s*0/);
 });
 
 test('the task id is not set in the smallest available type', () => {
-  // A task id ("UNA-2897") is read character by character, next to the
-  // header's title text. At 11px it read as noise rather than as a control.
+  // A task id ("UNA-2897") is read character by character. At 11px it read as
+  // noise rather than as a control.
   const body = rulesFor('.permission-roster-chip');
   const size = /font-size:\s*(\d+)px/.exec(body);
   assert.ok(size, 'the chip sets no font-size');
-  assert.ok(
-    Number(size[1]) >= 12,
-    `chip type is ${size[1]}px — too small to read a task id beside the title`,
-  );
+  assert.ok(Number(size[1]) >= 12, `chip type is ${size[1]}px — too small to read a task id`);
 });
 
-test('the decorative subtitle yields before the pill does', () => {
-  // When the bar genuinely runs out of room, "Planning UI" is what goes —
-  // it is decoration, and the task waiting on an answer is not.
-  const at = css.indexOf('@media (max-width: 900px)');
-  assert.notEqual(at, -1, 'no narrow-width rule for the header subtitle');
-  const block = css.slice(at, at + 200);
-  assert.match(block, /header \.subtitle/);
-  assert.match(block, /display:\s*none/);
-});
-
-// ── Additions from the second report ───────────────────────────────────────
-// "these pending button on top are malformed please give them width and the
-// text should fit in the buttons", with a screenshot of a task id drawn
-// through the subtitle — on a window much WIDER than the 900px breakpoint
-// the rule above tests.
-
-test('the subtitle yields whenever a chip is present, not just below 900px', () => {
-  // The width breakpoint was the wrong trigger. The row overflows when it is
-  // FULL, and it is fullest exactly when attention chips are on screen —
-  // which happens at any width.
-  const at = css.indexOf('header:has(.permission-roster) .subtitle');
-  assert.notEqual(at, -1, 'the subtitle does not yield to a waiting task');
-  assert.match(css.slice(at, at + 120), /display:\s*none/);
+test('the chips wrap within the collapsed rail, expanded too, so none moves under the pointer', () => {
+  const body = rulesFor('.permission-roster');
+  assert.match(body, /flex-wrap:\s*wrap/);
+  assert.match(body, /max-width:\s*112px/);  // $TASK-RAIL-INNER
 });
 
 test('the chip is never narrower than the id it carries', () => {
@@ -120,4 +90,3 @@ test('the chip dot cannot be squeezed into an ellipse', () => {
   // a flex child defaults to shrink:1.
   assert.match(rulesFor('.permission-roster-dot'), /flex-shrink:\s*0/);
 });
-

@@ -198,6 +198,15 @@ $ICON-GLYPH-LG: 14px;
 $ICON-BOX-SM: 16px;
 $ICON-GLYPH-SM: 10px;
 
+// ---------- Layout ----------
+// The tasks rail on the left, collapsed: each task's dot and code. It is the
+// one column the page gives up for it (``#root``'s left padding); expanded,
+// it lays over the page and moves nothing.
+$TASK-RAIL-WIDTH: 128px;
+// What the collapsed rail holds inside its 8px padding: the controls that must
+// not move when it expands are laid out within this width in both states.
+$TASK-RAIL-INNER: $TASK-RAIL-WIDTH - 16px;
+
 // ---------- Radius ----------
 $RADIUS-4: 4px;
 $RADIUS-CIRCLE: 50%;

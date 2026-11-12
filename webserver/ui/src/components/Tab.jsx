@@ -1,13 +1,11 @@
 import { memo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
-import { buttonDot, buttonLabel, planStatusLine } from './planQueue/planQueueHelpers.js';
-import { planQueueView } from './planQueue/planQueueViewStore.js';
+import { planRowLine } from './planQueue/planQueueHelpers.js';
+import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
 import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
-import { parentOfTab } from '../utils/subtaskTabs.js';
-import {
-  REVIEW_LOOP_IDLE_TOOLTIP, isReviewLoopRunning, reviewLoopChip, reviewLoopSentence,
-} from './reviewLoop/reviewLoopHelpers.js';
-import { isReviewLoopSeen, reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
+import { parentOfTab, subtaskListId } from '../utils/subtaskTabs.js';
+import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
+import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
 import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
 import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
@@ -56,6 +54,9 @@ function Tab({
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
   // A sub-task row in the tasks menu, drawn under its main task.
   nested = false,
+  // A main task's sub-task group: how many, shown or folded away, and how
+  // many of the folded ones wait for you. 0 = no group, no toggle.
+  subtaskCount = 0, subtasksShown = true, subtasksWaiting = 0, onToggleSubtasks,
 }) {
   const baseStatus = deriveTabStatus(session);
   // The agent dot + tooltip badge derive from the SAME value as the header chip
@@ -172,28 +173,14 @@ function Tab({
     closeTooltip();
     startRename();
   }
-  // The task's review loop and its split plan, opened from its own row (the
-  // menu has the room the header did not). Both switch to the task first:
-  // the views belong to the task they show. From the tab list's own data
-  // (``session.review_loop`` / ``plan_queue``) — no fetch per row.
-  const loop = session.review_loop || null;
-  const loopChip = reviewLoopChip(loop, 0);
-  const loopNews = !!loopChip && (loopChip.running || !isReviewLoopSeen(loop.loop_id));
-  const plan = session.plan_queue || null;
-  const planDot = buttonDot(plan);
-  const planLabel = buttonLabel(plan);
-  function handleOpenLoop(event) {
+  function handleToggleSubtasks(event) {
     event.stopPropagation();
     closeTooltip();
-    onSelect(session.task_id);
-    reviewLoopView.open(session.task_id);
+    onToggleSubtasks(session.task_id);
   }
-  function handleOpenPlan(event) {
-    event.stopPropagation();
-    closeTooltip();
-    onSelect(session.task_id);
-    planQueueView.open(session.task_id, planLabel);
-  }
+  const subtasksNoun = subtaskCount === 1 ? 'sub-task' : 'sub-tasks';
+  const subtasksToggleLabel = `${subtasksShown ? 'Hide' : 'Show'} the ${subtaskCount} ${subtasksNoun} of ${session.task_id}${
+    subtasksWaiting ? ` — ${subtasksWaiting} waiting for you` : ''}`;
   function handleTogglePin(event) {
     event.stopPropagation();
     closeTooltip();
@@ -376,28 +363,29 @@ function Tab({
             </span>
           ) : null}
         </span>
-        {/* Shown on hover like the pencil, and always while there is news:
-            a loop running or finished unseen, a plan split from the task. */}
-        <button
-          type="button"
-          className={cx('tab-view-btn', 'tab-loop-btn', loopNews && 'has-status')}
-          aria-label={`Review loop of ${session.task_id}`}
-          title={loop ? `Review loop — ${reviewLoopSentence(loop, Date.now() / 1000)}` : REVIEW_LOOP_IDLE_TOOLTIP}
-          onClick={handleOpenLoop}
-        >
-          <Icon name="loop" />
-          {loopNews ? <span className={cx('review-loop-dot', `is-${loopChip.tone}`)} aria-hidden="true" /> : null}
-        </button>
-        <button
-          type="button"
-          className={cx('tab-view-btn', 'tab-plan-btn', plan && 'has-status')}
-          aria-label={`${planLabel} of ${session.task_id}`}
-          title={plan ? `${planLabel} — ${planStatusLine(plan)}` : 'Split this task\'s plan into small tasks that run as a queue'}
-          onClick={handleOpenPlan}
-        >
-          <Icon name="board" />
-          {planDot ? <span className={`plan-queue-dot is-${planDot}`} aria-hidden="true" /> : null}
-        </button>
+        {subtaskCount > 0 && typeof onToggleSubtasks === 'function' ? (
+          <button
+            type="button"
+            className={cx(
+              'tab-subtasks-toggle',
+              !subtasksShown && 'is-folded',
+              subtasksWaiting > 0 && 'has-attention',
+            )}
+            aria-expanded={subtasksShown ? 'true' : 'false'}
+            aria-controls={subtasksShown ? subtaskListId(session.task_id) : undefined}
+            aria-label={subtasksToggleLabel}
+            title={subtasksToggleLabel}
+            onClick={handleToggleSubtasks}
+          >
+            <Icon name="chevron-down" />
+            <span className="tab-subtasks-count">{subtaskCount}</span>
+          </button>
+        ) : null}
+        {/* Done or not, nothing to click: the toolbar's buttons open the
+            task's review loop and its split plan. From the tab list's own
+            data — no fetch per row. */}
+        <ReviewLoopTabBadge loop={session.review_loop || null} />
+        <PlanQueueTabBadge plan={session.plan_queue || null} finished={!!session.plan_queue_finished} />
         {typeof onRename === 'function' && !renaming && (
           <button
             type="button"
@@ -492,8 +480,9 @@ function buildTooltipModel(session, baseStatus, needsAttention, agent) {
   // own sentence, separate from the agent's status row above.
   const loopLine = reviewLoopSentence(session?.review_loop || null, Date.now() / 1000);
   if (loopLine) { rows.push({ label: 'Review loop', value: loopLine }); }
-  // The plan split from this task, while it runs (its own axis, like the loop).
-  const planLine = planStatusLine(session?.plan_queue || null);
+  // The plan split from this task: while it runs, or that it finished (its
+  // own axis, like the loop).
+  const planLine = planRowLine(session?.plan_queue || null, !!session?.plan_queue_finished);
   if (planLine) { rows.push({ label: 'Split plan', value: planLine }); }
   const pushedPr = String(
     session?.pr_url || session?.pull_request_url || '',

@@ -223,6 +223,13 @@ export function planStatusLine(summary) {
   return `${PLAN_STATUS_TEXT[summary.status] || summary.status}${progress ? ` · ${progress}` : ''}`;
 }
 
+// A task's split plan in a line, for its row in the tasks menu: the live plan
+// (``plan``), else "Finished …" once its newest plan finished, else ''.
+export function planRowLine(plan, finished = false) {
+  if (plan) { return planStatusLine(plan); }
+  return finished ? PLAN_STATUS_TEXT.finished : '';
+}
+
 // "3/5 done" — or '' before there are steps.
 export function progressText(summary) {
   const total = summary?.step_count || 0;

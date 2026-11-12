@@ -233,12 +233,13 @@ export default function GlobalPermissionContainer({
     </span>
   ) : null;
 
-  // Lives in the header, beside the logo — the one strip that is on screen
-  // whatever else the operator is doing. An agent stays blocked until it is
-  // answered, so the notice has to be somewhere that is never scrolled past
-  // or covered by a pane.
-  const headerSlot = typeof document !== 'undefined'
-    ? document.getElementById('header-attention-slot')
+  // Lives in the tasks rail's footer — the rail is on screen whatever else the
+  // operator is doing (and its foot, unlike its top, can grow without pushing
+  // the task rows down). An agent stays blocked until it is answered, so the
+  // notice has to be somewhere that is never scrolled past or covered by a
+  // pane.
+  const menuSlot = typeof document !== 'undefined'
+    ? document.getElementById('menu-attention-slot')
     : null;
 
   // The ask itself, rendered INSIDE the task's own chat rather than over the
@@ -303,7 +304,7 @@ export default function GlobalPermissionContainer({
 
   return (
     <>
-      {headerSlot && roster ? createPortal(roster, headerSlot) : roster}
+      {menuSlot && roster ? createPortal(roster, menuSlot) : roster}
       {/* The overlay is rendered HERE, not portaled into a chat: in global
           mode it deliberately belongs to the whole app rather than to one
           task's pane — and it must still appear when the asking task's chat

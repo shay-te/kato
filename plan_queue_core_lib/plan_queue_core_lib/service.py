@@ -301,6 +301,16 @@ class PlanQueueService(object):
                 }
         return live
 
+    def finished_sources(self) -> set[str]:
+        """Source task ids whose NEWEST plan finished (every step satisfied
+        or cancelled), so a task's own row can say its split is done. A plan
+        stopped by the operator did not finish; a task split again after a
+        finished plan is the newer plan's (``live_by_source``)."""
+        newest = {}
+        for plan in self._registry.all():  # oldest first: the newest wins
+            newest[plan.source_task_id] = plan
+        return {source for source, plan in newest.items() if plan.status is PlanStatus.FINISHED}
+
     def live_task_codes(self) -> set[str]:
         """Every task code a live plan still owns, lower-cased: the task the
         plan was split from, and the task of each step not yet done or

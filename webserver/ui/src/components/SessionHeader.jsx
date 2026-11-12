@@ -9,7 +9,8 @@ import {
 } from '../api.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import FastPromptButtons from './FastPromptButtons.jsx';
-import { useReviewLoop } from '../hooks/useReviewLoop.js';
+import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
+import PlanQueueButton from './planQueue/PlanQueueButton.jsx';
 import { taskDefinitionView } from './taskDefinition/taskDefinitionView.js';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
@@ -57,9 +58,6 @@ export default function SessionHeader({
   onWorkspaceMutated = null,
 }) {
   const [resuming, setResuming] = useState(false);
-  // A loop on this task that ends is announced (a toast) — the job the review
-  // loop button did before it moved into the task's row in the tasks menu.
-  useReviewLoop(session, { announceFinish: true });
   const pushApproval = usePushApproval(session);
   const taskPublish = useTaskPublish(session?.task_id || '');
 
@@ -456,9 +454,9 @@ export default function SessionHeader({
           {/* No status chip here. It lives ON each agent tab now, beside the
               name it describes — a chip up here could only ever describe one
               agent, and duplicated what the tab already says. */}
-          {/* The review loop and split-plan buttons live in each task's row in
-              the tasks menu now (more room there); the loop's "where is it"
-              chip stays beside the title. */}
+          <ReviewLoopButton session={session} />
+          <PlanQueueButton session={session} />
+          <HeaderSeparator />
           <FastPromptButtons agentName={agentName} onSendPrompt={onSendPrompt} />
           {searchSlot}
           {/* Git operations, fenced on both sides: push / merge / pull / PR /
@@ -615,6 +613,9 @@ export function SessionHeaderPlaceholder() {
       {/* Same groups as the live header, or the bar rearranges itself the
           moment a task is picked. */}
       <div className="session-header-actions" aria-hidden="true">
+        <ReviewLoopButton disabled />
+        <PlanQueueButton disabled />
+        <HeaderSeparator />
         <FastPromptButtons disabled />
         {buttons.slice(0, 1).map(placeholderButton)}
         <HeaderSeparator />

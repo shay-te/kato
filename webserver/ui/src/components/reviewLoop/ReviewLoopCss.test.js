@@ -28,11 +28,19 @@ function ruleBody(selector) {
   return bodies.join('\n');
 }
 
-test('the dot is laid over the row\'s loop button, which keeps its own size', () => {
+test('the header dot is laid over its button, which keeps its own size', () => {
   assert.match(ruleBody('.review-loop-dot'), /position:\s*absolute;/);
   assert.match(ruleBody('.review-loop-dot'), /pointer-events:\s*none;/);
-  assert.match(css, /\.tabs-pane-side \.tab \.tab-view-btn,[^{]*\{[^}]*position:\s*relative;/);
-  assert.doesNotMatch(css, /tab-review-loop-badge|review-loop-button/);
+  assert.match(ruleBody('.review-loop-button'), /position:\s*relative;/);
+});
+
+test('the row\'s loop and plan marks sit in the row: never absolute, never shrunk', () => {
+  // One rule for both marks (the loop's selector leads the list).
+  assert.match(css, /\n\.tabs-pane-side \.tab \.tab-review-loop-badge,\n\.tabs-pane-side \.tab \.tab-plan-queue-badge \{/);
+  const mark = ruleBody('.tabs-pane-side .tab .tab-plan-queue-badge');
+  assert.doesNotMatch(mark, /position:\s*absolute;/);
+  assert.match(mark, /flex-shrink:\s*0;/);
+  assert.match(ruleBody('.tabs-pane-side .tab .tab-plan-queue-badge.is-good'), /color:/);
 });
 
 test('the chip gives way inside the title area instead of pushing the actions', () => {

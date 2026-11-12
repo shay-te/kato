@@ -76,6 +76,11 @@ vi.mock('./hooks/useSafetyState.js', () => ({
 }));
 vi.mock('./hooks/useAgentVersion.js', () => ({
   useAgentVersion: vi.fn(() => null),
+  refreshAgentVersion: vi.fn(),
+}));
+vi.mock('./hooks/useCatalogRefresh.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  refreshCatalogs: vi.fn(),
 }));
 vi.mock('./hooks/useStatusFeed.js', () => ({
   useStatusFeed: vi.fn(() => ({
@@ -123,10 +128,12 @@ vi.mock('./components/SessionDetail.jsx', () => ({
   ),
 }));
 vi.mock('./components/TabList.jsx', () => ({
-  default: ({ sessions, activeTaskId, onSelect, onForget, onNewTask }) => (
+  default: ({ sessions, activeTaskId, onSelect, onForget, onNewTask, onScanNow, handle, footer }) => (
     <div data-testid="tab-list">
+      {handle}
       <span>active={activeTaskId || 'none'}</span>
       <button type="button" onClick={onNewTask}>new-task</button>
+      <button type="button" onClick={onScanNow}>scan-now</button>
       {sessions.map((s) => (
         <button key={s.task_id} onClick={() => onSelect(s.task_id)}>
           {s.task_id}
@@ -140,6 +147,7 @@ vi.mock('./components/TabList.jsx', () => ({
           forget-{s.task_id}
         </button>
       ))}
+      {footer}
     </div>
   ),
 }));
@@ -152,8 +160,12 @@ vi.mock('./components/AdoptTaskModal.jsx', () => ({
     ) : null
   ),
 }));
-vi.mock('./components/Header.jsx', () => ({
-  default: () => <header data-testid="app-header" />,
+// The app's chrome lives in the tasks rail (there is no app bar).
+vi.mock('./components/MenuHandle.jsx', () => ({
+  default: () => <div data-testid="app-handle" />,
+}));
+vi.mock('./components/MenuFooter.jsx', () => ({
+  default: () => <div data-testid="app-footer" />,
 }));
 vi.mock('./components/Layout.jsx', () => ({
   default: ({ top, left, center, right }) => (
@@ -268,9 +280,24 @@ beforeEach(() => {
 
 describe('App — render shell', () => {
 
+  test('Scan now is the one refresh: it scans, and re-checks the agent CLI and the model lists', async () => {
+    const { triggerScan } = await import('./api.js');
+    const { refreshAgentVersion } = await import('./hooks/useAgentVersion.js');
+    const { refreshCatalogs } = await import('./hooks/useCatalogRefresh.js');
+    triggerScan.mockClear();
+    refreshAgentVersion.mockClear();
+    refreshCatalogs.mockClear();
+    render(<App />);
+    fireEvent.click(screen.getByText('scan-now'));
+    await waitFor(() => expect(triggerScan).toHaveBeenCalledTimes(1));
+    expect(refreshAgentVersion).toHaveBeenCalledTimes(1);
+    expect(refreshCatalogs).toHaveBeenCalledTimes(1);
+  });
+
   test('mounts without crashing', () => {
     render(<App />);
-    expect(screen.getByTestId('app-header')).toBeInTheDocument();
+    expect(screen.getByTestId('app-handle')).toBeInTheDocument();
+    expect(screen.getByTestId('app-footer')).toBeInTheDocument();
     expect(screen.getByTestId('tab-list')).toBeInTheDocument();
     expect(screen.getByTestId('session-detail')).toBeInTheDocument();
   });
@@ -1001,8 +1028,8 @@ describe('App — chaos / random button mashing', () => {
         await Promise.resolve();
 
         // Invariants that must hold after EVERY click:
-        //   1. App didn't unmount — the header is still there.
-        expect(screen.getByTestId('app-header')).toBeInTheDocument();
+        //   1. App didn't unmount — the rail's footer is still there.
+        expect(screen.getByTestId('app-footer')).toBeInTheDocument();
         //   2. Tab list is still rendered.
         expect(screen.getByTestId('tab-list')).toBeInTheDocument();
         //   3. activeTaskId is one of {none, T1, T2} — never a stale
@@ -1044,7 +1071,7 @@ describe('App — chaos / random button mashing', () => {
       action.run();
       // eslint-disable-next-line no-await-in-loop
       await Promise.resolve();
-      expect(screen.getByTestId('app-header')).toBeInTheDocument();
+      expect(screen.getByTestId('app-footer')).toBeInTheDocument();
       expect(activeTaskFromDom()).toBe('none');
     }
     expect(forgetTaskWorkspace).not.toHaveBeenCalled();

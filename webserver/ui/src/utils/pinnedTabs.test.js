@@ -16,6 +16,14 @@ import {
   togglePinned,
   writePinnedIds,
 } from './pinnedTabs.js';
+import {
+  COLLAPSED_GROUPS_STORAGE_KEY,
+  TAB_ORDER_STORAGE_KEY,
+  readCollapsedGroups,
+  readTabOrder,
+  writeCollapsedGroups,
+  writeTabOrder,
+} from './pinnedTabs.js';
 
 
 function fakeStorage(seed = {}) {
@@ -238,4 +246,33 @@ test('round-trip: unpin → re-pin lands at the end (rightmost pinned)', () => {
   pinned = togglePinned('T1', pinned);               // re-pin
   writePinnedIds(pinned, s);
   assert.deepEqual(readPinnedIds(s), ['T2', 'T3', 'T1']);
+});
+
+
+// ---------------------------------------------------------------------
+// The other id lists: the unpinned order and the folded groups
+// ---------------------------------------------------------------------
+
+test('folded groups: a clean list round-trips under its own key', () => {
+  const s = fakeStorage();
+  assert.deepEqual(writeCollapsedGroups(['UNA-1', ' ', 7, ' B-2 '], s), ['UNA-1', '7', 'B-2']);
+  assert.deepEqual(readCollapsedGroups(s), ['UNA-1', '7', 'B-2']);
+  assert.deepEqual(Object.keys(s._dump()), [COLLAPSED_GROUPS_STORAGE_KEY]);
+  assert.deepEqual(readTabOrder(s), []);  // a separate list
+});
+
+test('folded groups: nothing stored, junk, no storage or a throwing one read as []', () => {
+  assert.deepEqual(readCollapsedGroups(fakeStorage()), []);
+  assert.deepEqual(readCollapsedGroups(fakeStorage({ [COLLAPSED_GROUPS_STORAGE_KEY]: '{oops' })), []);
+  assert.deepEqual(readCollapsedGroups(fakeStorage({ [COLLAPSED_GROUPS_STORAGE_KEY]: '{"a":1}' })), []);
+  assert.deepEqual(readCollapsedGroups(null), []);
+  const throwing = { getItem() { throw new Error('denied'); } };
+  assert.deepEqual(readCollapsedGroups(throwing), []);
+});
+
+test('tab order: still reads and writes its own list', () => {
+  const s = fakeStorage();
+  writeTabOrder(['B-2', '', 'A-1'], s);
+  assert.deepEqual(readTabOrder(s), ['B-2', 'A-1']);
+  assert.equal(s._dump()[TAB_ORDER_STORAGE_KEY], '["B-2","A-1"]');
 });

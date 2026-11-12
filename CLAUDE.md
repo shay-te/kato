@@ -242,7 +242,7 @@ in the workspace, so the UI's Push button is the recovery path.
 
 ### Shutdown and resume after a restart
 ```
-header ⏻ Shut down → GET /api/shutdown (who is working) → confirm → POST /api/shutdown (202)
+rail-footer ⏻ Shut down → GET /api/shutdown (who is working) → confirm → POST /api/shutdown (202)
    → 0.5s later signal.raise_signal(SIGINT): THE Ctrl+C handler, not a second path
 Ctrl+C / SIGTERM / that button → _cleanup: recorder.record_final() FIRST (working agents → disk,
    recorder frozen) → watchers + service.shutdown() stop every agent → _exit_now
@@ -287,7 +287,7 @@ tick every 15s (LidAwakeService, lid_awake_core_lib; always started, even with t
 | **Linux** | `systemd-inhibit --what=handle-lid-switch:sleep:idle` | same, `sleep:idle` | built in: the inhibited command is the watch loop | `/sys/class/thermal` | none |
 
 Unsupported: WSL (Windows owns the lid; logind in the VM never hears of it), Linux with no logind, anything else.
-The header says so and kato changes nothing.
+The rail's lid chip says so and kato changes nothing.
 
 **So the feature is built around a crash.** `pmset disablesleep` is global and root-only: left on, the Mac never
 sleeps again, even in a bag. Windows' lid action is the operator's own setting and must come back. A watchdog
@@ -304,7 +304,7 @@ is allowed on a charger, never on a battery. The lid hold does not always stop t
 Windows), so the service holds both whenever it keeps the computer awake.
 
 Starts before connection validation (`_finalize_configured_boot`, first line): opening the laptop offline must not
-switch this off. Off by default. The header chip's words are `lid_awake/status_text.py`; the page decides nothing.
+switch this off. Off by default. The lid chip's words (rail footer) are `lid_awake/status_text.py`; the page decides nothing.
 Do not put a kato name in the lib: pass it in `HostIdentity`. Everything platform-specific is chosen in
 `platforms.py`; the service only knows `PlatformSupport`. Windows paths run for real only in CI's
 `lid-awake-windows` job (plus `RealWatchdogTests` under any PowerShell).
@@ -426,7 +426,7 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   core-lib's `ClientBase`; service-account JWT signed with `cryptography`, no google-auth dependency): Drive
   `files.update` media upload of HTML into the existing Doc. The local file is the master; the Doc is overwritten.
   Opt-in (titles leave the machine). Failures are kept in `~/.kato/release_notes_sync.json` and shown in the
-  header's Release notes dialog with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
+  Release notes dialog (rail footer) with "Sync now". Never touch `desktop/RELEASE_NOTES_<v>.md` (the app's own notes).
 
 ### Strict git (Settings → its own "Strict git" tab, `KATO_AGENT_GIT_STRICT`, default ON, GLOBAL: Claude + Codex)
 ```
@@ -493,29 +493,45 @@ conventions used to answer "restart required" though they never needed one.
   other katos read (`plan_record_on_tracker`), and several flows depend on theirs; one gate at `add_comment` would
   break them. Moving ticket states automatically — a task left Open is picked up again on the next scan.
 
-### The tasks menu (left edge, Chrome-style vertical tabs) and the task switcher
-There is no task strip at the top any more. Every task is a ROW in a vertical list (`TabList`, `#tabs-pane`
-`.tabs-pane-side`) that slides in from the left edge under the header. It opens while the pointer is over the
-kato icon (`#kato-menu-trigger` in `Header`, with menu bars beside the logo and an orange count of tasks waiting
-for you) or over the menu, and closes `TASK_MENU_CLOSE_GRACE_MS` after it leaves both (`stores/taskMenuStore.js`);
-Escape and a press outside close it; a click on the icon opens it (touch). It is `position: fixed`, z-index 900:
-ON TOP of everything on the page and it PUSHES NOTHING (the grid is two rows: task header, panels; it sits
-under its own header-height variable, `--app-header-height`, published by `Header`). Closed = `visibility:
-hidden`, out of the tab order. With no task it is held open (first run). Each row: status dot (the one
+### The tasks rail (left edge, Chrome-style vertical tabs) and the task switcher
+There is no task strip at the top and **no app bar** any more. Every task is a ROW in a rail on the left
+(`TabList`, `#tabs-pane` `.tabs-pane-side`), `position: fixed`, top to bottom of the screen, z-index 900, ALWAYS
+there, COLLAPSED to each row's dot + task code (`$TASK-RAIL-WIDTH`, 128px — the one column the page gives up:
+`#root`'s left padding). Hovering the rail expands it OVER the page after `TASK_MENU_OPEN_DELAY_MS` (a pointer
+only passing the edge does nothing; pointing at the kato logo expands at once) and it PUSHES NOTHING; leaving
+collapses it after `TASK_MENU_CLOSE_GRACE_MS` (`stores/taskMenuStore.js`); Escape and a press outside collapse
+it. **Expanding moves nothing already on screen** (proven in Chromium: every row's top/height/dot, the logo, the
+footer's icons): rows state their height (the collapsed rail hides their 16px controls), the footer's icons are
+three to a row and the waiting chips wrap within `$TASK-RAIL-INNER` in BOTH widths, and the actions the collapsed
+rail cannot fit keep their place `visibility: hidden`. Never `overflow: hidden` on the rail: the footer's
+`data-tooltip` labels are CSS-drawn beside their controls (`tooltip-above tooltip-anchor-left`, the rail being the
+screen's bottom-left). The app bar's contents moved INTO the rail: `MenuHandle` (the kato logo + menu bars +
+orange count of tasks waiting, and "Kato") heads it; `MenuFooter` is pinned to its foot (`margin-top: auto`,
+grows upward so nothing pushes the rows): the waiting-task chips (`#menu-attention-slot`, portaled by
+`GlobalPermissionContainer`), the status line (click → activity feed), the lid chip, then usage, release notes,
+settings, shut down. **Scan now (the rail's actions) is the ONE refresh:** it scans, reloads the list, and re-probes
+the agent CLI version + model catalogues (`refreshAgentVersion`, `refreshCatalogs`). A second footer "Refresh" did
+only the last two plus a list reload (the list polls itself) under the same icon, claimed to "re-scan tickets", and
+was removed on request — do not add it back. With no task it is held expanded (first run). Each row: status dot (the one
 derivation), id + name (capitalized for display only; the label is a flex row so the name is its own box — inline
 after the id the browser read "B-2admin" and skipped the first word), then the task's review loop and split-plan
-buttons (moved here from the header: more room; shown on hover, and always while a loop runs / finished unseen or
-a plan exists — from `session.review_loop` / `plan_queue`, no fetch per row), pencil, pin, ×. A row's view
-button SELECTS its task and opens the view; the plan view opens only for the task on screen, so
-`useOpenRequests` holds a request about another task for 3s and opens it once that task is active. The header
-keeps the loop's "finished" toast (`useReviewLoop(session, {announceFinish})` in `SessionHeader`). No width
-resizing, no scroll chevrons, no sub-task second row — removed with their code.
+MARKS — done or not, nothing to click (`ReviewLoopTabBadge`: turning indigo while running, green clean, the
+outcome's colour otherwise, kept once seen; `PlanQueueTabBadge`: amber/orange/grey while live, green once its
+newest plan FINISHED — `plan_queue_finished` on the tab list ← `PlanQueueService.finished_sources`; no fetch per
+row) — then pencil, pin, ×. **The review loop and split-plan BUTTONS are in the task toolbar** (`ReviewLoopButton`,
+`PlanQueueButton`, their own group before the prompts): they moved into the rows for a day and the operator
+asked for them back ("on the tab I want to see only indication it was done or not"). No width resizing, no
+scroll chevrons, no sub-task second row — removed with their code.
+**A group folds:** a main task's row carries a toggle (chevron + its sub-task count, always shown). Folded
+(remembered per browser, `kato.tabs.collapsedGroups`, `readCollapsedGroups` in `pinnedTabs.js`) hides its
+sub-tasks EXCEPT the one on screen, so the menu always shows where you are; a hidden one waiting for you turns
+the toggle orange (the header badge's colour and source). Tab / Ctrl+Tab still walk folded sub-tasks.
 **Task switcher (Cmd+Tab-style):** Tab / Shift+Tab and Ctrl+Tab / Ctrl+Shift+Tab move between tasks in the menu's
 order (`useTaskTabShortcuts`; Ctrl+Tab works even in a text field; in a plain browser the browser keeps Ctrl+Tab for
 itself, the desktop app does not). Each switch `announceTaskSwitch()`es; `TaskSwitcher` shows the tasks centred,
 the landed one highlighted, and fades `TASK_SWITCHER_HOLD_MS` after the last press. Proven in headless Chromium
-(Playwright) against a real kato webserver: the menu overlays, nothing moved, rows grouped, buttons in-row, a
-row's plan button switched + opened the plan tab, the switcher came and went.
+(Playwright) against a real kato webserver: the rail collapsed to codes, expanded over the page with nothing
+moving, rows grouped, footer labels on screen, the switcher came and went.
 
 ### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
 Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan
@@ -672,8 +688,9 @@ gets its OWN timeout — `KATO_REVIEW_LOOP_TIMEOUT_SECONDS` (default 7200, clamp
 per-call to `investigate(timeout_seconds=)` — NOT the transport's 1800s implementation default,
 which a big multi-repo task's review (slower on Windows) overruns, failing the whole loop. UI:
 `webserver/ui/src/components/reviewLoop/` —
-a loop button on each task's row in the tasks menu (opens the view; nothing starts from it; a dot while a
-loop runs or finished unseen) + "where is it now" chip beside the header title,
+a loop button in the task toolbar (opens the view; nothing starts from it; a dot while a loop runs or
+finished unseen; it also raises the "finished" toast) + a done-or-not mark on the task's row in the tasks
+menu + "where is it now" chip beside the header title,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.
 
@@ -715,7 +732,7 @@ who can tag the ticket can turn this on: it skips the operator's look before the
 
 ### Plan queue (split a plan into small dependent tasks)
 ```
-"Split plan" (the task's row in the tasks menu / plan pane) → the task's plan TAB in the centre strip
+"Split plan" (the task toolbar / plan pane) → the task's plan TAB in the centre strip
   → POST /api/sessions/<task>/plan-queue
   → snapshot <workspace>/plan.md into the plan (DONE wipes the workspace) → PROPOSING
     — or {split_folder}: a split the operator already WROTE as files (split_folders.py: a folder
@@ -906,9 +923,9 @@ move by hand: a ready card offers Start, a waiting one Count as done (confirmed 
 done and frees what waits on it), a stuck one Retry / Count as done; "Edit tasks" for the waiting ones; a
 card's code opens its task). Polled only while the tab shows; `planQueueChanges` refreshes its summary at once. Its states are the QUEUE's
 axis (`planQueueHelpers.js`) — never `session.working`, never `AGENT_STATUS_KIND` (a node test
-greps the folder). The task a plan was split from shows it on its ROW's plan button while the plan
-is live (`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`; no timer of
-its own); a sub-task's row shows `Subtask of UNA-1:` as a fixed mark when it is NOT grouped under its main
+greps the folder). The task a plan was split from shows it on its ROW's plan mark: live
+(`session.plan_queue` on the 5s tab list ← `PlanQueueService.live_by_source`) or finished
+(`plan_queue_finished` ← `finished_sources`), no timer of its own; a sub-task's row shows `Subtask of UNA-1:` as a fixed mark when it is NOT grouped under its main
 task, never as its name, and a rename edits only the name (`subtaskLabel.js`, pinned to
 `step_footer.subtask_summary` by a test).
 **Sub-task rows are grouped under their main task** in the tasks menu (`utils/subtaskTabs.js`
@@ -1217,7 +1234,7 @@ type a model id…", which opens a box (picking it never saves the marker). EVER
 else (a dated id, Bedrock, `[1m]`) passes as written. The CLI's own "There's an issue with the selected model" was
 what a teammate saw for "sonnet 4.6". Do not add a fourth `--model` builder outside `model_flags`.
 
-### Usage dialog (header chart button → `GET /api/usage`)
+### Usage dialog (the rail footer's chart button → `GET /api/usage`)
 Tokens per task, read from the Claude transcripts (`claude_core_lib/helpers/transcript_usage.py`), summed
 over EVERY chat the task had (current + `previous_session_ids`). **Count each API message once, by
 `message.id`** — Claude logs one line per content block and repeats the whole `usage` on each (7,169 lines

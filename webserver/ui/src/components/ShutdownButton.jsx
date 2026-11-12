@@ -2,11 +2,14 @@ import { fetchShutdownPreview, shutdownKato } from '../api.js';
 import { useBusyAction } from '../hooks/useBusyAction.js';
 import { toast } from '../stores/toastStore.js';
 import { BusyIcon } from './Icon.jsx';
+import { cx } from '../utils/cx.js';
 
 // Shut kato down from the UI — the very path Ctrl+C takes: kato writes down
 // which agents are working, stops every agent gracefully, and exits. When it
 // starts again, those agents are told to continue where they stopped.
-export default function ShutdownButton() {
+// ``tooltipClassName`` places its hover label (the rail's footer opens them
+// upward, from the left edge).
+export default function ShutdownButton({ tooltipClassName = '' }) {
   const [busy, run] = useBusyAction(async () => {
     let running = [];
     try {
@@ -30,7 +33,7 @@ export default function ShutdownButton() {
   return (
     <button
       type="button"
-      className="header-icon-btn header-shutdown"
+      className={cx('header-icon-btn', 'header-shutdown', tooltipClassName)}
       data-tooltip="Shut down kato — stops every agent gracefully. Agents that are working continue when kato starts again."
       aria-label="Shut down kato"
       disabled={busy}

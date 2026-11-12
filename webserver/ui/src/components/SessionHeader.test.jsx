@@ -743,22 +743,30 @@ describe('SessionHeader — fast prompts', () => {
     promptStore.add({ label: 'Go', icon: 'send', text: 'Go.' });
     renderHeader();
     const actions = [...document.querySelector('.session-header-actions').children];
-    const separator = actions.findIndex((el) => el.getAttribute('role') === 'separator');
+    const [afterLoop, separator] = actions
+      .map((el, index) => (el.getAttribute('role') === 'separator' ? index : -1))
+      .filter((index) => index > -1);
     const labels = actions.map((el) => el.getAttribute('aria-label') || '');
+    expect(separator).toBeGreaterThan(afterLoop);
+    expect(labels.indexOf('Code review')).toBeGreaterThan(afterLoop);
     expect(labels.indexOf('Code review')).toBeLessThan(separator);
     expect(labels.indexOf('Go')).toBeLessThan(separator);
     expect(labels.slice(separator + 1).some((label) => /^push$/i.test(label))).toBe(true);
   });
 
-  test('the review loop and split plan moved into each task\'s row: the bar starts with the prompts', () => {
-    // "review loop icon and split task can be inside each tab, there is more
-    // space" — they live on the task's row in the tasks menu (Tab.jsx).
+  test('the review loop is its own group: a loop glyph, then a separator', () => {
+    // "add seperator for the review loop button. and choose icon that looks
+    // like a loop" — it must not read as one of the fast prompts beside it.
+    // The plan board shares its group: both run work over the whole task,
+    // neither is a prompt.
     renderHeader();
     const actions = [...document.querySelector('.session-header-actions').children];
-    const labels = actions.map((el) => el.getAttribute('aria-label') || '');
-    expect(labels).not.toContain('Review loop');
-    expect(labels).not.toContain('Split plan');
-    expect(labels[0]).toBe('Code review');
+    expect(actions[0].getAttribute('aria-label')).toBe('Review loop');
+    expect(actions[0].querySelector('[data-icon="loop"]')).not.toBeNull();
+    expect(actions[1].getAttribute('aria-label')).toBe('Split plan');
+    expect(actions[1].querySelector('[data-icon="board"]')).not.toBeNull();
+    expect(actions[2].getAttribute('role')).toBe('separator');
+    expect(actions[3].getAttribute('aria-label')).toBe('Code review');
   });
 
   test('the toolbar is fenced into prompts, search, git, and task actions', () => {
@@ -779,10 +787,13 @@ describe('SessionHeader — fast prompts', () => {
     const fences = actions
       .map((el, index) => (el.getAttribute('role') === 'separator' ? index : -1))
       .filter((index) => index > -1);
-    expect(fences).toHaveLength(3);
-    const [afterPrompts, beforeGit, afterGit] = fences;
+    expect(fences).toHaveLength(4);
+    const [afterLoop, afterPrompts, beforeGit, afterGit] = fences;
 
-    // The prompts, then search, then the git block, then the task actions.
+    // The review loop, the prompts, then search, then the git block, then the
+    // task actions.
+    expect(labels.indexOf('Review loop')).toBeLessThan(afterLoop);
+    expect(labels.indexOf('Code review')).toBeGreaterThan(afterLoop);
     expect(labels.indexOf('Code review')).toBeLessThan(afterPrompts);
     expect(labels.indexOf('Go')).toBeLessThan(afterPrompts);
     expect(labels[afterPrompts + 1]).toBe('Search chat');
@@ -806,10 +817,11 @@ describe('SessionHeader — fast prompts', () => {
     const fences = actions
       .map((el, index) => (el.getAttribute('role') === 'separator' ? index : -1))
       .filter((index) => index > -1);
-    expect(fences).toHaveLength(3);
-    expect(labels[fences[0] + 1]).toBe('Search');
-    expect(labels.indexOf('Push')).toBeGreaterThan(fences[1]);
-    expect(labels.indexOf('Finish')).toBeGreaterThan(fences[2]);
+    expect(fences).toHaveLength(4);
+    expect(labels.indexOf('Review loop')).toBeLessThan(fences[0]);
+    expect(labels[fences[1] + 1]).toBe('Search');
+    expect(labels.indexOf('Push')).toBeGreaterThan(fences[2]);
+    expect(labels.indexOf('Finish')).toBeGreaterThan(fences[3]);
   });
 
   test('a prompt the chat did not accept is reported', async () => {

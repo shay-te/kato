@@ -7,7 +7,7 @@ import { act, render, screen, fireEvent } from '@testing-library/react';
 
 import TabList from './TabList.jsx';
 import {
-  TASK_MENU_CLOSE_GRACE_MS, _resetTaskMenu, openTaskMenu,
+  TASK_MENU_CLOSE_GRACE_MS, TASK_MENU_OPEN_DELAY_MS, _resetTaskMenu, openTaskMenu,
 } from '../stores/taskMenuStore.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
@@ -15,6 +15,10 @@ import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
 import {
   PINNED_TABS_STORAGE_KEY,
   readPinnedIds,
+} from '../utils/pinnedTabs.js';
+import {
+  COLLAPSED_GROUPS_STORAGE_KEY,
+  readCollapsedGroups,
 } from '../utils/pinnedTabs.js';
 
 
@@ -825,18 +829,31 @@ describe('TabList — the tasks menu opens from the kato icon', () => {
 
   afterEach(() => { vi.useRealTimers(); });
 
-  test('closed until hovered, a vertical list of rows once open', () => {
+  test('collapsed until hovered, its rows always there; expanded once open', () => {
     const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
     expect(pane(container)).toHaveClass('tabs-pane-side');
     expect(pane(container)).not.toHaveClass('is-open');
-    act(() => openTaskMenu());  // what hovering the kato icon does
+    // Collapsed is not hidden: the rail shows every task (by its code).
+    expect(container.querySelectorAll('#tab-list li.tab')).toHaveLength(2);
+    act(() => openTaskMenu());  // what pointing at the kato logo does
     expect(pane(container)).toHaveClass('is-open');
+  });
+
+  test('a pointer only passing over the rail does not expand it', () => {
+    vi.useFakeTimers();
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    fireEvent.mouseEnter(pane(container));
+    act(() => { vi.advanceTimersByTime(TASK_MENU_OPEN_DELAY_MS - 50); });
+    fireEvent.mouseLeave(pane(container));
+    act(() => { vi.advanceTimersByTime(TASK_MENU_OPEN_DELAY_MS + TASK_MENU_CLOSE_GRACE_MS); });
+    expect(pane(container)).not.toHaveClass('is-open');
   });
 
   test('leaving the menu closes it after a moment; coming back in time keeps it open', () => {
     vi.useFakeTimers();
     const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
     fireEvent.mouseEnter(pane(container));
+    act(() => { vi.advanceTimersByTime(TASK_MENU_OPEN_DELAY_MS); });
     expect(pane(container)).toHaveClass('is-open');
     fireEvent.mouseLeave(pane(container));
     act(() => { vi.advanceTimersByTime(TASK_MENU_CLOSE_GRACE_MS - 50); });
@@ -872,5 +889,113 @@ describe('TabList — the tasks menu opens from the kato icon', () => {
     const children = [...pane(container).children];
     expect(children[0]).toHaveClass('tabs-actions');
     expect(children[1].id).toBe('tab-list');
+  });
+
+  test('the app\'s chrome: the logo heads the rail, the footer is its foot', () => {
+    const { container } = render(
+      <TabList sessions={SESSIONS} onSelect={() => {}}
+        handle={<div data-testid="handle" />} footer={<div data-testid="footer" />} />,
+    );
+    const children = [...pane(container).children];
+    expect(children[0]).toBe(screen.getByTestId('handle'));
+    expect(children[1]).toHaveClass('tabs-actions');
+    expect(children[2].id).toBe('tab-list');
+    expect(children.at(-1)).toBe(screen.getByTestId('footer'));
+  });
+
+  test('the actions\' hover labels open from their left edge: the rail is the screen\'s', () => {
+    const { container } = render(<TabList sessions={SESSIONS} onSelect={() => {}} />);
+    container.querySelectorAll('.tabs-action').forEach((button) => {
+      expect(button).toHaveClass('tooltip-anchor-left');
+    });
+  });
+});
+
+describe('TabList — a main task\'s sub-tasks fold away', () => {
+  const SESSIONS = [
+    _session('UNA-1'),
+    _session('UNA-7', { task_summary: 'Subtask of UNA-1: The page' }),
+    _session('UNA-8', { task_summary: 'Subtask of UNA-1: The email' }),
+    _session('B-2'),
+  ];
+  const ids = (nodes) => [...nodes].map((li) => li.dataset.taskId);
+  const group = () => screen.queryByRole('list', { name: 'Sub-tasks of UNA-1' });
+  const toggle = (container) => container.querySelector('li[data-task-id="UNA-1"] .tab-subtasks-toggle');
+
+  beforeEach(() => { window.localStorage.removeItem(COLLAPSED_GROUPS_STORAGE_KEY); });
+  afterEach(() => { window.localStorage.removeItem(COLLAPSED_GROUPS_STORAGE_KEY); });
+
+  test('the main task\'s row folds its sub-tasks away and back, without opening it', () => {
+    const onSelect = vi.fn();
+    const onVisibleOrderChange = vi.fn();
+    const { container } = render(
+      <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={onSelect}
+        onVisibleOrderChange={onVisibleOrderChange} />,
+    );
+    const button = toggle(container);
+    expect(button).toHaveTextContent('2');
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+    expect(button).toHaveAttribute('aria-controls', group().id);
+    expect(button).toHaveAccessibleName('Hide the 2 sub-tasks of UNA-1');
+
+    fireEvent.click(button);
+    expect(group()).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(toggle(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle(container)).toHaveClass('is-folded');
+    expect(toggle(container)).toHaveAccessibleName('Show the 2 sub-tasks of UNA-1');
+    expect(readCollapsedGroups(window.localStorage)).toEqual(['UNA-1']);
+    // Tab / Ctrl+Tab still walk every task, folded or not.
+    expect(onVisibleOrderChange).toHaveBeenLastCalledWith(['UNA-1', 'UNA-7', 'UNA-8', 'B-2']);
+
+    fireEvent.click(toggle(container));
+    expect(ids(group().querySelectorAll('li.tab'))).toEqual(['UNA-7', 'UNA-8']);
+    expect(readCollapsedGroups(window.localStorage)).toEqual([]);
+  });
+
+  test('a fold is remembered across a reload', () => {
+    window.localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['UNA-1']));
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
+    expect(group()).toBeNull();
+    expect(toggle(container)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('a folded group still shows the sub-task on screen', () => {
+    window.localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['UNA-1']));
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="UNA-8" onSelect={() => {}} />);
+    expect(ids(group().querySelectorAll('li.tab'))).toEqual(['UNA-8']);
+    expect(toggle(container)).toHaveTextContent('2');  // still counts them all
+  });
+
+  test('a folded sub-task waiting for you shows on the toggle; the one on screen is not counted', () => {
+    window.localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['UNA-1']));
+    const { container, rerender } = render(
+      <TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}}
+        attentionTaskIds={new Set(['UNA-7'])} />,
+    );
+    expect(toggle(container)).toHaveClass('has-attention');
+    expect(toggle(container)).toHaveAccessibleName('Show the 2 sub-tasks of UNA-1 — 1 waiting for you');
+    rerender(
+      <TabList sessions={SESSIONS} activeTaskId="UNA-7" onSelect={() => {}}
+        attentionTaskIds={new Set(['UNA-7'])} />,
+    );
+    expect(toggle(container)).not.toHaveClass('has-attention');
+    // Unfolded, every row marks itself: nothing to count on the toggle.
+    fireEvent.click(toggle(container));
+    expect(toggle(container)).not.toHaveClass('has-attention');
+  });
+
+  test('only a main task with sub-tasks has the toggle', () => {
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
+    expect(container.querySelectorAll('.tab-subtasks-toggle')).toHaveLength(1);
+    expect(container.querySelector('li[data-task-id="B-2"] .tab-subtasks-toggle')).toBeNull();
+    expect(group().querySelector('.tab-subtasks-toggle')).toBeNull();
+  });
+
+  test('folding forgets tasks that are gone', () => {
+    window.localStorage.setItem(COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify(['GONE-1']));
+    const { container } = render(<TabList sessions={SESSIONS} activeTaskId="B-2" onSelect={() => {}} />);
+    fireEvent.click(toggle(container));
+    expect(readCollapsedGroups(window.localStorage)).toEqual(['UNA-1']);
   });
 });

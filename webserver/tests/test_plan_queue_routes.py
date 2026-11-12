@@ -90,6 +90,16 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.client.delete(f'/api/plan-queues/{plan_id}')
         self.assertIsNone(entry()['plan_queue'])  # gone with the plan
 
+    def test_the_tab_list_says_when_the_tasks_split_finished(self) -> None:
+        def entry():
+            return next(tab for tab in self.client.get('/api/sessions').get_json() if tab['task_id'] == 'T-1')
+        self.assertIs(entry()['plan_queue_finished'], False)
+        plan_id = self._proposed()
+        self.assertIs(entry()['plan_queue_finished'], False)  # still being split
+        self.queue._registry.mutate(plan_id, lambda live: setattr(live, 'status', PlanStatus.FINISHED))
+        self.assertIs(entry()['plan_queue_finished'], True)
+        self.assertIsNone(entry()['plan_queue'])  # no longer live
+
     def test_the_tab_list_names_each_sub_tasks_main_task(self) -> None:
         plan_id = self._proposed()
         approved = self._post(f'/api/plan-queues/{plan_id}/approve').get_json()
@@ -186,6 +196,10 @@ class PlanQueueRouteTests(unittest.TestCase):
         self.assertEqual(_plan_queue_summaries(SimpleNamespace(plan_queue=None)), {})
         odd = SimpleNamespace(plan_queue=SimpleNamespace(live_by_source=lambda: ['not', 'a', 'map']))
         self.assertEqual(_plan_queue_summaries(odd), {})
+        from kato_webserver.app import _plan_queue_finished
+        self.assertEqual(_plan_queue_finished(SimpleNamespace(plan_queue=SimpleNamespace(
+            finished_sources=Mock(side_effect=RuntimeError('x'))))), set())
+        self.assertEqual(_plan_queue_finished(SimpleNamespace(plan_queue=None)), set())
         from kato_webserver.app import _plan_parents
         self.assertEqual(_plan_parents(SimpleNamespace(plan_queue=SimpleNamespace(
             step_task_sources=Mock(side_effect=RuntimeError('x'))))), {})

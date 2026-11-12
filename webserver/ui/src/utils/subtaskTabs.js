@@ -57,3 +57,9 @@ function mainTaskOf(session, byKey) {
   }
   return found;
 }
+
+// The id of a main task's sub-task list in the tasks menu, which the fold
+// toggle on its row controls (``aria-controls``).
+export function subtaskListId(taskId) {
+  return `tab-subtasks-${String(taskId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}

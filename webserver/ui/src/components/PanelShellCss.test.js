@@ -39,18 +39,38 @@ test('the task header stays full-bleed above the cards, in the first row', () =>
   assertDeclaration(ruleBody('#layout.has-top-tabs'), 'grid-template-rows', 'auto minmax\\(0, 1fr\\)');
 });
 
-test('the tasks menu slides in over the grid from the left edge, hidden when closed', () => {
-  // Out of the grid, so opening it moves nothing the operator is reading.
+test('the tasks rail is always there, and the page gives up only its collapsed width', () => {
+  // Out of the grid, top to bottom of the screen (there is no app bar).
   const menu = ruleBody('.tabs-pane-side');
   assertDeclaration(menu, 'position', 'fixed');
   assertDeclaration(menu, 'left', '0');
-  assertDeclaration(menu, 'top', 'var\\(--app-header-height, 52px\\)');
-  // Over everything on the page, pushing nothing; dialogs still cover it.
+  assertDeclaration(menu, 'top', '0');
+  assertDeclaration(menu, 'width', '128px');
+  assertDeclaration(ruleBody('#root'), 'padding-left', '128px');
+  // Over everything on the page; dialogs still cover it.
   const z = Number(menu.match(/z-index:\s*(\d+)/)[1]);
   assert.ok(z > 60 && z < 999, `menu z-index ${z} must clear page chrome and stay under dialogs`);
-  // Closed is hidden, not merely off-screen: out of the tab order too.
-  assertDeclaration(menu, 'visibility', 'hidden');
-  assertDeclaration(ruleBody('.tabs-pane-side.is-open'), 'visibility', 'visible');
+  // Never clipped: the footer's hover labels are drawn beside their controls.
+  assert.doesNotMatch(menu, /overflow/);
+  assert.doesNotMatch(menu, /visibility:\s*hidden/);
+});
+
+test('expanded, the rail lays over the page: wider, with nothing in the grid moving', () => {
+  const open = ruleBody('.tabs-pane-side.is-open');
+  assertDeclaration(open, 'width', 'min\\(360px, 90vw\\)');
+  assert.doesNotMatch(open, /padding|margin|left/);
+});
+
+test('collapsed, a row is its dot and code, at the height it has expanded', () => {
+  for (const hidden of ['tab-label-title', 'tab-rename-btn', 'tab-pin-btn', 'tab-forget-btn', 'tab-subtasks-toggle']) {
+    assert.match(css, new RegExp(`\\.tabs-pane-side:not\\(\\.is-open\\) \\.tab \\.${hidden}[,\\s][^{]*\\{[^}]*display:\\s*none`));
+  }
+  assertDeclaration(ruleBody('.tabs-pane-side .tab'), 'min-height', 'calc\\(16px \\+ 2 \\* 6px \\+ 2px\\)');
+});
+
+test('the footer\'s icons stay three to a row in both widths', () => {
+  assertDeclaration(ruleBody('.task-menu-footer-icons'), 'grid-template-columns', 'repeat\\(3, 28px\\)');
+  assertDeclaration(ruleBody('.task-menu-footer'), 'margin-top', 'auto');
 });
 
 test('every panel is an outlined, rounded card', () => {

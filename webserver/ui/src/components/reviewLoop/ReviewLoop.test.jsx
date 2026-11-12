@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import EventLog from '../EventLog.jsx';
+import ReviewLoopButton from './ReviewLoopButton.jsx';
 import ReviewLoopChip from './ReviewLoopChip.jsx';
 import ReviewLoopPane from './ReviewLoopPane.jsx';
+import ReviewLoopTabBadge from './ReviewLoopTabBadge.jsx';
 import {
   markReviewLoopSeen,
   readReviewLoopTabs,
@@ -644,11 +646,45 @@ describe('the round limit — picked before a loop starts', () => {
   });
 });
 
-describe('ReviewLoopChip — where a loop is, beside the task title', () => {
-  test('the chip is the loop glyph too', () => {
-    // The row's own loop button (Tab.test.jsx) carries the same glyph.
-    const { container } = render(<ReviewLoopChip loop={summary()} taskId="UNA-1" />);
-    expect(container.querySelector('.review-loop-chip [data-icon="loop"]')).not.toBeNull();
+describe('ReviewLoopButton / chip / tab badge — the indicators', () => {
+  test('no loop yet: the button opens the view and starts nothing', () => {
+    // The rounds are picked in the view first; nothing runs from the header.
+    const requests = openRequests();
+    render(<ReviewLoopButton session={session(null)} />);
+    const button = screen.getByRole('button', { name: 'Review loop' });
+    expect(button).toHaveAttribute('data-tooltip', expect.stringMatching(/pick how many rounds and start/));
+    fireEvent.click(button);
+    expect(requests.seen().map((r) => r.taskId)).toEqual(['UNA-1']);
+    expect(kato.requests).toEqual([]);
+    requests.unsubscribe();
+  });
+
+  test('every mark of the loop is the loop glyph', () => {
+    const { container } = render(
+      <>
+        <ReviewLoopButton session={session(summary())} />
+        <ReviewLoopChip loop={summary()} taskId="UNA-1" />
+        <ReviewLoopTabBadge loop={summary()} />
+      </>,
+    );
+    for (const selector of ['.review-loop-button', '.review-loop-chip', '.tab-review-loop-badge']) {
+      expect(container.querySelector(`${selector} [data-icon="loop"]`)).not.toBeNull();
+    }
+  });
+
+  test('a loop exists: the button opens the view and starts nothing', () => {
+    const requests = openRequests();
+    const { container } = render(<ReviewLoopButton session={session(summary())} />);
+    expect(container.querySelector('.review-loop-dot.is-running')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review loop' }));
+    expect(requests.seen().map((r) => r.taskId)).toEqual(['UNA-1']);
+    expect(kato.requests).toEqual([]);
+    requests.unsubscribe();
+  });
+
+  test('the placeholder button is inert', () => {
+    render(<ReviewLoopButton disabled />);
+    expect(screen.getByRole('button', { name: 'Review loop' })).toBeDisabled();
   });
 
   test('the chip shows where a running loop is', () => {
@@ -665,6 +701,18 @@ describe('ReviewLoopChip — where a loop is, beside the task title', () => {
     expect(container.querySelector('.review-loop-chip')).not.toBeInTheDocument();
   });
 
+  test('the tab badge says done or not: running, then the outcome, even once seen', () => {
+    const { container, rerender } = render(<ReviewLoopTabBadge loop={summary()} />);
+    expect(container.querySelector('.tab-review-loop-badge.is-running')).toBeInTheDocument();
+    const finished = summary({ status: 'clean', phase: 'done' });
+    markReviewLoopSeen(LOOP_ID);
+    rerender(<ReviewLoopTabBadge loop={finished} />);
+    expect(screen.getByRole('img', { name: 'Review loop: clean' })).toHaveClass('is-good');
+    expect(screen.getByRole('img', { name: 'Review loop: clean' }))
+      .toHaveAttribute('title', expect.stringMatching(/^Review loop — The review loop finished clean/));
+    rerender(<ReviewLoopTabBadge loop={null} />);
+    expect(container.querySelector('.tab-review-loop-badge')).not.toBeInTheDocument();
+  });
 });
 
 describe('the transcript — kato\'s message is labelled as kato\'s', () => {

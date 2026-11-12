@@ -3,17 +3,19 @@ import {
 } from 'react';
 import { canDropOn, moveTab } from '../utils/tabOrder.js';
 import { cx } from '../utils/cx.js';
-import { groupSubtaskTabs } from '../utils/subtaskTabs.js';
+import { groupSubtaskTabs, subtaskListId } from '../utils/subtaskTabs.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
 import {
-  closeTaskMenu, closeTaskMenuSoon, openTaskMenu, useTaskMenuOpen,
+  closeTaskMenu, closeTaskMenuSoon, openTaskMenuSoon, useTaskMenuOpen,
 } from '../stores/taskMenuStore.js';
 import {
   orderByPinned,
+  readCollapsedGroups,
   readPinnedIds,
   readTabOrder,
+  writeCollapsedGroups,
   writeTabOrder,
   togglePinned,
   writePinnedIds,
@@ -26,14 +28,18 @@ import {
 } from '../utils/taskTabNames.js';
 
 /**
- * The tasks menu: every task as a row in a vertical list on the left edge,
- * like Chrome's vertical tabs. It opens while the pointer is over the kato
- * icon in the header or over the menu itself, and closes shortly after it
- * leaves both (``taskMenuStore``). Tab / Ctrl+Tab still walk the tasks with
- * the menu closed — the order is reported up to App.
+ * The tasks menu: every task as a row in a rail on the left edge, like
+ * Chrome's vertical tabs. The rail is always there, collapsed to each task's
+ * status dot and code; hovering it expands it OVER the page (it pushes
+ * nothing), and leaving collapses it (``taskMenuStore``). Tab / Ctrl+Tab
+ * still walk the tasks — the order is reported up to App.
+ *
+ * It is the app's chrome as well (there is no app bar): ``handle`` (the kato
+ * logo) heads it and ``footer`` (status, settings, …) is pinned to its foot.
  *
  * Each task is a row (``<li class="tab">``); a split plan's sub-tasks are rows
- * grouped under their main task. The actions (go to task, new task, add task,
+ * grouped under their main task, and a group folds away from its main task's
+ * row (remembered per browser). The actions (go to task, new task, add task,
  * delete tasks, scan now) head the menu. With no task at all the menu stays
  * open: the first-run "Create your first task" must not hide behind a hover.
  */
@@ -63,6 +69,10 @@ export default function TabList({
   onVisibleOrderChange,
   // The connected ticket system's name ('' = none: tasks are made in kato).
   trackerName = '',
+  // The rail's top (the kato logo) and foot (status, settings, …) — see
+  // MenuHandle / MenuFooter.
+  handle = null,
+  footer = null,
 }) {
   const menuOpen = useTaskMenuOpen();
   // Pinned tab ids (in pin order). localStorage-backed so the
@@ -78,6 +88,24 @@ export default function TabList({
   // being dragged and the one it is over, together in one object so a single
   // setState can never leave a stale highlight behind after a drop.
   const [drag, setDrag] = useState({ id: '', over: '' });
+  // Main tasks whose sub-tasks are folded away (expanded is the default).
+  const [collapsedIds, setCollapsedIds] = useState(() => readCollapsedGroups());
+  const collapsedSet = useMemo(() => new Set(collapsedIds), [collapsedIds]);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const handleToggleSubtasks = useCallback((taskId) => {
+    setCollapsedIds((prev) => {
+      const next = prev.includes(taskId)
+        ? prev.filter((id) => id !== taskId)
+        : [...prev, taskId];
+      // Forget tasks that are gone, or the list only ever grows. (There is a
+      // toggle to press only once the tasks have loaded.)
+      const known = new Set((sessionsRef.current || []).map((s) => s.task_id));
+      const kept = next.filter((id) => known.has(id));
+      writeCollapsedGroups(kept);
+      return kept;
+    });
+  }, []);
 
   const handleRename = useCallback((taskId, label) => {
     setTabNames((prev) => {
@@ -233,8 +261,10 @@ export default function TabList({
     : null;
 
   // One row. A sub-task's row is a full row too (rename, pin, forget, drag
-  // among its siblings): pinning one moves it up to the pins.
-  const renderTab = (session, nested = false) => {
+  // among its siblings): pinning one moves it up to the pins. ``group`` is a
+  // main task's sub-task fold: how many, shown or not, how many hidden ones
+  // wait for you.
+  const renderTab = (session, nested = false, group = null) => {
     const isActive = session.task_id === activeTaskId;
     const needsAttention = !!attentionTaskIds && attentionTaskIds.has(session.task_id);
     const liveStatus = agentStatuses[session.task_id] || null;
@@ -252,6 +282,10 @@ export default function TabList({
         displayName={tabNameFor(tabNames, session.task_id, session.task_summary)}
         onRename={handleRename}
         nested={nested}
+        subtaskCount={group ? group.count : 0}
+        subtasksShown={group ? group.shown : true}
+        subtasksWaiting={group ? group.waiting : 0}
+        onToggleSubtasks={group ? handleToggleSubtasks : undefined}
         dragging={drag.id === session.task_id}
         dropTarget={drag.over === session.task_id && drag.id !== session.task_id}
         // Among its own level only: a sub-task dropped among the main tasks
@@ -269,14 +303,26 @@ export default function TabList({
       />
     );
   };
+  // A folded group still shows the sub-task on screen, so the menu always
+  // says where you are (Tab / Ctrl+Tab still walk into a folded group). A
+  // hidden one waiting for you is counted on the fold's toggle.
   const rows = topSessions.flatMap((session) => {
     const children = childrenOf.get(session.task_id) || [];
     if (!children.length) { return [renderTab(session)]; }
+    const shown = !collapsedSet.has(session.task_id);
+    const visible = shown
+      ? children
+      : children.filter((child) => child.task_id === activeTaskId);
+    const waiting = shown || !attentionTaskIds ? 0 : children.filter(
+      (child) => child.task_id !== activeTaskId && attentionTaskIds.has(child.task_id),
+    ).length;
+    const row = renderTab(session, false, { count: children.length, shown, waiting });
+    if (!visible.length) { return [row]; }
     return [
-      renderTab(session),
+      row,
       <li key={`${session.task_id}::children`} className="tab-children" role="none">
-        <ul aria-label={`Sub-tasks of ${session.task_id}`}>
-          {children.map((child) => renderTab(child, true))}
+        <ul id={subtaskListId(session.task_id)} aria-label={`Sub-tasks of ${session.task_id}`}>
+          {visible.map((child) => renderTab(child, true))}
         </ul>
       </li>,
     ];
@@ -343,7 +389,9 @@ export default function TabList({
     );
   }
 
-  // The actions head the menu, above the task rows.
+  // The actions head the menu, above the task rows. Collapsed, the rail shows
+  // the first three (go to, new, add); the rest appear with the expanded
+  // menu — in place, so nothing moves. Their labels open from the left edge.
   const trailingActions = (
     <div className="tabs-actions">
       {/* Go to task. The Ctrl/Cmd+Shift+P shortcut is the fast path, but a
@@ -354,7 +402,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-go-to-task"
-        className="tabs-action"
+        className="tabs-action tooltip-anchor-left"
         data-tooltip="Go to task (Ctrl+Shift+P) — search your open tasks by id or name and jump straight to one."
         aria-label="Go to task"
         onClick={onOpenTaskPalette}
@@ -365,7 +413,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-new-task"
-        className="tabs-action"
+        className="tabs-action tooltip-anchor-left"
         data-tooltip="New task — write one here in kato, no tracker: title, description, repositories. Starts in Plan."
         aria-label="New task"
         onClick={onNewTask}
@@ -376,7 +424,7 @@ export default function TabList({
       <button
         type="button"
         id="tabs-add-task"
-        className="tabs-action"
+        className="tabs-action tooltip-anchor-left"
         data-tooltip="Add a task — pick from every task assigned to kato (open, in progress, in review, done) and provision its workspace."
         aria-label="Add a task"
         onClick={onOpenAddTask}
@@ -386,7 +434,7 @@ export default function TabList({
       {typeof onOpenBulkForget === 'function' && (
         <button
           type="button"
-          className="tabs-action"
+          className="tabs-action tooltip-anchor-left"
           data-tooltip="Delete tasks — pick several and remove their workspaces in one go."
           aria-label="Delete tasks"
           onClick={onOpenBulkForget}
@@ -397,8 +445,8 @@ export default function TabList({
       <button
         type="button"
         id="tabs-scan-now"
-        className="tabs-action"
-        data-tooltip={scanPending ? 'Scanning…' : 'Scan now — skip the idle wait and check for new tasks and review comments immediately.'}
+        className="tabs-action tooltip-anchor-left"
+        data-tooltip={scanPending ? 'Scanning…' : 'Scan now — check for new tasks and review comments right away (no waiting for the next scan), and re-check the agent CLI and model lists.'}
         aria-label="Scan now"
         onClick={onScanNow}
         disabled={scanPending || !onScanNow}
@@ -418,9 +466,10 @@ export default function TabList({
       id="tabs-pane"
       aria-label="Tasks"
       className={cx('tabs-pane-side', (menuOpen || heldOpen) && 'is-open', empty && 'is-empty')}
-      onMouseEnter={openTaskMenu}
+      onMouseEnter={openTaskMenuSoon}
       onMouseLeave={closeTaskMenuSoon}
     >
+      {handle}
       {trailingActions}
       {empty ? (
         <p id="empty-state" className="empty">
@@ -431,6 +480,7 @@ export default function TabList({
           {rows}
         </ul>
       )}
+      {footer}
     </nav>
   );
 }

@@ -9,7 +9,8 @@ import { moveTab } from './utils/tabOrder.js';
 import GlobalPermissionContainer from './components/GlobalPermissionContainer.jsx';
 import { usePendingPermissions } from './hooks/usePendingPermissions.js';
 import { unpackPermissionEnvelope } from './utils/permissionEnvelope.js';
-import Header from './components/Header.jsx';
+import MenuHandle from './components/MenuHandle.jsx';
+import MenuFooter from './components/MenuFooter.jsx';
 import Layout from './components/Layout.jsx';
 import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx';
 import PanelCard from './components/PanelCard.jsx';
@@ -537,8 +538,16 @@ export default function App() {
   // "the click did nothing". We now hold it until the server says the scan is
   // over (``/api/scan/status``), and ``waitForScanToFinish`` is bounded so a
   // wedged loop can never leave the button disabled for good.
+  // Scan now — the ONE refresh: kato checks the tracker for new tasks and
+  // review comments right away, then the task list reloads. It also re-probes
+  // the agent CLI version + picker catalogues, so a CLI upgrade or settings
+  // change shows in the banner / model picker with no kato restart. (A second
+  // "Refresh" button did only that plus a list reload — the list polls itself
+  // anyway — under the same icon, and read as the same thing.)
   const handleScanNow = useCallback(async () => {
     setScanPending(true);
+    refreshAgentVersion();
+    refreshCatalogs();
     try {
       await triggerScan();
       await waitForScanToFinish({ fetchStatus: fetchScanStatus });
@@ -548,15 +557,6 @@ export default function App() {
       // spinning with no way back except a page reload.
       setScanPending(false);
     }
-  }, [refresh]);
-
-  // Header Refresh: re-scan tickets + reload sessions AND re-probe the agent
-  // CLI version + picker catalogues, so a CLI upgrade or settings change shows
-  // in the banner / model picker with no kato restart.
-  const handleHeaderRefresh = useCallback(async () => {
-    refreshAgentVersion();
-    refreshCatalogs();
-    await refresh();
   }, [refresh]);
 
   const onTaskClickFromNotification = useCallback((taskId) => {
@@ -1192,6 +1192,21 @@ export default function App() {
           scanPending={scanPending}
           onVisibleOrderChange={setVisibleTabOrder}
           trackerName={ticketSystemLabel(configStatus?.issue_platform)}
+          // The app's chrome lives in the rail: there is no app bar.
+          handle={<MenuHandle attentionCount={attentionTaskIds.size} />}
+          footer={(
+            <MenuFooter
+              statusLatest={status.latest}
+              statusStale={status.stale}
+              statusConnected={status.connected}
+              onStatusClick={toggleOrchestrator}
+              statusActive={orchestratorOpen}
+              onOpenSettings={openSettings}
+              onOpenUsage={openUsage}
+              onOpenReleaseNotes={openReleaseNotes}
+              lidAwake={lidAwake}
+            />
+          )}
         />
       }
       // New 3-column layout, left → right:
@@ -1259,19 +1274,6 @@ export default function App() {
           the bug this reads around. */}
       <AgentVersionBanner backend={activeBannerBackend} />
       <UiBuildBanner />
-      <Header
-        onRefresh={handleHeaderRefresh}
-        statusLatest={status.latest}
-        statusStale={status.stale}
-        statusConnected={status.connected}
-        onStatusClick={toggleOrchestrator}
-        statusActive={orchestratorOpen}
-        onOpenSettings={openSettings}
-        onOpenUsage={openUsage}
-        onOpenReleaseNotes={openReleaseNotes}
-        lidAwake={lidAwake}
-        attentionCount={attentionTaskIds.size}
-      />
       {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
       {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}
       <SettingsDrawer

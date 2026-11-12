@@ -123,25 +123,25 @@ body {
   min-height: 0;
   min-width: 0;
   overflow-x: hidden;
+  /* The tasks rail's column (it is ``position: fixed`` at the left edge).
+   * There is no app bar: the page starts at the top, beside the rail. */
+  padding-left: 128px;
 }
 
-header {
+/* The rail's top: the kato logo (its handle) and name. There is no app bar —
+ * the rail is the app's chrome. */
+.task-menu-handle {
   display: flex;
   align-items: center;
-  gap: 12px;
-  /* 4px top and bottom: the bar is as tall as its 28px controls plus a
-   * hair (36px + the border). It carries a logo, a label, a status line and
-   * a few buttons — chrome that earns no more height than that. (It was
-   * 48px, and the task header under it 44px: two tall bars for one line
-   * each.) */
-  padding: 4px 24px;
-  border-bottom: 1px solid #2a2a2a;
+  gap: 8px;
   flex-shrink: 0;
+  height: 28px;
+  padding-left: 2px;
 }
 
-header #kato-logo {
-  /* Smaller than the bar's 28px controls: it is the brand and the tasks
-   * menu's handle, not the loudest thing on screen. */
+#kato-logo {
+  /* Smaller than the 28px controls: it is the brand and the rail's handle,
+   * not the loudest thing on screen. */
   width: 22px;
   height: 22px;
   border-radius: 4px;
@@ -149,63 +149,15 @@ header #kato-logo {
   display: block;
 }
 
-/* "Kato" + "Planning UI" beside the 22px logo: a label, not a headline.
- * (They were 26px — the biggest type in the app, on its least useful
- * line.) The 28px line box keeps them centred with the bar's controls. */
-header h1 {
+/* "Kato" beside the logo: a label, not a headline. */
+.task-menu-title {
   margin: 0;
   font-size: 16px;
   line-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  /* Flex children default to shrink:1, and an inline-flex box that has been
-   * shrunk below its text does not reflow — the text simply spills past its
-   * own edge and runs into whatever sits next to it. With a task chip in the
-   * attention slot that neighbour is "UNA-1234", so the two ran together
-   * into one unreadable string. */
+  white-space: nowrap;
   flex-shrink: 0;
 }
 
-header .subtitle {
-  color: #a3a3a3;
-  font-size: 16px;
-  line-height: 28px;
-  font-weight: 400;
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  /* Pinned, like every other item sharing this row. An inline-flex box
-   * shrunk below its own text does NOT reflow — it spills past its edge onto
-   * its neighbour, which is the collision this guard exists to prevent. The
-   * status pill is the designated victim (``flex: 1`` + ellipsis); when even
-   * that is not enough, the rule below drops this label entirely. */
-  flex-shrink: 0;
-}
-
-/* WHEN A TASK IS WAITING, THE DECORATION GOES.
- *
- * The bar already dropped "Planning UI" below 900px. That is the wrong
- * trigger: the row overflows when it is FULL, and it is fullest exactly when
- * attention chips are present — which can happen at any width. The operator
- * saw "UNA-3067" drawn through "Planning UI" on a window far wider than
- * 900px.
- *
- * Keyed on the chips actually being there, so the subtitle is only sacrificed
- * while something is genuinely waiting for an answer, and it returns the
- * moment the roster empties. */
-header:has(.permission-roster) .subtitle {
-  display: none;
-}
-
-/* "Planning UI" is decoration; the task waiting for an answer is not.
- * Below this width there is no room for both, so the label goes rather than
- * the chip — dropping it buys back its full width plus a 12px gap. */
-@media (max-width: 900px) {
-  header .subtitle {
-    display: none;
-  }
-}
 /* The app header's own icon buttons (settings, refresh). An OPT-IN class —
  * it styles what asks for it and nothing else.
  *
@@ -270,11 +222,10 @@ header:has(.permission-roster) .subtitle {
   cursor: not-allowed;
 }
 
-/* Inline status pill — lives between the kato subtitle and the
- * notification actions. Replaces the old standalone #status-bar
- * row so the top of the app is one line instead of two. */
-header .header-status {
-  flex: 1;
+/* kato's live status line, in the rail's footer: a line of its own, as wide
+ * as the rail. Collapsed it shows the start (the title has the rest);
+ * expanded, more of it. */
+.task-menu-footer .header-status {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -285,12 +236,14 @@ header .header-status {
   color: #f5f5f7;
   font: 12px/1 ui-monospace, monospace;
   min-width: 0;
-  margin-left: 4px;
-  margin-right: 4px;
 }
 
-header .header-lid-awake {
-  flex: none;
+.task-menu-footer .header-lid-awake {
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 4px 12px;
   border-radius: var(--radius-pill);
   background: rgba(255, 255, 255, 0.06);
@@ -300,27 +253,27 @@ header .header-lid-awake {
   white-space: nowrap;
 }
 
-header .header-status.is-error,
-header .header-lid-awake.is-error {
+.task-menu-footer .header-status.is-error,
+.task-menu-footer .header-lid-awake.is-error {
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.35);
   color: #fecaca;
 }
 
-header .header-status.is-warn,
-header .header-lid-awake.is-warn {
+.task-menu-footer .header-status.is-warn,
+.task-menu-footer .header-lid-awake.is-warn {
   background: rgba(245, 158, 11, 0.1);
   border-color: rgba(245, 158, 11, 0.35);
   color: #fde68a;
 }
 
-header .header-status.is-stale {
+.task-menu-footer .header-status.is-stale {
   background: rgba(64, 64, 64, 0.2);
   border-color: rgba(64, 64, 64, 0.45);
   color: #a3a3a3;
 }
 
-header .header-status-pulse {
+.task-menu-footer .header-status-pulse {
   flex-shrink: 0;
   width: 7px;
   height: 7px;
@@ -329,21 +282,21 @@ header .header-status-pulse {
   animation: kato-status-pulse 1.6s ease-in-out infinite;
 }
 
-header .header-status.is-error .header-status-pulse {
+.task-menu-footer .header-status.is-error .header-status-pulse {
   background: #ef4444;
   animation: none;
 }
 
-header .header-status.is-warn .header-status-pulse {
+.task-menu-footer .header-status.is-warn .header-status-pulse {
   background: #f59e0b;
 }
 
-header .header-status.is-stale .header-status-pulse {
+.task-menu-footer .header-status.is-stale .header-status-pulse {
   background: #2a2a2a;
   animation: none;
 }
 
-header .header-status-text {
+.task-menu-footer .header-status-text {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -353,24 +306,24 @@ header .header-status-text {
 /* Clickable variant — when the operator can pop the orchestrator
  * activity feed open by clicking the pill. Subtle hover lift +
  * a brighter active state when the feed is currently shown. */
-header button.header-status.is-clickable {
+.task-menu-footer button.header-status.is-clickable {
   cursor: pointer;
   font-family: inherit;
   text-align: left;
 }
 
-header button.header-status.is-clickable:hover {
+.task-menu-footer button.header-status.is-clickable:hover {
   background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.06);
 }
 
-header button.header-status.is-clickable.is-active {
+.task-menu-footer button.header-status.is-clickable.is-active {
   background: rgba(10, 132, 255, 0.18);
   border-color: rgba(10, 132, 255, 0.4);
   color: #cce0ff;
 }
 
-header button.header-status.is-clickable.is-active .header-status-pulse {
+.task-menu-footer button.header-status.is-clickable.is-active .header-status-pulse {
   background: #0a84ff;
 }
 
@@ -683,31 +636,38 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 
 /* The resize handles live in the gutter between two cards — see the
  * ``.pane-resizer`` rule further down for the geometry and states. */
-/* ───── the tasks menu (left edge, Chrome-style vertical tabs) ────────
+/* ───── the tasks rail (left edge, Chrome-style vertical tabs) ────────
  *
- * Every task is a row in a vertical list that slides in from the left edge,
- * under the header. It opens while the pointer is over the kato icon or over
- * the menu itself (``taskMenuStore``) and closes shortly after it leaves both.
- * Out of the layout grid entirely (``position: fixed``): opening it overlays
- * the files pane rather than moving anything (the operator is reading it).
- * Closed, it is ``visibility: hidden`` — out of the tab order and the
- * accessibility tree, not just off-screen.
+ * Always there, collapsed to each task's status dot and code, top to bottom
+ * of the screen: the kato logo, the actions, the tasks, and at its foot what
+ * the app bar used to carry (there is no app bar). The page gives up exactly
+ * the collapsed width (``#root``'s left padding). Hovering the rail expands it
+ * OVER the page (``taskMenuStore``) — it pushes nothing, the operator is
+ * reading what is under it — and leaving collapses it.
+ *
+ * Expanding moves nothing that was already on screen: every row keeps its
+ * height and its dot and code their place; the footer's controls are laid out
+ * within the collapsed width in both states (``$TASK-RAIL-INNER``). Only what
+ * the collapsed rail hides appears, to the right.
+ *
+ * Never ``overflow: hidden``: the hover labels of the footer's controls are
+ * drawn by CSS beside them, and the rail must not clip them.
  *
  * Material: the same frosted-glass family as the composer and the chat search
  * bar. */
 .tabs-pane-side {
   position: fixed;
-  top: var(--app-header-height, 52px);
+  top: 0;
   left: 0;
   bottom: 0;
   /* On top of everything on the page — headers, panels, the safety banner
-   * (50), dropdowns (40) — and it pushes nothing. Only what is meant to
-   * cover the page sits above it: the settings drawer and dialogs (999+),
-   * its own rows' hover card (1200), toasts. */
+   * (50), dropdowns (40) — and, expanded, it pushes nothing. Only what is
+   * meant to cover the page sits above it: the settings drawer and dialogs
+   * (999+), its own rows' hover card (1200), toasts. */
   z-index: 900;
   display: flex;
   flex-direction: column;
-  width: min(360px, 90vw);
+  width: 128px;
   box-sizing: border-box;
   padding: 8px;
   gap: 8px;
@@ -715,17 +675,53 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   background: linear-gradient(180deg, rgba(28, 28, 30, 0.62) 0%, rgba(16, 16, 18, 0.75) 100%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
-  box-shadow: -8px 0 32px rgba(28, 28, 30, 0.62);
-  transform: translateX(-100%);
-  visibility: hidden;
-  /* Visibility waits for the slide-out to finish, then hides. */
-  transition: transform 160ms ease-out, visibility 0s linear 160ms;
+  transition: width 140ms ease-out, box-shadow 140ms ease-out;
 }
 
 .tabs-pane-side.is-open {
-  transform: translateX(0);
-  visibility: visible;
-  transition: transform 160ms ease-out, visibility 0s;
+  width: min(360px, 90vw);
+  box-shadow: -8px 0 32px rgba(28, 28, 30, 0.62);
+}
+
+/* Collapsed: a row is its dot and code. What it hides comes back, in place,
+ * when the rail expands. ``display: none`` is safe for the row's height: the
+ * row states its own (below). */
+.tabs-pane-side:not(.is-open) .tab .tab-label-title,
+.tabs-pane-side:not(.is-open) .tab .tab-label-subtask,
+.tabs-pane-side:not(.is-open) .tab .tab-review-loop-badge,
+.tabs-pane-side:not(.is-open) .tab .tab-plan-queue-badge,
+.tabs-pane-side:not(.is-open) .tab .tab-subtasks-toggle,
+.tabs-pane-side:not(.is-open) .tab .tab-rename-btn,
+.tabs-pane-side:not(.is-open) .tab .tab-pin-btn,
+.tabs-pane-side:not(.is-open) .tab .tab-forget-btn {
+  display: none;
+}
+
+/* Collapsed, the actions that fit (go to task, new task, add task); the rest
+ * keep their place, invisible, until the rail expands. */
+.tabs-pane-side:not(.is-open) .tabs-action:nth-child(n+4) {
+  visibility: hidden;
+}
+
+/* The rail's foot: pinned to the bottom (``margin-top: auto`` holds it there
+ * even with no task rows above it). Grows UPWARD — the waiting-task chips
+ * appearing here never push a task row down. */
+.task-menu-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Three to a row, collapsed and expanded alike: a control must never move
+ * out from under the pointer that is about to press it. */
+.task-menu-footer-icons {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  gap: 4px 6px;
 }
 
 /* The task rows scroll; the actions above them stay put. */
@@ -742,19 +738,66 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
 }
 
 /* A split plan's sub-tasks, under their main task: indented, with a guide
- * line so the group reads as one. */
+ * line so the group reads as one. A small indent: the collapsed rail still
+ * has to fit a sub-task's code. */
 .tabs-pane-side .tab-children {
   list-style: none;
 }
 
 .tabs-pane-side .tab-children > ul {
   list-style: none;
-  margin: 0 0 0 14px;
-  padding: 0 0 0 8px;
+  margin: 0 0 0 6px;
+  padding: 0 0 0 6px;
   border-left: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+/* A main task's fold toggle: a chevron and how many sub-tasks it has. Always
+ * shown (unlike the hover buttons), so a folded group still says it is there;
+ * orange like the kato icon's badge while a folded sub-task waits for you. */
+.tabs-pane-side .tab .tab-subtasks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  height: 16px;
+  padding: 0 4px 0 2px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 245, 247, 0.85);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.tabs-pane-side .tab .tab-subtasks-count {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabs-pane-side .tab .tab-subtasks-toggle svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+  transition: transform 120ms ease;
+}
+
+.tabs-pane-side .tab .tab-subtasks-toggle.is-folded svg {
+  transform: rotate(-90deg);
+}
+
+.tabs-pane-side .tab .tab-subtasks-toggle:hover {
+  background: rgba(10, 132, 255, 0.55);
+  color: #f5f5f7;
+}
+
+.tabs-pane-side .tab .tab-subtasks-toggle.has-attention {
+  background: #f59e0b;
+  color: #f5f5f7;
 }
 
 /* The Cmd+Tab-style task switcher: while Tab / Ctrl+Tab move between tasks,
@@ -936,6 +979,9 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   gap: 6px;
   box-sizing: border-box;
   width: 100%;
+  /* As tall as its 16px controls, stated: the collapsed rail hides them, and
+   * a row that got shorter would move every row under it as the rail opens. */
+  min-height: calc(16px + 2 * 6px + 2px);
   white-space: nowrap;
   font-size: 12px;
   padding: 6px 8px 6px 10px;
@@ -1190,7 +1236,6 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
  * the feature may as well not have existed. Same 16px disc and same
  * hover/active reveal as the pin and × beside it. Double-click still works
  * for anyone who reaches for it. */
-.tabs-pane-side .tab .tab-view-btn,
 .tabs-pane-side .tab .tab-rename-btn {
   background: transparent;
   border: none;
@@ -1210,18 +1255,52 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.tabs-pane-side .tab .tab-view-btn svg,
+.tabs-pane-side .tab .tab-review-loop-badge svg,
+.tabs-pane-side .tab .tab-plan-queue-badge svg,
 .tabs-pane-side .tab .tab-rename-btn svg {
   width: 10px;
   height: 10px;
   display: block;
 }
 
-/* The review loop and split-plan buttons also show while there is news on
- * them (a loop running or finished unseen, a plan split from the task). */
-.tabs-pane-side .tab:hover .tab-view-btn,
-.tabs-pane-side .tab.active .tab-view-btn,
-.tabs-pane-side .tab .tab-view-btn.has-status,
+/* A task's review loop and split plan, done or not: a plain mark in the row
+ * (nothing to click — the toolbar opens them), shown only when there is one,
+ * coloured by where it stands. The hover card carries the words. */
+.tabs-pane-side .tab .tab-review-loop-badge,
+.tabs-pane-side .tab .tab-plan-queue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: #a3a3a3;
+}
+
+/* Indigo, the review loop's accent (its chat label and pill ring); amber, the
+ * split's (its chat prompt). Green on both = done. */
+.tabs-pane-side .tab .tab-review-loop-badge.is-running {
+  color: #a78bfa;
+}
+
+.tabs-pane-side .tab .tab-plan-queue-badge.is-running {
+  color: #fde68a;
+}
+
+.tabs-pane-side .tab .tab-review-loop-badge.is-good,
+.tabs-pane-side .tab .tab-plan-queue-badge.is-good {
+  color: #34d399;
+}
+
+.tabs-pane-side .tab .tab-review-loop-badge.is-warn,
+.tabs-pane-side .tab .tab-plan-queue-badge.is-warn {
+  color: #f59e0b;
+}
+
+.tabs-pane-side .tab .tab-review-loop-badge.is-bad {
+  color: #ef4444;
+}
+
 .tabs-pane-side .tab:hover .tab-rename-btn,
 .tabs-pane-side .tab.active .tab-rename-btn {
   visibility: visible;
@@ -1229,13 +1308,12 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   color: rgba(245, 245, 247, 0.85);
 }
 
-.tabs-pane-side .tab .tab-view-btn:hover,
 .tabs-pane-side .tab .tab-rename-btn:hover {
   background: rgba(10, 132, 255, 0.55);
   color: #f5f5f7;
 }
 
-.tabs-pane-side .tab .tab-view-btn,
+.tabs-pane-side .tab .tab-subtasks-toggle,
 .tabs-pane-side .tab .tab-rename-btn,
 .tabs-pane-side .tab .tab-pin-btn,
 .tabs-pane-side .tab .tab-forget-btn {
@@ -1243,7 +1321,7 @@ header button.header-status.is-clickable.is-active .header-status-pulse {
   z-index: 2;
 }
 
-.tabs-pane-side .tab .tab-view-btn::before,
+.tabs-pane-side .tab .tab-subtasks-toggle::before,
 .tabs-pane-side .tab .tab-rename-btn::before,
 .tabs-pane-side .tab .tab-pin-btn::before,
 .tabs-pane-side .tab .tab-forget-btn::before {
@@ -6543,6 +6621,20 @@ body.kato-resizing {
   background: rgba(245, 158, 11, 0.65);
   border-color: #f59e0b;
   color: #f5f5f7;
+}
+
+[data-tooltip].tooltip-anchor-left:hover::after,
+[data-tooltip].tooltip-anchor-left:focus-visible::after {
+  left: 0;
+  right: auto;
+  transform: none;
+}
+
+[data-tooltip].tooltip-anchor-left:hover::before,
+[data-tooltip].tooltip-anchor-left:focus-visible::before {
+  left: 8px;
+  right: auto;
+  transform: none;
 }
 
 [data-tooltip].tooltip-anchor-right:hover::after,
@@ -12423,12 +12515,16 @@ button.settings-prompt-editor-head {
  * the title and the scan status there was no room, the group was shrunk by
  * the flex row, and its nowrap children overflowed into each other — the
  * label sat on top of the task id and clipped it. */
-.header-attention-slot {
+.menu-attention-slot {
   display: contents;
 }
 
 .permission-roster {
   display: inline-flex;
+  /* In the rail's foot: as many chips to a row as the COLLAPSED rail holds,
+   * expanded too, so a chip never moves out from under the pointer. */
+  flex-wrap: wrap;
+  max-width: 112px;
   gap: 6px;
   align-items: center;
   /* Never shrunk. Shrinking a nowrap row does not reflow it, it just makes
@@ -13401,8 +13497,12 @@ button.settings-prompt-editor-head {
     transform: rotate(360deg);
   }
 }
-/* A row's review loop / split-plan button: its status as a dot over the
- * button's corner, never extra width. */
+/* Header button: a dot over its corner, never extra width. */
+.plan-queue-button,
+.review-loop-button {
+  position: relative;
+}
+
 .plan-queue-dot,
 .review-loop-dot {
   position: absolute;

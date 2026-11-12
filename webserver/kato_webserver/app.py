@@ -7269,6 +7269,7 @@ def _records_as_dicts(
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
     review_loop_by_task = _review_loop_summaries(agent_service)
     plan_queue_by_task = _plan_queue_summaries(agent_service)
+    plan_finished_tasks = _plan_queue_finished(agent_service)
     plan_parent_by_task = _plan_parents(agent_service)
     return [
         _workspace_record_to_dict(
@@ -7282,6 +7283,7 @@ def _records_as_dicts(
             backend_by_task=backend_by_task,
             review_loop_by_task=review_loop_by_task,
             plan_queue_by_task=plan_queue_by_task,
+            plan_finished_tasks=plan_finished_tasks,
             plan_parent_by_task=plan_parent_by_task,
         )
         for record in workspace_records
@@ -7319,6 +7321,18 @@ def _plan_queue_summaries(agent_service) -> dict[str, dict]:
     except Exception:
         return {}
     return live if isinstance(live, dict) else {}
+
+
+def _plan_queue_finished(agent_service) -> set[str]:
+    """The tasks whose newest split plan finished — memory only. Its row
+    says the split is done (a live plan is in ``_plan_queue_summaries``)."""
+    queue = getattr(agent_service, 'plan_queue', None)
+    if queue is None:
+        return set()
+    try:
+        return {str(task_id) for task_id in queue.finished_sources()}
+    except Exception:
+        return set()
 
 
 def _plan_parents(agent_service) -> dict[str, str]:
@@ -7609,6 +7623,7 @@ def _workspace_record_to_dict(
     backend_by_task: dict[str, str] | None = None,
     review_loop_by_task: dict[str, dict] | None = None,
     plan_queue_by_task: dict[str, dict] | None = None,
+    plan_finished_tasks: set[str] | None = None,
     plan_parent_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
@@ -7622,6 +7637,8 @@ def _workspace_record_to_dict(
         payload['branch_name'] = str(getattr(record, 'task_id', '') or '')
     payload['review_loop'] = (review_loop_by_task or {}).get(record.task_id)
     payload['plan_queue'] = (plan_queue_by_task or {}).get(record.task_id)
+    # Its newest split plan finished: the row shows the split as done.
+    payload['plan_queue_finished'] = record.task_id in (plan_finished_tasks or set())
     # The task this one's plan was split from ('' = no plan's sub-task).
     payload['plan_parent'] = (plan_parent_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
     # WORKSPACE records carry no backend — they predate agent tabs and are

@@ -541,6 +541,18 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual((live['plan_id'], live['status'], live['step_count'], live['counts']['ready']),
                          (second.plan_id, 'approved', 3, 2))
 
+    def test_finished_sources_names_each_task_whose_newest_plan_finished(self) -> None:
+        self.assertEqual(self.service.finished_sources(), set())
+        first = self._approved()
+        self.assertEqual(self.service.finished_sources(), set())  # still running
+        self.service._registry.mutate(first.plan_id, lambda live: setattr(live, 'status', PlanStatus.FINISHED))
+        self.assertEqual(self.service.finished_sources(), {first.source_task_id})
+        second = self._approved()  # split again: the newer plan speaks for the task
+        self.assertEqual(second.source_task_id, first.source_task_id)
+        self.assertEqual(self.service.finished_sources(), set())
+        self.service._registry.mutate(second.plan_id, lambda live: setattr(live, 'status', PlanStatus.CANCELLED))
+        self.assertEqual(self.service.finished_sources(), set())  # stopped is not finished
+
     def test_live_task_codes_names_the_source_and_every_step_task_still_wanted(self) -> None:
         self.assertEqual(self.service.live_task_codes(), set())
         plan = self._approved()

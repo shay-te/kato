@@ -28,7 +28,8 @@ import { join } from 'node:path';
 const ROOT = new URL('../../..', import.meta.url).pathname;
 const CSS = readFileSync(join(ROOT, 'static/css/app.css'), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, '');
-const HEADER_JSX = readFileSync(join(ROOT, 'ui/src/components/Header.jsx'), 'utf8');
+// The app bar is gone; its icon buttons live in the tasks rail's footer.
+const FOOTER_JSX = readFileSync(join(ROOT, 'ui/src/components/MenuFooter.jsx'), 'utf8');
 
 // Every selector in the compiled sheet, one per comma-separated part.
 function selectors() {
@@ -69,13 +70,14 @@ test('no rule reaches a header\'s buttons by descent', () => {
   );
 });
 
-test('the header icon style is an opt-in class the header actually uses', () => {
+test('the icon style is an opt-in class the rail\'s footer actually uses', () => {
   assert.ok(CSS.includes('\n.header-icon-btn {'), '.header-icon-btn is gone');
-  const uses = HEADER_JSX.match(/className="header-icon-btn"/g) || [];
+  const uses = FOOTER_JSX.match(/className=\{cx\('header-icon-btn'/g) || [];
   assert.equal(
-    uses.length, 4,
-    'the usage, release notes, settings and refresh buttons are the only reason this class '
-    + 'exists; if the header changed, keep them opted in or delete the class',
+    uses.length, 3,
+    'the usage, release notes and settings buttons (and Shut down, in its own component) are '
+    + 'the only reason this class exists; if the footer changed, keep them opted in or delete '
+    + 'the class',
   );
 });
 

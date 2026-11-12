@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { groupSubtaskTabs, parentOfTab } from './subtaskTabs.js';
+import { subtaskListId } from './subtaskTabs.js';
 
 const tab = (task_id, extra = {}) => ({ task_id, task_summary: `Name of ${task_id}`, ...extra });
 const ids = (sessions) => sessions.map((session) => session.task_id);
@@ -56,4 +57,10 @@ test('a sub-task of a sub-task goes under the top main task; a loop groups nothi
   assert.deepEqual(ids(looped.top), ['A', 'B', 'C']);
   assert.equal(looped.childrenOf.size, 0);
   assert.deepEqual(groupSubtaskTabs(null), { top: [], childrenOf: new Map(), order: [] });
+});
+
+test('subtaskListId: one valid element id per main task', () => {
+  assert.equal(subtaskListId('UNA-1'), 'tab-subtasks-UNA-1');
+  assert.equal(subtaskListId('a b/c'), 'tab-subtasks-a_b_c');
+  assert.notEqual(subtaskListId('UNA-1'), subtaskListId('UNA-2'));
 });

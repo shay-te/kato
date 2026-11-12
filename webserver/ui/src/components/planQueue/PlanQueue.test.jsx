@@ -14,7 +14,7 @@
 // - the plan is polled only while its tab shows.
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('../../api.js', () => ({
   fetchPlanQueues: vi.fn(),
@@ -62,8 +62,9 @@ import {
   takeOverPlanQueue,
 } from '../../api.js';
 import { toast, toastStore } from '../../stores/toastStore.js';
+import PlanQueueButton from './PlanQueueButton.jsx';
 import PlanQueueView from './PlanQueueView.jsx';
-import { usePlanQueueSummary } from '../../hooks/usePlanQueue.js';
+import PlanQueueTabBadge from './PlanQueueTabBadge.jsx';
 import { planQueueChanges, planQueueView } from './planQueueViewStore.js';
 
 function step(id, overrides = {}) {
@@ -124,6 +125,81 @@ beforeEach(() => {
     { id: 'sonnet', label: 'Sonnet 5.5', default: true }, { id: 'opus', label: 'Opus 5.5' },
   ] });
   fetchEffortLevels.mockResolvedValue({ levels: ['low', 'medium', 'high'], default: 'medium' });
+});
+
+describe('PlanQueueButton', () => {
+  test('says "Split plan" before the task has a plan queue', async () => {
+    render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    await waitFor(() => expect(fetchPlanQueues).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Split plan' })).toBeInTheDocument();
+  });
+
+  test('switches to "Plan board" once it has one, with a dot while it runs', async () => {
+    fetchPlanQueues.mockResolvedValue({ plans: [summary({ status: 'running', counts: { satisfied: 1 } })] });
+    const { container } = render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    const button = await screen.findByRole('button', { name: 'Plan board' });
+    expect(button).toHaveAttribute('data-tooltip', 'Plan board — Running · 1/2 done');
+    expect(container.querySelector('.plan-queue-dot')).toBeTruthy();
+  });
+
+  test('a stopped plan offers a new split again, without the dot', async () => {
+    fetchPlanQueues.mockResolvedValue({ plans: [summary({ status: 'cancelled' })] });
+    const { container } = render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    await waitFor(() => expect(fetchPlanQueues).toHaveBeenCalled());
+    expect(await screen.findByRole('button', { name: 'Split plan' })).toBeInTheDocument();
+    expect(container.querySelector('.plan-queue-dot')).toBeNull();
+  });
+
+  test('ignores another task\'s plan', async () => {
+    fetchPlanQueues.mockResolvedValue({ plans: [summary({ source_task_id: 'UNA-9' })] });
+    render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    await waitFor(() => expect(fetchPlanQueues).toHaveBeenCalled());
+    expect(screen.getByRole('button', { name: 'Split plan' })).toBeInTheDocument();
+  });
+
+  test('the placeholder is inert and asks nothing', () => {
+    render(<PlanQueueButton disabled />);
+    expect(screen.getByRole('button', { name: 'Split plan' })).toBeDisabled();
+    expect(fetchPlanQueues).not.toHaveBeenCalled();
+  });
+
+  test('a click opens its task\'s plan tab, named as the button', async () => {
+    const seen = [];
+    const unsubscribe = planQueueView.subscribe((request) => seen.push([request.taskId, request.label]));
+    render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Split plan' }));
+    unsubscribe();
+    expect(seen.at(-1)).toEqual(['UNA-1', 'Split plan']);
+  });
+
+  test('a blue dot while an agent proposes, an amber one while the split waits for review', async () => {
+    fetchPlanQueues.mockResolvedValue({ plans: [summary({ status: 'proposing' })] });
+    const { container, unmount } = render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    await waitFor(() => expect(container.querySelector('.plan-queue-dot.is-running')).toBeTruthy());
+    unmount();
+    fetchPlanQueues.mockResolvedValue({ plans: [summary({ status: 'proposed' })] });
+    const second = render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
+    await waitFor(() => expect(second.container.querySelector('.plan-queue-dot.is-warn')).toBeTruthy());
+  });
+});
+
+describe('PlanQueueTabBadge — the split on its task\'s row, done or not', () => {
+  test('a live plan is not done: its colour says where it stands', () => {
+    const tones = ['proposing', 'proposed', 'paused'].map((status) => {
+      const { container, unmount } = render(<PlanQueueTabBadge plan={summary({ status })} />);
+      const tone = container.querySelector('.tab-plan-queue-badge').className.match(/is-(\w+)/)[1];
+      unmount();
+      return tone;
+    });
+    expect(tones).toEqual(['running', 'warn', 'idle']);
+  });
+
+  test('a finished plan is done; no plan shows nothing', () => {
+    const { container, rerender } = render(<PlanQueueTabBadge finished />);
+    expect(screen.getByRole('img', { name: 'Split plan: Finished — every task is done' })).toHaveClass('is-good');
+    rerender(<PlanQueueTabBadge />);
+    expect(container.querySelector('.tab-plan-queue-badge')).toBeNull();
+  });
 });
 
 describe('PlanQueueView — before a split exists', () => {
@@ -984,8 +1060,8 @@ describe('the plan tab', () => {
     expect(fetchPlanQueue.mock.calls.length).toBe(closed);
   });
 
-  test('a change to the plan refreshes its summary at once, for that task only', async () => {
-    renderHook(() => usePlanQueueSummary('UNA-1'));
+  test('a change to the plan refreshes the toolbar button at once, for that task only', async () => {
+    render(<PlanQueueButton session={{ task_id: 'UNA-1' }} />);
     await waitFor(() => expect(fetchPlanQueues).toHaveBeenCalledTimes(1));
     act(() => planQueueChanges.notify('UNA-9'));
     expect(fetchPlanQueues).toHaveBeenCalledTimes(1);

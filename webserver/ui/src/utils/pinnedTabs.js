@@ -30,6 +30,10 @@ export const PINNED_TABS_STORAGE_KEY = 'kato.tabs.pinned';
 // somewhere, or the next poll would put it straight back.
 export const TAB_ORDER_STORAGE_KEY = 'kato.tabs.order';
 
+// The main tasks whose sub-tasks the operator folded away in the tasks menu.
+// Expanded is the default, so only the folded ones are recorded.
+export const COLLAPSED_GROUPS_STORAGE_KEY = 'kato.tabs.collapsedGroups';
+
 // Read the pinned-task-id list from storage. Defensive against:
 // missing storage, missing key, malformed JSON, non-array payload,
 // non-string entries (filtered out), and duplicates (dedup, keeping
@@ -92,25 +96,36 @@ export function togglePinned(taskId, ids) {
   return current;
 }
 
-export function readTabOrder(storage) {
-  const raw = readStorageString(TAB_ORDER_STORAGE_KEY, null, storage);
-  if (!raw) { return []; }
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
-      : [];
-  } catch (_err) {
-    return [];
-  }
+// A stored list of task ids: anything that is not a JSON array reads as [].
+function readIdList(key, storage) {
+  const parsed = parseJsonOr(readStorageString(key, null, storage), null);
+  return Array.isArray(parsed)
+    ? parsed.map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
 }
 
-export function writeTabOrder(ids, storage) {
+function writeIdList(key, ids, storage) {
   const sanitized = (Array.isArray(ids) ? ids : [])
     .map((id) => String(id || '').trim())
     .filter(Boolean);
-  writeStorageItem(TAB_ORDER_STORAGE_KEY, JSON.stringify(sanitized), storage);
+  writeStorageItem(key, JSON.stringify(sanitized), storage);
   return sanitized;
+}
+
+export function readTabOrder(storage) {
+  return readIdList(TAB_ORDER_STORAGE_KEY, storage);
+}
+
+export function writeTabOrder(ids, storage) {
+  return writeIdList(TAB_ORDER_STORAGE_KEY, ids, storage);
+}
+
+export function readCollapsedGroups(storage) {
+  return readIdList(COLLAPSED_GROUPS_STORAGE_KEY, storage);
+}
+
+export function writeCollapsedGroups(ids, storage) {
+  return writeIdList(COLLAPSED_GROUPS_STORAGE_KEY, ids, storage);
 }
 
 // Order ``sessions`` so pinned tasks come first (in pinned order)

@@ -7,8 +7,6 @@ import { describe, test, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 
 import Tab from './Tab.jsx';
-import { planQueueView } from './planQueue/planQueueViewStore.js';
-import { reviewLoopView } from './reviewLoop/reviewLoopViewStore.js';
 import { AGENT_SESSION_ID } from '../constants/sessionFields.js';
 import { TAB_STATUS } from '../constants/tabStatus.js';
 import { SESSION_LIFECYCLE } from '../hooks/useSessionStream.js';
@@ -560,69 +558,55 @@ describe('Tab — a plan\'s tasks', () => {
     expect(screen.queryByRole('img', { name: /subtask of/i })).toBeNull();
   });
 
-  test('the task a plan was split from: its row\'s plan button says so, and its card says where it is', () => {
+  test('the task a plan was split from: its row says whether the split is done, and its card says where it is', () => {
     vi.useFakeTimers();
     try {
       const plan = { plan_id: 'p', status: 'running', step_count: 17, counts: { satisfied: 3 } };
       const { container, rerender } = render(
         <Tab session={_session({ plan_queue: plan })} onSelect={() => {}} />,
       );
-      const button = screen.getByRole('button', { name: 'Plan board of KATO-123' });
-      expect(button).toHaveClass('has-status');  // shown without hovering
-      expect(button.querySelector('.plan-queue-dot.is-running')).not.toBeNull();
+      expect(screen.getByRole('img', { name: 'Split plan: Running · 3/17 done' }))
+        .toHaveClass('tab-plan-queue-badge', 'is-running');
       fireEvent.mouseEnter(container.querySelector('li'));
       act(() => { vi.advanceTimersByTime(400); });
       expect(document.querySelector('.tab-tooltip')).toHaveTextContent('Split planRunning · 3/17 done');
       fireEvent.mouseLeave(container.querySelector('li'));
+      rerender(<Tab session={_session({ plan_queue: null, plan_queue_finished: true })} onSelect={() => {}} />);
+      expect(screen.getByRole('img', { name: /^Split plan: Finished/ })).toHaveClass('is-good');
       rerender(<Tab session={_session({ plan_queue: null })} onSelect={() => {}} />);
-      const idle = screen.getByRole('button', { name: 'Split plan of KATO-123' });
-      expect(idle).not.toHaveClass('has-status');  // revealed on hover, like the pencil
-      expect(idle.querySelector('.plan-queue-dot')).toBeNull();
+      expect(container.querySelector('.tab-plan-queue-badge')).toBeNull();  // no plan, no mark
     } finally {
       vi.useRealTimers();
     }
   });
 
-  test('the row\'s plan button switches to the task and opens its plan tab', () => {
-    const onSelect = vi.fn();
-    const seen = [];
-    const unsubscribe = planQueueView.subscribe((request) => seen.push([request.taskId, request.label]));
-    try {
-      render(<Tab session={_session()} onSelect={onSelect} />);
-      fireEvent.click(screen.getByRole('button', { name: 'Split plan of KATO-123' }));
-    } finally {
-      unsubscribe();
-    }
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith('KATO-123');
-    expect(seen.at(-1)).toEqual(['KATO-123', 'Split plan']);
-  });
-
-  test('the row\'s review loop button switches to the task and opens its loop', () => {
-    const onSelect = vi.fn();
-    const seen = [];
-    const unsubscribe = reviewLoopView.subscribe((request) => seen.push(request.taskId));
-    try {
-      render(<Tab session={_session()} onSelect={onSelect} />);
-      const button = screen.getByRole('button', { name: 'Review loop of KATO-123' });
-      expect(button).not.toHaveClass('has-status');
-      expect(button.querySelector('[data-icon="loop"]')).not.toBeNull();
-      fireEvent.click(button);
-    } finally {
-      unsubscribe();
-    }
-    expect(onSelect).toHaveBeenCalledWith('KATO-123');
-    expect(seen.at(-1)).toBe('KATO-123');
-  });
-
-  test('a running loop shows on the row\'s loop button, without hovering', () => {
+  test('the row says whether its review loop is done: running, passed, or ended without passing', () => {
     const loop = {
       loop_id: 'c'.repeat(32), status: 'running', phase: 'reviewing', round: 1, max_rounds: 5,
       started_at: Date.now() / 1000,
     };
-    render(<Tab session={_session({ review_loop: loop })} onSelect={() => {}} />);
-    const button = screen.getByRole('button', { name: 'Review loop of KATO-123' });
-    expect(button).toHaveClass('has-status');
-    expect(button.querySelector('.review-loop-dot.is-running')).not.toBeNull();
+    const { container, rerender } = render(<Tab session={_session({ review_loop: loop })} onSelect={() => {}} />);
+    const running = screen.getByRole('img', { name: 'Review loop: running' });
+    expect(running).toHaveClass('tab-review-loop-badge', 'is-running');
+    expect(running.querySelector('[data-icon="loop"]')).toHaveClass('kato-icon-spin');
+    rerender(<Tab session={_session({ review_loop: { ...loop, status: 'clean' } })} onSelect={() => {}} />);
+    const clean = screen.getByRole('img', { name: 'Review loop: clean' });
+    expect(clean).toHaveClass('is-good');
+    expect(clean.querySelector('.kato-icon-spin')).toBeNull();
+    rerender(<Tab session={_session({ review_loop: { ...loop, status: 'stuck' } })} onSelect={() => {}} />);
+    expect(screen.getByRole('img', { name: 'Review loop: stuck' })).toHaveClass('is-warn');
+    rerender(<Tab session={_session({ review_loop: null })} onSelect={() => {}} />);
+    expect(container.querySelector('.tab-review-loop-badge')).toBeNull();
+  });
+
+  test('the marks are not buttons: the toolbar opens the loop and the plan, a click on a mark opens the task', () => {
+    const onSelect = vi.fn();
+    const loop = { loop_id: 'd'.repeat(32), status: 'clean', round: 2, max_rounds: 5 };
+    render(
+      <Tab session={_session({ review_loop: loop, plan_queue_finished: true })} onSelect={onSelect} />,
+    );
+    expect(screen.queryByRole('button', { name: /review loop|split plan|plan board/i })).toBeNull();
+    fireEvent.click(screen.getByRole('img', { name: 'Review loop: clean' }));
+    expect(onSelect).toHaveBeenCalledWith('KATO-123');
   });
 });

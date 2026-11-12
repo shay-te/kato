@@ -77,11 +77,11 @@ export default function RightPane({
     <div className="left-pane-empty">
       <p className="left-pane-empty-title">No task selected</p>
       <p className="left-pane-empty-hint">
-        Pick a task from the strip at the top to see its files and changes here.
+        Pick a task from the rail on the left to see its files and changes here.
       </p>
       <p className="left-pane-empty-hint">
-        Click the status pill (top of the window) to watch the orchestrator's
-        live activity feed.
+        Click the status line (at the foot of the rail) to watch the
+        orchestrator's live activity feed.
       </p>
     </div>
   );
