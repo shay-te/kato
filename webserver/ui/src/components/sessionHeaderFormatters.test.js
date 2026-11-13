@@ -1180,6 +1180,22 @@ test('formatHandoverResult: a failed tag says the ticket was left where it was',
   assert.match(toast.message, /^⚠ Not tagged kato:wait-editing: tag store down\. The ticket was left where it was/);
 });
 
+test('formatHandoverResult: left for their kato to start on by itself', () => {
+  const done = formatHandoverResult(handover('handed_over', [
+    { step: 'assign', ok: true, detail: '' },
+    { step: 'untag', ok: true, detail: '' },
+  ]));
+  assert.equal(done.kind, 'success');
+  assert.equal(done.message.split('\n')[1], 'Not tagged kato:wait-editing — their kato starts working on it by itself.');
+  const stuck = formatHandoverResult(handover('handed_over_with_problems', [
+    { step: 'assign', ok: true, detail: '' },
+    { step: 'untag', ok: false, detail: 'tag store down' },
+  ]));
+  assert.equal(stuck.kind, 'error');
+  assert.equal(stuck.message.split('\n')[0],
+    '⚠ kato:wait-editing could not be taken off: tag store down. Their kato will open it as a chat and wait for Jane Doe instead.');
+});
+
 test('formatHandoverResult: a failed assignment is "Not handed over"', () => {
   const toast = formatHandoverResult(handover('failed', [
     { step: 'assign', ok: false, detail: 'Unknown user' },

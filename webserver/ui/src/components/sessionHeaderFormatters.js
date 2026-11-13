@@ -124,6 +124,11 @@ const HANDOVER_STEP_WORDS = {
     ok: () => 'Tagged kato:wait-editing — their kato opens it as a chat and waits for them.',
     failed: (name, why) => `⚠ Not tagged kato:wait-editing: ${why}. The ticket was left where it was, so their kato does not run it unwatched.`,
   },
+  // "Their kato waits for them", unticked: the tag is taken off, never added.
+  untag: {
+    ok: () => 'Not tagged kato:wait-editing — their kato starts working on it by itself.',
+    failed: (name, why) => `⚠ kato:wait-editing could not be taken off: ${why}. Their kato will open it as a chat and wait for ${name} instead.`,
+  },
   comments: {
     ok: (name, detail) => `${capitalized(detail || "nothing of kato's blocked it")}.`,
     failed: (name, why) => `⚠ Kato's old comments: ${why}. The hand-over note still clears them for every kato.`,

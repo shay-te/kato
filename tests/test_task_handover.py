@@ -42,6 +42,7 @@ from kato_core_lib.data_layers.service.task_handover import (
     STEP_OPEN,
     STEP_STOP,
     STEP_TAG,
+    STEP_UNTAG,
     HandoverUnavailableError,
     TaskBusyError,
     TaskHandover,
@@ -102,6 +103,10 @@ class _Board(object):
     def add_tag(self, issue_id, tag):
         self._call('tag', issue_id, tag)
         self.tags.setdefault(issue_id, []).append(tag)
+
+    def remove_tag(self, issue_id, tag):
+        self._call('untag', issue_id, tag)
+        self.tags[issue_id] = [t for t in self.tags.get(issue_id, []) if t != tag]  # a missing tag: no-op
 
     # ----- the hand-over contract -----
 
@@ -201,12 +206,12 @@ class _Setup(unittest.TestCase):
             signed_by=signed_by, logger=self.logger,
         )
 
-    def hand(self, handle='jane', name='Jane Doe', *, quiet=True):
+    def hand(self, handle='jane', name='Jane Doe', *, quiet=True, **options):
         if not quiet:
-            return self.handover.hand_over('UNA-1', handle, name, stop_agent=self.stopper)
+            return self.handover.hand_over('UNA-1', handle, name, stop_agent=self.stopper, **options)
         logging.disable(logging.CRITICAL)
         try:
-            return self.handover.hand_over('UNA-1', handle, name, stop_agent=self.stopper)
+            return self.handover.hand_over('UNA-1', handle, name, stop_agent=self.stopper, **options)
         finally:
             logging.disable(logging.NOTSET)
 
@@ -376,6 +381,59 @@ class HandOverTests(_Setup):
         self.hand(name='')
         self.assertEqual(self.board.comments['UNA-1'][0].body,
                          HANDED_OVER_COMMENT.format(name='jane', by='kato'))
+
+
+class HandOverWithoutWaitingTests(_Setup):
+    """The picker's "Their kato waits for them", unticked: their kato is meant to
+    start on it by itself, so kato:wait-editing is taken off, never added."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.board.say('UNA-1', STARTED)
+
+    def test_their_kato_can_start_on_it_by_itself(self) -> None:
+        result = self.hand(quiet=False, wait_for_them=False)
+        self.assertEqual(result['status'], 'handed_over')
+        self.assertTrue(result['landed'])
+        self.assertEqual((self.board.assignee['UNA-1'], self.board.state['UNA-1']), ('jane', OPEN))
+        self.assertNotIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
+        self.assertIn('kato:repo:api', self.board.tags['UNA-1'])  # nothing else is touched
+        self.assertTrue(_gate_clear(self.board))
+        self.assertEqual(list(self.steps(result)),
+                         [STEP_ASSIGN, STEP_UNTAG, STEP_COMMENTS, STEP_NOTE, STEP_OPEN, STEP_STOP])
+        writes = [call[0] for call in self.board.calls if call[0] in ('assign', 'tag', 'untag', 'delete', 'comment', 'move')]
+        self.assertEqual(writes, ['assign', 'untag', 'delete', 'comment', 'move'])  # Open still last
+
+    def test_a_ticket_handed_on_wearing_the_tag_has_it_taken_off(self) -> None:
+        self.board.tags['UNA-1'].append(TaskTags.WAIT_EDITING)  # it came here that way
+        self.hand(wait_for_them=False)
+        self.assertNotIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
+
+    def test_a_tag_that_will_not_come_off_is_reported_and_the_rest_goes_on(self) -> None:
+        self.board.tags['UNA-1'].append(TaskTags.WAIT_EDITING)
+        self.board.refuse['untag'] = 'tag store down'
+        result = self.hand(wait_for_them=False)
+        self.assertEqual(self.steps(result)[STEP_UNTAG], (False, 'tag store down'))
+        self.assertEqual(result['status'], 'handed_over_with_problems')
+        self.assertTrue(result['landed'])  # theirs and in their queue: their kato just waits for them
+        self.assertEqual(self.board.state['UNA-1'], OPEN)
+        self.assertEqual(self.stopper.stopped, ['UNA-1'])
+
+    def test_a_refused_move_to_open_has_not_landed(self) -> None:
+        self.board.refuse['move'] = 'workflow forbids'
+        self.assertFalse(self.hand(wait_for_them=False)['landed'])
+
+    def test_a_refused_assignment_does_nothing_else(self) -> None:
+        self.board.refuse['assign'] = 'Unknown user: jane'
+        result = self.hand(wait_for_them=False)
+        self.assertFalse(result['landed'])
+        self.assertEqual(list(self.steps(result)), [STEP_ASSIGN])
+        self.assertNotIn('untag', [call[0] for call in self.board.calls])
+
+    def test_waiting_is_the_default(self) -> None:
+        self.hand()
+        self.assertIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
+        self.assertNotIn('untag', [call[0] for call in self.board.calls])
 
 
 class TrackerAssignmentTests(unittest.TestCase):

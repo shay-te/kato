@@ -11,6 +11,7 @@ import {
   fetchAgentVersion,
   fetchModels,
   fetchPendingPermissions,
+  handOverTask,
   refreshAgentBackends,
   postChatMessage,
   updateTaskSource,
@@ -460,6 +461,18 @@ test('fetchPendingPermissions sends the signature and reads a 304 as unchanged',
   assert.equal(calls[0].init.headers['If-None-Match'], '"abc"');
 });
 
+
+test('handOverTask: their kato waits for them unless the call says false', async () => {
+  const calls = _stubFetch({ ok: true, status: 200, json: async () => ({ status: 'handed_over' }) });
+  await handOverTask('UNA-1', 'jane', 'Jane Doe');
+  await handOverTask('UNA-1', 'jane', 'Jane Doe', { waitForThem: false });
+  await handOverTask('UNA-1', 'jane', 'Jane Doe', { waitForThem: undefined });
+  assert.equal(calls[0].url, '/api/sessions/UNA-1/handover');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { handle: 'jane', name: 'Jane Doe', wait_for_them: true });
+  assert.equal(JSON.parse(calls[1].init.body).wait_for_them, false);
+  assert.equal(JSON.parse(calls[2].init.body).wait_for_them, true);
+  assert.deepEqual(await handOverTask('', 'jane'), { ok: false, error: 'no task id' });
+});
 
 test('updateTaskSource: one repository goes in the body; none means every one', async () => {
   const calls = _stubFetch({ ok: true, status: 200, json: async () => ({ updated: true }) });

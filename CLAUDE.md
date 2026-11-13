@@ -794,19 +794,24 @@ auto-wait row in the tasks rail has a green border (`.tabs-pane-side .tab.is-aut
 ```
 header ⇄ (lifecycle group, before Stop; hidden unless GET /api/sessions/<t>/handover → available)
   → picker: GET …/handover/users (the tracker's assignable people) → pick one
-  → UnpushedWorkWarning purpose="handover" (their kato clones from the remote) → POST …/handover {handle, name}
+  → UnpushedWorkWarning purpose="handover" (their kato clones from the remote) → POST …/handover {handle, name, wait_for_them}
   → TaskHandover.hand_over: 409 while the agent is mid-turn (running_agents.is_mid_turn)
      1. assign_verified (tracker_assignment.py: assign + READ BACK)   ← fails → nothing else runs
      2. tag kato:wait-editing                                          ← fails → stops: never released untagged
+        — or, wait_for_them false: TAKE IT OFF (step `untag`)          ← fails → reported, goes on (they just wait)
      3. clear_pickup_block(delete_own=True) (pickup_block.py): delete the BLOCKING comments THIS account wrote
      4. comment "kato: retry approved — handed over to <name> by <agent_name()>…" (an override every kato honours)
      5. TaskMoves → Open (HANDED_OVER)  ← LAST ticket write: their kato sees it only once all of the above is on it
      6. stop_task_agent (task_agent_stop.py — the chat's Stop, one helper for both); the workspace is kept
 ```
-Each step is reported (`formatHandoverResult`: problems red, first). **"Also delete it from my tasks"** (the picker's
+Each step is reported (`formatHandoverResult`: problems red, first). **"Their kato waits for them"** (the picker's
+checkbox, TICKED every time it opens) is step 2: unticked, their kato is meant to start on the ticket by itself, unwatched,
+so the tag is removed rather than merely not added (a ticket handed on usually arrived wearing it). Only a literal
+`false` unticks it — the API helper and the route both read anything else (an older UI sending nothing) as "wait".
+`landed` then needs only assign + Open (`LANDING_STEPS_UNTAGGED`). **"Also delete it from my tasks"** (the picker's
 checkbox, unticked every time it opens) runs the tab's own delete (App's `doForgetTask` → `DELETE …/workspace`, no
-second dialog, never `?done=1`) only once the result's `landed` is true — assign, tag AND Open all done
-(`task_handover.LANDING_STEPS`); otherwise the task is kept and the toast says so. Not offered for a task a plan THIS
+second dialog, never `?done=1`) only once the result's `landed` is true — assign, tag (when asked for) AND Open all
+done (`task_handover.LANDING_STEPS`); otherwise the task is kept and the toast says so. Not offered for a task a plan THIS
 kato drives was split from (`kato_webserver/driven_plan.py`, the ONE answer the delete's sub-task cascade also uses):
 the delete would take the plan's sub-tasks with it. Asked again each time the picker opens; no answer = not offered. ONE home each, gated by
 `tests/test_task_handover.py` `SingleOwnerGateTests`: `assign_issue` only in `tracker_assignment.py` (the plan

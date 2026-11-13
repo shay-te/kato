@@ -622,9 +622,12 @@ export function fetchHandoverUsers(taskId) {
   return requestEnvelope(handoverUrl(taskId, '/users'), { method: 'GET' });
 }
 
-export function handOverTask(taskId, handle, name) {
+// ``waitForThem: false`` — the picker's "Their kato waits for them", unticked:
+// their kato starts on it by itself (kato:wait-editing is taken off, never
+// added). Only an explicit false; the server reads it the same way.
+export function handOverTask(taskId, handle, name, { waitForThem = true } = {}) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
-  return postEnvelope(handoverUrl(taskId), { handle, name });
+  return postEnvelope(handoverUrl(taskId), { handle, name, wait_for_them: waitForThem !== false });
 }
 
 export function finishTask(taskId) {

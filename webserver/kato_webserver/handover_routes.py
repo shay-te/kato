@@ -11,9 +11,11 @@
          Who the ticket can be assigned to — asked of the tracker when the
          picker opens. 400 when it cannot be handed over, 502 when the tracker
          did not answer.
-    POST /api/sessions/<task>/handover        {handle, name} -> {status, landed, assignee, steps}
-         ``TaskHandover.hand_over``: assign + verify, tag kato:wait-editing,
-         clear kato's blocking comments, post who has it, move to Open, stop
+    POST /api/sessions/<task>/handover        {handle, name, wait_for_them} -> {status, landed, assignee, steps}
+         ``TaskHandover.hand_over``: assign + verify, tag kato:wait-editing
+         (``wait_for_them: false`` — only the literal false — takes it off
+         instead: their kato starts on it by itself; anything else, or nothing,
+         tags it), clear kato's blocking comments, post who has it, move to Open, stop
          the agent here (``task_agent_stop`` — the chat's Stop). 409 while the
          agent is mid-turn; 400 for a task that cannot be handed over; 502 when
          the assignment itself failed (nothing else was done).
@@ -77,6 +79,8 @@ def register_handover_routes(app: Flask) -> None:
                 stop_agent=lambda task: stop_task_agent(
                     app, task, reason='the task was handed over', source='webserver_handover_route',
                 ),
+                # Only an explicit ``false`` lets their kato run it unwatched.
+                wait_for_them=body.get('wait_for_them') is not False,
             )
         except TaskBusyError as exc:
             return jsonify({'error': str(exc)}), 409

@@ -5143,9 +5143,10 @@ code {
   cursor: default;
 }
 
-/* Hand over's "also delete it from my tasks": the delete dialog's opt-in box,
-   between the picker's list and its buttons. */
-.handover-remove-here {
+/* Hand over's choices ("their kato waits for them", "also delete it from my
+   tasks"), the delete dialog's opt-in box, between the picker's list and its
+   buttons. */
+.handover-option {
   margin-top: $SPACE-10;
 }
 

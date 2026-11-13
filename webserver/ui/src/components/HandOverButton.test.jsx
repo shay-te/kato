@@ -16,7 +16,8 @@ import {
 } from '../api.js';
 import { toastResult } from '../stores/toastStore.js';
 import HandOverButton, {
-  CHECKING_REMOVE_HERE, HANDOVER_TOOLTIP, UNCHECKED_REMOVE_HERE, forgetHandoverAvailability,
+  CHECKING_REMOVE_HERE, HANDOVER_TOOLTIP, START_BY_ITSELF_HINT, UNCHECKED_REMOVE_HERE, WAIT_FOR_THEM_HINT,
+  forgetHandoverAvailability,
 } from './HandOverButton.jsx';
 import { KEPT_HERE_LINE } from './sessionHeaderFormatters.js';
 
@@ -79,7 +80,7 @@ describe('HandOverButton', () => {
   test('picking someone with nothing unpushed hands it over and reports each step', async () => {
     const { container } = await shown();
     await pick(container);
-    await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe'));
+    await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: true }));
     await waitFor(() => expect(toastResult).toHaveBeenCalled());
     expect(toastResult.mock.calls[0][0]).toMatchObject({ kind: 'success', title: 'Handed over to Jane Doe' });
   });
@@ -91,7 +92,7 @@ describe('HandOverButton', () => {
     expect(await screen.findByText(/would not reach them/)).toBeTruthy();
     expect(handOverTask).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Hand over anyway' }));
-    await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe'));
+    await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: true }));
   });
 
   test('cancelling the warning hands nothing over', async () => {
@@ -154,6 +155,58 @@ describe('HandOverButton', () => {
     await waitFor(() => expect(headerButton(again.container)).toBeNull());
   });
 
+  describe('their kato waits for them', () => {
+    const waits = (dialog) => within(dialog).getByRole('checkbox', { name: /Their kato waits for them/ });
+
+    async function openPicker(container) {
+      fireEvent.click(headerButton(container));
+      const dialog = await screen.findByRole('dialog');
+      await within(dialog).findByText('Jane Doe');
+      return dialog;
+    }
+
+    test('ticked: the ticket is tagged kato:wait-editing, and the picker says so', async () => {
+      const { container } = await shown();
+      const dialog = await openPicker(container);
+      expect(waits(dialog)).toBeChecked();
+      expect(within(dialog).getByText(WAIT_FOR_THEM_HINT)).toBeTruthy();
+      expect(within(dialog).getByText(/tagged kato:wait-editing and moved to Open/)).toBeTruthy();
+    });
+
+    test('unticked: their kato starts on it by itself, said before and sent', async () => {
+      const { container } = await shown();
+      const dialog = await openPicker(container);
+      fireEvent.click(waits(dialog));
+      expect(waits(dialog)).not.toBeChecked();
+      expect(within(dialog).getByText(START_BY_ITSELF_HINT)).toBeTruthy();
+      expect(within(dialog).getByText(/left without kato:wait-editing and moved to Open/)).toBeTruthy();
+      fireEvent.click(within(dialog).getByText('Jane Doe'));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Hand over' }));
+      await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: false }));
+    });
+
+    test('unticked and warned about unpushed work, the choice survives the warning', async () => {
+      fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+      const { container } = await shown();
+      const dialog = await openPicker(container);
+      fireEvent.click(waits(dialog));
+      fireEvent.click(within(dialog).getByText('Jane Doe'));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Hand over' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Hand over anyway' }));
+      await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: false }));
+    });
+
+    test('ticked again every time the picker opens', async () => {
+      const { container } = await shown();
+      let dialog = await openPicker(container);
+      fireEvent.click(waits(dialog));
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      dialog = await openPicker(container);
+      expect(waits(dialog)).toBeChecked();
+    });
+  });
+
   describe('also delete it from my tasks', () => {
     const PLAN_SOURCE = 'a plan was split from this task here: deleting it would delete the plan\'s sub-tasks too';
     const LANDED = {
@@ -187,7 +240,7 @@ describe('HandOverButton', () => {
 
     test('not offered when the header has no delete to run', async () => {
       const dialog = await openPicker(undefined);
-      expect(within(dialog).queryByRole('checkbox')).toBeNull();
+      expect(within(dialog).queryByRole('checkbox', { name: /Also delete it from my tasks/ })).toBeNull();
       expect(fetchHandoverAvailability).toHaveBeenCalledTimes(1);  // only the button's own question
     });
 
@@ -199,7 +252,7 @@ describe('HandOverButton', () => {
       fireEvent.click(option(dialog));
       await confirm(dialog, 'Hand over and delete here');
       await waitFor(() => expect(onRemoveHere).toHaveBeenCalledWith('UNA-1'));
-      expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe');
+      expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: true });
       expect(toastResult.mock.calls[0][0]).toMatchObject({ kind: 'success', title: 'Handed over to Jane Doe' });
       // The hand-over's own toast came first, the delete's own after it.
       expect(toastResult.mock.invocationCallOrder[0]).toBeLessThan(onRemoveHere.mock.invocationCallOrder[0]);

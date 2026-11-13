@@ -149,6 +149,24 @@ class HandoverRouteTests(unittest.TestCase):
                 response = self.client.post('/api/sessions/UNA-1/handover', json=body)
                 self.assertEqual(response.status_code, 400)
 
+    def test_only_an_explicit_false_hands_it_over_untagged(self) -> None:
+        self.board.tags['UNA-1'].append(TaskTags.WAIT_EDITING)
+        body = self.client.post('/api/sessions/UNA-1/handover',
+                                json={'handle': 'jane', 'wait_for_them': False}).get_json()
+        self.assertTrue(body['landed'])
+        self.assertEqual(body['steps'][1], {'step': 'untag', 'ok': True, 'detail': ''})
+        self.assertNotIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
+
+    def test_anything_but_false_tags_it(self) -> None:
+        for wait in (True, 'false', 0, None):
+            with self.subTest(wait=wait):
+                self.board.tags['UNA-1'] = []
+                self.board.assignee['UNA-1'] = ME
+                body = self.client.post('/api/sessions/UNA-1/handover',
+                                        json={'handle': 'jane', 'wait_for_them': wait}).get_json()
+                self.assertEqual(body['steps'][1]['step'], 'tag')
+                self.assertIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
+
     def test_a_failed_assignment_is_a_502_with_its_steps(self) -> None:
         self.board.refuse['assign'] = 'Unknown user'
         response = self.client.post('/api/sessions/UNA-1/handover', json={'handle': 'jane'})

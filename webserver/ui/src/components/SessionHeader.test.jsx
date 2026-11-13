@@ -929,7 +929,7 @@ describe('SessionHeader — Hand over can delete the task here', () => {
 
   test('no delete handed in: not offered', async () => {
     const dialog = await openHandover({});
-    expect(within(dialog).queryByRole('checkbox')).toBeNull();
+    expect(within(dialog).queryByRole('checkbox', { name: /Also delete it from my tasks/ })).toBeNull();
   });
 });
 

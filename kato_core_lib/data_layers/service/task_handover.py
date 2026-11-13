@@ -8,7 +8,12 @@ over"). Kato then, in this order:
 2. tags it ``kato:wait-editing``, so their kato opens it as an editing chat and
    waits for them instead of implementing it unasked — nothing after runs if
    this fails either: a ticket released without the tag would be run
-   autonomously by a kato its owner is not watching;
+   autonomously by a kato its owner is not watching. Unless the operator chose
+   ``wait_for_them=False`` (the picker's "Their kato waits for them",
+   unticked): then their kato is MEANT to start on it by itself, and the tag is
+   taken off instead — a ticket handed on usually came here wearing it. A
+   failure there is reported and does not stop the hand-over: their kato then
+   waits for them, the safe side;
 3. clears what would stop their kato from picking it up: deletes the blocking
    comments this kato's account wrote (``pickup_block.clear_pickup_block``) —
    never a person's;
@@ -22,7 +27,7 @@ over"). Kato then, in this order:
    it is: kato never deletes on its own.
 
 The result's ``landed`` says the ticket is theirs AND in their kato's queue
-(assigned, tagged, moved to Open). Only then may the operator's "also delete it
+(assigned, tagged — when the operator asked for the tag — moved to Open). Only then may the operator's "also delete it
 from my tasks" go ahead: a ticket that stopped half way is still this kato's
 to sort out, and its workspace is where that happens.
 
@@ -49,6 +54,7 @@ HANDED_OVER_COMMENT = (
 
 STEP_ASSIGN = 'assign'
 STEP_TAG = 'tag'
+STEP_UNTAG = 'untag'
 STEP_COMMENTS = 'comments'
 STEP_NOTE = 'note'
 STEP_OPEN = 'open'
@@ -96,7 +102,15 @@ class TaskHandover(object):
         tracker = self._available_tracker(task_id)
         return [{'handle': user.handle, 'name': user.name} for user in tracker.list_assignable_users(task_id)]
 
-    def hand_over(self, task_id: str, handle: str, name: str = '', *, stop_agent: Callable[[str], str]) -> dict:
+    def hand_over(
+        self,
+        task_id: str,
+        handle: str,
+        name: str = '',
+        *,
+        stop_agent: Callable[[str], str],
+        wait_for_them: bool = True,
+    ) -> dict:
         task = str(task_id or '').strip()
         handle = str(handle or '').strip()
         if not handle:
@@ -106,10 +120,13 @@ class TaskHandover(object):
             raise TaskBusyError(f'{task}\'s agent is working — wait for it to finish, or stop it first')
         person = str(name or '').strip() or handle
         steps: list[dict] = []
+        landing = LANDING_STEPS if wait_for_them else LANDING_STEPS_UNTAGGED
         if not self._run(steps, STEP_ASSIGN, lambda: assign_verified(tracker, task, handle)):
-            return _result(task, handle, person, steps)
-        if not self._run(steps, STEP_TAG, lambda: self._task_service.add_tag(task, TaskTags.WAIT_EDITING)):
-            return _result(task, handle, person, steps)
+            return _result(task, handle, person, steps, landing)
+        if not wait_for_them:
+            self._run(steps, STEP_UNTAG, lambda: self._task_service.remove_tag(task, TaskTags.WAIT_EDITING))
+        elif not self._run(steps, STEP_TAG, lambda: self._task_service.add_tag(task, TaskTags.WAIT_EDITING)):
+            return _result(task, handle, person, steps, landing)
         self._run(steps, STEP_COMMENTS, lambda: self._clear_comments(tracker, task))
         self._run(steps, STEP_NOTE, lambda: self._task_service.add_comment(
             task, HANDED_OVER_COMMENT.format(name=person, by=self._signed_by() or 'kato'),
@@ -118,7 +135,7 @@ class TaskHandover(object):
             task, OPEN, HANDED_OVER,
         ))
         self._run(steps, STEP_STOP, lambda: stop_agent(task))
-        return _result(task, handle, person, steps)
+        return _result(task, handle, person, steps, landing)
 
     def _clear_comments(self, tracker, task: str) -> str:
         cleared = clear_pickup_block(tracker, self._task_service, task, delete_own=True)
@@ -155,10 +172,13 @@ class TaskHandover(object):
 
 # What makes the ticket theirs and visible to their kato. The comments, the
 # note and this kato's own Stop are reported, but none of them decides it.
+# Untagged on purpose, taking an old tag off is not part of it either: a tag
+# left on only makes their kato wait for them.
 LANDING_STEPS = (STEP_ASSIGN, STEP_TAG, STEP_OPEN)
+LANDING_STEPS_UNTAGGED = (STEP_ASSIGN, STEP_OPEN)
 
 
-def _result(task: str, handle: str, name: str, steps: list[dict]) -> dict:
+def _result(task: str, handle: str, name: str, steps: list[dict], landing: tuple[str, ...]) -> dict:
     succeeded = {step['step'] for step in steps if step['ok']}
     assigned = STEP_ASSIGN in succeeded
     problems = [step for step in steps if not step['ok']]
@@ -171,7 +191,7 @@ def _result(task: str, handle: str, name: str, steps: list[dict]) -> dict:
     return {
         'task_id': task,
         'status': status,
-        'landed': all(step in succeeded for step in LANDING_STEPS),
+        'landed': all(step in succeeded for step in landing),
         'assignee': {'handle': handle, 'name': name},
         'steps': steps,
     }
