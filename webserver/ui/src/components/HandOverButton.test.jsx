@@ -15,7 +15,10 @@ import {
   fetchHandoverAvailability, fetchHandoverUsers, fetchTaskUnpushedWork, handOverTask,
 } from '../api.js';
 import { toastResult } from '../stores/toastStore.js';
-import HandOverButton, { HANDOVER_TOOLTIP, forgetHandoverAvailability } from './HandOverButton.jsx';
+import HandOverButton, {
+  CHECKING_REMOVE_HERE, HANDOVER_TOOLTIP, UNCHECKED_REMOVE_HERE, forgetHandoverAvailability,
+} from './HandOverButton.jsx';
+import { KEPT_HERE_LINE } from './sessionHeaderFormatters.js';
 
 const USERS = [{ handle: 'jane', name: 'Jane Doe' }, { handle: 'zed', name: 'zed' }];
 const CLEAN = { repositories: [], unchecked: [] };
@@ -149,5 +152,172 @@ describe('HandOverButton', () => {
     expect(headerButton(again.container)).not.toBeNull();
     resolve({ available: false });
     await waitFor(() => expect(headerButton(again.container)).toBeNull());
+  });
+
+  describe('also delete it from my tasks', () => {
+    const PLAN_SOURCE = 'a plan was split from this task here: deleting it would delete the plan\'s sub-tasks too';
+    const LANDED = {
+      ok: true,
+      body: {
+        status: 'handed_over', landed: true, assignee: { handle: 'jane', name: 'Jane Doe' },
+        steps: [{ step: 'assign', ok: true, detail: '' }, { step: 'open', ok: true, detail: '' }],
+      },
+    };
+
+    beforeEach(() => {
+      fetchHandoverAvailability.mockResolvedValue({ available: true, reason: '', remove_here_reason: '' });
+      handOverTask.mockResolvedValue(LANDED);
+    });
+
+    async function openPicker(onRemoveHere) {
+      const view = render(<HandOverButton taskId="UNA-1" onRemoveHere={onRemoveHere} />);
+      await waitFor(() => expect(headerButton(view.container)).not.toBeNull());
+      fireEvent.click(headerButton(view.container));
+      const dialog = await screen.findByRole('dialog');
+      await within(dialog).findByText('Jane Doe');
+      return dialog;
+    }
+
+    const option = (dialog) => within(dialog).getByRole('checkbox', { name: /Also delete it from my tasks/ });
+
+    async function confirm(dialog, label) {
+      fireEvent.click(within(dialog).getByText('Jane Doe'));
+      fireEvent.click(within(dialog).getByRole('button', { name: label }));
+    }
+
+    test('not offered when the header has no delete to run', async () => {
+      const dialog = await openPicker(undefined);
+      expect(within(dialog).queryByRole('checkbox')).toBeNull();
+      expect(fetchHandoverAvailability).toHaveBeenCalledTimes(1);  // only the button's own question
+    });
+
+    test('ticked, the task is deleted here once the ticket is theirs', async () => {
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(option(dialog)).not.toBeDisabled());
+      expect(option(dialog)).not.toBeChecked();  // a fresh choice every time
+      fireEvent.click(option(dialog));
+      await confirm(dialog, 'Hand over and delete here');
+      await waitFor(() => expect(onRemoveHere).toHaveBeenCalledWith('UNA-1'));
+      expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe');
+      expect(toastResult.mock.calls[0][0]).toMatchObject({ kind: 'success', title: 'Handed over to Jane Doe' });
+      // The hand-over's own toast came first, the delete's own after it.
+      expect(toastResult.mock.invocationCallOrder[0]).toBeLessThan(onRemoveHere.mock.invocationCallOrder[0]);
+    });
+
+    test('ticked, a hand-over that stopped half way keeps the task here and says so', async () => {
+      handOverTask.mockResolvedValue({
+        ok: true,
+        body: {
+          status: 'handed_over_with_problems', landed: false, assignee: { handle: 'jane', name: 'Jane Doe' },
+          steps: [{ step: 'assign', ok: true, detail: '' }, { step: 'tag', ok: false, detail: 'tag store down' }],
+        },
+      });
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(option(dialog)).not.toBeDisabled());
+      fireEvent.click(option(dialog));
+      await confirm(dialog, 'Hand over and delete here');
+      await waitFor(() => expect(toastResult).toHaveBeenCalled());
+      expect(onRemoveHere).not.toHaveBeenCalled();
+      const toast = toastResult.mock.calls[0][0];
+      expect(toast.kind).toBe('error');
+      expect(toast.message.split('\n')).toContain(KEPT_HERE_LINE);
+    });
+
+    test('ticked, a refused hand-over deletes nothing', async () => {
+      handOverTask.mockResolvedValue({ ok: false, status: 409, body: { error: "UNA-1's agent is working" } });
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(option(dialog)).not.toBeDisabled());
+      fireEvent.click(option(dialog));
+      await confirm(dialog, 'Hand over and delete here');
+      await waitFor(() => expect(toastResult).toHaveBeenCalled());
+      expect(onRemoveHere).not.toHaveBeenCalled();
+    });
+
+    test('left unticked, the task stays in my tasks', async () => {
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(option(dialog)).not.toBeDisabled());
+      await confirm(dialog, 'Hand over');
+      await waitFor(() => expect(toastResult).toHaveBeenCalled());
+      expect(onRemoveHere).not.toHaveBeenCalled();
+    });
+
+    test('ticked with work never pushed, the warning says it is deleted for good too', async () => {
+      fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(option(dialog)).not.toBeDisabled());
+      fireEvent.click(option(dialog));
+      await confirm(dialog, 'Hand over and delete here');
+      expect(await screen.findByText(/deleting the task here deletes it, with no backup/)).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Hand over and delete anyway' }));
+      await waitFor(() => expect(onRemoveHere).toHaveBeenCalledWith('UNA-1'));
+    });
+
+    test('the task a plan was split from: not offered, asked again when the picker opens', async () => {
+      // The header's own question said yes; the plan was split since.
+      fetchHandoverAvailability
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: '' })
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: PLAN_SOURCE });
+      const onRemoveHere = vi.fn();
+      const dialog = await openPicker(onRemoveHere);
+      await waitFor(() => expect(within(dialog).getByText(`Not offered — ${PLAN_SOURCE}.`)).toBeTruthy());
+      expect(option(dialog)).toBeDisabled();
+      fireEvent.click(option(dialog));
+      await confirm(dialog, 'Hand over');
+      await waitFor(() => expect(toastResult).toHaveBeenCalled());
+      expect(onRemoveHere).not.toHaveBeenCalled();
+    });
+
+    test('off until the server answers, and off when it cannot say', async () => {
+      let answer;
+      fetchHandoverAvailability
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: '' })
+        .mockReturnValueOnce(new Promise((done) => { answer = done; }));
+      const dialog = await openPicker(vi.fn());
+      expect(option(dialog)).toBeDisabled();
+      expect(within(dialog).getByText(`Not offered — ${CHECKING_REMOVE_HERE}.`)).toBeTruthy();
+      answer({ available: true, reason: '' });  // an older kato: says nothing about it
+      await waitFor(() => expect(within(dialog).getByText(`Not offered — ${UNCHECKED_REMOVE_HERE}.`)).toBeTruthy());
+      expect(option(dialog)).toBeDisabled();
+    });
+
+    test('a question that fails leaves it off', async () => {
+      fetchHandoverAvailability
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: '' })
+        .mockRejectedValueOnce(new Error('offline'));
+      const dialog = await openPicker(vi.fn());
+      await waitFor(() => expect(within(dialog).getByText(`Not offered — ${UNCHECKED_REMOVE_HERE}.`)).toBeTruthy());
+      expect(option(dialog)).toBeDisabled();
+    });
+
+    test('an answer that arrives after the picker closed is dropped', async () => {
+      let answer;
+      fetchHandoverAvailability
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: '' })
+        .mockReturnValueOnce(new Promise((done) => { answer = done; }));
+      const dialog = await openPicker(vi.fn());
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      answer({ remove_here_reason: '' });
+      await Promise.resolve();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    test('a failed question after the picker closed is dropped too', async () => {
+      let refuse;
+      fetchHandoverAvailability
+        .mockResolvedValueOnce({ available: true, reason: '', remove_here_reason: '' })
+        .mockReturnValueOnce(new Promise((_done, fail) => { refuse = fail; }));
+      const dialog = await openPicker(vi.fn());
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      refuse(new Error('offline'));
+      await Promise.resolve();
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
   });
 });

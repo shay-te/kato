@@ -1,13 +1,17 @@
 """HTTP routes for handing a task over to a teammate (the header's "Hand over").
 
-    GET  /api/sessions/<task>/handover        {available, reason}
+    GET  /api/sessions/<task>/handover        {available, reason, remove_here_reason}
          Cheap — no tracker call: may this task be handed over at all? (A task
-         created in kato, or a tracker that cannot, cannot.)
+         created in kato, or a tracker that cannot, cannot.) ``remove_here_reason``
+         ('' = it may) is why the picker's "also delete it from my tasks" is
+         not offered: deleting a plan's source here would take the plan's
+         sub-tasks with it (``driven_plan``). The delete itself is the tab's
+         own (``DELETE …/workspace``), run by the UI once the hand-over landed.
     GET  /api/sessions/<task>/handover/users  {users: [{handle, name}]}
          Who the ticket can be assigned to — asked of the tracker when the
          picker opens. 400 when it cannot be handed over, 502 when the tracker
          did not answer.
-    POST /api/sessions/<task>/handover        {handle, name} -> {status, assignee, steps}
+    POST /api/sessions/<task>/handover        {handle, name} -> {status, landed, assignee, steps}
          ``TaskHandover.hand_over``: assign + verify, tag kato:wait-editing,
          clear kato's blocking comments, post who has it, move to Open, stop
          the agent here (``task_agent_stop`` — the chat's Stop). 409 while the
@@ -23,9 +27,14 @@ from kato_core_lib.data_layers.service.task_handover import (
     HandoverUnavailableError,
     TaskBusyError,
 )
+from kato_webserver.driven_plan import plan_driven_from
 from kato_webserver.task_agent_stop import stop_task_agent
 
 STARTING_REASON = 'kato is still starting'
+PLAN_SOURCE_REASON = (
+    'a plan was split from this task here: deleting it would delete the plan\'s sub-tasks too '
+    'and decline their pull requests'
+)
 
 
 def register_handover_routes(app: Flask) -> None:
@@ -34,7 +43,11 @@ def register_handover_routes(app: Flask) -> None:
     def handover_availability(task_id: str):
         handover = _handover(app)
         reason = handover.unavailable_reason(task_id) if handover is not None else STARTING_REASON
-        return jsonify({'available': not reason, 'reason': reason})
+        return jsonify({
+            'available': not reason,
+            'reason': reason,
+            'remove_here_reason': PLAN_SOURCE_REASON if plan_driven_from(app, task_id) is not None else '',
+        })
 
     @app.get('/api/sessions/<task_id>/handover/users')
     def handover_users(task_id: str):

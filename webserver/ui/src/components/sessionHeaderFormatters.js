@@ -146,7 +146,16 @@ function capitalized(text) {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
-export function formatHandoverResult(result) {
+// Did the ticket get all the way to them — assigned, tagged and in their kato's
+// queue (the server's ``landed``)? Only then is "also delete it from my tasks"
+// carried out; a hand-over that stopped half way leaves the task here to fix.
+export function handoverLanded(result) {
+  return !!(result && result.ok && result.body && result.body.landed === true);
+}
+
+export const KEPT_HERE_LINE = 'Kept in your tasks: the ticket did not get all the way to them, so nothing was deleted here.';
+
+export function formatHandoverResult(result, { removeHere = false } = {}) {
   const body = (result && result.body) || {};
   const steps = Array.isArray(body.steps) ? body.steps : [];
   if (!steps.length) {
@@ -159,6 +168,7 @@ export function formatHandoverResult(result) {
     return step.ok ? words.ok(name, step.detail) : words.failed(name, step.detail);
   };
   const problems = steps.filter((step) => !step.ok).map(lines);
+  if (removeHere && !handoverLanded(result)) { problems.push(KEPT_HERE_LINE); }
   const done = steps.filter((step) => step.ok).map(lines).filter(Boolean);
   let title = `Handed over to ${name}`;
   if (body.status === 'failed') { title = 'Not handed over'; }

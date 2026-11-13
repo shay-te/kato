@@ -21,6 +21,11 @@ over"). Kato then, in this order:
 6. stops this task's agent here (the header's Stop). The workspace is left as
    it is: kato never deletes on its own.
 
+The result's ``landed`` says the ticket is theirs AND in their kato's queue
+(assigned, tagged, moved to Open). Only then may the operator's "also delete it
+from my tasks" go ahead: a ticket that stopped half way is still this kato's
+to sort out, and its workspace is where that happens.
+
 Refused while this task's agent is mid-turn (``TaskBusyError``), and for a task
 no one else's kato can see (a local task, a tracker that cannot hand over —
 ``HandoverUnavailableError``). Every step's outcome is reported.
@@ -148,8 +153,14 @@ class TaskHandover(object):
         return str(getattr(self._task_service, 'provider_name', '') or 'this one')
 
 
+# What makes the ticket theirs and visible to their kato. The comments, the
+# note and this kato's own Stop are reported, but none of them decides it.
+LANDING_STEPS = (STEP_ASSIGN, STEP_TAG, STEP_OPEN)
+
+
 def _result(task: str, handle: str, name: str, steps: list[dict]) -> dict:
-    assigned = any(step['step'] == STEP_ASSIGN and step['ok'] for step in steps)
+    succeeded = {step['step'] for step in steps if step['ok']}
+    assigned = STEP_ASSIGN in succeeded
     problems = [step for step in steps if not step['ok']]
     if not assigned:
         status = 'failed'
@@ -157,4 +168,10 @@ def _result(task: str, handle: str, name: str, steps: list[dict]) -> dict:
         status = 'handed_over_with_problems'
     else:
         status = 'handed_over'
-    return {'task_id': task, 'status': status, 'assignee': {'handle': handle, 'name': name}, 'steps': steps}
+    return {
+        'task_id': task,
+        'status': status,
+        'landed': all(step in succeeded for step in LANDING_STEPS),
+        'assignee': {'handle': handle, 'name': name},
+        'steps': steps,
+    }

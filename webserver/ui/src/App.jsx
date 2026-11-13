@@ -1249,6 +1249,7 @@ export default function App() {
           onWorkspaceMutated={handleWorkspaceMutated}
           planAvailable={planAvailable}
           onOpenPlan={handleOpenPlan}
+          onForgetTask={doForgetTask}
         />
       }
     />

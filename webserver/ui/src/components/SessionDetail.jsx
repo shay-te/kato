@@ -65,6 +65,7 @@ export default function SessionDetail({
   onWorkspaceMutated,
   planAvailable = false,
   onOpenPlan,
+  onForgetTask = null,
 }) {
   const taskId = session?.task_id;
   // ``session.working`` is handed over as an INPUT — the server's last word on
@@ -922,6 +923,7 @@ export default function SessionDetail({
       backgroundIsWorkflow={stream.backgroundIsWorkflow}
       onSendPrompt={onSendMessage}
       onWorkspaceMutated={onWorkspaceMutated}
+      onRemoveTask={onForgetTask}
       searchSlot={
         <ChatSearch
           query={searchQuery}

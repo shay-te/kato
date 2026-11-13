@@ -7,17 +7,29 @@ import { apiErrorMessage } from '../utils/apiError.js';
 import { BusyIcon } from './Icon.jsx';
 import SearchPickerModal from './SearchPickerModal.jsx';
 import UnpushedWorkWarning, { WARNING_PURPOSE } from './UnpushedWorkWarning.jsx';
-import { formatHandoverResult } from './sessionHeaderFormatters.js';
+import { formatHandoverResult, handoverLanded } from './sessionHeaderFormatters.js';
 
 export const HANDOVER_TOOLTIP = 'Hand over — give this task to a teammate: kato assigns the ticket to them, '
   + 'tags it kato:wait-editing, moves it to Open and stops the agent here, and THEIR kato picks it up. '
   + "Anyone the ticket can be assigned to is listed — kato cannot tell who runs a kato.";
+
+// Why "also delete it from my tasks" cannot be ticked yet / at all, when the
+// server's own answer is not in hand. Missing = not offered: never a delete on
+// a guess (an older kato says nothing about it).
+export const CHECKING_REMOVE_HERE = 'kato is checking whether it can be deleted here';
+export const UNCHECKED_REMOVE_HERE = 'kato could not check whether deleting it here is safe';
 
 // The header's "Hand over" (change the task's owner). Hidden for a task no one
 // else's kato can see (one created in kato, a tracker that cannot) — asked of
 // the server once per task, without a tracker call. The picker asks the tracker
 // who the ticket can go to; work never pushed is warned about first (their kato
 // clones from the remote); the server does the rest and says how each step went.
+//
+// ``onRemoveHere(taskId)`` is the tab's own delete (App's ``doForgetTask``):
+// given, the picker offers "also delete it from my tasks", carried out only once
+// the server says the ticket really reached them (``landed``). Not offered for a
+// task a plan this kato drives was split from — asked again each time the
+// picker opens, since a plan can be split while the header stays up.
 // Each task's answer, kept for this page: switching back to a task shows its
 // button at once instead of popping it in after a request. A task not asked
 // about yet starts from the last answer seen — it is mostly the tracker's, the
@@ -34,13 +46,22 @@ function remembered(taskId) {
   return availabilityByTask.has(taskId) ? availabilityByTask.get(taskId) : lastAnswer;
 }
 
-export default function HandOverButton({ taskId }) {
+export default function HandOverButton({ taskId, onRemoveHere = null }) {
   const [available, setAvailable] = useState(() => remembered(taskId));
   const [picking, setPicking] = useState(false);
+  // {user, removeHere}: who it goes to, and whether to delete it here after.
   const [chosen, setChosen] = useState(null);
+  const offerRemoveHere = typeof onRemoveHere === 'function';
   const [busy, handOver] = useBusyAction(
-    (user) => handOverTask(taskId, user.handle, user.name),
-    { onDone: (result) => toastResult(formatHandoverResult(result)) },
+    async ({ user, removeHere }) => ({
+      removeHere, result: await handOverTask(taskId, user.handle, user.name),
+    }),
+    {
+      onDone: ({ removeHere, result }) => {
+        toastResult(formatHandoverResult(result, { removeHere }));
+        if (removeHere && handoverLanded(result)) { onRemoveHere(taskId); }
+      },
+    },
   );
 
   useEffect(() => {
@@ -76,24 +97,27 @@ export default function HandOverButton({ taskId }) {
       {picking && (
         <HandOverPicker
           taskId={taskId}
+          offerRemoveHere={offerRemoveHere}
           onClose={() => setPicking(false)}
-          onPick={(user) => { setPicking(false); setChosen(user); }}
+          onPick={(pick) => { setPicking(false); setChosen(pick); }}
         />
       )}
       {chosen && (
         <UnpushedWorkWarning
           session={{ task_id: taskId }}
-          purpose={WARNING_PURPOSE.HANDOVER}
+          purpose={chosen.removeHere ? WARNING_PURPOSE.HANDOVER_AND_DELETE : WARNING_PURPOSE.HANDOVER}
           onCancel={() => setChosen(null)}
-          onContinue={() => { const user = chosen; setChosen(null); handOver(user); }}
+          onContinue={() => { const pick = chosen; setChosen(null); handOver(pick); }}
         />
       )}
     </>
   );
 }
 
-function HandOverPicker({ taskId, onClose, onPick }) {
+function HandOverPicker({ taskId, offerRemoveHere, onClose, onPick }) {
   const [query, setQuery] = useState('');
+  const [removeHere, setRemoveHere] = useState(false);
+  const removeHereReason = useRemoveHereReason(taskId, offerRemoveHere);
   const { data: users, loading, error } = usePickerData(async () => {
     const result = await fetchHandoverUsers(taskId);
     if (!result.ok) { throw new Error(apiErrorMessage(result, 'could not list who the ticket can go to')); }
@@ -121,9 +145,17 @@ function HandOverPicker({ taskId, onClose, onPick }) {
       loadingText="Asking the tracker who it can go to…"
       emptyText={users.length === 0 ? 'The tracker lists no one this ticket can go to.' : 'No one matches.'}
       getItemId={(user) => user.handle}
-      confirmLabel="Hand over"
+      confirmLabel={removeHere && !removeHereReason ? 'Hand over and delete here' : 'Hand over'}
       busyLabel="Handing over…"
-      onConfirm={onPick}
+      onConfirm={(user) => onPick({ user, removeHere: removeHere && !removeHereReason })}
+      extra={offerRemoveHere && (
+        <RemoveHereOption
+          taskId={taskId}
+          checked={removeHere && !removeHereReason}
+          reason={removeHereReason}
+          onChange={setRemoveHere}
+        />
+      )}
       renderRow={(user) => (
         <div className="adopt-session-row-top">
           <span className="adopt-session-cwd">{user.name}</span>
@@ -131,5 +163,49 @@ function HandOverPicker({ taskId, onClose, onPick }) {
         </div>
       )}
     />
+  );
+}
+
+// The server's word on whether deleting the task here is safe ('' = it is),
+// asked when the picker opens. Until it answers, or if it cannot, the option
+// stays off with the reason shown.
+function useRemoveHereReason(taskId, offered) {
+  const [reason, setReason] = useState(CHECKING_REMOVE_HERE);
+  useEffect(() => {
+    if (!offered) { return undefined; }
+    let live = true;
+    fetchHandoverAvailability(taskId).then(
+      (body) => {
+        if (!live) { return; }
+        const answer = body && body.remove_here_reason;
+        setReason(typeof answer === 'string' ? answer : UNCHECKED_REMOVE_HERE);
+      },
+      () => { if (live) { setReason(UNCHECKED_REMOVE_HERE); } },
+    );
+    return () => { live = false; };
+  }, [taskId, offered]);
+  return reason;
+}
+
+function RemoveHereOption({ taskId, checked, reason, onChange }) {
+  return (
+    <label className="forget-task-done handover-remove-here" htmlFor="handover-remove-here">
+      <input
+        id="handover-remove-here"
+        type="checkbox"
+        checked={checked}
+        disabled={!!reason}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>
+        <strong>Also delete it from my tasks</strong>
+        <span className="forget-task-done-hint">
+          {reason
+            ? `Not offered — ${reason}.`
+            : `Once the ticket is theirs, ${taskId} is deleted here like the tab's ✕: its workspace, chat and containers. `
+              + 'Kept if the hand-over does not get through.'}
+        </span>
+      </span>
+    </label>
   );
 }

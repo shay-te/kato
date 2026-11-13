@@ -5096,6 +5096,17 @@ code {
   color: #a3a3a3;
 }
 
+.forget-task-done:has(input[type=checkbox]:disabled),
+.forget-task-done input[type=checkbox]:disabled {
+  cursor: default;
+}
+
+/* Hand over's "also delete it from my tasks": the delete dialog's opt-in box,
+   between the picker's list and its buttons. */
+.handover-remove-here {
+  margin-top: 10px;
+}
+
 /* Only what the shared menu classes do not already cover. */
 .file-tab-menu {
   margin: 0;

@@ -23,11 +23,14 @@ export const CHECKING_GRACE_MS = 300;
  * the operator decides, not a guess. Cancel is focused; Esc cancels. ``onOpenTask``
  * takes the operator to the task to push it first.
  */
-export const WARNING_PURPOSE = Object.freeze({ DELETE: 'delete', HANDOVER: 'handover' });
+export const WARNING_PURPOSE = Object.freeze({
+  DELETE: 'delete', HANDOVER: 'handover', HANDOVER_AND_DELETE: 'handover_and_delete',
+});
 
 // What is about to happen to the task, in the warning's words. Deleting loses
 // unpushed work for good; handing over leaves it here, where the other kato —
-// which clones from the remote — never sees it.
+// which clones from the remote — never sees it; handing over AND deleting it
+// here does both: it never reaches them and it is gone from here too.
 const WARNING_WORDS = {
   [WARNING_PURPOSE.DELETE]: {
     before: 'before it can be deleted',
@@ -42,6 +45,13 @@ const WARNING_WORDS = {
     found: <>Their kato clones from the remote, so this work would not reach them.</>,
     keep: <>To hand it over with this work, press <strong>Push</strong> first.</>,
     proceed: 'Hand over anyway',
+  },
+  [WARNING_PURPOSE.HANDOVER_AND_DELETE]: {
+    before: 'before it is handed over and deleted here',
+    unknown: 'Their kato clones from the remote, and deleting the task here deletes anything not pushed for good.',
+    found: <>Their kato clones from the remote, so this work would not reach them &mdash; and deleting the task here deletes it, with no backup.</>,
+    keep: <>To keep it, press <strong>Push</strong> first.</>,
+    proceed: 'Hand over and delete anyway',
   },
 };
 

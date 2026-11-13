@@ -22,6 +22,9 @@ import ModalFooterActions from './ModalFooterActions.jsx';
 // never drops a pick, and a pick the current filter hides is still listed above
 // the list (and can be taken back from there) — so a person can search one
 // thing, tick it, search another, tick that too, and confirm them all.
+//
+// ``extra`` is anything the caller shows between the list and the buttons — an
+// option that goes with the confirm (Hand over's "also delete it from my tasks").
 export default function SearchPickerModal({
   ariaLabel,
   title,
@@ -43,6 +46,7 @@ export default function SearchPickerModal({
   confirmLabel,
   busyLabel,
   multiple = false,
+  extra = null,
 }) {
   const [selectedId, setSelectedId] = useState('');
   // id -> item, in the order ticked. Keeps the ITEM too, because once a filter
@@ -176,6 +180,7 @@ export default function SearchPickerModal({
           );
         })}
       </div>
+      {extra}
       <ModalFooterActions
         onCancel={onClose}
         onConfirm={confirm}

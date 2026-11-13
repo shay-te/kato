@@ -3,12 +3,13 @@
 // own logic: status-dot rendering, button enablement, action
 // dispatch, modal opening.
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
   // The header's Hand over asks once per task; hidden here.
   fetchHandoverAvailability: vi.fn().mockResolvedValue({ available: false, reason: '' }),
+  fetchHandoverUsers: vi.fn().mockResolvedValue({ ok: true, body: { users: [] } }),
   // The header now shows a status chip per agent, polled from here.
   fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   finishTask: vi.fn().mockResolvedValue({ ok: true, body: { finished: true } }),
@@ -54,7 +55,7 @@ vi.mock('../stores/toastStore.js', () => {
 });
 
 import {
-  postSession, triggerScan, fetchTaskAgentStatus,
+  postSession, triggerScan, fetchTaskAgentStatus, fetchHandoverAvailability,
 } from '../api.js';
 import { usePushApproval } from '../hooks/usePushApproval.js';
 import { useTaskPublish } from '../hooks/useTaskPublish.js';
@@ -896,6 +897,39 @@ describe('SessionHeader — the task\'s pull requests, per repository', () => {
   test('nothing to list yet: the button is disabled', () => {
     renderHeader({ pullRequestRepositories: [] });
     expect(listButton()).toBeDisabled();
+  });
+});
+
+
+describe('SessionHeader — Hand over can delete the task here', () => {
+  async function openHandover(props) {
+    fetchHandoverAvailability.mockResolvedValue({ available: true, reason: '', remove_here_reason: '' });
+    const { container } = render(
+      <SessionHeader session={_session({ task_id: 'HO-2' })} streamLifecycle={SESSION_LIFECYCLE.STREAMING} {...props} />,
+    );
+    const button = await waitFor(() => {
+      const found = container.querySelector('#session-handover');
+      expect(found).not.toBeNull();
+      return found;
+    });
+    fireEvent.click(button);
+    const dialog = await screen.findByRole('dialog', { name: 'Hand over this task' });
+    await within(dialog).findByText('The tracker lists no one this ticket can go to.');
+    return dialog;
+  }
+
+  afterEach(() => {
+    fetchHandoverAvailability.mockResolvedValue({ available: false, reason: '' });
+  });
+
+  test('the delete handed in reaches Hand over: its picker offers it', async () => {
+    const dialog = await openHandover({ onRemoveTask: vi.fn() });
+    expect(within(dialog).getByRole('checkbox', { name: /Also delete it from my tasks/ })).toBeTruthy();
+  });
+
+  test('no delete handed in: not offered', async () => {
+    const dialog = await openHandover({});
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
   });
 });
 

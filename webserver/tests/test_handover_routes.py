@@ -8,6 +8,7 @@ import logging
 import tempfile
 import types
 import unittest
+import uuid
 from pathlib import Path
 
 from kato_core_lib.data_layers.data.fields import TaskTags
@@ -18,9 +19,18 @@ from kato_core_lib.data_layers.service.local_task_routing import (
 )
 from kato_core_lib.data_layers.service.task_handover import LOCAL_TASK_REASON, TaskHandover
 from kato_webserver.app import create_app
-from kato_webserver.handover_routes import STARTING_REASON
+from kato_webserver.handover_routes import PLAN_SOURCE_REASON, STARTING_REASON
 from kato_webserver.task_agent_stop import NO_AGENT, STOPPED
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
+from plan_queue_core_lib.plan_queue_core_lib.data.plan import Plan, PlanMode
+from plan_queue_core_lib.plan_queue_core_lib.service import PlanQueueService
+from plan_queue_core_lib.plan_queue_core_lib.store import PlanQueueStore
+from plan_queue_core_lib.plan_queue_core_lib.tests.fakes import (
+    FakeProbe,
+    FakeProgress,
+    FakeProposer,
+    FakeWording,
+)
 from tests.test_task_handover import ME, OPEN, STARTED, _Board, _Chat, _config
 
 
@@ -80,13 +90,13 @@ class HandoverRouteTests(unittest.TestCase):
 
     def test_a_tracker_ticket_is_available(self) -> None:
         response = self.client.get('/api/sessions/UNA-1/handover')
-        self.assertEqual(response.get_json(), {'available': True, 'reason': ''})
+        self.assertEqual(response.get_json(), {'available': True, 'reason': '', 'remove_here_reason': ''})
         self.assertEqual(self.board.calls, [])  # no tracker call to decide
 
     def test_a_local_task_is_not(self) -> None:
         local_id = self.store.create('local', 'details').id
         self.assertEqual(self.client.get(f'/api/sessions/{local_id}/handover').get_json(),
-                         {'available': False, 'reason': LOCAL_TASK_REASON})
+                         {'available': False, 'reason': LOCAL_TASK_REASON, 'remove_here_reason': ''})
         response = self.client.get(f'/api/sessions/{local_id}/handover/users')
         self.assertEqual(response.status_code, 400)
         post = self.client.post(f'/api/sessions/{local_id}/handover', json={'handle': 'jane'})
@@ -109,6 +119,7 @@ class HandoverRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
         self.assertEqual(body['status'], 'handed_over')
+        self.assertTrue(body['landed'])
         self.assertEqual(body['steps'][-1], {'step': 'stop', 'ok': True, 'detail': STOPPED})
         self.assertEqual(self.manager.terminated, ['UNA-1'])
         self.assertEqual(self.loops.stopped, [('UNA-1', 'the task was handed over')])
@@ -142,14 +153,58 @@ class HandoverRouteTests(unittest.TestCase):
         self.board.refuse['assign'] = 'Unknown user'
         response = self.client.post('/api/sessions/UNA-1/handover', json={'handle': 'jane'})
         self.assertEqual(response.status_code, 502)
+        self.assertFalse(response.get_json()['landed'])
         self.assertEqual(response.get_json()['steps'], [{'step': 'assign', 'ok': False, 'detail': 'Unknown user'}])
+
+
+class RemoveHereOfferTests(unittest.TestCase):
+    """The picker's "also delete it from my tasks" is not offered for a task a
+    plan THIS kato drives was split from — the delete would take the plan's
+    sub-tasks with it. Against a real plan queue reading real saved plans."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.plans = PlanQueueStore(Path(tmp.name) / 'plans')
+
+    def _client(self, *plans: Plan):
+        for plan in plans:
+            self.plans.save(plan)
+        queue = PlanQueueService(
+            store=self.plans, proposer=FakeProposer(''), wording=FakeWording(),
+            progress=FakeProgress(), probe=FakeProbe(),
+        )
+        self.addCleanup(queue.shutdown)
+        agent = types.SimpleNamespace(handover=None, plan_queue=queue)
+        return create_app(session_manager=_Manager(), agent_service=agent).test_client()
+
+    def _reason(self, client, task_id: str = 'UNA-1') -> str:
+        return client.get(f'/api/sessions/{task_id}/handover').get_json()['remove_here_reason']
+
+    def test_a_plan_this_kato_drives_keeps_its_source_here(self) -> None:
+        for mode in (PlanMode.LOCAL, PlanMode.TRACKER):
+            with self.subTest(mode=mode):
+                client = self._client(Plan(plan_id=uuid.uuid4().hex, source_task_id='UNA-1', mode=mode))
+                self.assertEqual(self._reason(client), PLAN_SOURCE_REASON)
+                self.assertEqual(self._reason(client, 'una-1'), PLAN_SOURCE_REASON)  # ids ignore case
+                self.assertEqual(self._reason(client, 'UNA-2'), '')
+
+    def test_a_plan_another_kato_drives_is_not_this_kato_s_to_delete(self) -> None:
+        client = self._client(Plan(plan_id=uuid.uuid4().hex, source_task_id='UNA-1', mode=PlanMode.FOLLOWED))
+        self.assertEqual(self._reason(client), '')
+
+    def test_no_plan_queue_offers_it(self) -> None:
+        client = create_app(
+            session_manager=_Manager(), agent_service=types.SimpleNamespace(handover=None),
+        ).test_client()
+        self.assertEqual(self._reason(client), '')
 
 
 class HandoverBeforeKatoIsReadyTests(unittest.TestCase):
     def test_every_route_says_kato_is_still_starting(self) -> None:
         client = create_app(session_manager=_Manager(), agent_service=None).test_client()
         self.assertEqual(client.get('/api/sessions/UNA-1/handover').get_json(),
-                         {'available': False, 'reason': STARTING_REASON})
+                         {'available': False, 'reason': STARTING_REASON, 'remove_here_reason': ''})
         self.assertEqual(client.get('/api/sessions/UNA-1/handover/users').status_code, 503)
         self.assertEqual(client.post('/api/sessions/UNA-1/handover', json={'handle': 'j'}).status_code, 503)
 

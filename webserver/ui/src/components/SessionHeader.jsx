@@ -57,6 +57,9 @@ export default function SessionHeader({
   searchSlot = null,
   onSendPrompt = null,
   onWorkspaceMutated = null,
+  // The tab's own delete (App's ``doForgetTask``), for Hand over's "also
+  // delete it from my tasks". Not given: that option is not offered.
+  onRemoveTask = null,
 }) {
   const [resuming, setResuming] = useState(false);
   const pushApproval = usePushApproval(session);
@@ -560,7 +563,7 @@ export default function SessionHeader({
           >
             <BusyIcon busy={syncing} idle="history" />
           </button>
-          <HandOverButton taskId={session.task_id} />
+          <HandOverButton taskId={session.task_id} onRemoveHere={onRemoveTask} />
           {stopOrResumeButton}
         </div>
       </header>

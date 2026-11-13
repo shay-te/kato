@@ -260,6 +260,7 @@ class HandOverTests(_Setup):
     def test_end_to_end_their_kato_can_take_it(self) -> None:
         result = self.hand(quiet=False)
         self.assertEqual(result['status'], 'handed_over')
+        self.assertTrue(result['landed'])
         self.assertEqual(result['assignee'], {'handle': 'jane', 'name': 'Jane Doe'})
         self.assertEqual(self.board.assignee['UNA-1'], 'jane')
         self.assertIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
@@ -302,6 +303,7 @@ class HandOverTests(_Setup):
         self.board.refuse['assign'] = 'Unknown user: jane'
         result = self.hand()
         self.assertEqual(result['status'], 'failed')
+        self.assertFalse(result['landed'])
         self.assertEqual(self.steps(result), {STEP_ASSIGN: (False, 'Unknown user: jane')})
         self.assertEqual((self.board.assignee['UNA-1'], self.board.state['UNA-1']), (ME, PROGRESS))
         self.assertNotIn(TaskTags.WAIT_EDITING, self.board.tags['UNA-1'])
@@ -318,6 +320,7 @@ class HandOverTests(_Setup):
         self.board.refuse['tag'] = 'tag store down'
         result = self.hand()
         self.assertEqual(result['status'], 'handed_over_with_problems')
+        self.assertFalse(result['landed'])  # assigned to them, but never in their queue
         self.assertEqual(list(self.steps(result)), [STEP_ASSIGN, STEP_TAG])
         self.assertEqual(self.board.state['UNA-1'], PROGRESS)  # never released to their queue
         self.assertEqual(self.stopper.stopped, [])
@@ -329,6 +332,7 @@ class HandOverTests(_Setup):
         self.assertFalse(ok)
         self.assertIn("could not delete kato's comment c3: not allowed", detail)
         self.assertEqual(result['status'], 'handed_over_with_problems')
+        self.assertTrue(result['landed'])  # the note clears the block: it is theirs
         self.assertEqual(self.board.state['UNA-1'], OPEN)
         self.assertTrue(_gate_clear(self.board))
 
@@ -343,11 +347,14 @@ class HandOverTests(_Setup):
         self.board.refuse['move'] = 'workflow forbids'
         result = self.hand()
         self.assertEqual(self.steps(result)[STEP_OPEN], (False, 'workflow forbids'))
+        self.assertFalse(result['landed'])  # not in Open: their kato's queue never shows it
         self.assertEqual(self.stopper.stopped, ['UNA-1'])
 
     def test_a_failed_stop_is_reported(self) -> None:
         self.stopper.fails = 'process would not die'
-        self.assertEqual(self.steps(self.hand())[STEP_STOP], (False, 'process would not die'))
+        result = self.hand()
+        self.assertEqual(self.steps(result)[STEP_STOP], (False, 'process would not die'))
+        self.assertTrue(result['landed'])  # this kato's own Stop does not decide whose it is
 
     def test_refused_while_the_agent_is_working(self) -> None:
         self.chats._chats['UNA-1'] = _Chat(working=True)

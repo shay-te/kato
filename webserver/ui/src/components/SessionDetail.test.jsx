@@ -22,9 +22,12 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 // Expose onResume via a button so the resume path (deliverMessage,
 // bypassing the queue) can be exercised. Layout tests ignore it.
 vi.mock('./SessionHeader.jsx', () => ({
-  default: ({ onResume, onChatChanged, onChatSwitchPending }) => (
+  default: ({ onResume, onChatChanged, onChatSwitchPending, onRemoveTask }) => (
     <div data-testid="session-header">
       <button type="button" onClick={onResume}>mock-resume</button>
+      {onRemoveTask && (
+        <button type="button" onClick={() => onRemoveTask('HO-1')}>mock-remove-task</button>
+      )}
       <button type="button" onClick={() => onChatSwitchPending(true)}>
         mock-chat-pending
       </button>
@@ -323,6 +326,31 @@ describe('hasVisibleBubbles', () => {
         },
       },
     ])).toBe(true);
+  });
+});
+
+
+describe('SessionDetail — Hand over can delete the task here', () => {
+  function _stream() {
+    return {
+      events: [], lifecycle: SESSION_LIFECYCLE.STREAMING, turnInFlight: false, turnsCompleted: 0,
+      pendingPermission: null, lastEventAt: 0, appendLocalEvent: vi.fn(), markTurnBusy: vi.fn(),
+      reconnect: vi.fn(), resetChat: vi.fn(), dismissPermission: vi.fn(),
+    };
+  }
+
+  test('the delete handed in is the header\'s', () => {
+    useSessionStream.mockReturnValue(_stream());
+    const onForgetTask = vi.fn();
+    render(<SessionDetail session={{ task_id: 'HO-1', agent_backend: 'claude' }} onForgetTask={onForgetTask} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mock-remove-task' }));
+    expect(onForgetTask).toHaveBeenCalledWith('HO-1');
+  });
+
+  test('no delete handed in: the header gets none', () => {
+    useSessionStream.mockReturnValue(_stream());
+    render(<SessionDetail session={{ task_id: 'HO-1', agent_backend: 'claude' }} />);
+    expect(screen.queryByRole('button', { name: 'mock-remove-task' })).toBeNull();
   });
 });
 

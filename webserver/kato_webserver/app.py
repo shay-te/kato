@@ -4379,17 +4379,14 @@ def _forget_cascaded_sub_tasks(app: Flask, task_id: str) -> list[dict]:
     in ``_forget_one_task_result`` (best-effort, reported, never blocking —
     one stuck sub-task must not make an otherwise-clean parent delete read
     as a failure)."""
-    from plan_queue_core_lib.plan_queue_core_lib.data.plan import PlanMode
-
     from kato_core_lib.data_layers.service.plan_queue.step_deletion import PlanStepDeletion
+    from kato_webserver.driven_plan import plan_driven_from
 
+    plan = plan_driven_from(app, task_id)
+    if plan is None:
+        return []
     agent_service = app.config.get('AGENT_SERVICE')
-    queue = getattr(agent_service, 'plan_queue', None)
-    if queue is None:
-        return []
-    plan = queue.plan_for_source(task_id)
-    if plan is None or plan.mode == PlanMode.FOLLOWED:
-        return []
+    queue = agent_service.plan_queue
     deletion = PlanStepDeletion(queue=queue, repository_service=getattr(agent_service, 'repository_service', None))
     cascaded = []
     for step in plan.steps:

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   formatFinishResult,
   formatHandoverResult,
+  handoverLanded,
+  KEPT_HERE_LINE,
   formatMergeResult,
   formatMergeConflicts,
   formatPullResult,
@@ -1208,4 +1210,40 @@ test('formatHandoverResult: a refusal with no steps is the request failure', () 
     { title: 'Not handed over', kind: 'error', message: 'agent is working' },
   );
   assert.equal(formatHandoverResult(null).title, 'Not handed over');
+});
+
+
+test('handoverLanded: only an answered request whose ticket got all the way to them', () => {
+  assert.equal(handoverLanded({ ok: true, body: { landed: true } }), true);
+  assert.equal(handoverLanded({ ok: true, body: { landed: false } }), false);
+  assert.equal(handoverLanded({ ok: true, body: { landed: 'yes' } }), false);
+  assert.equal(handoverLanded({ ok: true, body: {} }), false);  // an older kato
+  assert.equal(handoverLanded({ ok: false, body: { landed: true } }), false);
+  assert.equal(handoverLanded({ ok: true }), false);
+  assert.equal(handoverLanded(null), false);
+});
+
+test('formatHandoverResult: deleting here was asked for but the ticket stopped half way', () => {
+  const stopped = { ok: true, body: {
+    status: 'handed_over_with_problems', landed: false, assignee: { handle: 'jane', name: 'Jane Doe' },
+    steps: [{ step: 'assign', ok: true, detail: '' }, { step: 'tag', ok: false, detail: 'tag store down' }],
+  } };
+  const toast = formatHandoverResult(stopped, { removeHere: true });
+  assert.equal(toast.kind, 'error');
+  const lines = toast.message.split('\n');
+  assert.match(lines[0], /^⚠ Not tagged kato:wait-editing: tag store down/);
+  assert.equal(lines[1], KEPT_HERE_LINE);
+  assert.equal(lines[2], 'Assigned to Jane Doe.');
+  // Not asked for: not said.
+  assert.ok(!formatHandoverResult(stopped).message.includes(KEPT_HERE_LINE));
+});
+
+test('formatHandoverResult: deleting here after a hand-over that landed adds nothing', () => {
+  const landed = { ok: true, body: {
+    status: 'handed_over', landed: true, assignee: { handle: 'jane', name: 'Jane Doe' },
+    steps: [{ step: 'assign', ok: true, detail: '' }],
+  } };
+  const toast = formatHandoverResult(landed, { removeHere: true });
+  assert.equal(toast.kind, 'success');
+  assert.equal(toast.message, 'Assigned to Jane Doe.');
 });

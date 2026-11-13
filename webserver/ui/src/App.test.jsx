@@ -124,9 +124,14 @@ vi.mock('./hooks/useSessionStream.js', async (importOriginal) => ({
 
 // Stub child components so render is fast and predictable.
 vi.mock('./components/SessionDetail.jsx', () => ({
-  default: ({ session }) => (
+  default: ({ session, onForgetTask }) => (
     <div data-testid="session-detail">
       session={session ? session.task_id : 'none'}
+      {session && onForgetTask && (
+        <button type="button" onClick={() => onForgetTask(session.task_id)}>
+          handed-over-delete-here
+        </button>
+      )}
     </div>
   ),
 }));
@@ -767,6 +772,23 @@ describe('App — forget task (hard-confirm modal gate)', () => {
     await waitFor(() => {
       expect(screen.getByText('active=none')).toBeInTheDocument();
     });
+  });
+
+  // Hand over's "also delete it from my tasks" is the tab's own delete: the
+  // picker's checkbox was the confirmation, so no second dialog, and the
+  // ticket is NOT moved to done — it is the teammate's now.
+  test('a hand-over that deletes the task here runs the tab\'s own delete, without its dialog', async () => {
+    const refresh = vi.fn();
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }], refresh });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'handed-over-delete-here' }));
+    await waitFor(() => {
+      expect(forgetTaskWorkspace).toHaveBeenCalledWith('T1', { markDone: false });
+    });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => { expect(screen.getByText('active=none')).toBeInTheDocument(); });
+    expect(refresh).toHaveBeenCalled();
   });
 
   test('approving forget of a NON-active task leaves activeTaskId intact', async () => {

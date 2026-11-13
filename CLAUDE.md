@@ -803,7 +803,12 @@ header ⇄ (lifecycle group, before Stop; hidden unless GET /api/sessions/<t>/ha
      5. TaskMoves → Open (HANDED_OVER)  ← LAST ticket write: their kato sees it only once all of the above is on it
      6. stop_task_agent (task_agent_stop.py — the chat's Stop, one helper for both); the workspace is kept
 ```
-Each step is reported (`formatHandoverResult`: problems red, first). ONE home each, gated by
+Each step is reported (`formatHandoverResult`: problems red, first). **"Also delete it from my tasks"** (the picker's
+checkbox, unticked every time it opens) runs the tab's own delete (App's `doForgetTask` → `DELETE …/workspace`, no
+second dialog, never `?done=1`) only once the result's `landed` is true — assign, tag AND Open all done
+(`task_handover.LANDING_STEPS`); otherwise the task is kept and the toast says so. Not offered for a task a plan THIS
+kato drives was split from (`kato_webserver/driven_plan.py`, the ONE answer the delete's sub-task cascade also uses):
+the delete would take the plan's sub-tasks with it. Asked again each time the picker opens; no answer = not offered. ONE home each, gated by
 `tests/test_task_handover.py` `SingleOwnerGateTests`: `assign_issue` only in `tracker_assignment.py` (the plan
 queue's release uses it too — it now reads the assignee back), `delete_comment` only in `pickup_block.py` (the plan
 queue's "released again" note uses it with `delete_own=False`), `list_assignable_users` only in `task_handover.py`.
