@@ -15,6 +15,9 @@ vi.mock('./api.js', () => ({
   // default: nothing unpushed, so the delete dialog opens straight away.
   fetchTaskUnpushedWork: vi.fn().mockResolvedValue({ repositories: [], unchecked: [] }),
   triggerScan: vi.fn().mockResolvedValue({ ok: true }),
+  // Scan now waits for the scan to finish before it reloads; "no scan loop"
+  // ends that wait at once (it was missing: an unhandled rejection).
+  fetchScanStatus: vi.fn().mockResolvedValue({ available: false }),
   // usePlanWatch polls this on mount; stub it so the mock doesn't
   // reject (unhandled-rejection noise Vitest flags).
   fetchSessionPlan: vi.fn().mockResolvedValue(
@@ -292,6 +295,8 @@ describe('App — render shell', () => {
     await waitFor(() => expect(triggerScan).toHaveBeenCalledTimes(1));
     expect(refreshAgentVersion).toHaveBeenCalledTimes(1);
     expect(refreshCatalogs).toHaveBeenCalledTimes(1);
+    const { fetchScanStatus } = await import('./api.js');
+    await waitFor(() => expect(fetchScanStatus).toHaveBeenCalled());
   });
 
   test('mounts without crashing', () => {
