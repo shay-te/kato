@@ -42,12 +42,12 @@ function visibleStrings(source) {
 }
 
 // Names that must never be baked into a chat string.
-const AGENT_NAMES = /\b(Claude|Codex)\b/;
+const AGENT_NAMES = /\b(Claude|Codex|Grok|OpenCode)\b/;
 
 // Strings that legitimately contain a name.
 const ALLOWED = [
   // The label map that DEFINES the names.
-  /^claude$/i, /^codex$/i,
+  /^claude$/i, /^codex$/i, /^grok$/i, /^opencode$/i,
   // Import paths and class/DOM names.
   /AgentBackendChip|claudeEvent|codexEvent|ClaudePermissions|claude-status/,
   // Claude Code the PRODUCT, not the agent in this chat.

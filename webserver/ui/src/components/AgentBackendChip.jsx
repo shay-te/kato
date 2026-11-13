@@ -9,6 +9,8 @@ import React from 'react';
 const LABELS = {
   claude: 'Claude',
   codex: 'Codex',
+  grok: 'Grok',
+  opencode: 'OpenCode',
   openhands: 'OpenHands',
 };
 

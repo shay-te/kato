@@ -1439,7 +1439,8 @@ class StreamingClaudeSession(object):
         with self._recent_events_lock:
             events = list(self._recent_events)
         if limit is not None and limit >= 0:
-            events = events[-limit:]
+            # ``events[-0:]`` is the WHOLE list, so a limit of 0 needs its own case.
+            events = events[-limit:] if limit else []
         return events
 
     def events_after(self, start_index: int) -> tuple[list[SessionEvent], int]:

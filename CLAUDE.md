@@ -52,7 +52,7 @@ npm run build
 
 ## Core-Lib Architecture
 
-Monorepo of mostly **closed black-box libs**. `kato_core_lib` is the top-level orchestrator. The agent transports (`claude_core_lib`, `codex_core_lib`, `openhands_core_lib`) depend on THREE shared bases, not one:
+Monorepo of mostly **closed black-box libs**. `kato_core_lib` is the top-level orchestrator. The agent transports (`claude_core_lib`, `codex_core_lib`, `grok_core_lib`, `opencode_core_lib`, `openhands_core_lib`) depend on THREE shared bases, not one:
 - **`agent_core_lib`** — the reusable agent-behavior layer (prompt helpers, session/text utils, the lessons-document directive + read gate, the resume-prompt renderer, the generic `workspace_scope_block`). Imports zero other core-libs itself.
 - **`sandbox_core_lib`** — workspace-content delimiter framing (`wrap_untrusted_workspace_content`, the prompt-injection defense), the Docker sandbox manager, bypass-permissions validation, system-prompt composition.
 - **`provider_client_base`** — the shared `ReviewComment` type and provider-agnostic retry/client-base plumbing.
@@ -62,8 +62,10 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 │                                 text — e.g. helpers/workspace_refusal_guidance.py — into
 │                                 agent clients via constructor params)
 ├── agent_backend_core_lib     ← agent-transport CLIENT FACTORY — lazily imports
-│                                 claude/codex/openhands_core_lib inside the factory only
-├── agent_core_lib             ← SHARED AGENT-BEHAVIOR BASE. Imported by claude/codex/openhands
+│                                 claude/codex/grok/opencode/openhands_core_lib inside the
+│                                 factory only (client, session manager, history, index,
+│                                 model catalog — one table row per transport)
+├── agent_core_lib             ← SHARED AGENT-BEHAVIOR BASE. Imported by every transport
 │                                 + kato + webserver. Generic + product-agnostic: NO kato /
 │                                 YouTrack / Jira / Files-tab / UI text. Accepts product text
 │                                 only via caller params (e.g. extra_refusal_guidance). Imports
@@ -74,6 +76,8 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 ├── claude_core_lib            ← Claude CLI transport   (may import agent_core_lib, sandbox_core_lib,
 │                                 provider_client_base)
 ├── codex_core_lib             ← Codex CLI transport    (same three-lib allowance as above)
+├── grok_core_lib              ← Grok Build CLI transport (xAI `grok`; same allowance)
+├── opencode_core_lib          ← OpenCode CLI transport (`opencode`; same allowance)
 ├── openhands_core_lib         ← OpenHands transport    (same three-lib allowance as above)
 ├── review_loop_core_lib       ← review loop: an independent read-only reviewer, findings into
 │                                 the main chat, repeat until clean. Generic + kato-free: imports
@@ -123,6 +127,25 @@ kato_core_lib                  ← orchestrator (imports any lib below; wires PR
 └── openrouter_core_lib        ← OpenRouter model catalog
 ```
 
+**The four CLI transports are MIRRORS — keep them one-to-one.** `claude_core_lib`, `codex_core_lib`,
+`grok_core_lib` and `opencode_core_lib` have the same files, public names, signatures and class members,
+only the agent's name substituted (`CodexCliClient` / `GrokCliClient`, `StreamingCodexSession` / …). The
+contract is data — `agent_provider_contracts/cli_transport_layout.py` — and `tests/test_transport_api_parity.py`
+enforces it: a module one transport has and the others do not must be DECLARED there as a real CLI difference
+(Claude's helpers; OpenCode's `helpers/cli_generation.py`), and the per-turn three must have identical private
+client methods. Codex, Grok and OpenCode are all one process per turn, so everything they share lives ONCE in
+`agent_core_lib`: `session/per_turn_session.py` (the chat state machine; hooks `_default_command`,
+`_translate_event`, `PROMPT_ON_STDIN`, `CLEAN_EXIT_ENDS_TURN`, `_turn_env`), `session/per_turn_manager.py`,
+`session/turn_events.py` (THE event vocabulary — Codex's own names; each transport's `session/wire_protocol.py`
+translates its CLI into it, so the UI's one renderer draws every per-turn chat), `session/turn_result.py`, and
+`per_turn_cli_shared.py` (the spawn-free client half; every `subprocess`/`shutil` call stays in the transport,
+where containment tests patch it). Grok and OpenCode ENFORCE strict git per turn (Grok `--deny` rules, OpenCode
+permission rules in `OPENCODE_CONFIG_CONTENT`, both from `command_floor.floor_command_prefixes`); neither has a
+Docker sandbox image, so Docker mode and bypass are REFUSED for them, never run unsandboxed. Like Codex they are
+chat tabs only (`KATO_GROK_ENABLED` / `KATO_OPENCODE_ENABLED`, on by default), never `KATO_AGENT_BACKEND`.
+Neither CLI was available to run when they were written: built from their published source, tested against
+fake CLIs that parse the real argv — try a real `grok` / `opencode` before trusting a flag change.
+
 **Rule:** reusable agent/LLM-behavior code belongs in `agent_core_lib`; the agent transports import it (plus `sandbox_core_lib` for sandbox/prompt-injection concerns and `provider_client_base` for the shared `ReviewComment` type — these three are the full set of sanctioned peer-imports for a transport lib). Provider/transport specifics stay in their own lib. Anything product-specific (ticket workflow, repo publishing, Kato UI, and the *text* of product-specific prompt guidance) stays in `kato_core_lib` and is injected into agent clients as a parameter — `agent_core_lib` must never contain kato-specific workflow/product text. Glue between the non-agent black-box libs still belongs in `kato_core_lib`.
 
 ### Core-Lib Quality Standard
@@ -131,7 +154,7 @@ Every core-lib must meet all of these (use `youtrack_core_lib` as the reference 
 
 1. **100% test coverage** — every service function, every permutation of inputs
 2. **Flow tests A-Z** — end-to-end flow tests inside the lib's own `tests/` folder (`test_flow.py`)
-3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the three agent transports (`claude_core_lib`/`codex_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket/azure devops), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once, and an audit had to catch it).
+3. **Minimal peer imports** — only stdlib + third-party packages, with narrow, documented exceptions: any lib may import the shared **`agent_core_lib`** base; the agent transports (`claude_core_lib`/`codex_core_lib`/`grok_core_lib`/`opencode_core_lib`/`openhands_core_lib`) additionally import **`sandbox_core_lib`** and **`provider_client_base`** (sandbox/prompt-injection concerns and the shared `ReviewComment` type — provider/git/ticket libs still don't need these). `agent_core_lib` itself imports NO other core-lib, not even lazily. The one sanctioned lazy-import pattern is a dedicated **client factory** — `agent_backend_core_lib` (agent transports), `repository_core_lib/client/pull_request_client_factory.py` (github/gitlab/bitbucket/azure devops), `task_core_lib/client/task_client_factory.py` (youtrack/jira/bitbucket/github/gitlab) — which imports its provider implementations lazily, inside the factory function only. Outside those factories, no lib imports another *transport/provider* lib peer-to-peer, and no git-subprocess call anywhere bypasses `git_core_lib`'s `GitClientMixin`/`build_safe_git_command` (a bare `subprocess.run(['git', ...])` skips the hook-disabling hardening and reopens a real RCE-out-of-sandbox path — this has regressed at least once, and an audit had to catch it).
 4. **No kato references — AT ALL, ENFORCED.** The string `kato` (any case, incl. `KATO_*` env names) must NOT appear ANYWHERE in a core-lib — not source, tests, comments, or field names. All `KATO_*` variables and the `kato` brand live ONLY in `kato_core_lib`; every other lib reads GENERIC names (`AGENT_IGNORED_REPOSITORY_FOLDERS`, `CLAUDE_SESSIONS_ROOT`, …) or takes values via constructor/params, and `kato_core_lib` bridges its `KATO_*` config to those (e.g. `_export_agent_env_from_kato_config()`, `from_config(..., state_dir=...)`, `workspace_refusal_guidance`). This regresses during feature work, so it is gated: **`python -m unittest tests.test_corelib_agnostic_gate`** (runs in `kato test`) — a ratchet that fails the build when a lib gains a kato ref. Fix the code; never raise a ceiling. Full rule: AGENTS.md → "Core-libs stay kato-free".
 5. **Tests live inside the lib** — at `<lib>/<lib>/tests/`, not in the top-level `tests/` folder
 6. **Check for leaked tests** — after building a lib, grep `kato_core_lib/` and `tests/` for any tests that belong inside the lib instead
@@ -177,7 +200,7 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 | `kato_core_lib/data_layers/service/repository_inventory_service.py` | Repo config loading + auto-discovery of `.git` folders |
 | `kato_core_lib/data_layers/service/task_publisher.py` | Push branch, open PR, move task to "In Review" |
 | `kato_core_lib/data_layers/service/review_comment_service.py` | Fix or answer PR review comments |
-| `kato_core_lib/validation/startup_dependency_validator.py` | Connections validated in parallel (in the background finalize, not blocking the UI); `{backend}_testing` probe skipped for claude/codex |
+| `kato_core_lib/validation/startup_dependency_validator.py` | Connections validated in parallel (in the background finalize, not blocking the UI); `{backend}_testing` probe skipped for the CLI backends (claude/codex/grok/opencode) |
 | `kato_core_lib/validation/repository_connections.py` | Per-repo git connectivity check |
 | `kato_core_lib/helpers/review_comment_utils.py` | `is_question_comment()` heuristic + reply body builders |
 | `git_core_lib/git_core_lib/client/git_client.py` | `GitClientMixin` — every `git` subprocess call |
@@ -203,7 +226,7 @@ main() → KatoInstance.init(cfg, defer_validation=True)  ← builds the service
 Validation no longer blocks the UI. On a configured boot the webserver binds before any
 network validation; a validation failure retries + surfaces in the UI banner instead of
 exiting. The `{backend}_testing` probe is skipped for the single-binary CLI backends
-(claude/codex — same local CLI as the implementation client); only openhands keeps it.
+(claude/codex/grok/opencode — same local CLI as the implementation client); only openhands keeps it.
 
 ### Task pickup
 ```
@@ -379,11 +402,11 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   **the Slack post**, and the task's containers (stopped) — add a new "on done" there, never a second hook.
   The ONE exception is the Slack post, which the Done button also makes (below): the team's "done" is the
   button, and the post is kept to one per task either way.
-- **Slack on done** (`slack_done_announcer.py` + `slack_core_lib`, kato-free). ONE post per task
-  (`SlackPostedTasks`, `~/.kato/slack_posted_tasks.json`), from whichever comes first: the header's **Done**
+- **Slack on done** (`slack_done_announcer.py` + `slack_core_lib`, kato-free). ONE post per task PER COMMITTED
+  STATE (`SlackPostedTasks`, `~/.kato/slack_posted_tasks.json`), from whichever comes first: the header's **Done**
   button (`finish_task_planning_session` → `publish.announce_finished` = `announcer.announce`, run NOW so the
-  answer's `slack` {status: posted | already_posted | not_set_up | failed, error} reaches the Done toast:
-  "✓ posted to Slack", or "⚠ not posted to Slack: <why>" listed first and amber) — or the tracker's Done
+  answer's `slack` {status: posted | posted_again | already_posted | not_set_up | failed, error} reaches the Done
+  toast: "✓ posted to Slack", or "⚠ not posted to Slack: <why>" listed first and amber) — or the tracker's Done
   (`DoneAnnouncements` → `task_done`, the task read NOW, posted in the background, skipped if Done already
   posted it). The operator thinks "Done" means the button: wiring Slack only to `move_task_to_done` meant the
   button never posted ("I marked the task done, no Slack"). Where it goes (Settings → Email & Slack, read fresh):
@@ -400,6 +423,14 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   plan sub-task calls `move_task_to_done` (→ `task_done`, background) and THEN `announce` (toast); both used to check
   "posted?" before either marked it, and the channel got the task twice. A second caller while a post is under way
   waits for it (`WAIT_FOR_POST_SECONDS`) and reports its outcome; a failed post gives the claim back.
+  **Posted AGAIN once something was committed since** ("I clicked Done, it said already posted", after the agent
+  kept working): each post keeps the commit every repository of the task was on (`TaskCommits` →
+  `GitClientMixin.last_commit`), and a Done (or the tracker's Done) whose repositories moved on posts again, marked
+  "_Updated: it changed since it was last posted here._" → `posted_again`. A commit, not a file on disk: Done commits
+  the edits before it pushes, and an uncommitted edit never reached the team. An entry from before commits were kept
+  is a bare epoch: a commit newer than it counts. Commits that cannot be read (no workspace, no clone, an empty
+  branch) are "already posted" with the reason in `error` — never a second post on a guess. A merge of the default
+  branch is a commit too, so it counts as a change.
 - **The task's Docker containers are stopped on done** (`task_containers.py` + `container_core_lib`, kato-free).
   An agent runs `docker compose up` / `docker run` like a developer and nothing stopped them: a finished task
   kept its database and dev server running. A container belongs to a task when its Compose project (working dir
@@ -1370,7 +1401,7 @@ warns naming both. A duplicate in a hand-written `repositories:` list still rais
   from a coarse clock, so a rewrite in the same tick keeps `st_mtime_ns` and an mtime-keyed cache serves stale
   data (a comment marked FAILED read back IN_PROGRESS 37/40 on Linux; never on macOS). Signature = mtime+size+inode,
   and a read of a file changed in the last 2s is not cached.
-- **No agent CLI gets the operator's terminal.** Every `claude`/`codex` launch passes `stdin=DEVNULL`
+- **No agent CLI gets the operator's terminal.** Every `claude`/`codex`/`grok`/`opencode` launch passes `stdin=DEVNULL`
   (or pipes its input). Given a TTY stdin, `claude --help` switches the terminal to raw mode
   (`-isig -icanon -echo`, `opost` kept — libuv's fingerprint) while it runs, and a probe killed by its
   timeout LEAVES it raw: Ctrl+C then sends no SIGINT ("ctrl+c doesn't stop kato") and the shell has

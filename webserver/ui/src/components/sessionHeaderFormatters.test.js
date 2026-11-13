@@ -551,7 +551,19 @@ test('formatFinishResult: says whether the team was told in Slack', () => {
   }, 'UNA-1');
   assert.match(done({ status: 'posted', error: '' }).message, /✓ ticket moved to In Review\n✓ posted to Slack$/);
   assert.equal(done({ status: 'posted', error: '' }).kind, 'success');
-  assert.match(done({ status: 'already_posted', error: '' }).message, /✓ already posted to Slack$/);
+  assert.match(
+    done({ status: 'already_posted', error: '' }).message,
+    /✓ already posted to Slack, nothing committed since$/,
+  );
+  // An "already posted" for another reason says that reason, not "nothing committed".
+  assert.match(
+    done({ status: 'already_posted', error: 'the post is still being sent' }).message,
+    /✓ already posted to Slack \(the post is still being sent\)$/,
+  );
+  // Posted again because something was committed since the last post.
+  const again = done({ status: 'posted_again', error: '' });
+  assert.match(again.message, /✓ posted to Slack again: it changed since the last post$/);
+  assert.equal(again.kind, 'success');
   assert.doesNotMatch(done({ status: 'not_set_up', error: '' }).message, /Slack/);
   assert.doesNotMatch(done(null).message, /Slack/);
   const failed = done({ status: 'failed', error: 'the Slack webhook is not valid any more' });

@@ -135,7 +135,7 @@ class SettingsDrawerTests(unittest.TestCase):
 
     def test_it_says_what_off_allows_and_what_it_never_allows(self) -> None:
         help_text = self._field()['help'].lower()
-        for words in ('commit', 'rebase', 'only kato pushes', 'claude and codex', 'auto'):
+        for words in ('commit', 'rebase', 'only kato pushes', 'claude, codex, grok and opencode', 'auto'):
             self.assertIn(words, help_text, words)
 
 

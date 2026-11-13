@@ -5,7 +5,7 @@ agent's own CLI over to the host, which then ``--resume``\\s it instead of
 opening a fresh one. To offer that, something has to enumerate what is on
 disk — and where "on disk" is differs per backend: Claude keys transcripts by
 an encoded cwd under ``~/.claude/projects``, Codex writes date-foldered
-rollouts under ``~/.codex/sessions``.
+rollouts under ``~/.codex/sessions``, Grok and OpenCode each keep their own.
 
 Each transport already owns that knowledge in its own ``session/index.py``,
 and both return the SAME row shape deliberately, so a caller needs the store
@@ -25,12 +25,22 @@ the picker simply shows nothing to pick.
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any
 
 from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
     resolve_platform,
 )
 from agent_backend_core_lib.agent_backend_core_lib.platform import AgentPlatform
+
+#: Each backend's own session index — present only for a backend whose
+#: conversations live on this machine.
+_INDEX_MODULES = {
+    AgentPlatform.CLAUDE: 'claude_core_lib.claude_core_lib.session.index',
+    AgentPlatform.CODEX: 'codex_core_lib.codex_core_lib.session.index',
+    AgentPlatform.GROK: 'grok_core_lib.grok_core_lib.session.index',
+    AgentPlatform.OPENCODE: 'opencode_core_lib.opencode_core_lib.session.index',
+}
 
 
 def supports_session_adoption(backend: str) -> bool:
@@ -45,7 +55,7 @@ def supports_session_adoption(backend: str) -> bool:
         platform = resolve_platform(backend)
     except ValueError:
         return False
-    return platform in (AgentPlatform.CLAUDE, AgentPlatform.CODEX)
+    return platform in _INDEX_MODULES
 
 
 def list_adoptable_sessions(
@@ -69,12 +79,8 @@ def list_adoptable_sessions(
     """
     if not supports_session_adoption(backend):
         return []
-    platform = resolve_platform(backend)
-    if platform is AgentPlatform.CODEX:
-        from codex_core_lib.codex_core_lib.session.index import list_sessions
-    else:
-        from claude_core_lib.claude_core_lib.session.index import list_sessions
-    return list(list_sessions(query=query, max_results=max_results))
+    index = import_module(_INDEX_MODULES[resolve_platform(backend)])
+    return list(index.list_sessions(query=query, max_results=max_results))
 
 
 def requires_transcript_migration(backend: str) -> bool:
@@ -85,8 +91,8 @@ def requires_transcript_migration(backend: str) -> bool:
     under the host's workspace clone — and the snapshot, rather than a move,
     is what keeps the host's git state out of the operator's live checkout.
 
-    Codex resolves a rollout by id across one flat global store, so the file
-    is already where ``codex exec resume`` will look. Copying it there would
+    Codex, Grok and OpenCode resolve a session by id in one global store, so
+    the file is already where the CLI's resume will look. Copying it there would
     at best be a no-op and at worst duplicate a transcript under a second id.
     """
     try:

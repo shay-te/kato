@@ -40,6 +40,8 @@ _MAX_KATO_LINES = {
     'bitbucket_core_lib': 0,
     'claude_core_lib': 0,
     'codex_core_lib': 0,
+    'grok_core_lib': 0,
+    'opencode_core_lib': 0,
     'git_core_lib': 0,
     'github_core_lib': 0,
     'gitlab_core_lib': 0,

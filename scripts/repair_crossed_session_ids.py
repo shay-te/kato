@@ -57,7 +57,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # Backends that keep a local session store. Ownership can only be decided for
 # these; anything else has no on-disk fact to check against.
-_RESOLVABLE_BACKENDS = ('claude', 'codex')
+_RESOLVABLE_BACKENDS = ('claude', 'codex', 'grok', 'opencode')
 
 
 def default_sessions_dir() -> Path:

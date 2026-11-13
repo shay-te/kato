@@ -43,6 +43,7 @@ def run_one_shot(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     cwd: str = '',
     read_output: Callable[[subprocess.CompletedProcess], str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
     """Run ``command`` with ``prompt`` on stdin; return the agent's text.
 
@@ -57,6 +58,10 @@ def run_one_shot(
     transcript under the CLI's per-directory session store, so a caller
     firing many one-shots should point this at a scratch dir instead of
     littering the operator's own session history.
+
+    ``env`` is the run's whole environment (``None`` inherits the caller's) —
+    for a CLI that takes its settings from the environment, without touching
+    the shared process environment other threads read.
     """
     # Resolve the executable before spawning. A one-shot is handed a bare
     # command name (``claude``), and on Windows ``CreateProcess`` does not
@@ -78,6 +83,7 @@ def run_one_shot(
             check=False,
             timeout=timeout_seconds,
             cwd=cwd or None,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise error_type(

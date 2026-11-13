@@ -43,8 +43,13 @@ _PROBES = textwrap.dedent('''\
     from claude_core_lib.claude_core_lib.helpers import effort_levels, remote_control
     from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
     from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
+    from grok_core_lib.grok_core_lib.cli_client import GrokCliClient
+    from grok_core_lib.grok_core_lib.helpers import effort_levels as grok_effort, model_catalog as grok_models
+    from opencode_core_lib.opencode_core_lib.cli_client import OpenCodeCliClient
+    from opencode_core_lib.opencode_core_lib.session.history import run_store_command
     from kato_core_lib.helpers import agent_version_utils
-    claude, codex = {claude!r}, {codex!r}
+    import os
+    claude, codex, grok, opencode = {claude!r}, {codex!r}, {grok!r}, {opencode!r}
     def attempt(run):
         try:
             run()
@@ -56,6 +61,12 @@ _PROBES = textwrap.dedent('''\
     attempt(lambda: agent_version_utils._default_runner(claude))
     attempt(lambda: agent_version_utils._default_upgrade_runner([claude, 'update']))
     attempt(lambda: CodexCliClient(binary=codex).validate_connection())
+    attempt(lambda: GrokCliClient(binary=grok).validate_connection())
+    attempt(lambda: grok_effort._parse_effort_levels_from_help(grok, 10))
+    os.environ['GROK_CLI_BINARY'] = grok
+    attempt(lambda: grok_models.discover_models(force=True))
+    attempt(lambda: OpenCodeCliClient(binary=opencode).validate_connection())
+    attempt(lambda: run_store_command(['models'], binary=opencode))
     print('PROBES-DONE', flush=True)
 ''')
 
@@ -81,8 +92,11 @@ class AgentCliNeverGetsTheTerminalTests(unittest.TestCase):
         import pty
         claude = self._fake('claude', '2.1.0 (Claude Code)')
         codex = self._fake('codex', 'codex-cli 1.2.3')
+        grok = self._fake('grok', 'grok 1.0.45')
+        opencode = self._fake('opencode', '2.2.7')
         script = self.root / 'probes.py'
-        script.write_text(_PROBES.format(repo=str(REPO), claude=claude, codex=codex),
+        script.write_text(_PROBES.format(repo=str(REPO), claude=claude, codex=codex,
+                                         grok=grok, opencode=opencode),
                           encoding='utf-8')
         pid, fd = pty.fork()
         if pid == 0:  # pragma: no cover - the child process
@@ -103,7 +117,8 @@ class AgentCliNeverGetsTheTerminalTests(unittest.TestCase):
         launches = [json.loads(line) for line in self.record.read_text().splitlines()]
         seen = {(Path(sys.executable).name, ' '.join(entry['argv'])) for entry in launches}
         # Every kind of probe actually ran — an empty record would pass vacuously.
-        for expected in ('--help', '--version', 'update', 'exec --help'):
+        for expected in ('--help', '--version', 'update', 'exec --help', 'run --help', 'models',
+                         'models --standalone'):
             self.assertTrue(any(argv == expected for _, argv in seen), (expected, seen))
         handed_the_terminal = [entry['argv'] for entry in launches if entry['tty']]
         self.assertEqual(handed_the_terminal, [])

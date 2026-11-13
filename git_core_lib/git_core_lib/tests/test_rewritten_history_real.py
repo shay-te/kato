@@ -43,6 +43,10 @@ class _RealRepos(unittest.TestCase):
         self.work.mkdir()
         _git(self.origin, 'init', '--bare', '--initial-branch', 'main')
         _git(self.work, 'init', '--initial-branch', 'main')
+        # The client's own rebase runs git without ``_git``'s identity env; a
+        # CI runner has no global identity and git there cannot guess one.
+        _git(self.work, 'config', 'user.name', 'Test')
+        _git(self.work, 'config', 'user.email', 'test@example.com')
         _git(self.work, 'remote', 'add', 'origin', str(self.origin))
         self._commit(self.work, 'README.md', 'base\n', 'baseline')
         _git(self.work, 'push', '-u', 'origin', 'main')

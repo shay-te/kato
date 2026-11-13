@@ -2224,9 +2224,15 @@ class AgentBackendsRouteTests(unittest.TestCase):
 
         body = app.test_client().get('/api/agent-backends').get_json()
 
-        self.assertEqual([e['id'] for e in body['backends']], ['claude', 'codex'])
-        self.assertTrue(all(e['wired'] for e in body['backends']))
-        self.assertTrue(all(e['chat_available'] for e in body['backends']))
+        # Every chat CLI is listed (a tab per CLI); only what the host wired
+        # can chat — the rest open their setup panel.
+        self.assertEqual(
+            [e['id'] for e in body['backends']], ['claude', 'codex', 'grok', 'opencode'],
+        )
+        wired = {e['id']: e['wired'] for e in body['backends']}
+        self.assertEqual(wired, {'claude': True, 'codex': True, 'grok': False, 'opencode': False})
+        available = {e['id']: e['chat_available'] for e in body['backends']}
+        self.assertEqual(available, wired)
         self.assertEqual(body['default'], 'claude')
 
     def test_a_single_unrouted_manager_still_reports_its_backend(self) -> None:

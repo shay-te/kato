@@ -246,6 +246,15 @@ class SessionDiscoveryTests(unittest.TestCase):
         ):
             self.assertEqual(default_sessions_root(), self.root)
 
+    def test_default_sessions_root_reads_a_given_environment(self) -> None:
+        self.assertEqual(
+            default_sessions_root({CLAUDE_SESSIONS_ROOT_ENV_KEY: str(self.root)}),
+            self.root,
+        )
+        self.assertEqual(
+            default_sessions_root({}), Path.home() / '.claude' / 'projects',
+        )
+
     def test_metadata_to_dict_is_json_serialisable(self) -> None:
         meta = ClaudeSessionMetadata(
             agent_session_id='sess',

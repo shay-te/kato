@@ -19,6 +19,8 @@ source =
     openhands_core_lib
     youtrack_core_lib
     codex_core_lib
+    grok_core_lib
+    opencode_core_lib
     sandbox_core_lib
     security_scanner_core_lib
     openrouter_core_lib

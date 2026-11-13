@@ -6,6 +6,8 @@ describe('backendLabel', () => {
   it('names the backends an operator recognises', () => {
     expect(backendLabel('claude')).toBe('Claude');
     expect(backendLabel('codex')).toBe('Codex');
+    expect(backendLabel('grok')).toBe('Grok');
+    expect(backendLabel('opencode')).toBe('OpenCode');
     expect(backendLabel('openhands')).toBe('OpenHands');
   });
 

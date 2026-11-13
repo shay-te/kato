@@ -8,7 +8,7 @@ OpenHands needs a live HTTP service). We exercise:
 * All alias permutations for resolve_platform
 * AgentClientFactory.__init__ flag storage
 * build() dispatch to correct builder
-* _build_claude happy path (lazy-import mocked) and error path
+* the Claude build path (lazy-import mocked) and error path
 * _build_openhands happy path (lazy-import mocked)
 * AgentBackendCoreLib composition root
 * A-Z flow: resolve_platform → factory → build → provider protocol
@@ -144,18 +144,19 @@ def _make_compliant_backend():
 # ---------------------------------------------------------------------------
 
 class AgentPlatformTests(unittest.TestCase):
-    def test_enum_has_exactly_three_members(self) -> None:
+    def test_enum_has_exactly_five_members(self) -> None:
         members = list(AgentPlatform)
-        self.assertEqual(len(members), 3, f'expected 3 members, got {members}')
+        self.assertEqual(len(members), 5, f'expected 5 members, got {members}')
 
-    def test_enum_members_are_claude_codex_and_openhands(self) -> None:
-        self.assertIn(AgentPlatform.CLAUDE, list(AgentPlatform))
-        self.assertIn(AgentPlatform.CODEX, list(AgentPlatform))
-        self.assertIn(AgentPlatform.OPENHANDS, list(AgentPlatform))
+    def test_enum_members_are_the_four_clis_and_openhands(self) -> None:
+        for member in ('CLAUDE', 'CODEX', 'GROK', 'OPENCODE', 'OPENHANDS'):
+            self.assertIn(getattr(AgentPlatform, member), list(AgentPlatform))
 
     def test_enum_values_are_lowercase_string_slugs(self) -> None:
         self.assertEqual(AgentPlatform.CLAUDE.value, 'claude')
         self.assertEqual(AgentPlatform.CODEX.value, 'codex')
+        self.assertEqual(AgentPlatform.GROK.value, 'grok')
+        self.assertEqual(AgentPlatform.OPENCODE.value, 'opencode')
         self.assertEqual(AgentPlatform.OPENHANDS.value, 'openhands')
 
     def test_enum_members_compare_by_identity(self) -> None:
@@ -186,6 +187,19 @@ class PlatformAliasTableTests(unittest.TestCase):
     def test_codex_aliases_cover_expected_spellings(self) -> None:
         expected = {'codex', 'codex-cli', 'codex_cli', 'openai-codex', 'openai_codex'}
         actual = {k for k, v in _PLATFORM_ALIASES.items() if v == AgentPlatform.CODEX}
+        self.assertEqual(actual, expected)
+
+    def test_grok_aliases_cover_expected_spellings(self) -> None:
+        expected = {
+            'grok', 'grok-cli', 'grok_cli', 'grok-build', 'grok_build',
+            'xai-grok', 'xai_grok',
+        }
+        actual = {k for k, v in _PLATFORM_ALIASES.items() if v == AgentPlatform.GROK}
+        self.assertEqual(actual, expected)
+
+    def test_opencode_aliases_cover_expected_spellings(self) -> None:
+        expected = {'opencode', 'open-code', 'open_code', 'opencode-cli', 'opencode_cli'}
+        actual = {k for k, v in _PLATFORM_ALIASES.items() if v == AgentPlatform.OPENCODE}
         self.assertEqual(actual, expected)
 
     def test_empty_string_is_in_aliases_for_historical_compat(self) -> None:
@@ -290,38 +304,34 @@ class AgentClientFactoryInitTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class FactoryDispatchTests(unittest.TestCase):
-    def test_claude_dispatch_routes_to_claude_builder(self) -> None:
+    def _dispatch(self, platform):
         factory = AgentClientFactory(max_retries=1)
-        with patch.object(factory, '_build_claude', return_value='CLAUDE') as bc, \
-             patch.object(factory, '_build_codex', return_value='CODEX') as bcx, \
+        with patch.object(factory, '_build_cli_agent', return_value='CLI') as cli, \
              patch.object(factory, '_build_openhands', return_value='OH') as boh:
-            result = factory.build(AgentPlatform.CLAUDE, object())
-        self.assertEqual(result, 'CLAUDE')
-        bc.assert_called_once()
-        bcx.assert_not_called()
-        boh.assert_not_called()
+            result = factory.build(platform, object())
+        return result, cli, boh
 
-    def test_codex_dispatch_routes_to_codex_builder(self) -> None:
-        factory = AgentClientFactory(max_retries=1)
-        with patch.object(factory, '_build_claude', return_value='CLAUDE') as bc, \
-             patch.object(factory, '_build_codex', return_value='CODEX') as bcx, \
-             patch.object(factory, '_build_openhands', return_value='OH') as boh:
-            result = factory.build(AgentPlatform.CODEX, object())
-        self.assertEqual(result, 'CODEX')
-        bcx.assert_called_once()
-        bc.assert_not_called()
-        boh.assert_not_called()
+    def test_every_cli_platform_routes_to_its_own_client_and_block(self) -> None:
+        expected = {
+            AgentPlatform.CLAUDE: 'ClaudeCliClient',
+            AgentPlatform.CODEX: 'CodexCliClient',
+            AgentPlatform.GROK: 'GrokCliClient',
+            AgentPlatform.OPENCODE: 'OpenCodeCliClient',
+        }
+        for platform, class_name in expected.items():
+            with self.subTest(platform=platform):
+                result, cli, boh = self._dispatch(platform)
+                self.assertEqual(result, 'CLI')
+                boh.assert_not_called()
+                kwargs = cli.call_args.kwargs
+                self.assertEqual(kwargs['config_key'], platform.value)
+                self.assertEqual(kwargs['client_cls'].__name__, class_name)
 
     def test_openhands_dispatch_routes_to_openhands_builder(self) -> None:
-        factory = AgentClientFactory(max_retries=1)
-        with patch.object(factory, '_build_claude', return_value='CLAUDE') as bc, \
-             patch.object(factory, '_build_codex', return_value='CODEX') as bcx, \
-             patch.object(factory, '_build_openhands', return_value='OH') as boh:
-            result = factory.build(AgentPlatform.OPENHANDS, object())
+        result, cli, boh = self._dispatch(AgentPlatform.OPENHANDS)
         self.assertEqual(result, 'OH')
         boh.assert_called_once()
-        bc.assert_not_called()
-        bcx.assert_not_called()
+        cli.assert_not_called()
 
     def test_unhandled_platform_raises_clearly(self) -> None:
         factory = AgentClientFactory(max_retries=1)
@@ -344,7 +354,7 @@ class FactoryDispatchTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# AgentClientFactory._build_claude
+# AgentClientFactory.build — Claude
 # ---------------------------------------------------------------------------
 
 class BuildClaudeTests(unittest.TestCase):
@@ -353,7 +363,7 @@ class BuildClaudeTests(unittest.TestCase):
         cfg_without_claude = types.SimpleNamespace()  # no .claude attribute
         with patch('claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'):
             with self.assertRaises(RuntimeError) as ctx:
-                factory._build_claude(cfg_without_claude)
+                factory.build(AgentPlatform.CLAUDE, cfg_without_claude)
         self.assertIn('claude', str(ctx.exception).lower())
 
     def test_raises_when_claude_config_is_explicitly_none(self) -> None:
@@ -361,7 +371,7 @@ class BuildClaudeTests(unittest.TestCase):
         cfg = types.SimpleNamespace(claude=None)
         with patch('claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient'):
             with self.assertRaises(RuntimeError):
-                factory._build_claude(cfg)
+                factory.build(AgentPlatform.CLAUDE, cfg)
 
     def test_instantiates_claude_cli_client_with_correct_params(self) -> None:
         factory = AgentClientFactory(max_retries=3, docker_mode_on=True, read_only_tools_on=True)
@@ -384,7 +394,7 @@ class BuildClaudeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient',
             return_value=mock_client,
         ) as MockCls:
-            result = factory._build_claude(cfg)
+            result = factory.build(AgentPlatform.CLAUDE, cfg)
 
         MockCls.assert_called_once_with(
             binary='/usr/bin/claude',
@@ -414,7 +424,7 @@ class BuildClaudeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_claude(cfg)
+            factory.build(AgentPlatform.CLAUDE, cfg)
 
         _, kwargs = MockCls.call_args
         # testing=True AND model_smoke_test_enabled=True → still False
@@ -428,7 +438,7 @@ class BuildClaudeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_claude(cfg)
+            factory.build(AgentPlatform.CLAUDE, cfg)
 
         _, kwargs = MockCls.call_args
         self.assertTrue(kwargs['model_smoke_test_enabled'])
@@ -442,7 +452,7 @@ class BuildClaudeTests(unittest.TestCase):
             'claude_core_lib.claude_core_lib.cli_client.ClaudeCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_claude(cfg)
+            factory.build(AgentPlatform.CLAUDE, cfg)
 
         _, kwargs = MockCls.call_args
         self.assertEqual(kwargs['binary'], '')
@@ -453,7 +463,7 @@ class BuildClaudeTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# AgentClientFactory._build_codex
+# AgentClientFactory.build — Codex
 # ---------------------------------------------------------------------------
 
 class BuildCodexTests(unittest.TestCase):
@@ -470,7 +480,7 @@ class BuildCodexTests(unittest.TestCase):
         cfg_without_codex = types.SimpleNamespace()  # no .codex attribute
         with patch('codex_core_lib.codex_core_lib.cli_client.CodexCliClient'):
             with self.assertRaises(RuntimeError) as ctx:
-                factory._build_codex(cfg_without_codex)
+                factory.build(AgentPlatform.CODEX, cfg_without_codex)
         self.assertIn('codex', str(ctx.exception).lower())
 
     def test_raises_when_codex_config_is_explicitly_none(self) -> None:
@@ -478,7 +488,7 @@ class BuildCodexTests(unittest.TestCase):
         cfg = types.SimpleNamespace(codex=None)
         with patch('codex_core_lib.codex_core_lib.cli_client.CodexCliClient'):
             with self.assertRaises(RuntimeError):
-                factory._build_codex(cfg)
+                factory.build(AgentPlatform.CODEX, cfg)
 
     def test_instantiates_codex_cli_client_with_correct_params(self) -> None:
         factory = AgentClientFactory(max_retries=3, docker_mode_on=True, read_only_tools_on=True)
@@ -501,7 +511,7 @@ class BuildCodexTests(unittest.TestCase):
             'codex_core_lib.codex_core_lib.cli_client.CodexCliClient',
             return_value=mock_client,
         ) as MockCls:
-            result = factory._build_codex(cfg)
+            result = factory.build(AgentPlatform.CODEX, cfg)
 
         MockCls.assert_called_once_with(
             binary='/usr/bin/codex',
@@ -531,7 +541,7 @@ class BuildCodexTests(unittest.TestCase):
             'codex_core_lib.codex_core_lib.cli_client.CodexCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_codex(cfg)
+            factory.build(AgentPlatform.CODEX, cfg)
 
         _, kwargs = MockCls.call_args
         # testing=True AND model_smoke_test_enabled=True → still False
@@ -545,7 +555,7 @@ class BuildCodexTests(unittest.TestCase):
             'codex_core_lib.codex_core_lib.cli_client.CodexCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_codex(cfg)
+            factory.build(AgentPlatform.CODEX, cfg)
 
         _, kwargs = MockCls.call_args
         self.assertTrue(kwargs['model_smoke_test_enabled'])
@@ -564,7 +574,7 @@ class BuildCodexTests(unittest.TestCase):
             'codex_core_lib.codex_core_lib.cli_client.CodexCliClient',
             return_value=MagicMock(),
         ) as MockCls:
-            factory._build_codex(cfg)
+            factory.build(AgentPlatform.CODEX, cfg)
 
         _, kwargs = MockCls.call_args
         self.assertEqual(kwargs['binary'], '')
@@ -809,8 +819,7 @@ class FlowTests(unittest.TestCase):
             platform = resolve_platform(alias)
             factory = AgentClientFactory(max_retries=1, testing=True)
             backend = _make_compliant_backend()
-            with patch.object(factory, '_build_claude', return_value=backend), \
-                 patch.object(factory, '_build_codex', return_value=backend), \
+            with patch.object(factory, '_build_cli_agent', return_value=backend), \
                  patch.object(factory, '_build_openhands', return_value=backend):
                 agent = factory.build(platform, object())
             self.assertIsInstance(
@@ -820,7 +829,7 @@ class FlowTests(unittest.TestCase):
 
     def test_build_openhands_raises_runtimeerror_when_openhands_block_missing(self) -> None:
         # Adversarial regression test (Bug-hunt finding):
-        # ``_build_claude`` correctly raises a clear ``RuntimeError``
+        # The Claude build correctly raises a clear ``RuntimeError``
         # when the ``claude`` config block is missing (line 87-92).
         # ``_build_openhands`` does ``open_cfg.openhands`` directly
         # (line 127), so a missing block raises a cryptic AttributeError

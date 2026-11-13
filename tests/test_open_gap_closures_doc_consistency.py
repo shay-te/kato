@@ -45,6 +45,8 @@ from pathlib import Path
 from kato_core_lib import main as kato_main
 from claude_core_lib.claude_core_lib import cli_client as cli_client_module
 from codex_core_lib.codex_core_lib import cli_client as codex_cli_client_module
+from grok_core_lib.grok_core_lib import cli_client as grok_cli_client_module
+from opencode_core_lib.opencode_core_lib import cli_client as opencode_cli_client_module
 from openhands_core_lib.openhands_core_lib import (
     openhands_client as openhands_client_module,
 )
@@ -324,6 +326,8 @@ class OG9aWorkspaceDelimiterWiringTests(unittest.TestCase):
         for label, client in (
             ('claude', cli_client_module.ClaudeCliClient),
             ('codex', codex_cli_client_module.CodexCliClient),
+            ('grok', grok_cli_client_module.GrokCliClient),
+            ('opencode', opencode_cli_client_module.OpenCodeCliClient),
         ):
             with self.subTest(transport=label):
                 for hook in ('_wrap_untrusted', '_wrap_untrusted_text'):

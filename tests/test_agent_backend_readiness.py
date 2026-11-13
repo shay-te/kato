@@ -112,7 +112,7 @@ class ProbeTests(unittest.TestCase):
             entries = readiness.probe_chat_backends()
         # Not-ready must NOT drop the entry — that is the whole point: a
         # hidden tab is how the backend stays undiscovered.
-        self.assertEqual([e['id'] for e in entries], ['claude', 'codex'])
+        self.assertEqual([e['id'] for e in entries], ['claude', 'codex', 'grok', 'opencode'])
         self.assertTrue(all(e['ready'] is False for e in entries))
 
     def test_a_configured_binary_path_is_used(self) -> None:
@@ -167,7 +167,9 @@ class BackendsEndpointTests(unittest.TestCase):
         with patch.object(readiness, '_build_probe_client') as build:
             build.return_value.validate_connection.return_value = None
             body = self._get()
-        self.assertEqual([e['id'] for e in body['backends']], ['claude', 'codex'])
+        self.assertEqual(
+            [e['id'] for e in body['backends']], ['claude', 'codex', 'grok', 'opencode'],
+        )
 
     def test_each_entry_carries_what_the_ui_needs(self) -> None:
         with patch.object(readiness, '_build_probe_client') as build:

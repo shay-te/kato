@@ -32,7 +32,7 @@ const FORMATTERS = {
     }
     return `$ ${cmd}`;
   },
-  Read: (input) => `Read · ${String(input?.file_path || '')}`,
+  Read: (input) => `Read · ${String(input?.file_path || '')}${_readRange(input)}`,
   Edit: (input) => {
     const path = String(input?.file_path || '');
     const oldStr = String(input?.old_string || '');
@@ -124,6 +124,23 @@ const FORMATTERS = {
     return `TaskOutput${id ? ` · ${id}` : ''}`;
   },
 };
+
+
+// Which part of the file a Read took. A file over the Read tool's size cap is
+// read in pieces (the lessons document: 17 reads of one path), and without the
+// range every piece rendered as the same line and read as duplicates.
+function _readRange(input) {
+  const pages = String(input?.pages || '').trim();
+  if (pages) { return ` · pages ${pages}`; }
+  const offset = Number(input?.offset);
+  const limit = Number(input?.limit);
+  const hasOffset = Number.isFinite(offset) && offset > 0;
+  const hasLimit = Number.isFinite(limit) && limit > 0;
+  if (!hasOffset && !hasLimit) { return ''; }
+  const first = hasOffset ? offset : 1;
+  if (!hasLimit) { return ` · from line ${first}`; }
+  return ` · lines ${first}–${first + limit - 1}`;
+}
 
 
 // Tools whose ``input`` names a single workspace file. Used by the

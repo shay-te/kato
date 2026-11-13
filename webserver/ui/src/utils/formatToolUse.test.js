@@ -49,6 +49,18 @@ test('Read renders the full file path, not a shortened one', function () {
   assert.equal(out.includes('…'), false);
 });
 
+test('Read says which part of the file it took, so pieces of one file read apart', function () {
+  const read = (extra) => formatToolUse('Read', { file_path: '/w/lessons.md', ...extra });
+  assert.equal(read({}), 'Read · /w/lessons.md');
+  assert.equal(read({ offset: 1, limit: 400 }), 'Read · /w/lessons.md · lines 1–400');
+  assert.equal(read({ offset: 401, limit: 750 }), 'Read · /w/lessons.md · lines 401–1150');
+  assert.equal(read({ limit: 50 }), 'Read · /w/lessons.md · lines 1–50');
+  assert.equal(read({ offset: 3000 }), 'Read · /w/lessons.md · from line 3000');
+  assert.equal(read({ pages: '1-5' }), 'Read · /w/lessons.md · pages 1-5');
+  // Nonsense is no range, never "lines NaN".
+  assert.equal(read({ offset: 'x', limit: 0 }), 'Read · /w/lessons.md');
+});
+
 test('Bash renders the full command without truncation', function () {
   const longCmd = 'git log --oneline ' + 'origin/master..HEAD '.repeat(10);
   const out = formatToolUse('Bash', { command: longCmd });

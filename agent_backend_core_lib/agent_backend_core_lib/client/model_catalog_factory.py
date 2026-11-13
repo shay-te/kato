@@ -28,11 +28,15 @@ def platform_for_binary(binary: str) -> AgentPlatform:
 
     Callers hold a configured binary (``claude``, ``/usr/local/bin/codex``),
     not a platform name, so the match is on the containing path rather than an
-    exact alias. An unrecognised binary answers CLAUDE — the historical
+    exact alias. ``opencode`` is tried before ``codex`` so neither name can be
+    mistaken for the other inside a longer path. An unrecognised binary answers CLAUDE — the historical
     default, and the one whose fallbacks are always populated.
     """
     name = str(binary or '').strip().lower()
-    for platform in (AgentPlatform.CODEX, AgentPlatform.OPENHANDS):
+    for platform in (
+        AgentPlatform.OPENCODE, AgentPlatform.CODEX, AgentPlatform.GROK,
+        AgentPlatform.OPENHANDS,
+    ):
         if platform.value in name:
             return platform
     return AgentPlatform.CLAUDE
@@ -106,6 +110,8 @@ def discover_effort_levels(
 _HELPER_PACKAGES = {
     AgentPlatform.CLAUDE: 'claude_core_lib.claude_core_lib.helpers',
     AgentPlatform.CODEX: 'codex_core_lib.codex_core_lib.helpers',
+    AgentPlatform.GROK: 'grok_core_lib.grok_core_lib.helpers',
+    AgentPlatform.OPENCODE: 'opencode_core_lib.opencode_core_lib.helpers',
 }
 
 

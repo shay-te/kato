@@ -1,6 +1,7 @@
 """Can each chat backend actually take a message right now?
 
-Both Claude and Codex ALWAYS get a tab in the chat pane. A tab whose CLI
+Every chat backend (Claude, Codex, Grok, OpenCode) ALWAYS gets a tab in the
+chat pane. A tab whose CLI
 is missing is not hidden — it opens a setup panel instead of a chat, which
 is the only way an operator ever discovers the backend exists. That trade
 needs a cheap, honest readiness answer per backend, which is what this is.
@@ -30,11 +31,18 @@ PROBE_CACHE_SECONDS = 60.0
 _LABELS = {
     AgentBackend.CLAUDE.value: 'Claude',
     AgentBackend.CODEX.value: 'Codex',
+    AgentBackend.GROK.value: 'Grok',
+    AgentBackend.OPENCODE.value: 'OpenCode',
 }
 
 # Backends that offer an interactive chat, in tab order. OpenHands is an API
 # client with no session model, so it never gets a chat tab.
-CHAT_BACKENDS = (AgentBackend.CLAUDE.value, AgentBackend.CODEX.value)
+CHAT_BACKENDS = (
+    AgentBackend.CLAUDE.value,
+    AgentBackend.CODEX.value,
+    AgentBackend.GROK.value,
+    AgentBackend.OPENCODE.value,
+)
 
 _cache: dict[str, tuple[float, dict]] = {}
 _lock = threading.Lock()
@@ -53,13 +61,14 @@ def _build_probe_client(backend: str, binary: str):
     is needed, and asking for it would make readiness depend on a fully
     resolved task config the chat pane does not have.
     """
-    if backend == AgentBackend.CODEX.value:
-        from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
-        return CodexCliClient(binary=binary or 'codex')
-    if backend == AgentBackend.CLAUDE.value:
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-        return ClaudeCliClient(binary=binary or 'claude')
-    return None
+    if backend not in CHAT_BACKENDS:
+        return None
+    from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
+        cli_client_class,
+        resolve_platform,
+    )
+    # Every CLI's default binary is its backend name (``claude``, ``grok``, …).
+    return cli_client_class(resolve_platform(backend))(binary=binary or backend)
 
 
 def probe_backend(backend: str, *, binary: str = '', now=None) -> dict:

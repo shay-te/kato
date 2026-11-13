@@ -25,7 +25,7 @@ Coding agents are powerful but scary: they run shell commands, touch credentials
 ### Do more, in one place
 - **All your tasks in a single pane.** Every ticket the agent is working — across every repo — lives in one tabbed UI. Stop hopping between terminals, IDEs, and browser tabs.
 - **One agent for every tracker & git host.** YouTrack, Jira, GitHub, GitLab, Bitbucket — and Azure DevOps (Azure Repos) as a git host — kato picks up assigned tickets and opens PRs wherever they belong.
-- **Run on the agent you like.** Claude or OpenHands behind the same UI; pick the model and effort per task. (A Codex transport exists in the tree but is not yet a selectable backend — see `codex_core_lib`.)
+- **Run on the agent you like.** Claude or OpenHands behind the same UI; pick the model and effort per task. Every task also gets a chat tab for **Codex**, **Grok** (xAI's Grok Build) and **OpenCode** (any provider) beside Claude — each its own conversation, set up from its tab (see `codex_core_lib`, `grok_core_lib`, `opencode_core_lib`).
 - **It handles the busywork end to end** — clone, branch, code, test, open the PR, post a summary, and fix or answer review comments in-thread.
 
 ### Approve everything from one popup — never window-hop again

@@ -60,6 +60,12 @@ DEFAULT_ON_BOOL_KEYS: frozenset[str] = frozenset({
     'KATO_ALLOW_CLI_UPGRADE',
     'KATO_REVIEW_COMMENTS_ENABLED',
     'KATO_REVIEW_COMMENTS_REQUIRE_MENTION',
+    # Each per-turn chat CLI gets its tab by default (the YAML defaults are
+    # "true"); without these the Enable switch drew unchecked while the tab
+    # was there.
+    'KATO_CODEX_ENABLED',
+    'KATO_GROK_ENABLED',
+    'KATO_OPENCODE_ENABLED',
 })
 
 # Action Guard posture — the per-category decision selects in the Settings UI.
@@ -272,7 +278,8 @@ SETTINGS_SCHEMA: list[dict] = [
              'reset, merge, cherry-pick and tag on its own task branch when you '
              'ask. In both modes only kato pushes, and only when you press '
              'Push / Done; the agent never switches branch, talks to the remote '
-             'or changes git config. Claude and Codex chats alike; never in '
+             'or changes git config. Claude, Codex, Grok and OpenCode chats '
+             'alike; never in '
              'Auto. A running chat switches on its next message.',
              {'panel': 'strict-git',
               # Asked in a popup before the switch goes OFF (SettingConfirmDialog).
@@ -290,7 +297,8 @@ SETTINGS_SCHEMA: list[dict] = [
                       'its turn to end.',
                       'If it rewrites commits that were already pushed, kato will '
                       'not push the branch until they are put back.',
-                      'Claude and Codex chats alike, never in Auto mode. Running '
+                      'Claude, Codex, Grok and OpenCode chats alike, never in '
+                      'Auto mode. Running '
                       'chats switch on their next message.',
                   ],
                   'confirm_label': 'Turn strict git off',
@@ -525,6 +533,85 @@ SETTINGS_SCHEMA: list[dict] = [
              'Per-task timeout (s)',
              'Subprocess timeout for the Codex CLI per task.', {}),
             ('KATO_CODEX_MODEL_SMOKE_TEST_ENABLED', 'bool',
+             'Model smoke test',
+             'Boot-time model-access check. Off by default (spend).',
+             {}),
+        ],
+    },
+    {
+        'id': 'grok_agent',
+        'label': 'Grok agent',
+        'title': 'Grok agent',
+        'description': 'xAI\'s Grok Build CLI. Grok gets its own chat tab '
+                       'alongside Claude by default — each tab is its own '
+                       'conversation with its own history. Auth lives in the '
+                       'CLI itself (`grok login`, or XAI_API_KEY). Each turn '
+                       'runs inside Grok\'s workspace sandbox, and the command '
+                       'floor (strict git included) is enforced as Grok deny '
+                       'rules. Grok has no Docker sandbox image, so it offers '
+                       'no bypass switch.',
+        'fields': [
+            ('KATO_GROK_ENABLED', 'bool', 'Enable Grok',
+             'On by default. Gives Grok its own chat tab; if the `grok` '
+             'binary is missing the tab shows setup instructions instead of '
+             'a chat. Uncheck to remove the tab. Needs a kato restart.', {}),
+            ('KATO_GROK_BINARY', 'text', 'Grok binary',
+             'Path to the `grok` CLI. Plain `grok` works on PATH.', {}),
+            ('KATO_GROK_MODEL', 'text', 'Model override',
+             'Model id passed with `-m` (e.g. grok-4.6). Empty = Grok default.', {}),
+            ('KATO_GROK_MAX_TURNS', 'number', 'Max turns',
+             'Cap on agent turns per run (`--max-turns`). Empty = no cap.', {}),
+            ('KATO_GROK_EFFORT', 'select', 'Reasoning effort',
+             'Passed as `--reasoning-effort`; which levels a model accepts '
+             'is the model\'s own.',
+             {'options': ['', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']}),
+            ('KATO_GROK_ALLOWED_TOOLS', 'text', 'Allowed tools',
+             'Comma-separated Grok `--allow` rules (Claude-style, e.g. '
+             '`Bash(npm test*)`).', {}),
+            ('KATO_GROK_DISALLOWED_TOOLS', 'text', 'Disallowed tools',
+             'Comma-separated Grok `--deny` rules, added to the command floor.', {}),
+            ('KATO_GROK_TIMEOUT_SECONDS', 'number',
+             'Per-task timeout (s)',
+             'Subprocess timeout for the Grok CLI per task.', {}),
+            ('KATO_GROK_MODEL_SMOKE_TEST_ENABLED', 'bool',
+             'Model smoke test',
+             'Boot-time model-access check. Off by default (spend).',
+             {}),
+        ],
+    },
+    {
+        'id': 'opencode_agent',
+        'label': 'OpenCode agent',
+        'title': 'OpenCode agent',
+        'description': 'The OpenCode CLI (any provider: Anthropic, OpenAI, '
+                       'local models, …). OpenCode gets its own chat tab '
+                       'alongside Claude by default — each tab is its own '
+                       'conversation with its own history. Providers are '
+                       'connected in the CLI itself (`opencode auth login`). '
+                       'OpenCode has no OS sandbox: kato passes it permission '
+                       'rules on every turn — edits allowed, the command floor '
+                       '(strict git included) denied, nothing outside the task '
+                       'folder. It has no Docker sandbox image, so it offers no '
+                       'bypass switch.',
+        'fields': [
+            ('KATO_OPENCODE_ENABLED', 'bool', 'Enable OpenCode',
+             'On by default. Gives OpenCode its own chat tab; if the '
+             '`opencode` binary is missing the tab shows setup instructions '
+             'instead of a chat. Uncheck to remove the tab. Needs a kato '
+             'restart.', {}),
+            ('KATO_OPENCODE_BINARY', 'text', 'OpenCode binary',
+             'Path to the `opencode` CLI. Plain `opencode` works on PATH.', {}),
+            ('KATO_OPENCODE_MODEL', 'text', 'Model override',
+             'A `provider/model` id (e.g. anthropic/claude-sonnet-4-5). '
+             'Empty = OpenCode\'s own default.', {}),
+            ('KATO_OPENCODE_EFFORT', 'select', 'Reasoning effort',
+             'Sent as the model\'s variant; which variants exist depends on '
+             'the model, and OpenCode refuses one the model lacks.',
+             {'options': ['', 'minimal', 'low', 'medium', 'high', 'max']}),
+            ('KATO_OPENCODE_TIMEOUT_SECONDS', 'number',
+             'Per-task timeout (s)',
+             'Subprocess timeout for the OpenCode CLI per task.', {}),
+            ('KATO_OPENCODE_MODEL_SMOKE_TEST_ENABLED', 'bool',
              'Model smoke test',
              'Boot-time model-access check. Off by default (spend).',
              {}),

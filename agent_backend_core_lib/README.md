@@ -19,18 +19,24 @@ contract.
 ```text
 kato_core_lib
   -> agent_backend_core_lib
-      -> claude_core_lib / codex_core_lib / openhands_core_lib
+      -> claude_core_lib / codex_core_lib / grok_core_lib / opencode_core_lib
+         / openhands_core_lib
 ```
 
-Backend imports are lazy. A Claude-only install does not import Codex or
-OpenHands until that platform is selected.
+Backend imports are lazy. A Claude-only install does not import another
+transport until that platform is selected. Every lookup is one table row per
+transport: the client (`client/agent_client_factory.py`), the chat manager
+(`client/session_manager_factory.py`), the history reader
+(`client/session_history_factory.py`), the session index
+(`client/session_index_factory.py`) and the model catalog
+(`client/model_catalog_factory.py`).
 
 ## Non-responsibilities
 
 - Prompt preparation and guardrail text live in `agent_core_lib`.
 - Provider contracts and DTOs live in `agent_provider_contracts`.
-- Backend transport lives in `claude_core_lib`, `codex_core_lib`, and
-  `openhands_core_lib`.
+- Backend transport lives in `claude_core_lib`, `codex_core_lib`,
+  `grok_core_lib`, `opencode_core_lib`, and `openhands_core_lib`.
 - Raw LLM API calls belong in an LLM connection library, not here.
 
 ## Example

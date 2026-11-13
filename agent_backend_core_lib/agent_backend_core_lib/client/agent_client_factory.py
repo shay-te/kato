@@ -12,6 +12,7 @@ silent config inheritance there before.
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any
 
 from agent_provider_contracts.agent_provider_contracts.agent_provider import (
@@ -36,11 +37,42 @@ _PLATFORM_ALIASES: dict[str, AgentPlatform] = {
     'codex_cli': AgentPlatform.CODEX,
     'openai-codex': AgentPlatform.CODEX,
     'openai_codex': AgentPlatform.CODEX,
+    'grok': AgentPlatform.GROK,
+    'grok-cli': AgentPlatform.GROK,
+    'grok_cli': AgentPlatform.GROK,
+    'grok-build': AgentPlatform.GROK,
+    'grok_build': AgentPlatform.GROK,
+    'xai-grok': AgentPlatform.GROK,
+    'xai_grok': AgentPlatform.GROK,
+    'opencode': AgentPlatform.OPENCODE,
+    'open-code': AgentPlatform.OPENCODE,
+    'open_code': AgentPlatform.OPENCODE,
+    'opencode-cli': AgentPlatform.OPENCODE,
+    'opencode_cli': AgentPlatform.OPENCODE,
     'openhands': AgentPlatform.OPENHANDS,
     'open-hands': AgentPlatform.OPENHANDS,
     'open_hands': AgentPlatform.OPENHANDS,
     '': AgentPlatform.OPENHANDS,  # historical default
 }
+
+
+# Every CLI transport: its client class, and the config block it reads. Each
+# client takes the SAME constructor (a parity test holds them to it), so one
+# builder serves them all and a new transport is one row here.
+_CLI_CLIENTS: dict[AgentPlatform, tuple[str, str]] = {
+    AgentPlatform.CLAUDE: ('claude_core_lib.claude_core_lib.cli_client', 'ClaudeCliClient'),
+    AgentPlatform.CODEX: ('codex_core_lib.codex_core_lib.cli_client', 'CodexCliClient'),
+    AgentPlatform.GROK: ('grok_core_lib.grok_core_lib.cli_client', 'GrokCliClient'),
+    AgentPlatform.OPENCODE: (
+        'opencode_core_lib.opencode_core_lib.cli_client', 'OpenCodeCliClient',
+    ),
+}
+
+
+def cli_client_class(platform: AgentPlatform):
+    """The client class of a CLI transport, imported only now."""
+    module_path, class_name = _CLI_CLIENTS[platform]
+    return getattr(import_module(module_path), class_name)
 
 
 def resolve_platform(name: str) -> AgentPlatform:
@@ -90,31 +122,15 @@ class AgentClientFactory(object):
         self._self_reply_prefixes = tuple(self_reply_prefixes or ())
 
     def build(self, platform: AgentPlatform, cfg: Any) -> AgentProvider:
-        if platform == AgentPlatform.CLAUDE:
-            return self._build_claude(cfg)
-        if platform == AgentPlatform.CODEX:
-            return self._build_codex(cfg)
+        if platform in _CLI_CLIENTS:
+            # Imported lazily, so an install running one CLI never touches
+            # another transport's module tree.
+            return self._build_cli_agent(
+                cfg, config_key=platform.value, client_cls=cli_client_class(platform),
+            )
         if platform == AgentPlatform.OPENHANDS:
             return self._build_openhands(cfg)
         raise ValueError(f'unhandled agent platform: {platform!r}')
-
-    def _build_claude(self, open_cfg: Any) -> AgentProvider:
-        # Imported lazily so an OpenHands-only install never
-        # touches the Claude streaming machinery.
-        from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
-
-        return self._build_cli_agent(
-            open_cfg, config_key='claude', client_cls=ClaudeCliClient,
-        )
-
-    def _build_codex(self, open_cfg: Any) -> AgentProvider:
-        # Imported lazily so a Claude-only / OpenHands-only install
-        # never touches the Codex module tree.
-        from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
-
-        return self._build_cli_agent(
-            open_cfg, config_key='codex', client_cls=CodexCliClient,
-        )
 
     def _build_cli_agent(
         self, open_cfg: Any, *, config_key: str, client_cls,
@@ -147,16 +163,16 @@ class AgentClientFactory(object):
                 getattr(cli_cfg, 'lessons_path', '') or ''
             ),
             # Product-specific refusal guidance the spawner threads in;
-            # every CLI agent (Claude, Codex) receives it identically so
-            # the boundary block is consistent across backends.
+            # every CLI agent receives it identically so the boundary block
+            # is consistent across backends.
             workspace_refusal_guidance=self._workspace_refusal_guidance,
-            # Host bot's self-reply prefixes — same rationale: both CLI
-            # agents drop the host bot's own prior replies identically.
+            # Host bot's self-reply prefixes — same rationale: every CLI
+            # agent drops the host bot's own prior replies identically.
             self_reply_prefixes=self._self_reply_prefixes,
         )
 
     def _build_openhands(self, open_cfg: Any) -> AgentProvider:
-        # Imported lazily — see _build_claude for the rationale.
+        # Imported lazily — see ``build`` for the rationale.
         from openhands_core_lib.openhands_core_lib.openhands_client import OpenHandsClient
         from openhands_core_lib.openhands_core_lib.config_utils import (
             resolved_openhands_base_url,

@@ -101,6 +101,7 @@ from kato_core_lib.data_layers.service.release_notes_google_sync import ReleaseN
 from kato_core_lib.data_layers.service.release_notes_service import ReleaseNotesService
 from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
 from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer
+from kato_core_lib.data_layers.service.task_commits import TaskCommits
 from kato_core_lib.data_layers.service.task_containers import TaskContainers
 from kato_core_lib.data_layers.service.plan_queue.done_nudge import PlanQueueDoneNudge
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
@@ -178,6 +179,16 @@ def _export_agent_env_from_kato_config() -> None:
         'AGENT_LESSONS_GATE_STATE_DIR',
         str(kato_home_path('lessons-gate', env_key='KATO_LESSONS_GATE_STATE_DIR')),
     )
+    # The Grok and OpenCode transports read their model lists (and OpenCode its
+    # session store) by running the CLI itself; name the binary the operator
+    # configured, so a CLI outside PATH is found there too.
+    for kato_key, agent_key in (
+        ('KATO_GROK_BINARY', 'GROK_CLI_BINARY'),
+        ('KATO_OPENCODE_BINARY', 'OPENCODE_CLI_BINARY'),
+    ):
+        binary = os.environ.get(kato_key, '').strip()
+        if binary:
+            os.environ.setdefault(agent_key, binary)
 
 
 def _export_agent_workspaces_root(workspace_manager) -> None:
@@ -444,51 +455,53 @@ class KatoCoreLib(CoreLib):
     def _build_session_manager(self, open_cfg, agent_backend: str):
         """One session-manager face over every backend that has chats.
 
-        Claude and Codex both offer an interactive chat; OpenHands is an API
-        client with no session model and gets ``None``, exactly as before.
+        Claude, Codex, Grok and OpenCode each offer an interactive chat;
+        OpenHands is an API client with no session model and gets ``None``.
 
         The Claude manager owns RECORD bookkeeping for every backend — the
         records are backend-agnostic and share one state directory, so a
         second record owner would fragment the chat list the UI shows as one.
-        The Codex manager owns only its live sessions and publishes the
-        records it writes back into that one view.
+        Each per-turn manager (Codex, Grok, OpenCode) owns only its live
+        sessions and publishes the records it writes back into that one view.
         """
+        from agent_backend_core_lib.agent_backend_core_lib.client.session_manager_factory import (
+            PER_TURN_CHAT_PLATFORMS,
+            has_chat,
+            session_manager_class,
+        )
         state_dir = kato_session_state_dir()
         backend = AgentBackend.parse(agent_backend)
-        if backend not in (AgentBackend.CLAUDE, AgentBackend.CODEX):
+        if backend is None or not has_chat(backend.value):
             return None
         record_owner = ClaudeSessionManager(state_dir=state_dir)
         managers = {AgentBackend.CLAUDE.value: record_owner}
-        # Codex is opt-in. The config block always resolves (it has defaults),
-        # so presence cannot be the signal — the operator has to say yes, or
-        # be running Codex as their agent backend already.
-        codex_cfg = getattr(open_cfg, AgentBackend.CODEX.value, None)
-        codex_on = bool(getattr(codex_cfg, 'enabled', False)) or (
-            backend is AgentBackend.CODEX
-        )
-        if codex_cfg is not None and codex_on:
-            from codex_core_lib.codex_core_lib.session.manager import (
-                CodexSessionManager,
-            )
-            from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
-            managers[AgentBackend.CODEX.value] = CodexSessionManager(
-                state_dir=state_dir,
-                record_sink=record_owner.save_record,
-                # The read side, so a Codex spawn can see an id the operator
-                # adopted and can update the task's existing record instead
-                # of overwriting it.
-                record_source=record_owner.get_record,
-                # Strict git (Settings → Strict git) is global: each Codex turn
-                # asks it fresh, the same setting Claude's spawns read.
-                git_access_source=agent_git_access,
-            )
-        elif backend is AgentBackend.CODEX:
-            # Configured for Codex with no Codex block: nothing can spawn.
-            self.logger.warning(
-                'agent backend is codex but no codex config block exists; '
-                'chats are unavailable',
-            )
-            return None
+        for platform in PER_TURN_CHAT_PLATFORMS:
+            name = platform.value
+            # Each per-turn chat is opt-in. Its config block always resolves
+            # (it has defaults), so presence cannot be the signal — the
+            # operator has to say yes, or be running it as their agent backend.
+            chat_cfg = getattr(open_cfg, name, None)
+            chat_on = bool(getattr(chat_cfg, 'enabled', False)) or backend.value == name
+            if chat_cfg is not None and chat_on:
+                from kato_core_lib.helpers.agent_git_access_utils import agent_git_access
+                managers[name] = session_manager_class(platform)(
+                    state_dir=state_dir,
+                    record_sink=record_owner.save_record,
+                    # The read side, so a spawn can see an id the operator
+                    # adopted and can update the task's existing record
+                    # instead of overwriting it.
+                    record_source=record_owner.get_record,
+                    # Strict git (Settings → Strict git) is global: each turn
+                    # asks it fresh, the same setting Claude's spawns read.
+                    git_access_source=agent_git_access,
+                )
+            elif backend.value == name:
+                # Configured for this CLI with no config block: nothing can spawn.
+                self.logger.warning(
+                    'agent backend is %s but no %s config block exists; '
+                    'chats are unavailable', name, name,
+                )
+                return None
         return AgentSessionRouter(
             managers=managers,
             record_manager=record_owner,
@@ -949,7 +962,8 @@ class KatoCoreLib(CoreLib):
 
     def _build_slack_done_announcer(self, task_service, repository_service) -> SlackDoneAnnouncer:
         """A finished task, posted to the Slack channel set in Settings with its
-        pull requests — read and found the same way as for the release notes."""
+        pull requests — read and found the same way as for the release notes.
+        Posted again once something is committed in it since (``TaskCommits``)."""
         return SlackDoneAnnouncer(
             sources=ReleaseNoteSources(
                 workspace_manager=later(self, 'workspace_manager'), task_service=task_service,
@@ -959,6 +973,9 @@ class KatoCoreLib(CoreLib):
                     repository_service=repository_service,
                 ).pull_requests_of_branch,
             ),
+            commits=TaskCommits(
+                workspace_manager=later(self, 'workspace_manager'), git=repository_service,
+            ).read,
         )
 
     def _build_release_notes_watcher(self, task_service, task_state_service, local_tasks):

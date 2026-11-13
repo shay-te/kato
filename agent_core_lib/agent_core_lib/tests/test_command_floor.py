@@ -14,9 +14,13 @@ import unittest
 
 from agent_core_lib.agent_core_lib.helpers.command_floor import (
     FLOOR_DENY_PROGRAMS,
+    GIT_ACCESS_LOCAL,
+    GIT_ACCESS_STRICT,
     GIT_MUTATING_SUBCOMMANDS,
     UNSUPERVISED_DENY_SUBCOMMANDS,
     cli_deny_patterns,
+    floor_command_prefixes,
+    git_denied_subcommands,
     prompt_floor_rules,
 )
 
@@ -83,6 +87,22 @@ class CliDenyPatternTests(unittest.TestCase):
 
     def test_an_empty_floor_renders_nothing(self) -> None:
         self.assertEqual(cli_deny_patterns(()), ())
+
+
+class FloorCommandPrefixTests(unittest.TestCase):
+    def test_every_denied_git_subcommand_and_program_is_a_prefix(self) -> None:
+        for level in (GIT_ACCESS_STRICT, GIT_ACCESS_LOCAL):
+            with self.subTest(level=level):
+                prefixes = floor_command_prefixes(level)
+                for token in git_denied_subcommands(level):
+                    self.assertIn(f'git {token}', prefixes)
+                for program in FLOOR_DENY_PROGRAMS:
+                    self.assertIn(program, prefixes)
+
+    def test_local_access_releases_commit_but_never_push(self) -> None:
+        self.assertIn('git commit', floor_command_prefixes(GIT_ACCESS_STRICT))
+        self.assertNotIn('git commit', floor_command_prefixes(GIT_ACCESS_LOCAL))
+        self.assertIn('git push', floor_command_prefixes(GIT_ACCESS_LOCAL))
 
 
 class PromptFloorRulesTests(unittest.TestCase):

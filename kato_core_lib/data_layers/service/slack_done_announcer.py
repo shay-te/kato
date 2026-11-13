@@ -1,6 +1,7 @@
 """A finished task, announced in a Slack channel with its pull requests.
 
-Two moments, ONE post per task (``SlackPostedTasks``):
+Two moments, ONE post per task (``SlackPostedTasks``) — until something is
+committed in it again:
 
 * the operator presses **Done** (``TaskPublishService.finish_task_planning_session``
   — push, pull request, In Review): ``announce`` posts NOW and answers what
@@ -13,6 +14,15 @@ Two moments, ONE post per task (``SlackPostedTasks``):
 Where it goes: an Incoming Webhook URL alone (the simplest), or a channel's link
 plus the app's bot token. Best effort: a Slack that refuses or cannot be reached
 is said in words that say what to do, and never fails the done.
+
+**Posted again when the work moved on.** Each post keeps the commit every
+repository of the task was on (``TaskCommits``). A later Done (or the tracker's
+Done) whose repositories have moved on since — the agent kept working, Done
+committed and pushed more — posts the task again, marked as updated; with
+nothing committed since it is "already posted". A post kept before commits were
+recorded counts as moved on when a repository has a commit newer than the post.
+When the commits cannot be read it is "already posted": never a second post on
+a guess.
 
 **One post, even when both moments come at once.** Done on a plan's sub-task
 moves its ticket to Done (which calls ``task_done``) and then calls ``announce``
@@ -34,12 +44,14 @@ from slack_core_lib.slack_core_lib.errors import SlackError
 from slack_core_lib.slack_core_lib.helpers.channel_link import channel_from_link, webhook_url
 
 from kato_core_lib.data_layers.data.release_note_source import ReleaseNoteSource
-from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
+from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPost, SlackPostedTasks
+from kato_core_lib.data_layers.service.task_commits import TaskCommitReading
 from kato_core_lib.helpers.agent_name_utils import agent_name
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.slack_done_settings_utils import SlackDoneSettings, slack_done_settings
 
 POSTED = 'posted'
+POSTED_AGAIN = 'posted_again'
 ALREADY_POSTED = 'already_posted'
 NOT_SET_UP = 'not_set_up'
 FAILED = 'failed'
@@ -50,14 +62,40 @@ def run_in_background(work: Callable[[], None]) -> None:
 
 
 class _Post(object):
-    """A post of one task under way: whoever else asks waits for its outcome."""
+    """A post of one task under way: whoever else asks waits for its outcome.
 
-    def __init__(self) -> None:
+    ``commits``: where the task's repositories stood when it was claimed (kept
+    with the post). ``again``: the task was posted before, and has moved on."""
+
+    def __init__(self, commits: TaskCommitReading | None = None, *, again: bool = False) -> None:
         self.finished = threading.Event()
         self.outcome: dict | None = None
+        self.commits = commits
+        self.again = again
 
 #: How long a second caller waits for the post already under way.
 WAIT_FOR_POST_SECONDS = 30
+
+#: Why an "already posted" is not "nothing committed since" (the Done toast).
+COMMITS_UNREADABLE = 'could not read its commits, so it was not posted again'
+STILL_SENDING = 'the post is still being sent'
+
+
+def _cannot_tell(_task_id: str) -> None:
+    return None
+
+
+def moved_on_since(post: SlackPost, commits: TaskCommitReading | None) -> bool:
+    """Was anything committed in the task since ``post``? False when the
+    commits cannot be read: "cannot tell" must never post a task twice.
+
+    A post that kept its commits is compared repository by repository; an
+    older one (no commits kept) by time: a commit made after it."""
+    if commits is None:
+        return False
+    if post.commits is not None:
+        return {repo: commit for repo, (commit, _at) in commits.items()} != post.commits
+    return any(committed_at > post.at for _commit, committed_at in commits.values())
 
 
 def sender_for(settings: SlackDoneSettings, *, webhook_for=SlackWebhook, client_for=SlackClient):
@@ -88,9 +126,11 @@ class SlackDoneAnnouncer(object):
         webhook_for: Callable[[str], SlackWebhook] = SlackWebhook,
         background: Callable[[Callable[[], None]], None] = run_in_background,
         signed_by: Callable[[], str] = agent_name,
+        commits: Callable[[str], TaskCommitReading | None] = _cannot_tell,
         logger=None,
     ) -> None:
         self._sources = sources
+        self._commits = commits
         self._links = links
         self._posted = posted or SlackPostedTasks()
         self._settings = settings
@@ -104,7 +144,8 @@ class SlackDoneAnnouncer(object):
 
     def announce(self, task_id: str) -> dict:
         """Post ``task_id`` now (the Done button). ``{status, error}`` — status
-        ``posted`` / ``already_posted`` / ``not_set_up`` / ``failed``. Never raises."""
+        ``posted`` / ``posted_again`` / ``already_posted`` / ``not_set_up`` /
+        ``failed``. Never raises."""
         task = str(task_id or '').strip()
         try:
             prepared = self._prepare(task)
@@ -119,7 +160,8 @@ class SlackDoneAnnouncer(object):
             return _outcome(FAILED, str(exc) or exc.__class__.__name__)
 
     def task_done(self, task_id: str) -> None:
-        """The task reached Done: posted in the background unless it already was."""
+        """The task reached Done: posted in the background unless it already
+        was, with nothing committed since."""
         task = str(task_id or '').strip()
         try:
             prepared = self._prepare(task)
@@ -141,7 +183,7 @@ class SlackDoneAnnouncer(object):
         if problem:
             self.logger.warning('task %s was not posted to Slack: %s', task, problem)
             return _outcome(FAILED, problem)
-        post = self._claim(task)
+        post = self._claim(task, self._commits_of(task))
         if not isinstance(post, tuple):
             return post
         try:
@@ -150,25 +192,35 @@ class SlackDoneAnnouncer(object):
             self._finish(task, post[0], None)  # gives the claim back
             raise
 
-    def _claim(self, task: str):
-        """``(post,)``: this caller may post ``task``. Else ALREADY_POSTED,
-        or the ``_Post`` another caller is sending right now. Checked and
-        taken under one lock — that is what makes the post happen once."""
+    def _commits_of(self, task: str) -> TaskCommitReading | None:
+        """Read BEFORE the claim's lock: it runs git, and the lock is shared."""
+        try:
+            return self._commits(task)
+        except Exception:
+            self.logger.exception('could not read the commits of task %s', task)
+            return None
+
+    def _claim(self, task: str, commits: TaskCommitReading | None):
+        """``(post,)``: this caller may post ``task``. Else ALREADY_POSTED
+        (posted, nothing committed since), or the ``_Post`` another caller is
+        sending right now. Checked and taken under one lock — that is what
+        makes the post happen once."""
         key = task.lower()
         with self._claims_lock:
             under_way = self._under_way.get(key)
             if under_way is not None:
                 return under_way
-            if self._posted.has(task):
-                return _outcome(ALREADY_POSTED)
-            post = _Post()
+            last = self._posted.last_post(task)
+            if last is not None and not moved_on_since(last, commits):
+                return _outcome(ALREADY_POSTED, '' if commits is not None else COMMITS_UNREADABLE)
+            post = _Post(commits, again=last is not None)
             self._under_way[key] = post
             return (post,)
 
     def _send(self, send, source: ReleaseNoteSource, post: _Post) -> dict:
         outcome = None
         try:
-            send(done_message(source, self._links.links(source), self._signed_by()))
+            send(done_message(source, self._links.links(source), self._signed_by(), again=post.again))
         except SlackError as exc:
             self.logger.error('task %s was not posted to Slack: %s', source.task_id, exc)
             outcome = _outcome(FAILED, str(exc))
@@ -176,9 +228,10 @@ class SlackDoneAnnouncer(object):
             self.logger.exception('could not post task %s to Slack', source.task_id)
             outcome = _outcome(FAILED, str(exc) or exc.__class__.__name__)
         else:
-            self._posted.mark(source.task_id)
-            self.logger.info('posted task %s and its pull requests to Slack', source.task_id)
-            outcome = _outcome(POSTED)
+            self._posted.mark(source.task_id, _commit_ids(post.commits))
+            self.logger.info('posted task %s and its pull requests to Slack%s',
+                             source.task_id, ' again: it changed since the last post' if post.again else '')
+            outcome = _outcome(POSTED_AGAIN if post.again else POSTED)
         finally:
             self._finish(source.task_id, post, outcome)
         return outcome
@@ -196,7 +249,7 @@ class SlackDoneAnnouncer(object):
         """What the post already under way came to — the toast says that, not
         "already posted" for a post it just watched happen."""
         if not post.finished.wait(WAIT_FOR_POST_SECONDS):
-            return _outcome(ALREADY_POSTED)  # still sending: it is one post either way
+            return _outcome(ALREADY_POSTED, STILL_SENDING)  # one post either way
         return post.outcome or _outcome(FAILED, 'the post did not finish')
 
 
@@ -204,11 +257,19 @@ def _outcome(status: str, error: str = '') -> dict:
     return {'status': status, 'error': error}
 
 
-def done_message(source: ReleaseNoteSource, links: list[tuple[str, str]], signed_by: str = '') -> str:
+def _commit_ids(commits: TaskCommitReading | None) -> dict[str, str] | None:
+    return None if commits is None else {repo: commit for repo, (commit, _at) in commits.items()}
+
+
+def done_message(
+    source: ReleaseNoteSource, links: list[tuple[str, str]], signed_by: str = '', *, again: bool = False,
+) -> str:
     """``✅ *UNA-1* is done — Title``, then whose agent finished it (several
-    developers' katos post to one channel), then one line per pull request:
-    its whole link, shown as the link itself (a word like "pull request" hid
-    where it goes), after its repository's name when the task spans several.
+    developers' katos post to one channel), then — for a task posted before
+    that has changed since — that it was updated, then one line per pull
+    request: its whole link, shown as the link itself (a word like "pull
+    request" hid where it goes), after its repository's name when the task
+    spans several.
 
     Everything that came from a ticket or a setting is escaped: a title
     holding ``<!channel>`` must never notify a whole channel.
@@ -217,6 +278,8 @@ def done_message(source: ReleaseNoteSource, links: list[tuple[str, str]], signed
     lines = [f'✅ *{_escape(source.task_id)}* is done' + (f' — {title}' if title else '')]
     if signed_by.strip():
         lines.append(f'Finished by *{_escape(signed_by.strip())}*')
+    if again:
+        lines.append('_Updated: it changed since it was last posted here._')
     if links:
         lines += [f'• {_where(label)}<{url}>' for label, url in links]
     else:

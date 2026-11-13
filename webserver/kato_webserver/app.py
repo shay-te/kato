@@ -6741,42 +6741,35 @@ from claude_core_lib.claude_core_lib.helpers.context_window import (
 def _replay_history(record, agent_session_id: str):
     """Replay a chat's transcript, from whichever CLI wrote it.
 
-    Each backend persists its own way and neither can read the other's, so
-    the record's backend picks the reader. Codex used to have NO reader at
-    all: its events lived only in the session object's memory, so a chat
-    survived a page reload but not a restart of the process hosting it — the
+    Each backend persists its own way and none can read another's, so the
+    record's backend picks the reader. A per-turn CLI (Codex, Grok, OpenCode)
+    used to have NO reader at all: its events lived only in the session
+    object's memory, so a chat survived a page reload but not a restart — the
     operator came back to an empty tab.
     """
-    from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
+    from agent_backend_core_lib.agent_backend_core_lib.client.session_manager_factory import (
+        PER_TURN_CHAT_PLATFORMS,
+    )
     backend = str(getattr(record, 'agent_backend', '') or '').strip().lower()
-    if backend == AgentBackend.CODEX.value:
-        yield from _replay_codex_history_from_disk(record)
+    if backend in {platform.value for platform in PER_TURN_CHAT_PLATFORMS}:
+        yield from _replay_per_turn_history_from_disk(record, backend)
         return
     # Claude, and legacy records with no backend recorded (all Claude).
     yield from _replay_history_from_disk(agent_session_id)
 
 
-def _replay_codex_history_from_disk(record):
-    """Codex's rollout transcript, in the live stream's own wire shape.
+def _replay_per_turn_history_from_disk(record, backend: str):
+    """A per-turn CLI's own transcript, in the live stream's wire shape.
 
-    Read from the record's OWN id rather than the resolver the other
-    transport uses: that one deliberately answers '' for a Codex chat, so it
-    can never hand Claude's transcript to a Codex tab.
+    Read from the record's OWN id rather than the resolver the persistent
+    transport uses: that one deliberately answers '' for another backend's
+    chat, so it can never hand Claude's transcript to another agent's tab.
     """
+    from agent_backend_core_lib.agent_backend_core_lib.client.session_history_factory import (
+        load_history_events,
+    )
     session_id = str(getattr(record, 'agent_session_id', '') or '').strip()
-    if not session_id:
-        return
-    try:
-        from codex_core_lib.codex_core_lib.session.history import (
-            load_history_events as load_codex_history,
-        )
-    except ImportError:
-        return
-    try:
-        events = load_codex_history(session_id)
-    except Exception:
-        return
-    for raw in events:
+    for raw in load_history_events(backend, session_id):
         epoch = _epoch_from_iso(raw.get('timestamp'))
         yield epoch, _sse_message(
             SSE_EVENT_SESSION_HISTORY_EVENT,

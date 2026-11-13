@@ -12,16 +12,26 @@ the same contract every other backend
 ```
 codex_core_lib/codex_core_lib/
 ├── cli_client.py               ← CodexCliClient (implements AgentProvider)
-└── helpers/
-    └── one_shot_utils.py       ← codex_one_shot / make_codex_one_shot
+├── helpers/
+│   ├── effort_levels.py        ← the reasoning-effort levels (static: no flag)
+│   ├── model_catalog.py        ← models, from $CODEX_HOME/models_cache.json
+│   └── one_shot_utils.py       ← one_shot / make_one_shot
+└── session/
+    ├── wire_protocol.py        ← Codex's event names (they ARE the shared vocabulary)
+    ├── streaming.py            ← StreamingCodexSession: one `codex exec` per turn
+    ├── manager.py              ← CodexSessionManager
+    ├── history.py              ← replay a chat from its rollout transcript
+    └── index.py                ← list rollouts for adoption
 ```
 
-That's it — everything else (prompt builders, lessons reader,
-AGENTS.md reader, result-shape helpers,
-text utilities, ImplementationFields) lives in
-[`agent_core_lib`](../agent_core_lib/) and is shared with
-[`claude_core_lib`](../claude_core_lib/) so the two CLI backends
-present an identical helper surface.
+The layout is the contract in `agent_provider_contracts/cli_transport_layout.py`
+— every CLI transport (Claude, Codex, Grok, OpenCode) has these files and
+names, enforced by the host's `tests/test_transport_api_parity.py`. Everything
+a per-turn CLI shares (the chat state machine, the manager, the result
+reducer, the review-comment and investigation orchestration) lives in
+`agent_core_lib` — `session/per_turn_session.py`, `session/per_turn_manager.py`,
+`session/turn_result.py`, `per_turn_cli_shared.py` — and Grok and OpenCode
+build on the same base. What stays here is Codex's argv and the spawns.
 
 ## Public surface
 
@@ -70,11 +80,10 @@ moved.
 | Session resume | `--resume <id>` flag | `codex exec resume <id>` sub-subcommand (NOT a flag). Resume accepts a **restricted flag subset** — `--sandbox`, `-C`, `--add-dir` are rejected (resumed sessions inherit those from the original spawn); `--json`, `-o`, `-m`, `--skip-git-repo-check`, `--dangerously-bypass-*`, `-c` are accepted. |
 | Workspace-outside-git escape hatch | n/a | `--skip-git-repo-check` (kato always sets this since workspaces aren't always git roots) |
 
-Streaming chat sessions and the planning-UI tab integration aren't
-wired yet — the current client is one-shot. When Codex's
-streaming surface is added, the streaming machinery will follow
-the same file layout `claude_core_lib` uses (a `session/` folder
-with the same module names).
+Chats are one `codex exec` (then `codex exec resume <id>`) process per turn:
+`session/streaming.py` binds the shared per-turn session to Codex's argv, and
+the writable roots ride in a `-c sandbox_workspace_write.writable_roots=[…]`
+override on every turn (a resumed turn does not keep `--add-dir`).
 
 ### Knobs accepted but ignored
 

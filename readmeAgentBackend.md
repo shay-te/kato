@@ -1,6 +1,6 @@
 # Agent Backend — kato
 
-Kato can drive its implementation, testing, and review-fix work through one of two agent backends.
+Kato can drive its implementation, testing, and review-fix work through one of two agent backends, and offers a chat with four agent CLIs (see "Chat CLIs" below).
 
 ## Choosing an Agent Backend
 
@@ -60,6 +60,34 @@ Notes:
 - `KATO_CLAUDE_PERMISSION_MODE` defaults to `bypassPermissions` because the orchestration layer pins the agent to a prepared branch and runs unattended. Use `acceptEdits` if you would rather have Claude prompt for tool grants in interactive setups.
 - The CLI is invoked with `--output-format json` so the orchestration parses `result` and `session_id` from the structured output. Review-comment follow-ups pass that `session_id` back via `--resume`.
 - The agent writes `pr_description.md` into the **task folder** (`<workspaces_root>/<task_id>/`), beside the repo clones rather than inside one, and the publication flow reads it as the pull request description — same as the OpenHands path. The location is the guarantee: a file outside every worktree cannot be staged, so it can never reach a PR as a committed file. It used to be `validation_report.md` in the repository root, which depended on the orchestrator stripping it before each push — a blanket `git add -A` in the "merge default branch" WIP commit defeated that permanently, and one report rode three commits into a pull request. A repo-root `validation_report.md` is still stripped if an older prompt produces one, and its text is used only when the task folder has none.
+
+## Chat CLIs: Codex, Grok and OpenCode
+
+Beside the main agent, every task has a chat tab per CLI — **Claude**,
+**Codex**, **Grok** (xAI's Grok Build, `grok`) and **OpenCode** (`opencode`,
+any provider). Each tab is its own conversation with its own history, resumed
+after a restart. A tab whose CLI is missing opens a setup panel with the
+install and login commands instead of a chat. They are chat tabs, not the main
+agent (`KATO_AGENT_BACKEND` stays `claude` or `openhands`).
+
+Each has its own Settings tab (Codex agent / Grok agent / OpenCode agent),
+on by default (`KATO_CODEX_ENABLED`, `KATO_GROK_ENABLED`,
+`KATO_OPENCODE_ENABLED` — a restart applies a change):
+
+| | Codex | Grok | OpenCode |
+|---|---|---|---|
+| Install | `npm install -g @openai/codex` | `curl -fsSL https://x.ai/cli/install.sh \| bash` | `npm install -g @opencode/cli` (or `opencode-ai`, V1) |
+| Sign in | `codex login` | `grok login` or `XAI_API_KEY` | `opencode auth login` |
+| A turn runs | in Codex's `workspace-write` sandbox | inside Grok's workspace sandbox (Seatbelt / Landlock; Windows: edits only) | with kato's permission rules: edits allowed, nothing outside the task folder |
+| Strict git | the sandbox keeps `.git` read-only | **enforced** as `--deny` rules | **enforced** as shell rules |
+| Settings | binary, model, effort, timeout, smoke test | binary, model, effort, max turns, allow/deny rules, timeout, smoke test | binary, model (`provider/model`), effort (a model variant), timeout, smoke test |
+| Bypass switch | yes (Sandbox tab) | none — no Docker sandbox image; bypass is refused | none — same |
+
+All four transports are mirrors of each other (the same modules, names and
+signatures — see `agent_provider_contracts/cli_transport_layout.py`); Codex,
+Grok and OpenCode share one per-turn base in `agent_core_lib`. Their own
+READMEs (`codex_core_lib/`, `grok_core_lib/`, `opencode_core_lib/`) list the
+CLI flags each run uses and what was verified against the CLI's source.
 
 The agent is designed to:
 

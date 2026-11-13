@@ -48,6 +48,24 @@ class AgentEnvBridgeTests(unittest.TestCase):
             os.environ.get('AGENT_IGNORED_REPOSITORY_FOLDERS'), 'explicit-wins',
         )
 
+    def test_the_grok_and_opencode_binaries_reach_their_libs(self) -> None:
+        with patch.dict(os.environ, {
+            'KATO_GROK_BINARY': '/opt/grok', 'KATO_OPENCODE_BINARY': '/opt/opencode',
+        }):
+            os.environ.pop('GROK_CLI_BINARY', None)
+            os.environ.pop('OPENCODE_CLI_BINARY', None)
+            _export_agent_env_from_kato_config()
+            self.assertEqual(os.environ['GROK_CLI_BINARY'], '/opt/grok')
+            self.assertEqual(os.environ['OPENCODE_CLI_BINARY'], '/opt/opencode')
+
+    def test_unset_cli_binaries_bridge_nothing(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            for key in ('KATO_GROK_BINARY', 'KATO_OPENCODE_BINARY', 'GROK_CLI_BINARY', 'OPENCODE_CLI_BINARY'):
+                os.environ.pop(key, None)
+            _export_agent_env_from_kato_config()
+            self.assertNotIn('GROK_CLI_BINARY', os.environ)
+            self.assertNotIn('OPENCODE_CLI_BINARY', os.environ)
+
 
 
 class WorkspacesRootExportTests(unittest.TestCase):

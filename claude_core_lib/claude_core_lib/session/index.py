@@ -83,16 +83,18 @@ class ClaudeSessionMetadata:
         return asdict(self)
 
 
-def default_sessions_root() -> Path:
+def default_sessions_root(env: dict | None = None) -> Path:
     """Resolve Claude Code's ``projects/`` directory.
 
     Honours ``CLAUDE_SESSIONS_ROOT`` first (for tests). Falls
     back to ``~/.claude/projects`` which is Claude Code's default on
     macOS / Linux. We don't try to detect alternate Claude Code
     installations — if an operator has moved their store, they set
-    the env var.
+    the env var. ``env`` replaces the process environment for the lookup
+    (the same argument every transport's ``default_sessions_root`` takes).
     """
-    override = os.environ.get(CLAUDE_SESSIONS_ROOT_ENV_KEY, '').strip()
+    source = os.environ if env is None else env
+    override = str(source.get(CLAUDE_SESSIONS_ROOT_ENV_KEY, '') or '').strip()
     if override:
         return Path(override).expanduser()
     return Path.home() / '.claude' / 'projects'

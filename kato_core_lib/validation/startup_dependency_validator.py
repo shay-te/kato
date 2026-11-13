@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # client resolves a SEPARATE base_url/container (``resolved_openhands_base_url(
 # ..., testing=True)``), so its testing step validates a genuinely different
 # endpoint and must still run.
-_SINGLE_BINARY_BACKENDS = frozenset({'claude', 'codex'})
+_SINGLE_BINARY_BACKENDS = frozenset({'claude', 'codex', 'grok', 'opencode'})
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,7 @@ class StartupDependencyValidator(ValidationBase):
             ),
         ]
         # Skip the testing-connection probe when it would just re-validate the
-        # same local CLI the implementation step already checked (Claude/Codex);
+        # same local CLI the implementation step already checked (a CLI backend);
         # keep it for OpenHands, whose testing client hits a separate endpoint.
         redundant_for_backend = self._agent_backend in _SINGLE_BINARY_BACKENDS
         if not self._skip_testing and not redundant_for_backend:

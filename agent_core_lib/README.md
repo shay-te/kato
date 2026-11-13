@@ -45,8 +45,13 @@ UI, repository workflow, or model provider.
   `agent_backend_core_lib`.
 - **Provider contracts.** `AgentProvider` and its DTOs live in
   `agent_provider_contracts`.
-- **Backend transport.** Claude/Codex/OpenHands process, streaming,
-  permission, and sandbox details live in their backend libraries.
+- **Backend transport.** Each CLI's argv, event names, spawn, permission and
+  sandbox details live in its backend library. What every one-process-per-turn
+  CLI (Codex, Grok, OpenCode) shares DOES live here: the chat state machine
+  (`session/per_turn_session.py`), its manager (`session/per_turn_manager.py`),
+  the shared event vocabulary (`session/turn_events.py`), the result reducer
+  (`session/turn_result.py`) and the spawn-free client half
+  (`per_turn_cli_shared.py`).
 - **Raw LLM API calls.** Bedrock/OpenAI/Anthropic request construction
   and response normalization belong in an LLM connection library.
 - **Product workflow.** Ticketing, repo publishing, PR/review

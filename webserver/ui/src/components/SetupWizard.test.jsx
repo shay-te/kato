@@ -464,6 +464,12 @@ describe('SetupWizard AI agent steps — every boot-mandatory key is asked here'
     // ...but it does not claim Codex is unusable: it still gets a chat tab.
     expect(codex).toHaveTextContent(/own chat tab next to Claude/);
     expect(codex).not.toHaveTextContent(/not yet available/i);
+    // Grok and OpenCode are the same: chat tabs, never the main agent.
+    for (const name of [/Grok agent/, /OpenCode agent/]) {
+      const card = screen.getByRole('radio', { name });
+      expect(card).toBeDisabled();
+      expect(card).toHaveTextContent(/own chat\s+tab next to Claude/);
+    }
     // Nothing picked yet → Next is gated.
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
   });

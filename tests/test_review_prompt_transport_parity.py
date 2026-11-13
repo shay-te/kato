@@ -27,9 +27,16 @@ from types import SimpleNamespace
 
 from claude_core_lib.claude_core_lib.cli_client import ClaudeCliClient
 from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
+from grok_core_lib.grok_core_lib.cli_client import GrokCliClient
+from opencode_core_lib.opencode_core_lib.cli_client import OpenCodeCliClient
 
 #: Every CLI transport that builds review-comment prompts. Add new ones here.
-TRANSPORTS = (('claude', ClaudeCliClient), ('codex', CodexCliClient))
+TRANSPORTS = (
+    ('claude', ClaudeCliClient),
+    ('codex', CodexCliClient),
+    ('grok', GrokCliClient),
+    ('opencode', OpenCodeCliClient),
+)
 
 #: The two record shapes a comment can arrive in. Provider review comments use
 #: ``line_number``; the in-app diff-comment store uses ``line``. Both reach the

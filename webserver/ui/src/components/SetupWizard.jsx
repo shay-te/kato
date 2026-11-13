@@ -73,12 +73,14 @@ const REQUIRED_TICKET_FIELDS = {
 // with are selectable (validate_env: openhands | claude); OpenRouter is the
 // OpenHands runtime pointed at OpenRouter's API.
 //
-// Codex is shown disabled HERE because this step picks the MAIN agent (the one
-// that implements tickets on its own) and ``KATO_AGENT_BACKEND=codex`` is
-// rejected — selecting it would wedge the config on an unsupported value. It is
-// NOT unavailable: Codex runs as a chat tab beside Claude, switched on by
-// default (``KATO_CODEX_ENABLED``) once kato is set up. The card says so, because
-// "not yet available" read as "kato cannot use my installed Codex".
+// Codex, Grok and OpenCode are shown disabled HERE because this step picks the
+// MAIN agent (the one that implements tickets on its own) and
+// ``KATO_AGENT_BACKEND=codex|grok|opencode`` is rejected — selecting one would
+// wedge the config on an unsupported value. They are NOT unavailable: each runs
+// as a chat tab beside Claude, switched on by default (``KATO_CODEX_ENABLED``,
+// ``KATO_GROK_ENABLED``, ``KATO_OPENCODE_ENABLED``) once kato is set up. The
+// cards say so, because "not yet available" read as "kato cannot use my
+// installed CLI".
 const AGENT_CHOICES = [
   {
     id: 'claude',
@@ -121,6 +123,26 @@ const AGENT_CHOICES = [
     label: 'Codex agent',
     blurb: 'Not a main agent yet. Once set up, Codex still gets its own chat tab '
       + 'next to Claude (needs the `codex` CLI).',
+    required: [],
+    optional: [],
+    disabled: true,
+  },
+  {
+    id: 'grok',
+    backend: 'grok',
+    label: 'Grok agent',
+    blurb: 'Not a main agent yet. Once set up, Grok still gets its own chat tab '
+      + 'next to Claude (needs the `grok` CLI).',
+    required: [],
+    optional: [],
+    disabled: true,
+  },
+  {
+    id: 'opencode',
+    backend: 'opencode',
+    label: 'OpenCode agent',
+    blurb: 'Not a main agent yet. Once set up, OpenCode still gets its own chat '
+      + 'tab next to Claude (needs the `opencode` CLI).',
     required: [],
     optional: [],
     disabled: true,

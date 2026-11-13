@@ -81,6 +81,16 @@ test('a running loop rings the whole task pill (overlay ::after, own axis)', () 
   assert.match(ring, /inset:\s*-2px;/);
 });
 
+test('the loop ring follows the row\'s corners (row radius + the 2px outset)', () => {
+  // It stayed a 999px pill after the rows became rounded boxes and bulged
+  // out at both ends of the row.
+  const px = (body) => Number(/border-radius:\s*([\d.]+)px;/.exec(body)?.[1]);
+  const row = px(ruleBody('.tabs-pane-side .tab'));
+  const ring = px(ruleBody('.tabs-pane-side .tab.has-review-loop::after'));
+  assert.ok(row > 0, 'the row states a px radius');
+  assert.equal(ring, row + 2);
+});
+
 test('a loop tab in the shared strip reads as its own kind', () => {
   // Indigo active underline (not the files' cyan), and the loop glyph tinted
   // by the loop's state.

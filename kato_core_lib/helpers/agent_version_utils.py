@@ -67,9 +67,16 @@ _UPGRADE_TIMEOUT_SECONDS = 300
 _VERSION_RE = re.compile(r'(\d+)\.(\d+)\.(\d+)')
 _CLAUDE_NPM_PACKAGE = '@anthropic-ai/claude-code'
 _CODEX_NPM_PACKAGE = '@openai/codex'
-# The npm package each backend's CLI ships as. Both are published to the public
-# registry, so "what is the latest version" needs no credential.
-_NPM_PACKAGES = {'claude': _CLAUDE_NPM_PACKAGE, 'codex': _CODEX_NPM_PACKAGE}
+_OPENCODE_NPM_PACKAGE = 'opencode-ai'
+# The npm package each backend's CLI ships as. All are published to the public
+# registry, so "what is the latest version" needs no credential. Grok's CLI
+# ships through xAI's own installer, not npm, so it has no row: no published
+# version to compare, and no in-app npm upgrade.
+_NPM_PACKAGES = {
+    'claude': _CLAUDE_NPM_PACKAGE,
+    'codex': _CODEX_NPM_PACKAGE,
+    'opencode': _OPENCODE_NPM_PACKAGE,
+}
 _NPM_REGISTRY_URL = 'https://registry.npmjs.org/{package}/latest'
 _REGISTRY_TIMEOUT_SECONDS = 4.0
 # A published release doesn't change minute to minute; cache so the banner's
@@ -84,6 +91,18 @@ _CLAUDE_MIN_DEFAULT = '2.1.160'
 # developers.openai.com/codex.
 _CLAUDE_DOWNLOAD_DEFAULT = 'https://code.claude.com/docs/en/setup'
 _CODEX_DOWNLOAD_DEFAULT = 'https://developers.openai.com/codex/'
+_GROK_DOWNLOAD_DEFAULT = 'https://x.ai/cli'
+_OPENCODE_DOWNLOAD_DEFAULT = 'https://opencode.ai/docs/'
+
+# Per chat CLI: the settings that name its binary, its minimum version and its
+# install page, and their defaults. One row per CLI, so a CLI cannot be wired
+# for one of these questions and silently missing from another.
+_CLI_SETTINGS = {
+    'claude': ('KATO_CLAUDE', _CLAUDE_MIN_DEFAULT, _CLAUDE_DOWNLOAD_DEFAULT),
+    'codex': ('KATO_CODEX', '', _CODEX_DOWNLOAD_DEFAULT),
+    'grok': ('KATO_GROK', '', _GROK_DOWNLOAD_DEFAULT),
+    'opencode': ('KATO_OPENCODE', '', _OPENCODE_DOWNLOAD_DEFAULT),
+}
 
 _latest_cache: dict[str, tuple[float, str | None]] = {}
 _latest_lock = threading.Lock()
@@ -114,11 +133,9 @@ def _resolve_backend(env: dict, backend: str = '') -> str:
             )
             return resolve_platform(explicit).value
         except Exception:
-            low = explicit.lower()
-            if low.startswith('claude'):
-                return 'claude'
-            if 'codex' in low:
-                return 'codex'
+            guessed = _guess_cli(explicit)
+            if guessed:
+                return guessed
     name = (env.get('KATO_AGENT_BACKEND', '') or '').strip()
     try:
         from agent_backend_core_lib.agent_backend_core_lib.client.agent_client_factory import (
@@ -126,12 +143,23 @@ def _resolve_backend(env: dict, backend: str = '') -> str:
         )
         return resolve_platform(name).value
     except Exception:
-        low = name.lower()
-        if low.startswith('claude'):
-            return 'claude'
-        if 'codex' in low:
-            return 'codex'
-        return 'openhands'
+        return _guess_cli(name) or 'openhands'
+
+
+def _guess_cli(name: str) -> str:
+    """The chat CLI a free-form name mentions, or '' (``opencode`` before ``codex``)."""
+    low = str(name or '').lower()
+    if low.startswith('claude'):
+        return 'claude'
+    for cli in ('opencode', 'codex', 'grok'):
+        if cli in low:
+            return cli
+    return ''
+
+
+def _cli_settings(backend: str) -> tuple[str, str, str] | None:
+    parsed = AgentBackend.parse(backend)
+    return _CLI_SETTINGS.get(parsed.value) if parsed is not None else None
 
 
 def binary_for_backend(backend: str, env: dict | None = None) -> str:
@@ -146,19 +174,19 @@ def binary_for_backend(backend: str, env: dict | None = None) -> str:
     binary saved through the Settings UI counts without a restart.
     """
     env = _config_env() if env is None else env
-    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
-        return env.get('KATO_CLAUDE_BINARY', '').strip() or 'claude'
-    if AgentBackend.is_a(backend, AgentBackend.CODEX):
-        return env.get('KATO_CODEX_BINARY', '').strip() or 'codex'
-    return ''
+    settings = _cli_settings(backend)
+    if settings is None:
+        return ''
+    prefix = settings[0]
+    return env.get(f'{prefix}_BINARY', '').strip() or AgentBackend.parse(backend).value
 
 
 def _min_version(backend: str, env: dict) -> str:
-    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
-        return (env.get('KATO_CLAUDE_MIN_VERSION', '') or _CLAUDE_MIN_DEFAULT).strip()
-    if AgentBackend.is_a(backend, AgentBackend.CODEX):
-        return (env.get('KATO_CODEX_MIN_VERSION', '') or '').strip()
-    return ''
+    settings = _cli_settings(backend)
+    if settings is None:
+        return ''
+    prefix, minimum, _ = settings
+    return (env.get(f'{prefix}_MIN_VERSION', '') or minimum).strip()
 
 
 def _fetch_latest_package(package: str) -> dict:
@@ -221,11 +249,11 @@ def reset_latest_version_cache() -> None:
 
 
 def _download_url(backend: str, env: dict) -> str:
-    if AgentBackend.is_a(backend, AgentBackend.CLAUDE):
-        return (env.get('KATO_CLAUDE_DOWNLOAD_URL', '') or _CLAUDE_DOWNLOAD_DEFAULT).strip()
-    if AgentBackend.is_a(backend, AgentBackend.CODEX):
-        return (env.get('KATO_CODEX_DOWNLOAD_URL', '') or _CODEX_DOWNLOAD_DEFAULT).strip()
-    return ''
+    settings = _cli_settings(backend)
+    if settings is None:
+        return ''
+    prefix, _, download = settings
+    return (env.get(f'{prefix}_DOWNLOAD_URL', '') or download).strip()
 
 
 def _probe(binary: str, runner=None) -> tuple[bool, str]:
@@ -496,7 +524,7 @@ def upgrade_command_str(env: dict | None = None, backend: str = '') -> str:
 
 def upgrade_allowed(env: dict | None = None, backend: str = '') -> tuple[bool, str]:
     """``(allowed, reason)`` for an in-app CLI upgrade. Available by default for
-    the claude and codex CLIs on the host (both ship as npm packages); an
+    the CLIs that ship as npm packages (claude, codex, opencode); an
     operator can hard-disable it with ``KATO_ALLOW_CLI_UPGRADE=false``. Not
     offered in Docker (the CLI lives in the image — rebuild it with
     ``kato sandbox build``). The per-use confirm in the UI (showing the exact
@@ -507,8 +535,9 @@ def upgrade_allowed(env: dict | None = None, backend: str = '') -> tuple[bool, s
     backend = _resolve_backend(env, backend)
     if backend not in _NPM_PACKAGES:
         return False, (
-            f'in-app upgrade supports only the claude and codex CLIs (backend '
-            f'is {backend}) — use the download page'
+            f'in-app upgrade supports only the CLIs published to npm '
+            f'({", ".join(sorted(_NPM_PACKAGES))}; backend is {backend}) — '
+            'use the download page'
         )
     if _is_truthy(env.get('KATO_CLAUDE_DOCKER')):
         return False, (

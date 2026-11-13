@@ -20,8 +20,9 @@ do not do any git commit or push. let me inspect the changes
 
 This keeps regressing during feature work, so it is now a build gate. **The rule:**
 every `KATO_*` variable and the `kato` brand live ONLY in `kato_core_lib`. **No
-other core-lib** (`agent_core_lib`, `claude_core_lib`, `codex_core_lib`, the
-provider/git/ticket libs, `provider_client_base`, …) may contain the string
+other core-lib** (`agent_core_lib`, `claude_core_lib`, `codex_core_lib`,
+`grok_core_lib`, `opencode_core_lib`, the provider/git/ticket libs,
+`provider_client_base`, …) may contain the string
 `kato` ANYWHERE — not in source, not in tests, not in comments, not in env-var
 names. A lib's tests test only that lib; only `kato_core_lib`'s own tests may say
 `kato`.

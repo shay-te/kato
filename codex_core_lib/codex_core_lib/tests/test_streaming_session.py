@@ -20,10 +20,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from codex_core_lib.codex_core_lib.session.streaming import (
-    CODEX_EVENT_TURN_ABORTED,
-    CODEX_EVENT_TURN_FAILED,
     SessionEvent,
     StreamingCodexSession,
+)
+from codex_core_lib.codex_core_lib.session.wire_protocol import (
+    CODEX_EVENT_TURN_ABORTED,
+    CODEX_EVENT_TURN_FAILED,
 )
 
 _SETTLE_SECONDS = 5.0

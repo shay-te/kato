@@ -1,11 +1,19 @@
-"""Codex Code CLI backend for the orchestrator.
+"""Codex CLI backend for the orchestrator.
 
-Mirrors the structure of ``claude_core_lib`` so a reader who has
-learned one backend recognises the other. Shared helpers
-(``agent_prompt_utils``, ``lessons_doc_utils``, …) live in
-``agent_core_lib`` and are re-exported here under the same module
-names so the two backends present the same import surface to the
-orchestration layer.
+Mirrors every other CLI transport module for module (the layout is the
+contract in ``agent_provider_contracts.cli_transport_layout``), so a reader who
+has learned one backend recognises the others.
+
+Public surface:
+    CodexCliClient        - one-shot ``codex exec`` runs (implements AgentProvider).
+    StreamingCodexSession - a chat: one ``codex exec`` process per turn.
+    CodexSessionManager   - per-task lifecycle for those chats.
+    SessionEvent          - one event in a chat's log.
 """
 
-from codex_core_lib.codex_core_lib.cli_client import CodexCliClient  # noqa: F401
+from codex_core_lib.codex_core_lib.cli_client import CodexCliClient
+from codex_core_lib.codex_core_lib.session.manager import CodexSessionManager
+from codex_core_lib.codex_core_lib.session.streaming import (
+    SessionEvent,
+    StreamingCodexSession,
+)

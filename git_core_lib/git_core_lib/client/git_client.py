@@ -373,6 +373,28 @@ class GitClientMixin:
             ) from exc
         return {'changed_files': changed_files, 'unpushed_commits': unpushed_commits}
 
+    def last_commit(self, local_path: str) -> tuple[str, int]:
+        """``(commit, committed_at)`` of what is checked out: the commit HEAD
+        points at and its committer time (epoch seconds).
+
+        Moves only when work is committed (or the branch history changes), so
+        two readings that match mean nothing was committed in between.
+        Uncommitted edits do not move it. Raises when git cannot answer,
+        including a branch with no commit yet.
+        """
+        output = self._git_stdout(
+            local_path,
+            ['log', '-1', '--format=%H %ct', 'HEAD'],
+            f'failed to read the last commit in {local_path}',
+        )
+        commit, _, committed_at = output.partition(' ')
+        try:
+            return commit.strip(), int(committed_at.strip())
+        except ValueError as exc:
+            raise RuntimeError(
+                f'failed to parse the last commit in {local_path}: {output or "<empty>"}'
+            ) from exc
+
     def has_local_branch(self, local_path: str, branch_name: str) -> bool:
         return self._git_reference_exists(local_path, f'refs/heads/{branch_name}')
 

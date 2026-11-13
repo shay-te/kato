@@ -112,6 +112,15 @@ def _task_mode_spawn(task_id: str) -> dict:
         return {}
 
 
+#: Every backend with an interactive chat, in tab order (the CLI transports).
+_CHAT_BACKENDS = (
+    AgentBackend.CLAUDE,
+    AgentBackend.CODEX,
+    AgentBackend.GROK,
+    AgentBackend.OPENCODE,
+)
+
+
 class SessionStoppedByUserError(RuntimeError):
     """Raised by ``_run_to_terminal`` when the user explicitly stopped the session.
 
@@ -180,18 +189,19 @@ class PlanningSessionRunner(object):
         manager wasn't created — the rest of the orchestration falls back to
         the one-shot path in those cases.
 
-        Claude and Codex both have one, and each reads its OWN config block:
-        the binary, model, and tool settings differ per CLI, and reading
-        Claude's block for a Codex spawn would hand it a ``claude`` binary.
+        Every chat backend (Claude, Codex, Grok, OpenCode) has one, and each
+        reads its OWN config block: the binary, model, and tool settings differ
+        per CLI, and reading Claude's block for another spawn would hand it a
+        ``claude`` binary.
         """
         backend = AgentBackend.parse(agent_backend)
-        if backend not in (AgentBackend.CLAUDE, AgentBackend.CODEX):
+        if backend not in _CHAT_BACKENDS:
             return None
         if session_manager is None:
             return None
         # Each backend's own config block. Falls back to Claude's only for
-        # Claude — a missing Codex block means Codex is not configured, not
-        # that it should silently borrow Claude's binary.
+        # Claude — a missing block for another CLI means that CLI is not
+        # configured, not that it should silently borrow Claude's binary.
         config_key = backend.value
         claude_cfg = getattr(open_cfg, config_key, None)
         if claude_cfg is None:
@@ -201,7 +211,7 @@ class PlanningSessionRunner(object):
         # a spawn on a tab other than the configured backend still gets that
         # CLI's binary, model and tool settings.
         by_backend = {}
-        for candidate in (AgentBackend.CLAUDE, AgentBackend.CODEX):
+        for candidate in _CHAT_BACKENDS:
             cfg = getattr(open_cfg, candidate.value, None)
             if cfg is None:
                 continue

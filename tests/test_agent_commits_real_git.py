@@ -37,6 +37,10 @@ class _TaskClone(unittest.TestCase):
         self.clone = root / 'workspaces' / BRANCH / 'api'
         self.clone.parent.mkdir(parents=True)
         _git(root, 'clone', str(self.origin), str(self.clone))
+        # Kato's own commit runs git without ``_git``'s identity env; a CI
+        # runner has no global identity and git there cannot guess one.
+        _git(self.clone, 'config', 'user.name', 'Test')
+        _git(self.clone, 'config', 'user.email', 'test@example.com')
         _git(self.clone, 'checkout', '-b', BRANCH)
         self.repository = _make_repository(
             repo_id='api', local_path=self.clone, remote_url=self.origin,

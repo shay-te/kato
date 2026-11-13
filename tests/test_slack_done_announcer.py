@@ -23,7 +23,12 @@ from kato_core_lib.data_layers.data.release_note_source import ReleaseNoteSource
 from kato_core_lib.data_layers.service.done_announcements import DoneAnnouncements
 from kato_core_lib.data_layers.service.release_note_sources import ReleaseNoteSources
 from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPostedTasks
-from kato_core_lib.data_layers.service.slack_done_announcer import SlackDoneAnnouncer, done_message
+from kato_core_lib.data_layers.service.slack_done_announcer import (
+    COMMITS_UNREADABLE,
+    STILL_SENDING,
+    SlackDoneAnnouncer,
+    done_message,
+)
 from kato_core_lib.helpers.agent_name_utils import AGENT_NAME_KEY
 from kato_core_lib.helpers.slack_done_settings_utils import (
     SLACK_DONE_CHANNEL_KEY,
@@ -224,7 +229,10 @@ class DoneButtonAnnouncesTests(SlackDoneAnnouncerTests):
     def test_a_task_is_posted_once_whichever_way_it_got_done(self) -> None:
         self._webhook()
         self.announcer.announce('UNA-1')
-        self.assertEqual(self.announcer.announce('una-1'), {'status': 'already_posted', 'error': ''})
+        # No commits reader here: it cannot tell whether the task changed, so
+        # it is never posted a second time on a guess, and the toast says why.
+        self.assertEqual(self.announcer.announce('una-1'),
+                         {'status': 'already_posted', 'error': COMMITS_UNREADABLE})
         self._done('UNA-1')  # the tracker's Done later: not again
         self.assertEqual(len(self.slack.requests), 1)
 
@@ -238,7 +246,7 @@ class DoneButtonAnnouncesTests(SlackDoneAnnouncerTests):
         self._webhook()
         self.slack.answer = (404, b'no_service')
         self.assertEqual(self.announcer.announce('UNA-1')['status'], 'failed')
-        self.assertFalse(self.posted.has('UNA-1'))  # a failed post is tried again next time
+        self.assertIsNone(self.posted.last_post('UNA-1'))  # a failed post is tried again next time
         self.slack.answer = (200, b'ok')
         self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
 
@@ -275,7 +283,7 @@ class OnePostWhenBothMomentsMeetTests(SlackDoneAnnouncerTests):
 
         self.assertEqual(len(self.slack.requests), 1)
         self.assertEqual(answer, {'status': 'posted', 'error': ''})  # the toast: "posted"
-        self.assertTrue(self.posted.has('UNA-1'))
+        self.assertIsNotNone(self.posted.last_post('UNA-1'))
 
     def test_the_other_way_round_posts_once_too(self) -> None:
         self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
@@ -292,7 +300,7 @@ class OnePostWhenBothMomentsMeetTests(SlackDoneAnnouncerTests):
             work()
         thread.join(5)
         self.assertEqual(answer['status'], 'failed')  # what the post it waited for came to
-        self.assertFalse(self.posted.has('UNA-1'))
+        self.assertIsNone(self.posted.last_post('UNA-1'))
         # The next Done tries again — the claim was given back.
         self.slack.answer = (200, {'ok': True})
         self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted')
@@ -301,7 +309,8 @@ class OnePostWhenBothMomentsMeetTests(SlackDoneAnnouncerTests):
     def test_a_post_that_never_finishes_is_still_one_post(self) -> None:
         self.announcer.task_done('UNA-1')  # held: never run
         with patch('kato_core_lib.data_layers.service.slack_done_announcer.WAIT_FOR_POST_SECONDS', 0.05):
-            self.assertEqual(self.announcer.announce('UNA-1'), {'status': 'already_posted', 'error': ''})
+            self.assertEqual(self.announcer.announce('UNA-1'),
+                             {'status': 'already_posted', 'error': STILL_SENDING})
         self.assertEqual(self.slack.requests, [])
 
     def test_a_task_that_cannot_be_read_gives_the_claim_back(self) -> None:
@@ -319,13 +328,13 @@ class SlackPostedTasksTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         path = Path(tmp.name) / 'posted.json'
         posted = SlackPostedTasks(path, clock=lambda: 7.0)
-        self.assertFalse(posted.has('UNA-1'))
+        self.assertIsNone(posted.last_post('UNA-1'))
         posted.mark('UNA-1')
-        self.assertTrue(SlackPostedTasks(path).has(' una-1 '))
+        self.assertIsNotNone(SlackPostedTasks(path).last_post(' una-1 '))
         path.write_text('[1]')
-        self.assertFalse(posted.has('UNA-1'))
+        self.assertIsNone(posted.last_post('UNA-1'))
         path.write_text('nope')
-        self.assertFalse(posted.has('UNA-1'))
+        self.assertIsNone(posted.last_post('UNA-1'))
 
     def test_the_default_place_is_under_kato_home(self) -> None:
         tmp = tempfile.TemporaryDirectory()

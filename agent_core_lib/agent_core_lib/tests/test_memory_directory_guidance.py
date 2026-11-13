@@ -70,7 +70,7 @@ class MemoryDirectoryGuidanceTests(unittest.TestCase):
         # Agent vendors only. The host product's own name is covered by
         # tests/test_corelib_agnostic_gate, and naming it here would itself
         # be the leak that gate exists to catch — it did catch it.
-        for brand in ('claude', 'codex', 'openhands'):
+        for brand in ('claude', 'codex', 'grok', 'opencode', 'openhands'):
             with self.subTest(brand=brand):
                 self.assertNotIn(brand, memory)
 

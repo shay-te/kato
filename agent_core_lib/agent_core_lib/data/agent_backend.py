@@ -26,6 +26,8 @@ class AgentBackend(str, Enum):
 
     CLAUDE = 'claude'
     CODEX = 'codex'
+    GROK = 'grok'
+    OPENCODE = 'opencode'
     OPENHANDS = 'openhands'
 
     @classmethod

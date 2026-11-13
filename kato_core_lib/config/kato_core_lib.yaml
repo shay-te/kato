@@ -249,6 +249,34 @@ kato:
     timeout_seconds: ${oc.decode:${oc.env:KATO_CODEX_TIMEOUT_SECONDS,"1800"}}
     model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_CODEX_MODEL_SMOKE_TEST_ENABLED,"false"}}
     lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
+  # Grok Build (xAI's ``grok`` CLI) and OpenCode (``opencode``): wired exactly
+  # like Codex — each gets its own chat tab by default, one CLI process per
+  # turn, and a tab whose CLI is missing opens a setup panel instead of a chat.
+  # Neither has a Docker sandbox image, so there is no bypass switch for them
+  # (the client refuses bypass rather than run unsandboxed). Each block lists
+  # only the knobs its CLI honours.
+  grok:
+    # ON by default. Turn it off to drop the Grok tab entirely.
+    enabled: ${oc.decode:${oc.env:KATO_GROK_ENABLED,"true"}}
+    binary: ${oc.env:KATO_GROK_BINARY,"grok"}
+    model: ${oc.env:KATO_GROK_MODEL,""}
+    max_turns: ${oc.env:KATO_GROK_MAX_TURNS,""}
+    effort: ${oc.env:KATO_GROK_EFFORT,""}
+    allowed_tools: ${oc.env:KATO_GROK_ALLOWED_TOOLS,""}
+    disallowed_tools: ${oc.env:KATO_GROK_DISALLOWED_TOOLS,""}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_GROK_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_GROK_MODEL_SMOKE_TEST_ENABLED,"false"}}
+    lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
+  opencode:
+    # ON by default. Turn it off to drop the OpenCode tab entirely.
+    enabled: ${oc.decode:${oc.env:KATO_OPENCODE_ENABLED,"true"}}
+    binary: ${oc.env:KATO_OPENCODE_BINARY,"opencode"}
+    model: ${oc.env:KATO_OPENCODE_MODEL,""}
+    # A model VARIANT (``high``, ``max`` …); which exist depends on the model.
+    effort: ${oc.env:KATO_OPENCODE_EFFORT,""}
+    timeout_seconds: ${oc.decode:${oc.env:KATO_OPENCODE_TIMEOUT_SECONDS,"1800"}}
+    model_smoke_test_enabled: ${oc.decode:${oc.env:KATO_OPENCODE_MODEL_SMOKE_TEST_ENABLED,"false"}}
+    lessons_path: ${oc.env:KATO_LESSONS_PATH,""}
   task_scan:
     # Seconds between autonomous scans. 0 = manual-only.
     # Default lives in main.py: DEFAULT_SCAN_INTERVAL_SECONDS.

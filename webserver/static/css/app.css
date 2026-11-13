@@ -13546,16 +13546,20 @@ button.settings-prompt-editor-head {
   background: #ef4444;
 }
 
-/* A running review loop rings the whole task pill in indigo, so an active loop
+/* A running review loop rings the whole task row in indigo, so an active loop
  * is visible from any tab — a SEPARATE axis from the status dot. Drawn as an
  * overlay ring (::after) so it layers over the active-tab cyan fill and the
  * orange needs-attention state without fighting their own box-shadows. The
- * pill is already ``position: relative`` for the corner badge. */
+ * row is already ``position: relative`` for the corner badge.
+ *
+ * Its corners follow the row's: the row's radius plus the 2px the ring sits
+ * outside it, so the two outlines run parallel. It was still a pill (999px)
+ * after the rows became 6px boxes, and bulged out at both ends. */
 .tabs-pane-side .tab.has-review-loop::after {
   content: "";
   position: absolute;
   inset: -2px;
-  border-radius: var(--radius-pill);
+  border-radius: 8px;
   border: 1.5px solid #a78bfa;
   box-shadow: 0 0 8px rgba(167, 139, 250, 0.55);
   pointer-events: none;

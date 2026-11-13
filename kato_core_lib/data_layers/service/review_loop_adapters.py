@@ -223,7 +223,7 @@ class KatoReviewer(object):
 def review_loop_refusal(task_id: str, *, implementation_service, workspace_manager) -> str:
     """Why a loop cannot start for ``task_id`` right now, or ''."""
     if not getattr(implementation_service, 'supports_investigation', False):
-        return 'the configured agent backend cannot run an independent review (Claude or Codex can)'
+        return 'the configured agent backend cannot run an independent review (Claude, Codex, Grok or OpenCode can)'
     if not task_repository_clones(workspace_manager, task_id):
         return 'this task has no repository clone to review'
     return chat_mode_refusal(task_id)

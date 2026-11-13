@@ -8,7 +8,7 @@ import SettingsSectionHead from './settings/SettingsSectionHead.jsx';
 // of General (``panel: 'strict-git'``), so its label, help, default-on and the
 // confirm popup on the way off all stay in the schema. This tab adds what a
 // single toggle row cannot: what strict git is, why it is the recommended
-// setting, and exactly what turning it off changes — for Claude and Codex.
+// setting, and exactly what turning it off changes — for every chat CLI.
 
 const WHY_RECOMMENDED = [
   ['One hand on the branch.',
@@ -101,12 +101,14 @@ export default function StrictGitSettingsPanel({ highlightKey = '' }) {
         <Points items={NEVER} />
       </SettingsSectionHead>
 
-      <SettingsSectionHead title="Claude and Codex">
+      <SettingsSectionHead title="Claude, Codex, Grok and OpenCode">
         <p className="settings-drawer-field-group-help">
-          The setting applies to both. A running chat switches on its next
-          message. Claude&apos;s git commands are refused by the Claude CLI
-          itself and by kato&apos;s Action Guard. Codex&apos;s own sandbox keeps
-          each repository&apos;s <code>.git</code> read-only while strict git is
+          The setting applies to all of them. A running chat switches on its
+          next message. Claude&apos;s git commands are refused by the Claude CLI
+          itself and by kato&apos;s Action Guard. Grok and OpenCode refuse them
+          too: each turn carries the same list as Grok deny rules and as
+          OpenCode permission rules. Codex&apos;s own sandbox keeps each
+          repository&apos;s <code>.git</code> read-only while strict git is
           on — even staging fails there — and writable when it is off. Codex
           has no per-command block, so staying on the branch and not pushing
           are instructions it is given, not walls.

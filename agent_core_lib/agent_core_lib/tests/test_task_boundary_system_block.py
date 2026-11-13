@@ -86,7 +86,7 @@ class TaskBoundarySystemBlockTests(unittest.TestCase):
     def test_it_names_no_agent_vendor(self) -> None:
         # The host product's own name is covered by tests/test_corelib_agnostic_gate.
         block = task_boundary_system_block(TASK, outside_files=[DOC]).lower()
-        for brand in ('claude', 'codex', 'openhands'):
+        for brand in ('claude', 'codex', 'grok', 'opencode', 'openhands'):
             with self.subTest(brand=brand):
                 self.assertNotIn(brand, block)
 

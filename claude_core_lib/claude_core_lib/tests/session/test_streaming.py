@@ -987,6 +987,12 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
             session._recent_events.append(SessionEvent(raw={'type': 'system'}))
         self.assertEqual(len(session.recent_events()), 3)
 
+    def test_recent_events_with_a_zero_limit_returns_none(self) -> None:
+        # ``events[-0:]`` is the whole list; a limit of 0 must not mean "all".
+        session = self._build_session()
+        session._recent_events.append(SessionEvent(raw={'type': 'system'}))
+        self.assertEqual(session.recent_events(limit=0), [])
+
     def test_has_finished_false_before_terminal_event(self) -> None:
         session = self._build_session()
         self.assertFalse(session.has_finished)

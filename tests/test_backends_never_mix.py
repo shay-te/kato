@@ -229,16 +229,23 @@ class HistoryReplayUsesTheRightReaderTests(unittest.TestCase):
             app_module, '_replay_history_from_disk',
             lambda sid: claude_calls.append(sid) or iter(()),
         ), patch.object(
-            app_module, '_replay_codex_history_from_disk',
-            lambda rec: codex_calls.append(rec.agent_session_id) or iter(()),
+            app_module, '_replay_per_turn_history_from_disk',
+            lambda rec, name: codex_calls.append((name, rec.agent_session_id)) or iter(()),
         ):
             list(app_module._replay_history(record, session_id))
         return claude_calls, codex_calls
 
     def test_a_codex_chat_uses_the_codex_reader(self) -> None:
         claude, codex = self._replay('codex', 'codex-1')
-        self.assertEqual(codex, ['codex-1'])
+        self.assertEqual(codex, [('codex', 'codex-1')])
         self.assertEqual(claude, [])
+
+    def test_a_grok_or_opencode_chat_uses_its_own_reader(self) -> None:
+        for backend in ('grok', 'opencode'):
+            with self.subTest(backend=backend):
+                claude, per_turn = self._replay(backend, f'{backend}-1')
+                self.assertEqual(per_turn, [(backend, f'{backend}-1')])
+                self.assertEqual(claude, [])
 
     def test_a_claude_chat_uses_the_claude_reader(self) -> None:
         claude, codex = self._replay('claude', 'claude-1')
@@ -256,4 +263,4 @@ class HistoryReplayUsesTheRightReaderTests(unittest.TestCase):
         # NOT the shared resolver: that one deliberately answers '' for a
         # Codex chat so it can never hand back Claude's transcript id.
         _claude, codex = self._replay('codex', 'codex-1')
-        self.assertEqual(codex, ['codex-1'])
+        self.assertEqual(codex, [('codex', 'codex-1')])

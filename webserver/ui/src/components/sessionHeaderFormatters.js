@@ -369,7 +369,15 @@ export function formatFinishResult(result, taskId = '') {
 function slackLine(slack) {
   const status = slack?.status || '';
   if (status === 'posted') { return { text: '✓ posted to Slack', problem: false }; }
-  if (status === 'already_posted') { return { text: '✓ already posted to Slack', problem: false }; }
+  if (status === 'posted_again') {
+    return { text: '✓ posted to Slack again: it changed since the last post', problem: false };
+  }
+  if (status === 'already_posted') {
+    // The reason when it is not "nothing committed since": the commits could
+    // not be read, or the post is still being sent.
+    const why = slack.error ? ` (${slack.error})` : ', nothing committed since';
+    return { text: `✓ already posted to Slack${why}`, problem: false };
+  }
   if (status === 'failed') {
     return { text: `⚠ not posted to Slack: ${slack.error || 'see the kato log'}`, problem: true };
   }

@@ -17,7 +17,7 @@ stays decoupled and testable.
   review-comment handling. It wires product-specific text into the agent clients.
 - **`agent_core_lib`** — the shared, product-agnostic agent-behavior base
   (prompt helpers, session/text utils). The agent transports import it.
-- **Agent transports** — `claude_core_lib`, `codex_core_lib`, `openhands_core_lib`.
+- **Agent transports** — `claude_core_lib`, `codex_core_lib`, `grok_core_lib`, `opencode_core_lib`, `openhands_core_lib`.
   One per backend; the UI looks the same regardless.
 - **Provider libs** — `youtrack`, `jira`, `github`, `gitlab`, `bitbucket`, plus
   `git_core_lib` and `provider_client_base` (shared issue/PR client base).

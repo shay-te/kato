@@ -220,6 +220,20 @@ def cli_deny_patterns(tokens: tuple[str, ...], *, program: str = '') -> tuple[st
     )
 
 
+def floor_command_prefixes(git_access: object = GIT_ACCESS_STRICT) -> tuple[str, ...]:
+    """Every command prefix the floor denies at ``git_access``, as plain text.
+
+    ``git push``, ``git commit`` (strict only), ``mkfs``, ``shutdown`` … — for
+    a CLI whose deny rules are globs in its own syntax (Grok's
+    ``Bash(git push*)``, OpenCode's ``"git push*": "deny"``). Each transport
+    renders these; none keeps a list of its own.
+    """
+    return (
+        *(f'git {token}' for token in git_denied_subcommands(git_access)),
+        *FLOOR_DENY_PROGRAMS,
+    )
+
+
 def prompt_floor_rules() -> str:
     """The floor as prompt text, for a CLI with no tool-deny flag.
 

@@ -63,7 +63,7 @@ describe('StrictGitSettingsPanel', () => {
     for (const heading of [
       'What strict git is', 'Why it is recommended', 'When to turn it off',
       'What changes when it is off', 'What the agent never does, in either mode',
-      'Claude and Codex',
+      'Claude, Codex, Grok and OpenCode',
     ]) {
       expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument();
     }

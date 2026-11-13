@@ -37,7 +37,7 @@ _SCANNERS = ["bandit", "safety", "detect_secrets"]
 # biggest startup + size win. A desktop operator who sets KATO_AGENT_BACKEND=
 # openhands gets a clear ImportError; that config needs the docker-compose stack.
 _LAZY_LIBS = [
-    "claude_core_lib", "codex_core_lib",                              # agent transports (CLI)
+    "claude_core_lib", "codex_core_lib", "grok_core_lib", "opencode_core_lib",  # agent transports (CLI)
     "github_core_lib", "gitlab_core_lib", "bitbucket_core_lib",        # PR providers
     "azure_devops_core_lib",
     "youtrack_core_lib", "jira_core_lib",                             # task providers

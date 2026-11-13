@@ -38,7 +38,14 @@ no required base class.
 
 ## What is NOT on the contract
 
-The streaming session protocol (long-lived process, NDJSON events,
+Chats have their own written-down contract: `agent_session.py`
+(`AgentSession`, `AgentSessionEvent`) and `agent_session_manager.py`
+(`AgentSessionManager`). And `cli_transport_layout.py` is the MIRROR contract
+every CLI transport (Claude, Codex, Grok, OpenCode) satisfies module for
+module — the same files, public names and signatures — checked by the host's
+`tests/test_transport_api_parity.py`.
+
+The persistent streaming protocol (long-lived process, NDJSON events,
 in-flight permission asks) is **Claude-specific** and lives on
 `claude_core_lib`'s `StreamingClaudeSession` directly. OpenHands
 has no equivalent (its runtime model is HTTP RPC); forcing both to
@@ -52,6 +59,8 @@ asymmetry.
 |---|---|
 | [`claude_core_lib`](../claude_core_lib/) | `ClaudeCliClient` implements `AgentProvider` |
 | [`codex_core_lib`](../codex_core_lib/) | `CodexCliClient` implements `AgentProvider` |
+| [`grok_core_lib`](../grok_core_lib/) | `GrokCliClient` implements `AgentProvider` |
+| [`opencode_core_lib`](../opencode_core_lib/) | `OpenCodeCliClient` implements `AgentProvider` |
 | [`openhands_core_lib`](../openhands_core_lib/) | `OpenHandsClient` implements `AgentProvider` |
 | [`agent_backend_core_lib`](../agent_backend_core_lib/) | factory returns the contract type |
 

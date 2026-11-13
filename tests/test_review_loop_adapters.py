@@ -404,7 +404,7 @@ class RefusalTests(_ModeIsolation):
     def test_reasons_an_operator_can_act_on(self) -> None:
         world = _KatoWorld(self)
         no_reviewer = ImplementationService(object())  # e.g. OpenHands: no investigate
-        self.assertIn('Claude or Codex', review_loop_refusal(
+        self.assertIn('Claude, Codex, Grok or OpenCode', review_loop_refusal(
             'T-1', implementation_service=no_reviewer, workspace_manager=world.workspaces))
         world.workspaces.create(task_id='T-2', repository_ids=['never-cloned'])
         self.assertIn('no repository clone', review_loop_refusal(

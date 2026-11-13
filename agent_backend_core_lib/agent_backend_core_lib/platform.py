@@ -26,4 +26,6 @@ class AgentPlatform(Enum):
 
     CLAUDE = AgentBackend.CLAUDE.value
     CODEX = AgentBackend.CODEX.value
+    GROK = AgentBackend.GROK.value
+    OPENCODE = AgentBackend.OPENCODE.value
     OPENHANDS = AgentBackend.OPENHANDS.value

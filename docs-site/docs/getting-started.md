@@ -38,7 +38,7 @@ The `kato configure` wizard writes a `.env` with:
 - **Repositories** — either an explicit list, or a `REPOSITORY_ROOT_PATH` that
   Kato walks to auto-discover `.git` folders. You approve which repos Kato may
   touch from the UI.
-- **Agent backend** — `claude` (default), `codex`, or `openhands`, plus the model
+- **Agent backend** — `claude` (default) or `openhands`, plus the model
   alias (`opus` / `sonnet` / `haiku`) which always tracks the latest.
 
 Settings made in the UI persist to `~/.kato/settings.json`; `.env` is the
