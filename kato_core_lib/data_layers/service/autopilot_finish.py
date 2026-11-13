@@ -17,6 +17,12 @@ failed, nothing to review) leaves the task to the operator, as does a
 ``kato:wait-before-git-push`` tag: that tag says "ask me before pushing", and
 it is the stricter statement. Whatever autopilot decides, it says so in the
 task's status feed.
+
+``kato:auto-wait`` takes the same road and stops before Done: the work, then
+the review loop (default rounds unless the ticket names them — kato's park
+starts it, ``AgentService._review_loop_rounds``), then the operator's own Done.
+Its done token never publishes, whatever the loop says. With both tags,
+auto-wait wins (``helpers/autopilot_store.py``).
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ from __future__ import annotations
 import threading
 from typing import Callable
 
-from kato_core_lib.helpers.autopilot_store import is_autopilot
+from kato_core_lib.helpers.autopilot_store import AUTO_WAIT, automation_level, is_autopilot
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 
@@ -64,13 +70,21 @@ class AutopilotFinisher(object):
         """The agent printed the done token. True when autopilot took it over,
         and the caller must not publish by itself."""
         task_id = _norm(task_id)
-        if not is_autopilot(task_id):
+        level = automation_level(task_id)
+        if not level:
             return False
         if self._runner_in_flight(task_id):
             # A task kato runs by itself still has its tests to pass; it
-            # parks after them, and that is where Done is pressed.
-            self._say(task_id, 'autopilot: the agent is done; Done is pressed once kato\'s own run parks')
+            # parks after them, and that is where Done is pressed — or, on
+            # auto-wait, where its review loop starts.
+            self._say(task_id, (
+                'auto-wait: the agent is done; the review loop runs once kato\'s own run parks'
+                if level == AUTO_WAIT
+                else 'autopilot: the agent is done; Done is pressed once kato\'s own run parks'
+            ))
             return True
+        if level == AUTO_WAIT:
+            return self._review_then_wait(task_id)
         try:
             task = self._read_task(task_id)
         except Exception:
@@ -94,6 +108,9 @@ class AutopilotFinisher(object):
         """A task kato ran by itself parked after its tests. Its review loop
         (if tagged) was started by the park. The Done result, or None."""
         task_id = _norm(getattr(task, 'id', ''))
+        if automation_level(task_id) == AUTO_WAIT:
+            self._say(task_id, 'auto-wait: the review loop runs; Done is yours once it is over')
+            return None
         if not is_autopilot(task_id) or self._leaves_push_to_operator(task_id, task):
             return None
         if self._review_rounds(task):
@@ -105,13 +122,20 @@ class AutopilotFinisher(object):
         """A review loop ended. A clean one presses Done (in the background:
         this is called on the loop's own thread)."""
         task_id = _norm(task_id)
-        if not is_autopilot(task_id):
+        level = automation_level(task_id)
+        if not level:
             return
         verdict = str(getattr(status, 'value', status) or '')
+        if level == AUTO_WAIT:
+            self._say(
+                task_id,
+                f'auto-wait: the review loop ended {_said(verdict)} — the task waits for you to press Done',
+            )
+            return
         if verdict != CLEAN_REVIEW:
             self._say(
                 task_id,
-                f'autopilot: the review loop ended {verdict.replace("_", " ") or "without a verdict"}, '
+                f'autopilot: the review loop ended {_said(verdict)}, '
                 'so Done was not pressed — the task is yours',
             )
             return
@@ -134,6 +158,21 @@ class AutopilotFinisher(object):
             self._say(task_id, f'autopilot: Done did not finish the task: {why}')
         return result
 
+    def _review_then_wait(self, task_id: str) -> bool:
+        """Auto-wait's done token from a chat: its review loop starts, and
+        nothing is pushed — whatever the loop says, Done stays the operator's."""
+        try:
+            task = self._read_task(task_id)
+        except Exception:
+            self._get_logger().exception('auto-wait: could not read task %s', task_id)
+            task = None
+        if task is None:
+            self._say(task_id, 'auto-wait: could not read the task, so its review loop did not start')
+            return True
+        self._say(task_id, 'auto-wait: the agent is done; the review loop runs, then Done is yours')
+        self._start_review_loop(task)
+        return True
+
     def _leaves_push_to_operator(self, task_id: str, task) -> bool:
         if not self._holds_push(task):
             return False
@@ -146,6 +185,10 @@ class AutopilotFinisher(object):
 
     def _say(self, task_id: str, message: str) -> None:
         log_mission_step(self._get_logger(), task_id, message)
+
+
+def _said(verdict: str) -> str:
+    return verdict.replace('_', ' ') or 'without a verdict'
 
 
 def _norm(task_id: object) -> str:

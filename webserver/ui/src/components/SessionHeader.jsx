@@ -13,6 +13,7 @@ import ReviewLoopButton from './reviewLoop/ReviewLoopButton.jsx';
 import PlanQueueButton from './planQueue/PlanQueueButton.jsx';
 import { taskDefinitionView } from './taskDefinition/taskDefinitionView.js';
 import ReviewLoopChip from './reviewLoop/ReviewLoopChip.jsx';
+import HandOverButton from './HandOverButton.jsx';
 import HeaderSeparator from './HeaderSeparator.jsx';
 import PullRequestList from './PullRequestList.jsx';
 import RenameBranchButton from './RenameBranchButton.jsx';
@@ -559,6 +560,7 @@ export default function SessionHeader({
           >
             <BusyIcon busy={syncing} idle="history" />
           </button>
+          <HandOverButton taskId={session.task_id} />
           {stopOrResumeButton}
         </div>
       </header>
@@ -599,6 +601,7 @@ export function SessionHeaderPlaceholder() {
     { icon: 'refresh', label: 'Update source' },
     { icon: 'check', label: 'Finish', primary: true },
     { icon: 'history', label: 'Sync now' },
+    { icon: 'user-handover', label: 'Hand over' },
     { icon: 'comment', label: 'Chats' },
     { icon: 'stop', label: 'Stop' },
   ];

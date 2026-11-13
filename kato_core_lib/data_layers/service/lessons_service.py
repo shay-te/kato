@@ -52,6 +52,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from agent_core_lib.agent_core_lib.helpers.one_shot import AgentOneShotError
 from agent_core_lib.agent_core_lib.helpers.lessons_doc_utils import (
     LESSONS_BUDGET_CHARS,
 )
@@ -89,6 +90,24 @@ EXTRACTION_INSTRUCTIONS = (
 
 
 NO_LESSON_MARKER = 'NO_LESSON'
+
+#: The most of a context an extraction is shown. It answers with ONE rule, so
+#: more never helps — and a ticket description or an operator prompt can hold a
+#: pasted log or an inlined image, which only makes the one-shot slower and
+#: costlier. The start (what was asked) and the end (how it went) are kept.
+EXTRACTION_CONTEXT_MAX_CHARS = 20_000
+_CONTEXT_TAIL_CHARS = 5_000
+
+
+def bounded_context(text: str) -> str:
+    """``text`` cut to :data:`EXTRACTION_CONTEXT_MAX_CHARS`: its start and its
+    end, with how much was left out between them."""
+    text = str(text or '')
+    if len(text) <= EXTRACTION_CONTEXT_MAX_CHARS:
+        return text
+    head = EXTRACTION_CONTEXT_MAX_CHARS - _CONTEXT_TAIL_CHARS
+    left_out = len(text) - head - _CONTEXT_TAIL_CHARS
+    return f'{text[:head]}\n[… {left_out} characters left out …]\n{text[-_CONTEXT_TAIL_CHARS:]}'
 
 
 # What the document editor is told. The rules are the ones the task agent is
@@ -196,13 +215,8 @@ class LessonsService(object):
             )
             return ''
         prompt = self._build_candidate_prompt(normalized_id, source_context)
-        try:
-            response = self._llm_one_shot(prompt)
-        except Exception:
-            self.logger.exception(
-                'candidate lesson extraction failed for %s',
-                normalized_id,
-            )
+        response = self._ask(prompt, f'candidate lesson {normalized_id}')
+        if response is None:
             return ''
         lesson = self._parse_extraction_response(response)
         if not lesson:
@@ -286,14 +300,9 @@ class LessonsService(object):
             self.logger.warning('extract_and_save called with empty task id; skipping')
             return ''
         prompt = self._build_extraction_prompt(normalized_task_id, task_context)
-        try:
-            response = self._llm_one_shot(prompt)
-        except Exception:
-            self.logger.exception(
-                'lesson extraction failed for task %s; per-task file untouched',
-                normalized_task_id,
-            )
-            return ''
+        response = self._ask(prompt, f'the lesson of task {normalized_task_id}')
+        if response is None:
+            return ''  # its per-task file is left as it was
         lesson = self._parse_extraction_response(response)
         if not lesson:
             self.logger.info(
@@ -491,6 +500,21 @@ class LessonsService(object):
 
     # ----- internals -----
 
+    def _ask(self, prompt: str, what: str) -> str | None:
+        """The extractor's reply, or None when there is none. A one-shot that
+        did not finish (timed out, the CLI failed) is one warning line — it
+        happens, under load, and a traceback adds nothing; anything else is a
+        bug and keeps its traceback. Either way nothing staged is lost: a
+        promoted lesson is already a pending file, filed (and kept until filed)
+        by ``file_pending``."""
+        try:
+            return self._llm_one_shot(prompt)
+        except AgentOneShotError as exc:
+            self.logger.warning('could not extract %s: %s', what, exc)
+        except Exception:
+            self.logger.exception('could not extract %s', what)
+        return None
+
     def _build_extraction_prompt(self, task_id: str, task_context: str) -> str:
         return (
             f'{EXTRACTION_INSTRUCTIONS}\n'
@@ -498,7 +522,7 @@ class LessonsService(object):
             f'Task id: {task_id}\n'
             f'\n'
             f'Task context:\n'
-            f'{task_context}\n'
+            f'{bounded_context(task_context)}\n'
         )
 
     def _build_candidate_prompt(
@@ -516,7 +540,7 @@ class LessonsService(object):
             f'Candidate id: {candidate_id}\n'
             f'\n'
             f'Source context:\n'
-            f'{source_context}\n'
+            f'{bounded_context(source_context)}\n'
         )
 
     @staticmethod

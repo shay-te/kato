@@ -82,6 +82,17 @@ describe('Tab', () => {
     expect(container.querySelector('.status-dot')?.className).toBe(dotClass);
   });
 
+  test('a task on kato:auto-wait gets the green-border class; autopilot and none do not', () => {
+    const { container, rerender } = render(
+      <Tab session={_session({ automation: 'auto-wait' })} onSelect={() => {}} />,
+    );
+    expect(container.querySelector('li')).toHaveClass('is-auto-wait');
+    for (const automation of ['autopilot', '', undefined]) {
+      rerender(<Tab session={_session({ automation })} onSelect={() => {}} />);
+      expect(container.querySelector('li')).not.toHaveClass('is-auto-wait');
+    }
+  });
+
   test('status dot reflects the resolved status (attention overrides base)', () => {
     const { container } = render(
       <Tab

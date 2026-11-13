@@ -1136,19 +1136,72 @@ class StreamingClaudeSessionPureMethodTests(unittest.TestCase):
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         self.assertFalse(session.is_working)
 
-    def test_waiting_clears_once_a_newer_plain_turn_closes(self) -> None:
-        # After the wait, the agent does a final plain turn → idle again
-        # (the Monitor is in an OLDER turn, behind a newer result).
+    def test_a_background_job_outlives_a_newer_plain_turn(self) -> None:
+        # The operator asks "still running?" mid-wait and the agent answers:
+        # that reply is a newer turn, but the job it waits on still runs.
+        # (The UI reducer keeps the same rule — one answer, two surfaces.)
         session = self._build_session()
         session._proc = SimpleNamespace(poll=lambda: None)
         session._recent_events.append(SessionEvent(raw={
             'type': 'assistant',
-            'message': {'content': [{'type': 'tool_use', 'name': 'Monitor', 'input': {}}]},
+            'message': {'content': [{'type': 'tool_use', 'id': 'toolu_m', 'name': 'Monitor', 'input': {}}]},
         }))
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
         session._recent_events.append(SessionEvent(raw={'type': 'assistant'}))
         session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertTrue(session.is_working)
+        # Its report is what ends the wait.
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'system', 'subtype': 'task_notification',
+            'tool_use_id': 'toolu_m', 'status': 'completed',
+        }))
         self.assertFalse(session.is_working)
+
+    def test_a_background_job_that_finished_inside_its_own_turn_is_not_waited_on(self) -> None:
+        # UNA-3416: an npm install started in the background, reported back
+        # 25s later inside the same turn, and the turn ended. It read
+        # "working" for 11 hours — the host's run waited out its idle limit
+        # and every review loop waited 2h for the chat to be free.
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        for raw in (
+            {'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'toolu_npm', 'name': 'Bash',
+                 'input': {'command': 'npm ci', 'run_in_background': True}},
+            ]}},
+            {'type': 'system', 'subtype': 'background_tasks_changed', 'tasks': [{'task_id': 'b1'}]},
+            {'type': 'system', 'subtype': 'task_started', 'task_id': 'b1',
+             'tool_use_id': 'toolu_npm', 'is_backgrounded': True},
+            {'type': 'assistant'},
+            {'type': 'system', 'subtype': 'task_updated', 'task_id': 'b1',
+             'patch': {'status': 'completed'}},
+            {'type': 'system', 'subtype': 'task_notification', 'task_id': 'b1',
+             'tool_use_id': 'toolu_npm', 'status': 'completed'},
+            {'type': 'system', 'subtype': 'background_tasks_changed', 'tasks': []},
+            {'type': 'assistant'},
+            {'type': 'result'},
+        ):
+            session._recent_events.append(SessionEvent(raw=raw))
+        self.assertFalse(session.is_working)
+
+    def test_background_jobs_are_caught_up_incrementally(self) -> None:
+        session = self._build_session()
+        session._proc = SimpleNamespace(poll=lambda: None)
+        session._recent_events.append(SessionEvent(raw={'type': 'assistant', 'message': {'content': [
+            {'type': 'tool_use', 'id': 'toolu_w', 'name': 'Workflow', 'input': {}}]}}))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertTrue(session.is_working)
+        self.assertEqual(session._background_jobs_seen, 2)
+        session._recent_events.append(SessionEvent(raw={
+            'type': 'user', 'message': {'content': '<task-notification>\n<tool-use-id>toolu_w</tool-use-id>'},
+        }))
+        session._recent_events.append(SessionEvent(raw={'type': 'result'}))
+        self.assertFalse(session.is_working)
+        self.assertEqual(session._background_jobs_seen, 4)
+        # A log that shrank (never in practice — it is append-only) starts over.
+        session._recent_events[:] = session._recent_events[:2]
+        self.assertTrue(session.is_working)
+        self.assertEqual(session._background_jobs_seen, 2)
 
     def test_is_working_false_when_init_followed_by_result(self) -> None:
         # A completed turn leaves a trailing ``result`` that wins over the

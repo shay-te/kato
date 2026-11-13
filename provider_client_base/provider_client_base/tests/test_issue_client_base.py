@@ -1086,3 +1086,19 @@ class SubtaskDefaultsTests(unittest.TestCase):
             self.assertIn('cannot hold work as sub-tasks', str(caught.exception))
         self.assertEqual(IssueStatus('P-2').exists, True)
         self.assertEqual(IssueComment('9').body, '')
+
+
+class HandoverDefaultsTests(unittest.TestCase):
+    """A provider that cannot hand an issue over refuses both calls, by name."""
+
+    def test_every_handover_call_refuses(self) -> None:
+        from provider_client_base.provider_client_base.client.issue_client_base import IssueClientBase
+        from provider_client_base.provider_client_base.data.tracker_user import TrackerUser
+
+        client = IssueClientBase.__new__(IssueClientBase)
+        self.assertFalse(client.supports_handover)
+        for call in (lambda: client.list_assignable_users('P-1'), lambda: client.delete_comment('P-1', '7')):
+            with self.assertRaises(NotImplementedError) as caught:
+                call()
+            self.assertIn('cannot hand an issue over', str(caught.exception))
+        self.assertEqual(TrackerUser('jane').name, '')

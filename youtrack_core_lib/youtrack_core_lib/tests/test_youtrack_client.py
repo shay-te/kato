@@ -2035,3 +2035,72 @@ class YouTrackCurrentUserTests(unittest.TestCase):
         with patch.object(self.client, '_get', side_effect=ClientTimeout('timed out')), \
              patch.object(self.client, 'logger'):
             self.assertEqual(self.client._fetch_current_user_logins(), ())
+
+
+class YouTrackHandoverTests(unittest.TestCase):
+    """Who an issue can go to, and deleting the account's own comment."""
+
+    def setUp(self) -> None:
+        self.client = _subtask_client()
+
+    def test_it_can_hand_an_issue_over(self) -> None:
+        self.assertTrue(YouTrackClient.supports_handover)
+
+    @staticmethod
+    def _project() -> object:
+        return mock_response(json_data={'project': {'id': '0-7'}})
+
+    def test_lists_the_project_assignee_bundle_by_name_without_banned_or_repeats(self) -> None:
+        fields = mock_response(json_data=[
+            {'field': {'name': 'Priority'}, 'bundle': {}},
+            'junk',
+            {'field': {'name': 'Assignee'}, 'bundle': {'aggregatedUsers': [
+                {'login': 'zed', 'fullName': 'Zed Last'},
+                {'login': 'amy', 'fullName': 'Amy First'},
+                {'login': 'gone', 'fullName': 'Gone User', 'banned': True},
+                {'login': 'AMY', 'fullName': 'Amy Again'},
+                {'login': 'nameless'},
+                {'fullName': 'No Login'},
+                'junk',
+            ]}},
+        ])
+        with patch.object(self.client, '_get', side_effect=[self._project(), fields]) as get:
+            users = self.client.list_assignable_users('PROJ-1')
+        self.assertEqual([(user.handle, user.name) for user in users],
+                         [('amy', 'Amy First'), ('nameless', 'nameless'), ('zed', 'Zed Last')])
+        self.assertEqual(get.call_args_list[1].args[0], '/api/admin/projects/0-7/customFields')
+        self.assertEqual(get.call_args_list[1].kwargs['params']['fields'],
+                         'field(name),bundle(aggregatedUsers(login,fullName,banned))')
+
+    def test_a_bundle_without_users_falls_back_to_every_user(self) -> None:
+        for bundle in ({}, {'aggregatedUsers': 'junk'}):
+            with self.subTest(bundle=bundle):
+                fields = mock_response(json_data=[{'field': {'name': 'Assignee'}, 'bundle': bundle}])
+                everyone = mock_response(json_data=[{'login': 'bob', 'fullName': 'Bob B'}])
+                with patch.object(self.client, '_get', side_effect=[self._project(), fields, everyone]) as get:
+                    users = self.client.list_assignable_users('PROJ-1')
+                self.assertEqual(users[0].handle, 'bob')
+                self.assertEqual(get.call_args_list[2].args[0], '/api/users')
+
+    def test_no_assignee_field_falls_back_to_every_user(self) -> None:
+        fields = mock_response(json_data=[{'field': {'name': 'Priority'}}])
+        everyone = mock_response(json_data=[{'login': 'bob'}])
+        with patch.object(self.client, '_get', side_effect=[self._project(), fields, everyone]):
+            self.assertEqual(self.client.list_assignable_users('PROJ-1')[0].handle, 'bob')
+
+    def test_a_project_that_cannot_be_read_falls_back_to_every_user_with_a_warning(self) -> None:
+        everyone = mock_response(json_data=[{'login': 'bob'}])
+        with patch.object(self.client, '_get', side_effect=[_refused('Forbidden', 403), everyone]), \
+             patch.object(self.client, 'logger') as logger:
+            self.assertEqual(self.client.list_assignable_users('PROJ-1')[0].handle, 'bob')
+        logger.warning.assert_called_once()
+
+    def test_delete_comment_deletes_it(self) -> None:
+        with patch.object(self.client, '_delete', return_value=mock_response(json_data={})) as delete:
+            self.client.delete_comment('PROJ-1', '4-12')
+        delete.assert_called_once_with('/api/issues/PROJ-1/comments/4-12')
+
+    def test_a_refused_delete_says_why(self) -> None:
+        with patch.object(self.client, '_delete', return_value=_refused('Not your comment', 403)):
+            with self.assertRaisesRegex(Exception, 'Not your comment'):
+                self.client.delete_comment('PROJ-1', '4-12')

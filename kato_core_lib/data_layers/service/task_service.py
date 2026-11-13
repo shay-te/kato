@@ -156,6 +156,10 @@ class TaskService(Service):
         """The tracker, when it can hold a plan's steps as sub-tasks; else None."""
         return self._task_data_access.subtask_tracker
 
+    def handover_tracker(self, issue_id: str):
+        """The tracker, when ``issue_id`` can be handed over to another person; else None."""
+        return self._task_data_access.handover_tracker
+
     def add_tag(self, issue_id: str, tag_name: str) -> None:
         self._task_data_access.add_tag(issue_id, tag_name)
 

@@ -1334,7 +1334,7 @@ class DrainAndCompleteCommentHelpersUnitTests(unittest.TestCase):
 
 
 class WebserverHookHelpersUnitTests(unittest.TestCase):
-    """``_fire_webserver_hook`` + ``_run_pre_tool_use_hook`` — hook plumbing.
+    """``fire_webserver_hook`` + ``_run_pre_tool_use_hook`` — hook plumbing.
 
     Concrete ``_RecordingRunner`` stand-in (NO MagicMock) implements the
     HookRunner surface the helpers call: ``fire()`` and ``is_blocked()``.
@@ -1372,19 +1372,19 @@ class WebserverHookHelpersUnitTests(unittest.TestCase):
         )
         return app
 
-    # ---- _fire_webserver_hook ----
+    # ---- fire_webserver_hook ----
 
     def test_fire_webserver_hook_is_noop_when_runner_not_configured(self) -> None:
-        from kato_webserver.app import _fire_webserver_hook
+        from kato_webserver.task_agent_stop import fire_webserver_hook
         app = self._make_app(runner=None)
         # Must not raise; just returns.
-        _fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
+        fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
 
     def test_fire_webserver_hook_calls_runner_fire(self) -> None:
-        from kato_webserver.app import _fire_webserver_hook
+        from kato_webserver.task_agent_stop import fire_webserver_hook
         runner = self._RecordingRunner()
         app = self._make_app(runner=runner)
-        _fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
+        fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
         self.assertEqual(len(runner.fired), 1)
         hook_point, event = runner.fired[0]
         # HookPoint is an enum — its .value or .name matches the input string.
@@ -1395,11 +1395,11 @@ class WebserverHookHelpersUnitTests(unittest.TestCase):
         self.assertEqual(event, {'task_id': 'T1'})
 
     def test_fire_webserver_hook_swallows_runner_exception(self) -> None:
-        from kato_webserver.app import _fire_webserver_hook
+        from kato_webserver.task_agent_stop import fire_webserver_hook
         runner = self._RecordingRunner(fire_raises=True)
         app = self._make_app(runner=runner)
         # The route fired the hook but the runner blew up — must not raise.
-        _fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
+        fire_webserver_hook(app, 'post_tool_use', {'task_id': 'T1'})
 
     # ---- _run_pre_tool_use_hook ----
 

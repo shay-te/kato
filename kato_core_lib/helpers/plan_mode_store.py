@@ -29,7 +29,7 @@ import threading
 from pathlib import Path
 
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
-from kato_core_lib.helpers.autopilot_store import is_autopilot
+from kato_core_lib.helpers.autopilot_store import runs_by_itself
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
 
 _ENV_KEY = 'KATO_PLAN_MODE_PATH'
@@ -82,12 +82,13 @@ def configured_default_task_mode() -> str:
 def unpicked_task_mode(task_id: object, default: str = '') -> str:
     """The mode a task runs in when nobody picked one for it.
 
-    Auto for a task on autopilot (``kato:autopilot``), else ``default``, else
+    Auto for a task kato takes by itself (``kato:autopilot``, ``kato:auto-wait``),
+    else ``default``, else
     the configured default mode for new tasks — '' = kato's built-in default.
     The ONE answer, read by the spawn (:func:`task_permission_mode`) and by
     the composer's picker, so the picker shows the mode that will run.
     """
-    if is_autopilot(task_id):
+    if runs_by_itself(task_id):
         return AUTOPILOT_MODE
     return default or configured_default_task_mode()
 

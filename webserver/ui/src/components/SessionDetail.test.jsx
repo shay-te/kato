@@ -82,6 +82,8 @@ vi.mock('../stores/toastStore.js', () => ({
   toastResult: vi.fn(),
 }));
 vi.mock('../api.js', () => ({
+  // The header's Hand over asks once per task; hidden here.
+  fetchHandoverAvailability: vi.fn().mockResolvedValue({ available: false, reason: '' }),
   // Each agent tab shows its own status, polled from here.
   fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   // The chat pane's agent tabs read these on mount.

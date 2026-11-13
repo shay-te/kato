@@ -999,3 +999,52 @@ describe('TabList — a main task\'s sub-tasks fold away', () => {
     expect(readCollapsedGroups(window.localStorage)).toEqual(['UNA-1']);
   });
 });
+
+
+// "when clicking on the kato/hamburger icon (not hover, but click) it will
+// snap open. and I can change the width of it"
+describe('TabList — pinned open, docked and resizable', () => {
+  test('pinned: the menu is open, docked, has a draggable edge, and the page moves aside', async () => {
+    const { toggleTaskMenuPinned, setTaskMenuWidth } = await import('../stores/taskMenuStore.js');
+    render(<TabList sessions={[_session('UNA-1')]} onSelect={() => {}} />);
+    const rail = document.getElementById('tabs-pane');
+    expect(rail).not.toHaveClass('is-docked');
+    expect(screen.queryByRole('separator', { name: 'Resize the tasks menu' })).toBeNull();
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('');
+
+    act(() => toggleTaskMenuPinned());
+    expect(rail).toHaveClass('is-open');
+    expect(rail).toHaveClass('is-docked');
+    expect(screen.getByRole('separator', { name: 'Resize the tasks menu' })).toBeInTheDocument();
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('360px');
+    expect(rail.style.getPropertyValue('--task-rail-open-width')).toBe('360px');
+
+    act(() => setTaskMenuWidth(480));
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('480px');
+    expect(rail.style.getPropertyValue('--task-rail-open-width')).toBe('480px');
+
+    // Dragging marks the rail so its width follows the pointer with no easing.
+    const edge = screen.getByRole('separator', { name: 'Resize the tasks menu' });
+    fireEvent.pointerDown(edge, { pointerId: 1, clientX: 480 });
+    expect(rail).toHaveClass('is-resizing');
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    expect(rail).not.toHaveClass('is-resizing');
+
+    // Leaving the rail does not collapse a pinned menu.
+    act(() => { fireEvent.mouseLeave(rail); });
+    expect(rail).toHaveClass('is-open');
+
+    act(() => toggleTaskMenuPinned());
+    expect(rail).not.toHaveClass('is-docked');
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('');
+  });
+
+  test('a pinned menu that unmounts gives the page its column back', async () => {
+    const { toggleTaskMenuPinned } = await import('../stores/taskMenuStore.js');
+    act(() => toggleTaskMenuPinned());
+    const view = render(<TabList sessions={[_session('UNA-1')]} onSelect={() => {}} />);
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('360px');
+    view.unmount();
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('');
+  });
+});

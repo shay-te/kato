@@ -1,5 +1,6 @@
 import { memo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
+import { AUTOMATION_LEVEL } from '../constants/automationLevel.js';
 import { planRowLine } from './planQueue/planQueueHelpers.js';
 import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
 import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
@@ -213,6 +214,9 @@ function Tab({
     // SEPARATE axis from the status dot (``dotClass``), which the single
     // agent-status derivation owns — this never touches that dot.
     isReviewLoopRunning(session.review_loop) && 'has-review-loop',
+    // ``kato:auto-wait``: kato does the work and its review, then waits for
+    // the operator's Done — the row says so with a green border.
+    session.automation === AUTOMATION_LEVEL.AUTO_WAIT && 'is-auto-wait',
   );
 
   const model = buildTooltipModel(session, baseStatus, needsAttention, agent);

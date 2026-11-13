@@ -18,10 +18,10 @@ from plan_queue_core_lib.plan_queue_core_lib.ports import LaunchRequest
 from kato_core_lib.data_layers.data.fields import TaskTags
 from kato_core_lib.data_layers.service.local_task_service import START_IMPLEMENT, START_PLAN
 from kato_core_lib.data_layers.service.plan_queue.step_footer import subtask_description, subtask_summary
-from kato_core_lib.helpers.agent_comment_classification import (
-    PLAN_STEP_COMMENT_PREFIX,
-    active_execution_blocking_comment,
-)
+from kato_core_lib.data_layers.service.pickup_block import clear_pickup_block
+from kato_core_lib.data_layers.service.task_moves import COUNTED_DONE_ON_ITS_PLAN, DONE, TaskMoves
+from kato_core_lib.data_layers.service.tracker_assignment import assign_verified
+from kato_core_lib.helpers.agent_comment_classification import PLAN_STEP_COMMENT_PREFIX
 from kato_core_lib.helpers.kato_tag_utils import is_model_tag, model_tag
 from kato_core_lib.helpers.late_binding import provider_for
 
@@ -66,9 +66,10 @@ class TrackerStepLauncher(object):
         if status.assignee:
             return task_id  # someone has it: theirs, never assigned over
         self._hold_for_planning(task_id, request.start_mode)
-        if self._pickup_blocked(tracker, task_id):
-            self._get_task_service().add_comment(task_id, RELEASED_AGAIN_COMMENT)
-        tracker.assign_issue(task_id, self.assignee())
+        clear_pickup_block(
+            tracker, self._get_task_service(), task_id, delete_own=False, note=RELEASED_AGAIN_COMMENT,
+        )
+        assign_verified(tracker, task_id, self.assignee())
         return task_id
 
     def _hold_for_planning(self, task_id: str, start_mode: str) -> None:
@@ -122,7 +123,7 @@ class TrackerStepLauncher(object):
         )
 
     def counted_done(self, task_id: str) -> None:
-        self._get_task_state_service().move_task_to_done(task_id)
+        TaskMoves(self._get_task_state_service()).move(task_id, DONE, COUNTED_DONE_ON_ITS_PLAN)
         self._get_task_service().add_comment(task_id, COUNTED_DONE_COMMENT)
 
     def assignee(self) -> str:
@@ -143,12 +144,6 @@ class TrackerStepLauncher(object):
     def _status(self, tracker, task_id: str):
         field = self._get_task_state_service().state_names()['field']
         return tracker.get_issues_status([task_id], field)[task_id]
-
-    @staticmethod
-    def _pickup_blocked(tracker, task_id: str) -> bool:
-        """Does an earlier run's comment still block kato from picking it up?"""
-        oldest_first = [{'body': comment.body} for comment in reversed(tracker.list_comments(task_id))]
-        return bool(active_execution_blocking_comment(oldest_first))
 
     def _repository_labels(self, repository_ids) -> list[str]:
         """Each repository by the name it has on its git host (the same for

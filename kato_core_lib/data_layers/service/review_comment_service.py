@@ -25,6 +25,7 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.data_layers.service.planning_session_runner import SessionStoppedByUserError
+from kato_core_lib.data_layers.service.pull_request_lookup import LookupPaused
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
 from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.helpers.forgotten_tasks_store import forgotten_task_ids
@@ -101,6 +102,8 @@ class ReviewCommentService(Service):
         # Last state the poll gate logged; ``True`` so a normal boot (switch
         # on) stays silent and only a transition prints.
         self._poll_gate_logged_enabled = True
+        # Lookups the current scan skipped because the host paused kato (429).
+        self._paused_lookups: list[LookupPaused] = []
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     @property
@@ -436,6 +439,7 @@ class ReviewCommentService(Service):
         # utils_core_lib.text_utils.normalized_lower_text).
         forgotten = {fid.lower() for fid in forgotten_task_ids()}
         skipped_forgotten: list[str] = []
+        self._paused_lookups: list[LookupPaused] = []
         for task in self._task_service.get_review_tasks():
             task_id = str(getattr(task, 'id', '') or '').strip()
             if task_id.lower() in forgotten:
@@ -458,6 +462,7 @@ class ReviewCommentService(Service):
                     continue
                 seen.add(key)
                 contexts.append(context)
+        self._say_paused_lookups()
         if skipped_forgotten:
             # Make the skip visible: a silent ``continue`` left "kato keeps
             # resurrecting a task I deleted" impossible to diagnose. One line
@@ -483,10 +488,8 @@ class ReviewCommentService(Service):
             if task_contexts:
                 contexts.extend(task_contexts)
                 continue
-            pull_requests = self._repository_service.find_pull_requests(
-                repository,
-                source_branch=branch_name,
-                title_prefix=title_prefix,
+            pull_requests = self._looked_up_pull_requests(
+                task, repository, branch_name, title_prefix,
             )
             for pull_request in pull_requests:
                 pull_request_context = dict(pull_request)
@@ -505,6 +508,37 @@ class ReviewCommentService(Service):
                     }
                 )
         return contexts
+
+    def _looked_up_pull_requests(self, task, repository, branch_name: str, title_prefix: str) -> list:
+        """One repository's pull requests for this scan — remembered between
+        scans by ``PullRequestLookup``, so a repository with none is not asked
+        every 50s. ``[]`` for THIS scan only when the host could not be asked:
+        one warning line (never a traceback), and the task's other
+        repositories are still checked. A host that is paused (it said 429)
+        is counted, and said once at the end of the scan."""
+        try:
+            return self._repository_service.find_pull_requests(
+                repository, source_branch=branch_name, title_prefix=title_prefix,
+            )
+        except LookupPaused as paused:
+            self._paused_lookups.append(paused)
+            return []
+        except Exception as exc:
+            self.logger.warning(
+                'review scan: could not look up the pull requests of task %s in %s '
+                '(branch %s): %s',
+                task.id, getattr(repository, 'id', ''), branch_name, exc,
+            )
+            return []
+
+    def _say_paused_lookups(self) -> None:
+        if not self._paused_lookups:
+            return
+        longest = max(self._paused_lookups, key=lambda paused: paused.seconds_left)
+        self.logger.warning(
+            'review scan: %d repositories were not checked for pull requests — %s',
+            len(self._paused_lookups), longest,
+        )
 
     def _task_pull_request_contexts(
         self,

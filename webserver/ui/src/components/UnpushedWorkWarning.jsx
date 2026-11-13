@@ -23,8 +23,33 @@ export const CHECKING_GRACE_MS = 300;
  * the operator decides, not a guess. Cancel is focused; Esc cancels. ``onOpenTask``
  * takes the operator to the task to push it first.
  */
-export default function UnpushedWorkWarning({ session, onContinue, onCancel, onOpenTask }) {
+export const WARNING_PURPOSE = Object.freeze({ DELETE: 'delete', HANDOVER: 'handover' });
+
+// What is about to happen to the task, in the warning's words. Deleting loses
+// unpushed work for good; handing over leaves it here, where the other kato —
+// which clones from the remote — never sees it.
+const WARNING_WORDS = {
+  [WARNING_PURPOSE.DELETE]: {
+    before: 'before it can be deleted',
+    unknown: 'Deleting the task deletes its workspace, and anything not pushed with it.',
+    found: <>Deleting the task deletes its workspace, and this work with it &mdash; there is no backup.</>,
+    keep: <>To keep it, open the task and press <strong>Push</strong> first.</>,
+    proceed: 'Delete anyway…',
+  },
+  [WARNING_PURPOSE.HANDOVER]: {
+    before: 'before it is handed over',
+    unknown: 'Their kato clones from the remote, so anything not pushed stays here.',
+    found: <>Their kato clones from the remote, so this work would not reach them.</>,
+    keep: <>To hand it over with this work, press <strong>Push</strong> first.</>,
+    proceed: 'Hand over anyway',
+  },
+};
+
+export default function UnpushedWorkWarning({
+  session, onContinue, onCancel, onOpenTask, purpose = WARNING_PURPOSE.DELETE,
+}) {
   const taskId = String(session?.task_id || '').trim();
+  const words = WARNING_WORDS[purpose] || WARNING_WORDS[WARNING_PURPOSE.DELETE];
   // undefined = still checking; null = could not ask at all.
   const [answer, setAnswer] = useState(undefined);
   const cancelRef = useRef(null);
@@ -81,7 +106,7 @@ export default function UnpushedWorkWarning({ session, onContinue, onCancel, onO
       >
         <p className="forget-task-lead">
           Looking for commits and edits in <strong>{taskId}</strong> that
-          were never pushed, before it can be deleted.
+          were never pushed, {words.before}.
         </p>
         <div className="modal-actions">{cancelButton}</div>
       </DialogShell>
@@ -103,14 +128,12 @@ export default function UnpushedWorkWarning({ session, onContinue, onCancel, onO
         {answer === null ? (
           <>
             ⚠ Kato <strong>could not check</strong> whether {taskId} has work
-            that was never pushed. Deleting the task deletes its workspace,
-            and anything not pushed with it.
+            that was never pushed. {words.unknown}
           </>
         ) : (
           <>
             ⚠ <strong>{taskId} has work that was never pushed.</strong>{' '}
-            Deleting the task deletes its workspace, and this work with it
-            &mdash; there is no backup.
+            {words.found}
           </>
         )}
       </p>
@@ -125,9 +148,7 @@ export default function UnpushedWorkWarning({ session, onContinue, onCancel, onO
         </ul>
       )}
 
-      <p className="forget-task-lead">
-        To keep it, open the task and press <strong>Push</strong> first.
-      </p>
+      <p className="forget-task-lead">{words.keep}</p>
 
       <div className="modal-actions">
         {cancelButton}
@@ -147,7 +168,7 @@ export default function UnpushedWorkWarning({ session, onContinue, onCancel, onO
           className="danger"
           onClick={() => onContinue(answer)}
         >
-          Delete anyway…
+          {words.proceed}
         </button>
       </div>
     </DialogShell>

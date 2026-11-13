@@ -5,6 +5,7 @@ from core_lib.data_layers.service.service import Service
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.notification_service import NotificationService
 from kato_core_lib.data_layers.service.repository_service import RepositoryService
+from kato_core_lib.data_layers.service.task_moves import ITS_RUN_FAILED, OPEN, TaskMoves
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.data_layers.service.task_service import TaskService
 from kato_core_lib.helpers.error_handling_utils import run_best_effort
@@ -345,14 +346,9 @@ class TaskFailureHandler(MissionStepLoggerMixin, Service):
         )
 
     def _move_task_to_open(self, task_id: str) -> bool:
-        try:
-            self._log_task_step(task_id, 'moving issue back to open')
-            self._task_state_service.move_task_to_open(task_id)
-            self._log_task_step(task_id, 'moved issue back to open')
-            return True
-        except Exception:
-            self.logger.exception('failed to move task %s back to open', task_id)
-            return False
+        return TaskMoves(self._task_state_service, logger=self.logger).try_move(
+            task_id, OPEN, ITS_RUN_FAILED,
+        )
 
     @staticmethod
     def _is_repository_detection_failure(error: Exception) -> bool:

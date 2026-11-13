@@ -9,6 +9,32 @@ do not do any git commit or push. let me inspect the changes
 
 - **Do not write code that already exists — search before writing.** Before adding any helper, hook, component, util, constant, or service method, `rg` for an existing one and reuse it. Duplicated logic and orphaned (uncalled) code are both defects.
 
+### One capability = ONE service, tested, and GATED — this is how all work is done
+
+Every capability (moving a ticket, posting to Slack, deciding an agent's status, choosing a task's branch, …)
+lives in ONE service or core-lib, and every feature that needs it CALLS it. A feature never re-implements it,
+never calls the layer beneath it directly, and never wraps it in its own try/except + log copy. Copies drift:
+the move to In Progress had three, each with its own logging and its own idea of when, and the gaps between
+them left tickets in Open while kato worked on them (2026-11-13).
+
+When you build or touch a capability, all four of these, or it is not done:
+
+1. **One home.** One module/class owns it (a core-lib when it is generic — see "New capability = own core-lib").
+   Callers choose only what is truly theirs (e.g. `move` raises vs `try_move` logs) — never re-code the logic.
+2. **Every caller goes through it.** `rg` for every existing caller of the layer beneath and repoint ALL of
+   them in the same change. A feature added later reuses it: search first.
+3. **Tested for real, 100%.** 100% line + branch coverage of the service; real objects (real services, real
+   stores on disk, real git) wherever possible, an in-memory stand-in only at the network edge (a tracker's
+   HTTP client), and no `Mock` when a real object or a plain stand-in can do it. Test each real caller too.
+4. **Gated.** A test that reads the SOURCE (AST) and fails the build when anything but the service calls the
+   layer beneath it, naming file:line — and prove the gate by planting a violation once and watching it fail.
+   A rule nobody enforces is a rule the next feature breaks.
+
+Reference: `kato_core_lib/data_layers/service/task_moves.py` (`TaskMoves`, every ticket move: In Progress /
+In Review / Open / Done, every tracker and local tasks) + `tests/test_task_moves.py` (real
+`LocalAwareTaskStateService` + `LocalTaskStore`, every caller, and `SingleMoverGateTests`). The agent-status
+rule (one derivation, `agentStatus.js`) and the core-lib agnostic gate follow the same idea.
+
 ### No redundancy — checks to run before you finish
 
 - **Frontend duplication:** `cd webserver/ui && npm run dedup` (jscpd). Only the two annotated intentional clones are allowed; any new clone is a regression — dedupe it or annotate why it must stay. The gate fails (exit 1) above 0.3% duplication.

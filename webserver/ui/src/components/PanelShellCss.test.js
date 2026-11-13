@@ -46,7 +46,9 @@ test('the tasks rail is always there, and the page gives up only its collapsed w
   assertDeclaration(menu, 'left', '0');
   assertDeclaration(menu, 'top', '0');
   assertDeclaration(menu, 'width', '118px');
-  assertDeclaration(ruleBody('#root'), 'padding-left', '118px');
+  // 118px unless the menu is PINNED (docked: then the page gives up the
+  // pinned width, which TabList sets in --task-rail-docked-width).
+  assertDeclaration(ruleBody('#root'), 'padding-left', 'var\\(--task-rail-docked-width, 118px\\)');
   // Over everything on the page; dialogs still cover it.
   const z = Number(menu.match(/z-index:\s*(\d+)/)[1]);
   assert.ok(z > 60 && z < 999, `menu z-index ${z} must clear page chrome and stay under dialogs`);
@@ -57,7 +59,8 @@ test('the tasks rail is always there, and the page gives up only its collapsed w
 
 test('expanded, the rail lays over the page: wider, with nothing in the grid moving', () => {
   const open = ruleBody('.tabs-pane-side.is-open');
-  assertDeclaration(open, 'width', 'min\\(360px, 90vw\\)');
+  // 360px unless the operator dragged a pinned menu to another width.
+  assertDeclaration(open, 'width', 'min\\(var\\(--task-rail-open-width, 360px\\), 90vw\\)');
   assert.doesNotMatch(open, /padding|margin|left/);
 });
 
@@ -68,8 +71,8 @@ test('collapsed, a row is its dot and code, at the height it has expanded', () =
   assertDeclaration(ruleBody('.tabs-pane-side .tab'), 'min-height', 'calc\\(16px \\+ 2 \\* 6px \\+ 2px\\)');
 });
 
-test('collapsed, a row is bare — but the task on screen, one waiting for you and a pinned one keep their box', () => {
-  const bare = ruleBody('.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(:hover)');
+test('collapsed, a row is bare — but the task on screen, one waiting for you, a pinned one and a kato:auto-wait one keep their box', () => {
+  const bare = ruleBody('.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(.is-auto-wait):not(:hover)');
   assertDeclaration(bare, 'background', 'transparent');
   assertDeclaration(bare, 'border-color', 'transparent');
 });

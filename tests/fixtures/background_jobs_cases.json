@@ -1,0 +1,116 @@
+{
+  "_about": "Background jobs a Claude session still waits on. ONE set of cases run by BOTH claude_core_lib/.../session/background_jobs.py (the server's is_working) and webserver/ui/src/utils/backgroundJobs.js (the UI reducer) — tests/test_background_jobs_parity.py and backgroundJobs.test.js. A job is outstanding from its start until it is REPORTED finished. Add a case here, never to one side only.",
+  "cases": [
+    {
+      "name": "UNA-3416: finished inside its own turn, as the CLI sent it",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_npm", "name": "Bash", "input": {"command": "npm ci", "run_in_background": true}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_npm", "content": "Command running in background with ID: b1"}]}},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "b1", "task_type": "local_bash"}]},
+        {"type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "toolu_npm", "is_backgrounded": true},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "editing"}]}},
+        {"type": "system", "subtype": "task_updated", "task_id": "b1", "patch": {"status": "completed"}},
+        {"type": "system", "subtype": "task_notification", "task_id": "b1", "tool_use_id": "toolu_npm", "status": "completed"},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": []},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "done <KATO_TASK_DONE>"}]}},
+        {"type": "result", "subtype": "success"}
+      ],
+      "outstanding": []
+    },
+    {
+      "name": "a background job still running after its turn ended",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_t", "name": "Bash", "input": {"command": "mvn test", "run_in_background": true}}]}},
+        {"type": "system", "subtype": "task_started", "task_id": "b2", "tool_use_id": "toolu_t", "is_backgrounded": true},
+        {"type": "result", "subtype": "success"}
+      ],
+      "outstanding": ["toolu_t"]
+    },
+    {
+      "name": "a newer turn does not end a job; its report does",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_m", "name": "Monitor", "input": {}}]}},
+        {"type": "result"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "still going"}]}},
+        {"type": "result"}
+      ],
+      "outstanding": ["toolu_m"]
+    },
+    {
+      "name": "an older CLI's notification text names its job",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_a", "name": "Monitor", "input": {}}, {"type": "tool_use", "id": "toolu_b", "name": "Workflow", "input": {}}]}},
+        {"type": "result"},
+        {"type": "user", "message": {"content": "<task-notification>\n<task-id>x</task-id>\n<tool-use-id>toolu_a</tool-use-id>\n</task-notification>"}}
+      ],
+      "outstanding": ["toolu_b"]
+    },
+    {
+      "name": "an older notification naming nothing ends every job",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_a", "name": "Monitor", "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "text", "text": "  <task-notification>\n<status>completed</status>"}]}}
+      ],
+      "outstanding": []
+    },
+    {
+      "name": "a person's message ends nothing",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_a", "name": "Workflow", "input": {}}]}},
+        {"type": "user", "message": {"content": "any update?"}}
+      ],
+      "outstanding": ["toolu_a"]
+    },
+    {
+      "name": "the CLI's list ends jobs it no longer lists and adds ones it does",
+      "events": [
+        {"type": "system", "subtype": "task_started", "task_id": "t1", "tool_use_id": "u1", "is_backgrounded": true},
+        {"type": "system", "subtype": "task_started", "task_id": "t2", "tool_use_id": "u2", "is_backgrounded": true},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": [{"task_id": "t2"}, {"task_id": "t9"}]}
+      ],
+      "outstanding": ["t9", "u2"]
+    },
+    {
+      "name": "a foreground command the CLI tracked starts no job",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_f", "name": "Bash", "input": {"command": "npm test"}}]}},
+        {"type": "system", "subtype": "task_started", "task_id": "b3", "tool_use_id": "toolu_f", "is_backgrounded": false},
+        {"type": "system", "subtype": "task_notification", "task_id": "b3", "tool_use_id": "toolu_f", "status": "completed"},
+        {"type": "result"}
+      ],
+      "outstanding": []
+    },
+    {
+      "name": "task_updated ends a job only with a finished status",
+      "events": [
+        {"type": "system", "subtype": "task_started", "task_id": "t1", "tool_use_id": "u1", "is_backgrounded": true},
+        {"type": "system", "subtype": "task_started", "task_id": "t2", "tool_use_id": "u2", "is_backgrounded": true},
+        {"type": "system", "subtype": "task_updated", "task_id": "t1", "patch": {"status": "failed"}},
+        {"type": "system", "subtype": "task_updated", "task_id": "t2", "patch": {"status": "running"}}
+      ],
+      "outstanding": ["u2"]
+    },
+    {
+      "name": "a call with no id is still followed",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Monitor", "input": {}}]}},
+        {"type": "result"}
+      ],
+      "outstanding": ["unnamed-tool-use-1"]
+    },
+    {
+      "name": "a Workflow the CLI named no task for waits for its own report",
+      "events": [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_w", "name": "Workflow", "input": {}}]}},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": []},
+        {"type": "system", "subtype": "task_notification", "tool_use_id": "toolu_w", "status": "completed"}
+      ],
+      "outstanding": []
+    },
+    {
+      "name": "what is not an event is ignored",
+      "events": [null, "text", 3, ["list"], {"type": "system", "subtype": "init"}, {"type": "assistant", "message": "not a dict"}],
+      "outstanding": []
+    }
+  ]
+}

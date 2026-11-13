@@ -112,6 +112,64 @@ export function formatRequestFailure(result, fallbackTitle) {
   };
 }
 
+// Build the toast for ``POST /handover``: one line per step the server ran,
+// problems first (a hand-over that half happened leaves the ticket somewhere
+// the operator must fix). A 409/400 carries no steps — just why not.
+const HANDOVER_STEP_WORDS = {
+  assign: {
+    ok: (name) => `Assigned to ${name}.`,
+    failed: (name, why) => `⚠ Not assigned to ${name}: ${why}`,
+  },
+  tag: {
+    ok: () => 'Tagged kato:wait-editing — their kato opens it as a chat and waits for them.',
+    failed: (name, why) => `⚠ Not tagged kato:wait-editing: ${why}. The ticket was left where it was, so their kato does not run it unwatched.`,
+  },
+  comments: {
+    ok: (name, detail) => `${capitalized(detail || "nothing of kato's blocked it")}.`,
+    failed: (name, why) => `⚠ Kato's old comments: ${why}. The hand-over note still clears them for every kato.`,
+  },
+  note: {
+    ok: () => 'Posted who has it now.',
+    failed: (name, why) => `⚠ The hand-over note was not posted: ${why}`,
+  },
+  open: {
+    ok: () => 'Moved to Open — their kato picks it up on its next scan.',
+    failed: (name, why) => `⚠ Not moved to Open: ${why}. Move it to Open so their kato picks it up.`,
+  },
+  stop: {
+    ok: (name, detail) => (detail === 'stopped' ? 'Stopped the agent here.' : 'No agent was running here.'),
+    failed: (name, why) => `⚠ The agent here did not stop: ${why}`,
+  },
+};
+
+function capitalized(text) {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
+export function formatHandoverResult(result) {
+  const body = (result && result.body) || {};
+  const steps = Array.isArray(body.steps) ? body.steps : [];
+  if (!steps.length) {
+    return formatRequestFailure(result, 'Not handed over');
+  }
+  const name = (body.assignee && (body.assignee.name || body.assignee.handle)) || 'them';
+  const lines = (step) => {
+    const words = HANDOVER_STEP_WORDS[step.step];
+    if (!words) { return step.ok ? '' : `⚠ ${step.step}: ${step.detail}`; }
+    return step.ok ? words.ok(name, step.detail) : words.failed(name, step.detail);
+  };
+  const problems = steps.filter((step) => !step.ok).map(lines);
+  const done = steps.filter((step) => step.ok).map(lines).filter(Boolean);
+  let title = `Handed over to ${name}`;
+  if (body.status === 'failed') { title = 'Not handed over'; }
+  else if (problems.length) { title = `Handed over to ${name}, with problems`; }
+  return {
+    title,
+    kind: problems.length ? 'error' : 'success',
+    message: [...problems, ...done].join('\n'),
+  };
+}
+
 export function formatRenameBranchResult(result) {
   if (!result || !result.ok) {
     return formatRequestFailure(result, 'Branch not renamed');

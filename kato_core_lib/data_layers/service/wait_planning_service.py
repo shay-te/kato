@@ -34,15 +34,15 @@ from dataclasses import dataclass
 
 from kato_core_lib.data_layers.data.fields import TaskTags
 from kato_core_lib.data_layers.data.task import Task
-from kato_core_lib.helpers.autopilot_store import is_autopilot, set_autopilot
-from kato_core_lib.data_layers.service.task_in_progress import CHAT_OPENED_FOR_IT, TaskInProgress
+from kato_core_lib.helpers.autopilot_store import automation_level, set_automation_level
+from kato_core_lib.data_layers.service.task_moves import CHAT_OPENED_FOR_IT, IN_PROGRESS, TaskMoves
 from kato_core_lib.data_layers.service.workspace_provisioning_service import (
     provision_task_workspace_clones,
 )
 from agent_core_lib.agent_core_lib.helpers import agent_prompt_utils
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.plan_mode_store import PLAN_MODE
-from kato_core_lib.helpers.kato_tag_utils import has_autopilot_tag, is_model_tag, model_from_tag
+from kato_core_lib.helpers.kato_tag_utils import automation_level_from_tags, is_model_tag, model_from_tag
 from kato_core_lib.helpers.planning_hold_store import set_planning_hold
 from kato_core_lib.helpers.task_model_tag_store import set_task_model_tag
 from kato_core_lib.helpers.task_definition_prompt import task_definition_block
@@ -190,8 +190,8 @@ class WaitPlanningService(object):
         # only for tasks still in the queue, so a live chat here means an
         # earlier move failed or someone moved the ticket back to Open. Once
         # moved it leaves the queue, so this is not repeated every scan.
-        TaskInProgress(self._task_state_service, logger=self.logger).try_move(
-            task.id, CHAT_OPENED_FOR_IT,
+        TaskMoves(self._task_state_service, logger=self.logger).try_move(
+            task.id, IN_PROGRESS, CHAT_OPENED_FOR_IT,
         )
         if self._is_chat_already_alive(task):
             return skip_task_result(task.id, [])
@@ -242,20 +242,26 @@ class WaitPlanningService(object):
         self._stop_live_editing_session(task_id)
 
     def observe_autopilot(self, task: Task) -> None:
-        """Remember whether the ticket carries ``kato:autopilot`` (Auto mode,
-        and Done pressed by kato once the work and its review are finished).
-        Released when the tag leaves the ticket. Same places, same switch as
-        :meth:`observe_model_tag`."""
+        """Remember how far the ticket's tags let kato take the task by itself:
+        ``kato:autopilot`` (Auto mode, the work, Done pressed once it and its
+        review are finished) or ``kato:auto-wait`` (Auto mode, the work, the
+        review loop — then the operator's Done). Released when the tag leaves
+        the ticket. Same places, same switch as :meth:`observe_model_tag`."""
         if not self._track_planning_holds:
             return
         task_id = str(getattr(task, 'id', '') or '').strip()
         try:
-            changed = set_autopilot(task_id, has_autopilot_tag(getattr(task, 'tags', None)))
+            changed = set_automation_level(
+                task_id, automation_level_from_tags(getattr(task, 'tags', None)),
+            )
         except Exception:
-            self.logger.exception('failed to record the autopilot tag for task %s', task_id)
+            self.logger.exception('failed to record the automation tag for task %s', task_id)
             return
         if changed:
-            self.logger.info('task %s is %s on autopilot', task_id, 'now' if is_autopilot(task_id) else 'no longer')
+            level = automation_level(task_id)
+            self.logger.info(
+                'task %s is %s', task_id, f'now on {level}' if level else 'no longer on autopilot or auto-wait',
+            )
 
     def observe_model_tag(self, task: Task) -> None:
         """Remember the model the ticket's ``kato:model:`` tag selects.

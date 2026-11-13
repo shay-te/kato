@@ -608,6 +608,25 @@ export function renameTaskBranch(taskId, branch) {
   );
 }
 
+// "Hand over": may this task go to someone else ({available, reason}, no
+// tracker call), who it can go to, and handing it over.
+function handoverUrl(taskId, suffix = '') {
+  return `/api/sessions/${encodeURIComponent(taskId)}/handover${suffix}`;
+}
+
+export function fetchHandoverAvailability(taskId) {
+  return fetchJson(handoverUrl(taskId), { timeoutMs: 10000 });
+}
+
+export function fetchHandoverUsers(taskId) {
+  return requestEnvelope(handoverUrl(taskId, '/users'), { method: 'GET' });
+}
+
+export function handOverTask(taskId, handle, name) {
+  if (!taskId) { return { ok: false, error: 'no task id' }; }
+  return postEnvelope(handoverUrl(taskId), { handle, name });
+}
+
 export function finishTask(taskId) {
   if (!taskId) { return { ok: false, error: 'no task id' }; }
   return requestEnvelope(

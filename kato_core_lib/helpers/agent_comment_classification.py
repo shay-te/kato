@@ -136,6 +136,12 @@ def is_pre_start_blocking_comment(text: object) -> bool:
     return _matches_prefixes(text, PRE_START_BLOCKING_PREFIXES)
 
 
+def is_execution_blocking_comment(text: object) -> bool:
+    """True when the comment, standing alone, would stop kato starting the task
+    (``active_execution_blocking_comment`` reads the thread in order)."""
+    return _matches_prefixes(text, AGENT_EXECUTION_BLOCKING_PREFIXES)
+
+
 def is_retry_override_comment(text: object) -> bool:
     """True when the operator explicitly approved another attempt.
 

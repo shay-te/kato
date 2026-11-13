@@ -9,7 +9,14 @@ from kato_core_lib.data_layers.service.agent_state_registry import AgentStateReg
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
-from kato_core_lib.data_layers.service.task_in_progress import KATO_STARTED_IT, TaskInProgress
+from kato_core_lib.data_layers.service.task_handover import TaskHandover
+from kato_core_lib.data_layers.service.task_moves import (
+    DONE,
+    IN_PROGRESS,
+    KATO_STARTED_IT,
+    OPERATOR_MARKED_IT_DONE,
+    TaskMoves,
+)
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.validation.repository_connections import (
     RepositoryConnectionsValidator,
@@ -18,7 +25,9 @@ from kato_core_lib.validation.startup_dependency_validator import (
     StartupDependencyValidator,
 )
 from kato_core_lib.helpers.automation_switches_utils import run_tests_enabled
+from kato_core_lib.helpers.autopilot_store import is_auto_wait
 from kato_core_lib.helpers.kato_tag_utils import (
+    DEFAULT_MAX_ROUNDS,
     is_review_loop_tag,
     review_rounds_from_tag,
 )
@@ -677,6 +686,17 @@ class AgentService(MissionStepLoggerMixin, Service):
         return self._task_lesson_service
 
     @property
+    def handover(self) -> TaskHandover:
+        """Hand a task over to a teammate (the header's "Hand over") — see
+        ``TaskHandover``. Built per use: stateless, over the live services."""
+        return TaskHandover(
+            task_service=self._task_service,
+            task_state_service=self._task_state_service,
+            session_manager=self._session_manager,
+            logger=self.logger,
+        )
+
+    @property
     def repositories(self):
         """The repositories subsystem — ``agent_service.repositories.sync_task_repositories(…)``.
 
@@ -899,7 +919,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         normalized = str(task_id or '').strip()
         if not normalized:
             raise ValueError('task id is required')
-        self._task_state_service.move_task_to_done(normalized)
+        self._task_moves().move(normalized, DONE, OPERATOR_MARKED_IT_DONE)
 
 
     def forget_task_state(self, task_id: str) -> None:
@@ -976,7 +996,7 @@ class AgentService(MissionStepLoggerMixin, Service):
         # (this list): a run that failed moved it back to Open and the operator
         # typed "continue". The work is in progress — the ticket says so — and
         # nothing else starts on it: a run is already going.
-        if self._task_in_progress().move_if_agent_working(task.id, self._session_manager):
+        if self._task_moves().move_if_agent_working(task.id, self._session_manager):
             return skip_task_result(task.id, [])
 
         # No in-memory "already processed" short-circuit. The ticket system
@@ -1055,6 +1075,10 @@ class AgentService(MissionStepLoggerMixin, Service):
         switch and must not be overridden by it.
         """
         if not auto_push_enabled():
+            return True
+        # ``kato:auto-wait`` stops before Done whatever the switch says: its
+        # review loop runs at the park, and the push is the operator's.
+        if is_auto_wait(getattr(task, 'id', '')):
             return True
         return AgentService._task_has_wait_before_push_tag(task)
 
@@ -1161,7 +1185,9 @@ class AgentService(MissionStepLoggerMixin, Service):
         """The rounds the task's ``kato:review-loop`` tags ask for; 0 means no loop.
 
         Two tags on one ticket take the larger, so the answer does not depend on
-        the order the tracker lists them in.
+        the order the tracker lists them in. A task on ``kato:auto-wait`` always
+        has its loop — the default rounds unless a tag names them: reviewing the
+        work before the operator's Done is what that tag asks for.
         """
         rounds = 0
         for tag in getattr(task, 'tags', None) or []:
@@ -1173,6 +1199,8 @@ class AgentService(MissionStepLoggerMixin, Service):
                     'ignoring malformed tag %r on task %s', tag, task.id,
                 )
             rounds = max(rounds, tag_rounds)
+        if not rounds and is_auto_wait(task.id):
+            return DEFAULT_MAX_ROUNDS
         return rounds
 
 
@@ -1384,14 +1412,14 @@ class AgentService(MissionStepLoggerMixin, Service):
 
 
 
-    def _task_in_progress(self) -> TaskInProgress:
+    def _task_moves(self) -> TaskMoves:
         # Built per use from the current state service — stateless, and tests
         # swap ``_task_state_service`` after construction.
-        return TaskInProgress(self._task_state_service, logger=self.logger)
+        return TaskMoves(self._task_state_service, logger=self.logger)
 
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
         try:
-            self._task_in_progress().move(task.id, KATO_STARTED_IT)
+            self._task_moves().move(task.id, IN_PROGRESS, KATO_STARTED_IT)
         except Exception as exc:
             self._task_failure_handler.handle_task_failure(task, exc, prepared_task=prepared_task)
             return False

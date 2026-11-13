@@ -139,6 +139,7 @@ from kato_webserver.git_diff_utils import (
 )
 from kato_webserver.prompt_attachment_store import save_attachment
 from kato_webserver.prompt_draft_store import read_draft, write_draft
+from kato_webserver.task_agent_stop import NO_AGENT, fire_webserver_hook, stop_task_agent
 from kato_webserver.usage_routes import keep_deleted_task_usage, snapshot_task_usage
 
 
@@ -1612,6 +1613,8 @@ def create_app(
     register_plan_question_routes(app)
     from kato_webserver.task_definition_routes import register_task_definition_routes
     register_task_definition_routes(app)
+    from kato_webserver.handover_routes import register_handover_routes
+    register_handover_routes(app)
     from kato_webserver.claude_models_routes import register_claude_models_routes
     register_claude_models_routes(app)
     return app
@@ -4979,48 +4982,17 @@ def _capture_prompt_lesson_candidate(app: Flask, task_id: str, text: str) -> Non
 def _register_stop_session_route(app: Flask) -> None:
     @app.post('/api/sessions/<task_id>/stop')
     def stop_session(task_id: str):
-        # The chat's Stop ends the review loop too — first, and even when the
-        # chat has no session yet (the loop may be mid-review): the operator
-        # pressed Stop, so nothing kato started on this task keeps going.
-        loops = getattr(app.config.get('AGENT_SERVICE'), 'review_loops', None)
-        if loops is not None:
-            try:
-                loops.stop(task_id, reason='the chat was stopped')
-            except Exception:
-                app.logger.exception('failed to stop the review loop for %s', task_id)
-        manager = app.config['SESSION_MANAGER']
-        if manager.get_record(task_id) is None:
-            return jsonify({'error': 'session not found'}), 404
+        # The chat's Stop ends the review loop too (``stop_task_agent``): the
+        # operator pressed Stop, so nothing kato started on this task keeps going.
         try:
-            manager.terminate_session(task_id)
+            stopped = stop_task_agent(
+                app, task_id, reason='the chat was stopped', source='webserver_stop_route',
+            )
         except Exception as exc:
             return jsonify({'error': str(exc)}), 500
-        # Fire the ``stop`` hook AFTER the manager kill succeeds so
-        # observers (audit log, slack mirror) only see stops that
-        # actually went through. The runner isolates its own
-        # failures — a misbehaving hook can't 500 this route.
-        _fire_webserver_hook(app, 'stop', {
-            'task_id': task_id,
-            'source': 'webserver_stop_route',
-        })
+        if stopped == NO_AGENT:
+            return jsonify({'error': 'session not found'}), 404
         return jsonify({'status': 'stopped'})
-
-
-def _fire_webserver_hook(app: Flask, point: str, event: dict) -> None:
-    """Fire a configured hook from a webserver route.
-
-    Routes don't import :mod:`kato_core_lib.hooks` directly so the
-    webserver can boot without that package installed (test
-    environments, embedded use). Lazy-import + isolate failures.
-    """
-    runner = app.config.get('HOOK_RUNNER')
-    if runner is None:
-        return
-    try:
-        from kato_core_lib.hooks.config import HookPoint
-        runner.fire(HookPoint(point), dict(event))
-    except Exception:
-        app.logger.exception('webserver hook firing failed for %s', point)
 
 
 def _resolve_permission_decision(
@@ -5085,7 +5057,7 @@ def _resolve_permission_decision(
     _audit_action_guard(app, task_id, request_id, verdict, guard_command, allow)
     # ``post_tool_use`` sees the final, post-hook decision so the
     # audit log reflects what actually got delivered to Claude.
-    _fire_webserver_hook(app, 'post_tool_use', {
+    fire_webserver_hook(app, 'post_tool_use', {
         'task_id': task_id,
         'request_id': request_id,
         'allow': bool(allow),
@@ -7264,6 +7236,7 @@ def _records_as_dicts(
     plan_queue_by_task = _plan_queue_summaries(agent_service)
     plan_finished_tasks = _plan_queue_finished(agent_service)
     plan_parent_by_task = _plan_parents(agent_service)
+    automation_by_task = _automation_levels()
     return [
         _workspace_record_to_dict(
             record,
@@ -7278,9 +7251,21 @@ def _records_as_dicts(
             plan_queue_by_task=plan_queue_by_task,
             plan_finished_tasks=plan_finished_tasks,
             plan_parent_by_task=plan_parent_by_task,
+            automation_by_task=automation_by_task,
         )
         for record in workspace_records
     ]
+
+
+def _automation_levels() -> dict[str, str]:
+    """``kato:autopilot`` / ``kato:auto-wait`` per task (lower-cased id): the
+    rail colours an auto-wait row. Unreadable → none: a colour is never worth
+    failing the tab list over."""
+    from kato_core_lib.helpers.autopilot_store import automation_levels
+    try:
+        return automation_levels()
+    except Exception:
+        return {}
 
 
 def _in_start_order(records) -> list:
@@ -7645,6 +7630,7 @@ def _workspace_record_to_dict(
     plan_queue_by_task: dict[str, dict] | None = None,
     plan_finished_tasks: set[str] | None = None,
     plan_parent_by_task: dict[str, str] | None = None,
+    automation_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     # The branch the task works on — the ONE answer (``task_branch``: a
@@ -7661,6 +7647,9 @@ def _workspace_record_to_dict(
     payload['plan_queue_finished'] = record.task_id in (plan_finished_tasks or set())
     # The task this one's plan was split from ('' = no plan's sub-task).
     payload['plan_parent'] = (plan_parent_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
+    # How far kato takes it by itself: 'autopilot', 'auto-wait' or '' (the
+    # rail draws an auto-wait row with a green border).
+    payload['automation'] = (automation_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
     # WORKSPACE records carry no backend — they predate agent tabs and are
     # about the clone on disk, not the chat. Without this the UI had nothing
     # to name the agent with and fell back to the literal word "Agent" on the

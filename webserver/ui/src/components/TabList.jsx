@@ -7,8 +7,10 @@ import { groupSubtaskTabs, subtaskListId } from '../utils/subtaskTabs.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
+import TaskMenuResizer from './TaskMenuResizer.jsx';
 import {
   closeTaskMenu, closeTaskMenuSoon, openTaskMenuSoon, useTaskMenuOpen,
+  useTaskMenuPinned, useTaskMenuWidth,
 } from '../stores/taskMenuStore.js';
 import {
   orderByPinned,
@@ -75,6 +77,12 @@ export default function TabList({
   footer = null,
 }) {
   const menuOpen = useTaskMenuOpen();
+  // Pinned (the kato logo's click): docked beside the page, its width dragged
+  // by its right edge. The width is also how wide the hover menu opens.
+  const menuPinned = useTaskMenuPinned();
+  const menuWidth = useTaskMenuWidth();
+  const [menuResizing, setMenuResizing] = useState(false);
+  useDockedRailWidth(menuPinned, menuWidth);
   // Pinned tab ids (in pin order). localStorage-backed so the
   // operator's preference survives reloads. Read lazily on mount;
   // every toggle re-persists. See utils/pinnedTabs.js for the rules.
@@ -465,10 +473,15 @@ export default function TabList({
     <nav
       id="tabs-pane"
       aria-label="Tasks"
-      className={cx('tabs-pane-side', (menuOpen || heldOpen) && 'is-open', empty && 'is-empty')}
+      className={cx(
+        'tabs-pane-side', (menuOpen || heldOpen) && 'is-open', empty && 'is-empty',
+        menuPinned && 'is-docked', menuResizing && 'is-resizing',
+      )}
+      style={{ '--task-rail-open-width': `${menuWidth}px` }}
       onMouseEnter={openTaskMenuSoon}
       onMouseLeave={closeTaskMenuSoon}
     >
+      {menuPinned ? <TaskMenuResizer onResizingChange={setMenuResizing} /> : null}
       {handle}
       {trailingActions}
       {empty ? (
@@ -483,4 +496,19 @@ export default function TabList({
       {footer}
     </nav>
   );
+}
+
+// A pinned menu is docked: the page gives up its whole width
+// (``#root``'s left padding reads ``--task-rail-docked-width``), so nothing
+// lies under it. Unpinned, the page gives up only the collapsed rail.
+function useDockedRailWidth(pinned, width) {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!pinned) {
+      root.style.removeProperty('--task-rail-docked-width');
+      return undefined;
+    }
+    root.style.setProperty('--task-rail-docked-width', `${width}px`);
+    return () => root.style.removeProperty('--task-rail-docked-width');
+  }, [pinned, width]);
 }

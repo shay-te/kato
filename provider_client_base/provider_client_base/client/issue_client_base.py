@@ -24,6 +24,7 @@ from provider_client_base.provider_client_base.data.issue_record import (
     IssueRecord,
 )
 from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
+from provider_client_base.provider_client_base.data.tracker_user import TrackerUser
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
     is_addressed_elsewhere_from_mentions,
@@ -130,6 +131,23 @@ class IssueClientBase(RetryingClientBase):
 
     def _no_subtasks(self) -> NotImplementedError:
         return NotImplementedError(f'{type(self).__name__} cannot hold work as sub-tasks')
+
+    # Whether an issue can be HANDED OVER to another person: list who it can be
+    # assigned to, and delete the account's own comments. Builds on the
+    # sub-task surface above (``assign_issue``, ``get_issues_status``,
+    # ``list_comments``, ``current_user``), so only a tracker with that sets it.
+    supports_handover: bool = False
+
+    def list_assignable_users(self, issue_id: str) -> list[TrackerUser]:
+        """Everyone ``issue_id`` can be assigned to, by name."""
+        raise self._no_handover()
+
+    def delete_comment(self, issue_id: str, comment_id: str) -> None:
+        """Delete one comment (the account's own — a tracker refuses others)."""
+        raise self._no_handover()
+
+    def _no_handover(self) -> NotImplementedError:
+        return NotImplementedError(f'{type(self).__name__} cannot hand an issue over')
 
     # ----- record building -----
 

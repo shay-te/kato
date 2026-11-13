@@ -89,6 +89,7 @@ That's it. To make kato work a ticket: open it in your tracker, **assign it to y
 - ⏸ **Pause before push** — tag `kato:wait-before-git-push` and approve PR creation from the UI
 - 🔁 **Review on finish** — tag `kato:review-loop` and the review loop starts by itself when the task finishes
 - 🛫 **Autopilot** — tag `kato:autopilot`: the chat starts in Auto, and when the work is finished (and its review loop is clean, if the ticket asks for one) kato presses Done for you: push, pull request, ticket, Slack. Anyone who can tag the ticket can turn it on
+- ⏸️ **Auto-wait** — tag `kato:auto-wait`: the chat starts in Auto, kato does the work and runs its review loop — then it stops and waits for you to press Done (nothing is pushed). Its row in the tasks menu has a green border. With both tags, auto-wait wins
 - 📂 **Multi-repo tickets** — one ticket → one PR per `kato:repo:<name>` tag
 - 🔔 **Notifications** — email + Slack on completion / failure
 

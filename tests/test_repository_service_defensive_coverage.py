@@ -83,30 +83,38 @@ class GetRepositoryTests(unittest.TestCase):
 
 
 class FindPullRequestsTests(unittest.TestCase):
-    """Line 354: thin delegate to ``_publication_service.find_pull_requests``."""
+    """``find_pull_requests`` asks the host through ``PullRequestLookup``."""
 
-    def test_delegates_to_publication_service(self) -> None:
+    def test_asks_the_pull_request_api_for_open_pull_requests(self) -> None:
         service = _make_service()
-        publication = MagicMock()
-        publication.find_pull_requests.return_value = [{'id': '17'}]
-        service._publication_service = publication
+        service._publication_service._ensure_pr_api_or_log_once = lambda repo, operation: True
+        data_access = MagicMock()
+        data_access.find_pull_requests.return_value = [{'id': '17'}]
+        service._pull_request_data_access = MagicMock(return_value=data_access)
         repo = SimpleNamespace(id='client')
         result = service.find_pull_requests(
             repo, source_branch='feat/x', title_prefix='PROJ-',
         )
         self.assertEqual(result, [{'id': '17'}])
-        publication.find_pull_requests.assert_called_once_with(
-            repo, source_branch='feat/x', title_prefix='PROJ-', state='open',
+        data_access.find_pull_requests.assert_called_once_with(
+            source_branch='feat/x', title_prefix='PROJ-', state='open',
         )
 
-    def test_delegates_the_state_filter(self) -> None:
+    def test_passes_the_state_filter_and_no_empty_title_prefix(self) -> None:
         service = _make_service()
-        publication = MagicMock()
-        publication.find_pull_requests.return_value = []
-        service._publication_service = publication
-        repo = SimpleNamespace(id='client')
-        service.find_pull_requests(repo, source_branch='feat/x', state='all')
-        self.assertEqual(publication.find_pull_requests.call_args.kwargs['state'], 'all')
+        service._publication_service._ensure_pr_api_or_log_once = lambda repo, operation: True
+        data_access = MagicMock()
+        data_access.find_pull_requests.return_value = []
+        service._pull_request_data_access = MagicMock(return_value=data_access)
+        service.find_pull_requests(SimpleNamespace(id='client'), source_branch='feat/x', state='all')
+        data_access.find_pull_requests.assert_called_once_with(source_branch='feat/x', state='all')
+
+    def test_no_pull_request_api_is_no_pull_requests_and_never_asks(self) -> None:
+        service = _make_service()
+        service._publication_service._ensure_pr_api_or_log_once = lambda repo, operation: False
+        service._pull_request_data_access = MagicMock()
+        self.assertEqual(service.find_pull_requests(SimpleNamespace(id='client'), source_branch='feat/x'), [])
+        service._pull_request_data_access.assert_not_called()
 
 
 class BranchNeedsPushDefensiveTests(unittest.TestCase):

@@ -261,12 +261,8 @@ test('a fresh turn does NOT cancel a background job still running', function () 
   // The turn still shows as WORKING while it runs: ``deriveAgentStatus``
   // gives ``turnInFlight`` precedence. This flag only decides what the
   // status falls back to once the turn ends.
-  const busy = { ..._freshState(), awaitingBackground: true, backgroundIsWorkflow: true };
-  const next = reducer(busy, {
-    type: 'incoming_event',
-    event: { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } },
-    receivedAtEpoch: Date.now(),
-  });
+  const busy = _afterEvents([_workflowCall('toolu_wf'), { type: 'result' }]);
+  const next = _feed(busy, { type: 'assistant', message: { content: [{ type: 'text', text: 'hi' }] } });
   assert.equal(next.turnInFlight, true);
   assert.equal(next.awaitingBackground, true);
   assert.equal(next.backgroundIsWorkflow, true);
@@ -275,29 +271,55 @@ test('a fresh turn does NOT cancel a background job still running', function () 
 test('the background job reporting back is what clears the flag', function () {
   // The one signal that the wait is over. Without it the flag could only be
   // cleared by the session ending, leaving a "background" chip standing over
-  // work that finished hours ago.
-  const busy = { ..._freshState(), awaitingBackground: true, backgroundIsWorkflow: true };
-  const next = reducer(busy, {
-    type: 'incoming_event',
-    event: {
-      type: 'user',
-      message: { content: '<task-notification>\n<task-id>x</task-id>\n' },
-    },
-    receivedAtEpoch: Date.now(),
+  // work that finished hours ago. An older CLI's text form…
+  const busy = _afterEvents([_workflowCall('toolu_wf'), { type: 'result' }]);
+  const next = _feed(busy, {
+    type: 'user',
+    message: { content: '<task-notification>\n<task-id>x</task-id>\n' },
   });
   assert.equal(next.awaitingBackground, false);
   assert.equal(next.backgroundIsWorkflow, false);
+  // …and the CLI's own event, naming the job.
+  const reported = _feed(busy, {
+    type: 'system', subtype: 'task_notification', tool_use_id: 'toolu_wf', status: 'completed',
+  });
+  assert.equal(reported.awaitingBackground, false);
 });
 
 test('a human message does not clear it', function () {
-  const busy = { ..._freshState(), awaitingBackground: true };
-  const next = reducer(busy, {
-    type: 'incoming_event',
-    event: { type: 'user', message: { content: 'any update?' } },
-    receivedAtEpoch: Date.now(),
-  });
+  const busy = _afterEvents([_workflowCall('toolu_wf'), { type: 'result' }]);
+  const next = _feed(busy, { type: 'user', message: { content: 'any update?' } });
   assert.equal(next.awaitingBackground, true);
 });
+
+test('a job that reported back inside its own turn does not leave the session busy', function () {
+  // UNA-3416: an npm install in the background reported back 25s later in
+  // the same turn; the turn ended; the tab read "background" for good.
+  const done = _afterEvents([
+    { type: 'assistant', message: { content: [
+      { type: 'tool_use', id: 'toolu_npm', name: 'Bash', input: { command: 'npm ci', run_in_background: true } },
+    ] } },
+    { type: 'system', subtype: 'task_started', task_id: 'b1', tool_use_id: 'toolu_npm', is_backgrounded: true },
+    { type: 'system', subtype: 'task_notification', task_id: 'b1', tool_use_id: 'toolu_npm', status: 'completed' },
+    { type: 'system', subtype: 'background_tasks_changed', tasks: [] },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } },
+    { type: 'result' },
+  ]);
+  assert.equal(done.turnInFlight, false);
+  assert.equal(done.awaitingBackground, false);
+});
+
+function _workflowCall(id) {
+  return { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Workflow', input: {} }] } };
+}
+
+function _feed(state, event) {
+  return reducer(state, { type: 'incoming_event', event, receivedAtEpoch: Date.now() });
+}
+
+function _afterEvents(events) {
+  return events.reduce(_feed, _freshState());
+}
 
 test('a spawn does NOT make the task look busy', function () {
   // ``system/init`` fires on EVERY spawn — including the one kato does just

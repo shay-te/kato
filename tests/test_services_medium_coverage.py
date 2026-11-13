@@ -594,14 +594,14 @@ class RepositoryPublicationServiceTests(unittest.TestCase):
             max_retries=2,
         )
 
-    def test_find_pull_requests_returns_empty_when_api_setup_fails(self) -> None:
-        # Lines 117-119: ``if not _ensure_pr_api...: return []``.
+    def test_pull_request_api_that_cannot_be_set_up_is_not_ready(self) -> None:
+        # ``RepositoryService.find_pull_requests`` answers [] on this.
         service = self._service()
         service._repository_service._prepare_pull_request_api.side_effect = (
             RuntimeError('no token')
         )
         repo = SimpleNamespace(id='repo-a')
-        self.assertEqual(service.find_pull_requests(repo), [])
+        self.assertFalse(service._ensure_pr_api_or_log_once(repo, 'lookup'))
 
     def test_list_pull_request_comments_returns_empty_when_api_setup_fails(
         self,
@@ -1093,20 +1093,6 @@ class MediumServicesRemainingEdgeTests(unittest.TestCase):
         session.is_working = False
         result = runner._wait_for_terminal_event(session, task_id='T')
         self.assertIs(result, terminal)
-
-    def test_publication_find_pull_requests_succeeds(self) -> None:
-        # Line 119: success branch — api ready, delegates to data access.
-        from kato_core_lib.data_layers.service.repository_publication_service import (
-            RepositoryPublicationService,
-        )
-        repo_service = MagicMock()
-        data_access = MagicMock()
-        data_access.find_pull_requests.return_value = [{'id': '1'}]
-        repo_service._pull_request_data_access.return_value = data_access
-        service = RepositoryPublicationService(repo_service, max_retries=1)
-        repo = SimpleNamespace(id='repo-a')
-        result = service.find_pull_requests(repo, source_branch='feat/x')
-        self.assertEqual(result, [{'id': '1'}])
 
     def test_publisher_logs_pushed_branch_without_url(self) -> None:
         # Line 268: ``else`` branch when pull_request_url is blank.

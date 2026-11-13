@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   formatFinishResult,
+  formatHandoverResult,
   formatMergeResult,
   formatMergeConflicts,
   formatPullResult,
@@ -1118,4 +1119,93 @@ test('formatUpdateSourceResult: only main-branch moves still read as updated, ne
   });
   assert.equal(out.title, 'Source updated');
   assert.doesNotMatch(out.message, /no source repositories updated/);
+});
+
+
+// ----- formatHandoverResult -----
+
+function handover(status, steps, assignee = { handle: 'jane', name: 'Jane Doe' }) {
+  return { ok: status !== 'failed', body: { status, assignee, steps } };
+}
+
+test('formatHandoverResult: every step done is green, one line each', () => {
+  const toast = formatHandoverResult(handover('handed_over', [
+    { step: 'assign', ok: true, detail: '' },
+    { step: 'tag', ok: true, detail: '' },
+    { step: 'comments', ok: true, detail: "deleted 2 of kato's comments" },
+    { step: 'note', ok: true, detail: '' },
+    { step: 'open', ok: true, detail: '' },
+    { step: 'stop', ok: true, detail: 'stopped' },
+  ]));
+  assert.equal(toast.kind, 'success');
+  assert.equal(toast.title, 'Handed over to Jane Doe');
+  assert.deepEqual(toast.message.split('\n'), [
+    'Assigned to Jane Doe.',
+    'Tagged kato:wait-editing — their kato opens it as a chat and waits for them.',
+    "Deleted 2 of kato's comments.",
+    'Posted who has it now.',
+    'Moved to Open — their kato picks it up on its next scan.',
+    'Stopped the agent here.',
+  ]);
+});
+
+test('formatHandoverResult: problems are red and listed first', () => {
+  const toast = formatHandoverResult(handover('handed_over_with_problems', [
+    { step: 'assign', ok: true, detail: '' },
+    { step: 'tag', ok: true, detail: '' },
+    { step: 'comments', ok: false, detail: 'not allowed' },
+    { step: 'note', ok: false, detail: 'refused' },
+    { step: 'open', ok: false, detail: 'workflow' },
+    { step: 'stop', ok: false, detail: 'stuck' },
+  ]));
+  assert.equal(toast.kind, 'error');
+  assert.equal(toast.title, 'Handed over to Jane Doe, with problems');
+  const lines = toast.message.split('\n');
+  assert.deepEqual(lines.slice(0, 4), [
+    "⚠ Kato's old comments: not allowed. The hand-over note still clears them for every kato.",
+    '⚠ The hand-over note was not posted: refused',
+    '⚠ Not moved to Open: workflow. Move it to Open so their kato picks it up.',
+    '⚠ The agent here did not stop: stuck',
+  ]);
+  assert.equal(lines[4], 'Assigned to Jane Doe.');
+});
+
+test('formatHandoverResult: a failed tag says the ticket was left where it was', () => {
+  const toast = formatHandoverResult(handover('handed_over_with_problems', [
+    { step: 'assign', ok: true, detail: '' },
+    { step: 'tag', ok: false, detail: 'tag store down' },
+  ]));
+  assert.match(toast.message, /^⚠ Not tagged kato:wait-editing: tag store down\. The ticket was left where it was/);
+});
+
+test('formatHandoverResult: a failed assignment is "Not handed over"', () => {
+  const toast = formatHandoverResult(handover('failed', [
+    { step: 'assign', ok: false, detail: 'Unknown user' },
+  ], { handle: 'jane', name: '' }));
+  assert.equal(toast.title, 'Not handed over');
+  assert.equal(toast.kind, 'error');
+  assert.equal(toast.message, '⚠ Not assigned to jane: Unknown user');
+});
+
+test('formatHandoverResult: nothing blocking, no agent, no names, an unknown step', () => {
+  const toast = formatHandoverResult(handover('handed_over_with_problems', [
+    { step: 'comments', ok: true, detail: '' },
+    { step: 'stop', ok: true, detail: 'no agent was running' },
+    { step: 'later', ok: true, detail: '' },
+    { step: 'mystery', ok: false, detail: 'odd' },
+  ], null));
+  assert.deepEqual(toast.message.split('\n'), [
+    '⚠ mystery: odd',
+    "Nothing of kato's blocked it.",
+    'No agent was running here.',
+  ]);
+  assert.equal(toast.title, 'Handed over to them, with problems');
+});
+
+test('formatHandoverResult: a refusal with no steps is the request failure', () => {
+  assert.deepEqual(
+    formatHandoverResult({ ok: false, status: 409, body: { error: 'agent is working' } }),
+    { title: 'Not handed over', kind: 'error', message: 'agent is working' },
+  );
+  assert.equal(formatHandoverResult(null).title, 'Not handed over');
 });

@@ -225,6 +225,15 @@ def _export_agent_workspaces_root(workspace_manager) -> None:
 # quietly stops learning.
 _LESSONS_EDITOR_TIMEOUT_SECONDS = 1800
 
+# Budget for one lesson EXTRACTION (one prompt in, one rule out). Measured: 12s
+# on an idle API with Opus 5.5 [1m]. It still timed out at the shared 120s
+# default (UNA-3416, 2026-11-13) — run beside the Done push, the PR, Slack and
+# other agents, when the Claude CLI was retrying an overloaded / rate-limited
+# API by itself. Nothing waits on it (``capture_task_lesson`` runs it on a
+# background thread), so it gets room for those retries instead of losing the
+# task's lesson to them.
+_LESSON_EXTRACTION_TIMEOUT_SECONDS = 600
+
 # How long the boot filing waits after a batch fails before trying again, and
 # the most it backs off to. A failed batch used to end the filing for good:
 # the rest of the backlog then sat until the next restart or the next
@@ -882,9 +891,12 @@ class KatoCoreLib(CoreLib):
         state_dir = lessons_path.parent
         data_access = LessonsDataAccess(state_dir)
         binary, model, cwd = self._claude_one_shot_settings(open_cfg)
-        # Extraction is one prompt in, one line out: the shared one-shot
-        # budget is enough for it.
-        llm_one_shot = make_one_shot(binary=binary, model=model, cwd=cwd)
+        # Extraction is one prompt in, one line out — but under load the CLI's
+        # own API retries need more than the shared budget (see the constant).
+        llm_one_shot = make_one_shot(
+            binary=binary, model=model, cwd=cwd,
+            timeout_seconds=_LESSON_EXTRACTION_TIMEOUT_SECONDS,
+        )
         # Filing is the AI run that WRITES the lessons document. It is given
         # that one file and three tools — read, search, edit — and nothing
         # else; ``cwd`` stays the scratch dir, so the file is reached through

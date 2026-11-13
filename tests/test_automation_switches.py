@@ -122,7 +122,7 @@ class ChatPromptTests(_SettingsFile):
         self.assertEqual(with_test_policy(''), NO_TESTS_GUIDANCE)
 
     def test_autopilot_no_longer_waits_for_tests_it_must_not_run(self) -> None:
-        with patch('kato_core_lib.helpers.autopilot_guidance_utils.is_autopilot', return_value=True):
+        with patch('kato_core_lib.helpers.autopilot_guidance_utils.automation_level', return_value='autopilot'):
             self.assertIn(AUTOPILOT_GUIDANCE, with_autopilot_guidance('T1', 'G'))
             self._save(**{RUN_TESTS_KEY: 'false'})
             guidance = with_autopilot_guidance('T1', 'G')

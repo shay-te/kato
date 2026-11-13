@@ -106,6 +106,13 @@ class TaskTags(object):
     # Slack). The tag is the operator saying so in advance, per ticket.
     AUTOPILOT = f'{KATO_TAG_NAMESPACE}:autopilot'
 
+    # Auto-wait: like autopilot up to the end — the chat starts in Auto, kato
+    # does the work, and the review loop runs (default rounds, or the ticket's
+    # ``kato:review-loop:<n>``) — then it WAITS: the operator presses Done. With
+    # both tags, auto-wait wins (not pressing Done is the stricter statement).
+    # Read the level via ``kato_tag_utils.automation_level_from_tags``.
+    AUTO_WAIT = f'{KATO_TAG_NAMESPACE}:auto-wait'
+
     # Model pick: ``kato:model:<family>`` runs the task on that family's
     # latest model; ``kato:model:<family>:<version>`` pins one release
     # (``kato:model:sonnet:5.5``). Parse it via ``kato_tag_utils``.

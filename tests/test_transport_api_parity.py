@@ -68,6 +68,11 @@ _DECLARED_EXTRA_MODULES = {
         'helpers/transcript_usage.py', 'helpers/write_scope_settings.py',
         # The registry of live persistent processes (one per task).
         'session/registry.py',
+        # Background jobs that outlive a turn (run_in_background / Monitor /
+        # Workflow), read from the CLI's own task events: only a persistent
+        # process has a turn that ends while its job still runs. A per-turn
+        # CLI's process — and so its job — ends with the turn.
+        'session/background_jobs.py',
     },
     'opencode_core_lib': {
         # OpenCode ships two maintained generations (V1 ``opencode-ai``, V2

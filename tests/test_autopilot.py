@@ -31,8 +31,8 @@ from kato_core_lib.helpers.autopilot_guidance_utils import (
     AUTOPILOT_GUIDANCE,
     with_autopilot_guidance,
 )
-from kato_core_lib.helpers.autopilot_store import is_autopilot, set_autopilot
-from kato_core_lib.helpers.kato_tag_utils import has_autopilot_tag
+from kato_core_lib.helpers.autopilot_store import AUTOPILOT, is_autopilot, set_automation_level
+from kato_core_lib.helpers.kato_tag_utils import automation_level_from_tags
 from kato_core_lib.helpers.plan_mode_store import (
     AUTOPILOT_MODE,
     DEFAULT_MODE_ENV,
@@ -66,12 +66,12 @@ class TagTests(unittest.TestCase):
     def test_the_tag_is_read_whatever_its_case_or_spacing(self) -> None:
         for tags in ([TaskTags.AUTOPILOT], ['  KATO:Autopilot '], ['kato:repo:api', 'kato:autopilot']):
             with self.subTest(tags=tags):
-                self.assertTrue(has_autopilot_tag(tags))
+                self.assertEqual(automation_level_from_tags(tags), AUTOPILOT)
 
     def test_anything_else_is_not_the_tag(self) -> None:
         for tags in (None, [], ['kato:autopilot:on'], ['autopilot'], ['kato:review-loop'], [None]):
             with self.subTest(tags=tags):
-                self.assertFalse(has_autopilot_tag(tags))
+                self.assertEqual(automation_level_from_tags(tags), '')
 
     def test_the_tag_is_in_kato_namespace(self) -> None:
         self.assertEqual(TaskTags.AUTOPILOT, 'kato:autopilot')
@@ -81,19 +81,22 @@ class StoreTests(_Isolated):
 
     def test_a_task_is_remembered_and_released(self) -> None:
         self.assertFalse(is_autopilot('UNA-1'))
-        self.assertTrue(set_autopilot('UNA-1', True))
+        self.assertTrue(set_automation_level('UNA-1', AUTOPILOT))
         self.assertTrue(is_autopilot('una-1'))  # ids match in any case
-        self.assertFalse(set_autopilot('UNA-1', True))  # no change
-        self.assertTrue(set_autopilot('una-1', False))
+        self.assertFalse(set_automation_level('UNA-1', AUTOPILOT))  # no change
+        self.assertTrue(set_automation_level('una-1', ''))
         self.assertFalse(is_autopilot('UNA-1'))
 
     def test_it_survives_a_restart(self) -> None:
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         import json
-        self.assertEqual(json.loads((self.folder / 'autopilot_tasks.json').read_text(encoding='utf-8')), ['una-1'])
+        self.assertEqual(
+            json.loads((self.folder / 'autopilot_tasks.json').read_text(encoding='utf-8')),
+            {'una-1': 'autopilot'},
+        )
 
     def test_no_task_id_records_nothing(self) -> None:
-        self.assertFalse(set_autopilot('  ', True))
+        self.assertFalse(set_automation_level('  ', AUTOPILOT))
         self.assertFalse(is_autopilot(''))
         self.assertFalse((self.folder / 'autopilot_tasks.json').exists())
 
@@ -107,26 +110,26 @@ class StoreTests(_Isolated):
 class ModeTests(_Isolated):
 
     def test_a_task_on_autopilot_starts_in_auto(self) -> None:
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         self.assertEqual(AUTOPILOT_MODE, 'bypassPermissions')
         self.assertEqual(task_permission_mode('UNA-1'), AUTOPILOT_MODE)
         self.assertEqual(unpicked_task_mode('UNA-1'), AUTOPILOT_MODE)
         self.assertEqual(_task_mode_spawn('UNA-1')['permission_mode'], AUTOPILOT_MODE)
 
     def test_autopilot_outranks_the_default_mode_for_new_tasks(self) -> None:
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         with patch.dict(os.environ, {DEFAULT_MODE_ENV: 'plan'}):
             self.assertEqual(task_permission_mode('UNA-1'), AUTOPILOT_MODE)
             self.assertEqual(task_permission_mode('UNA-2'), 'plan')
 
     def test_the_operators_pick_wins(self) -> None:
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         set_task_mode('UNA-1', 'plan')
         self.assertEqual(task_permission_mode('UNA-1'), 'plan')
 
     def test_picking_edit_automatically_sticks_on_autopilot(self) -> None:
         # '' would read back as Auto, so the pick is kept explicitly.
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         stored = picked_mode_to_store('', 'UNA-1')
         self.assertEqual(stored, EDIT_AUTOMATICALLY_MODE)
         set_task_mode('UNA-1', stored)
@@ -140,8 +143,8 @@ class ModeTests(_Isolated):
     def test_the_composer_shows_the_mode_that_will_run(self) -> None:
         from kato_webserver.app import _task_mode_of
         app = SimpleNamespace(config={'TASK_PLAN_MODE_OVERRIDES': {'UNA-2': 'plan'}})
-        set_autopilot('UNA-1', True)
-        set_autopilot('UNA-2', True)
+        set_automation_level('UNA-1', AUTOPILOT)
+        set_automation_level('UNA-2', AUTOPILOT)
         self.assertEqual(_task_mode_of(app, 'UNA-1'), AUTOPILOT_MODE)
         self.assertEqual(_task_mode_of(app, 'UNA-2'), 'plan')
         self.assertEqual(_task_mode_of(app, 'UNA-3'), '')
@@ -150,7 +153,7 @@ class ModeTests(_Isolated):
 class GuidanceTests(_Isolated):
 
     def test_a_task_on_autopilot_is_told_to_finish_by_itself(self) -> None:
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         prompt = with_autopilot_guidance('UNA-1', 'kato guidance')
         self.assertTrue(prompt.startswith('kato guidance\n\n## Autopilot'))
         self.assertIn(KATO_TASK_DONE_SENTINEL, prompt)
@@ -219,7 +222,7 @@ class FinisherTests(_Isolated):
 
     def setUp(self) -> None:
         super().setUp()
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
 
     def said(self, calls: dict) -> list[str]:
         return [call.args[2] for call in calls['logger'].info.call_args_list]
@@ -359,7 +362,7 @@ class AgentServiceTests(_Isolated):
 
     def setUp(self) -> None:
         super().setUp()
-        set_autopilot('UNA-1', True)
+        set_automation_level('UNA-1', AUTOPILOT)
         self.publish = MagicMock()
         self.publish.finish_task_planning_session.return_value = {'finished': True}
         patcher = patch.object(AgentService, 'publish', new_callable=PropertyMock, return_value=self.publish)

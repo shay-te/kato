@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
+from provider_client_base.provider_client_base.data.tracker_user import TrackerUser
 from youtrack_core_lib.youtrack_core_lib.client.youtrack_client_base import YouTrackClientBase
 from youtrack_core_lib.youtrack_core_lib.data.fields import (
     YouTrackAttachmentFields,
@@ -25,6 +26,7 @@ from utils_core_lib.utils_core_lib.text_utils import (
 class YouTrackClient(YouTrackClientBase):
     provider_name = 'youtrack'
     supports_subtasks = True
+    supports_handover = True
     ISSUES_PATH = '/api/issues'
     READABLE_ID = 'idReadable'
     # The custom field holding an issue's assignee, and the value a command
@@ -505,6 +507,59 @@ class YouTrackClient(YouTrackClientBase):
         if not login or login.lower() in self._BOT_LOGIN_ALIASES:
             raise RuntimeError('YouTrack did not report the login this token works as')
         return login
+
+    # ----- hand-over -----
+
+    #: The people a project's Assignee field offers, from its user bundle.
+    PROJECT_ASSIGNEE_FIELDS = 'field(name),bundle(aggregatedUsers(login,fullName,banned))'
+    USER_FIELDS = 'login,fullName,banned'
+
+    def list_assignable_users(self, issue_id: str) -> list[TrackerUser]:
+        """Who ``issue_id`` can be assigned to: the people its project's
+        Assignee field offers, by name. When that list cannot be read (a token
+        without project-admin read access) every user the token can see is
+        offered instead — YouTrack still refuses an assignee the project does
+        not allow, and that refusal is what the operator then sees. Banned
+        accounts are left out."""
+        try:
+            users = self._project_assignees(issue_id)
+        except Exception:
+            self.logger.warning(
+                'could not read the assignees of %s\'s project; listing every user instead', issue_id,
+            )
+            users = []
+        if not users:
+            users = list(self._paged_items('/api/users', {'fields': self.USER_FIELDS}))
+        return self._tracker_users(users)
+
+    def delete_comment(self, issue_id: str, comment_id: str) -> None:
+        response = self._delete_with_retry(f'/api/issues/{issue_id}/comments/{comment_id}')
+        self.raise_for_status_with_detail(response)
+
+    def _project_assignees(self, issue_id: str) -> list[dict[str, Any]]:
+        project_id = self._issue_project_id(issue_id)
+        for field in self._paged_items(
+            f'/api/admin/projects/{project_id}/customFields',
+            {'fields': self.PROJECT_ASSIGNEE_FIELDS},
+        ):
+            if not isinstance(field, dict):
+                continue
+            if text_from_mapping(dict_from_mapping(field, 'field'), 'name') != self.ASSIGNEE_FIELD:
+                continue
+            users = dict_from_mapping(field, 'bundle').get('aggregatedUsers')
+            return [user for user in users if isinstance(user, dict)] if isinstance(users, list) else []
+        return []
+
+    @staticmethod
+    def _tracker_users(users: list[Any]) -> list[TrackerUser]:
+        found: dict[str, TrackerUser] = {}
+        for user in users:
+            if not isinstance(user, dict) or user.get('banned') is True:
+                continue
+            login = text_from_mapping(user, 'login')
+            if login and login.lower() not in found:
+                found[login.lower()] = TrackerUser(login, text_from_mapping(user, 'fullName') or login)
+        return sorted(found.values(), key=lambda user: (user.name.lower(), user.handle.lower()))
 
     def _issue_project_id(self, issue_id: str) -> str:
         response = self._get_with_retry(

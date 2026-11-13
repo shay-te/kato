@@ -162,6 +162,10 @@ class LocalAwareTaskService(TaskService):
             return
         self.add_comment(issue_id, f'Pull request created: {pull_request_url}')
 
+    def handover_tracker(self, issue_id: str):
+        # A task created in kato lives only here: no one else's kato can see it.
+        return None if self.is_local(issue_id) else super().handover_tracker(issue_id)
+
     def supports_tags(self, issue_id: str) -> bool:
         # A task created in kato keeps its tags in kato's own store.
         return True if self.is_local(issue_id) else super().supports_tags(issue_id)

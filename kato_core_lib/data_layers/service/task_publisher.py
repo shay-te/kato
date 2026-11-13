@@ -17,6 +17,11 @@ from kato_core_lib.data_layers.data.fields import (
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.notification_service import NotificationService
+from kato_core_lib.data_layers.service.task_moves import (
+    IN_REVIEW,
+    ITS_PULL_REQUESTS_ARE_OPEN,
+    TaskMoves,
+)
 from kato_core_lib.data_layers.service.repository_service import (
     RepositoryHasNoChangesError,
     RepositoryService,
@@ -608,10 +613,10 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
         prepared_task: PreparedTaskContext,
         pull_requests: list[dict[str, str]],
     ) -> dict[str, object] | None:
-        self._log_task_step(task.id, 'moving issue to review state')
+        moves = TaskMoves(self._task_state_service, logger=self.logger)
         try:
             self._run_publish_with_retry(
-                lambda: self._task_state_service.move_task_to_review(task.id),
+                lambda: moves.move(task.id, IN_REVIEW, ITS_PULL_REQUESTS_ARE_OPEN),
                 operation_label='move task to review',
                 task_id=str(task.id),
             )
@@ -622,7 +627,6 @@ class TaskPublisher(MissionStepLoggerMixin, Service):
                 prepared_task=prepared_task,
             )
             return None
-        self._log_task_step(task.id, 'moved issue to review state')
         # Record success before notification so a notification failure cannot
         # cause duplicate publish work on a later retry.
         self._state_registry.mark_task_processed(task.id, pull_requests)

@@ -29,6 +29,7 @@ from agent_core_lib.agent_core_lib.helpers.session_id_utils import (
     AGENT_SESSION_ID,
     fix_session_id,
 )
+from claude_core_lib.claude_core_lib.session.background_jobs import BackgroundJobs
 from claude_core_lib.claude_core_lib.session.wire_protocol import (
     CLAUDE_EVENT_ASSISTANT,
     CLAUDE_EVENT_CONTROL_REQUEST,
@@ -439,6 +440,11 @@ class StreamingClaudeSession(object):
         # planning task. A bounded deque was a footgun: once full, len()
         # stayed constant and the WS loop stopped forwarding new events.
         self._recent_events: list[SessionEvent] = []
+        # Background jobs still running (``is_working``), caught up with the
+        # log one event at a time.
+        self._background_jobs = BackgroundJobs()
+        self._background_jobs_seen = 0
+        self._background_jobs_lock = threading.Lock()
         self._recent_events_lock = threading.Lock()
         # Out-of-task-folder write paths already warned about this session,
         # so a repeated edit to the same external file doesn't spam the
@@ -614,10 +620,12 @@ class StreamingClaudeSession(object):
            a STALLED subprocess (alive, stopped reading stdin) ages back to
            idle instead of sticking "working" forever; ``is_alive`` gates it
            too, so a dead subprocess never reads working.
-        2. Otherwise the latest turn has closed — walk the log for the
-           background-WAIT case (a Monitor / run_in_background the turn
-           scheduled and is still blocked on counts as working until a
-           newer turn supersedes it).
+        2. Otherwise the latest turn has closed — it is still working while
+           a background job it started (``run_in_background``, a Monitor, a
+           Workflow) has not been reported finished (``BackgroundJobs``, read
+           from the CLI's own task events). It used to be "the turn used a
+           background tool", which never ended for a job that finished inside
+           its own turn, so the session read working for good.
         """
         if not self.is_alive:
             return False
@@ -629,11 +637,9 @@ class StreamingClaudeSession(object):
             event = events[index]
             event_type = event.event_type
             if event_type == CLAUDE_EVENT_RESULT:
-                # Turn closed. If it scheduled a background WAIT (a Monitor
-                # / run_in_background tool) the agent is still effectively
-                # working — waiting on that result — so keep it "working"
-                # until a newer turn supersedes it. Otherwise it's idle.
-                return self._turn_scheduled_background_wait(events, index)
+                # Turn closed: still working only while a background job it
+                # (or an earlier turn) started has not reported back.
+                return bool(self._outstanding_background_jobs(events))
             if event_type in ('assistant', 'stream_event', 'user'):
                 return True
             if (
@@ -658,45 +664,17 @@ class StreamingClaudeSession(object):
             return False
         return (time.time() - last_sent) < TURN_ACK_GRACE_SECONDS
 
-    # Tools that park the agent on a long-running wait (it scheduled the
-    # work and is blocked on its result). Treated as "still working" even
-    # after the turn closes, so a 10-minute test/build wait doesn't read
-    # as idle. ``run_in_background`` on any tool counts too.
-    #
-    # ``Workflow`` returns immediately but runs in the BACKGROUND and emits a
-    # ``<task-notification>`` (a fresh turn) when it completes — so the turn
-    # that launched it has not really finished. Without it here the launching
-    # turn's ``result`` reads "idle", the session looks done, and the host
-    # tears it down before the workflow can notify back into the chat.
-    _BACKGROUND_WAIT_TOOLS = frozenset({'Monitor', 'Workflow'})
-
-    def _turn_scheduled_background_wait(self, events, result_index: int) -> bool:
-        """True if the turn ending at ``result_index`` left a background
-        wait outstanding (its last actions include a Monitor / background
-        tool). Scans backward over that one turn only (stops at the prior
-        ``result``)."""
-        for j in range(result_index - 1, -1, -1):
-            if events[j].event_type == CLAUDE_EVENT_RESULT:
-                return False
-            if self._event_has_background_wait_tool(events[j]):
-                return True
-        return False
-
-    def _event_has_background_wait_tool(self, event: SessionEvent) -> bool:
-        raw = event.raw if isinstance(event.raw, dict) else {}
-        message = raw.get('message')
-        content = message.get('content') if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            return False
-        for block in content:
-            if not isinstance(block, dict) or block.get('type') != 'tool_use':
-                continue
-            if str(block.get('name') or '') in self._BACKGROUND_WAIT_TOOLS:
-                return True
-            tool_input = block.get('input')
-            if isinstance(tool_input, dict) and tool_input.get('run_in_background') is True:
-                return True
-        return False
+    def _outstanding_background_jobs(self, events: list[SessionEvent]) -> frozenset[str]:
+        """The background jobs still running, caught up with ``events`` (the
+        append-only log) — only the events added since the last call are read."""
+        with self._background_jobs_lock:
+            if len(events) < self._background_jobs_seen:
+                self._background_jobs = BackgroundJobs()
+                self._background_jobs_seen = 0
+            for event in events[self._background_jobs_seen:]:
+                self._background_jobs.observe(event.raw)
+            self._background_jobs_seen = len(events)
+            return self._background_jobs.outstanding
 
     @property
     def user_messages_sent(self) -> int:

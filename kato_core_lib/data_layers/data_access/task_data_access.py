@@ -50,6 +50,16 @@ class TaskDataAccess(DataAccess):
         return self._client if getattr(self._client, 'supports_subtasks', False) is True else None
 
     @property
+    def handover_tracker(self):
+        """The issue client itself when an issue can be handed over to someone
+        else (list who it can go to, assign, delete the account's own comments —
+        see ``IssueClientBase.supports_handover``), else None."""
+        client = self._client
+        if getattr(client, 'supports_handover', False) is True and getattr(client, 'supports_subtasks', False) is True:
+            return client
+        return None
+
+    @property
     def max_retries(self) -> int:
         return retry_count(getattr(self._client, 'max_retries', 1))
 

@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 
 from agent_core_lib.agent_core_lib.helpers.session_id_utils import AGENT_SESSION_ID
 from kato_webserver import app as app_module
+from kato_webserver.task_agent_stop import fire_webserver_hook
 from kato_webserver.app import (
     _build_fallback_manager,
     _changed_files_for_repo,
@@ -29,7 +30,6 @@ from kato_webserver.app import (
     _drain_queued_task_comment,
     _enumerate_repo_ids_from_disk,
     _event_stream_generator,
-    _fire_webserver_hook,
     _follow_live_session,
     _live_session_ids,
     _replay_history_from_disk,
@@ -1648,7 +1648,7 @@ class DrainQueuedCommentTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# _fire_webserver_hook: exception path (2402-2403)
+# fire_webserver_hook: exception path
 # --------------------------------------------------------------------------
 
 
@@ -1659,13 +1659,13 @@ class FireWebserverHookTests(unittest.TestCase):
         app = create_app(session_manager=_Manager(), hook_runner=runner)
         with app.app_context():
             # Should not raise — the exception is logged and swallowed.
-            _fire_webserver_hook(app, 'stop', {'task_id': 'T-1'})
+            fire_webserver_hook(app, 'stop', {'task_id': 'T-1'})
         runner.fire.assert_called_once()
 
     def test_no_runner_is_a_noop(self):
         app = create_app(session_manager=_Manager())
         with app.app_context():
-            _fire_webserver_hook(app, 'stop', {'task_id': 'T-1'})  # no raise
+            fire_webserver_hook(app, 'stop', {'task_id': 'T-1'})  # no raise
 
 
 # --------------------------------------------------------------------------

@@ -32,7 +32,7 @@ class RepositoryPublicationServiceTests(unittest.TestCase):
             'missing Bitbucket API email for repository audit-core-lib',
         )
         repository = types.SimpleNamespace(id='audit-core-lib', local_path='/workspace/audit-core-lib')
-        self.assertEqual(self.service.find_pull_requests(repository, source_branch='UNA-1'), [])
+        self.assertFalse(self.service._ensure_pr_api_or_log_once(repository, 'lookup'))
         with self.assertRaisesRegex(ValueError, 'missing Bitbucket API email for repository audit-core-lib'):
             self.service.create_pull_request(repository, 'UNA-1 title', 'UNA-1')
         self.repository_service._publish_branch_updates.assert_not_called()
@@ -153,27 +153,5 @@ class RepositoryPublicationServiceTests(unittest.TestCase):
             default_commit_message='Address review comments',
         )
 
-    def test_find_pull_requests_asks_for_open_pull_requests_by_default(self) -> None:
-        repository = types.SimpleNamespace(id='client')
-        data_access = self.repository_service._pull_request_data_access.return_value
-        data_access.find_pull_requests.return_value = [{PullRequestFields.ID: '17'}]
-
-        result = self.service.find_pull_requests(
-            repository, source_branch='feature/client', title_prefix='PROJ-1 ',
-        )
-
-        self.assertEqual(result, [{PullRequestFields.ID: '17'}])
-        data_access.find_pull_requests.assert_called_once_with(
-            source_branch='feature/client',
-            title_prefix='PROJ-1 ',
-            state='open',
-        )
-
-    def test_find_pull_requests_passes_the_state_filter_through(self) -> None:
-        repository = types.SimpleNamespace(id='client')
-        data_access = self.repository_service._pull_request_data_access.return_value
-        data_access.find_pull_requests.return_value = []
-
-        self.service.find_pull_requests(repository, source_branch='feature/client', state='all')
-
-        self.assertEqual(data_access.find_pull_requests.call_args.kwargs['state'], 'all')
+    # Pull request lookups moved to ``RepositoryService.find_pull_requests``
+    # through ``PullRequestLookup`` — tests/test_pull_request_lookup.py.

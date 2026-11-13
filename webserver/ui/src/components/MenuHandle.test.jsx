@@ -30,12 +30,25 @@ describe('MenuHandle', () => {
     act(() => closeTaskMenu());
   });
 
-  test('a click expands it too (a touch screen cannot hover)', () => {
+  test('a click pins it open (a touch screen gets the menu the same way); a second click lets go', () => {
     _resetTaskMenu();
     render(<MenuHandle />);
-    fireEvent.click(screen.getByRole('button', { name: 'Tasks' }));
-    expect(screen.getByRole('button', { name: 'Tasks' })).toHaveAttribute('aria-expanded', 'true');
+    const trigger = screen.getByRole('button', { name: 'Tasks' });
+    expect(trigger).toHaveAttribute('aria-pressed', 'false');
+    expect(trigger.getAttribute('data-tooltip')).toMatch(/^Pin the tasks menu open/);
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(trigger).toHaveAttribute('aria-pressed', 'true');
+    expect(trigger).toHaveClass('is-pinned');
+    expect(trigger.getAttribute('data-tooltip')).toMatch(/^Unpin the tasks menu/);
+    // Pinned, what would collapse a hover menu (leaving, Escape, a press
+    // outside — all closeTaskMenu) keeps it open.
     act(() => closeTaskMenu());
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-pressed', 'false');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    _resetTaskMenu();
   });
 
   test('the logo carries menu bars, so it reads as the menu it opens', () => {

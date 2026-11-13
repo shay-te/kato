@@ -168,8 +168,10 @@ body {
   min-width: 0;
   overflow-x: hidden;
   /* The tasks rail's column (it is ``position: fixed`` at the left edge).
-   * There is no app bar: the page starts at the top, beside the rail. */
-  padding-left: $TASK-RAIL-WIDTH;
+   * There is no app bar: the page starts at the top, beside the rail. A
+   * PINNED rail is docked: the page gives up its whole width instead
+   * (``--task-rail-docked-width``, set by TabList while it is pinned). */
+  padding-left: var(--task-rail-docked-width, #{$TASK-RAIL-WIDTH});
 }
 
 /* The rail's top: the kato logo (its handle) and name. There is no app bar —
@@ -724,9 +726,58 @@ body {
   transition: width 140ms ease-out, box-shadow 140ms ease-out;
 }
 
+/* Expanded to the width the operator dragged a pinned rail to
+ * (``--task-rail-open-width``, from taskMenuStore; 360px by default). */
 .tabs-pane-side.is-open {
-  width: min(360px, 90vw);
+  width: min(var(--task-rail-open-width, 360px), 90vw);
   box-shadow: $SHADOW-30;
+}
+
+/* Pinned (the kato logo's click): docked beside the page, which moved aside —
+ * nothing lies under it, so no shadow over the page. */
+.tabs-pane-side.is-docked {
+  box-shadow: none;
+}
+
+/* While its edge is dragged the width follows the pointer at once. */
+.tabs-pane-side.is-resizing {
+  transition: none;
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The pinned rail's right edge: drag to resize, double-click for the default,
+ * arrow keys when focused. A hairline shows where it is on hover and focus. */
+.tabs-pane-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 6px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.tabs-pane-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 120ms ease-out;
+}
+
+.tabs-pane-resizer:hover::after,
+.tabs-pane-resizer:focus-visible::after,
+.tabs-pane-side.is-resizing .tabs-pane-resizer::after {
+  background: $C-BLUE-53;
+}
+
+.tabs-pane-resizer:focus-visible {
+  outline: none;
 }
 
 /* Collapsed: a row is its dot and code. What it hides comes back, in place,
@@ -751,7 +802,7 @@ body {
   padding-right: $SPACE-4;
 }
 
-.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(:hover) {
+.tabs-pane-side:not(.is-open) .tab:not(.active):not(.needs-attention):not(.is-pinned):not(.is-auto-wait):not(:hover) {
   background: transparent;
   border-color: transparent;
 }
@@ -1086,6 +1137,15 @@ body {
 
 .tabs-pane-side .tab:focus {
   outline: none;
+}
+
+/* ``kato:auto-wait`` — kato does the work and its review loop, then waits for
+ * the operator's Done: a green border, collapsed or not (it keeps its box like
+ * the task on screen does). After hover and active so it wins over their rims;
+ * a task waiting for you (orange, below) still wins over it. The review loop's
+ * ring is drawn 2px OUTSIDE the row, so both show at once. */
+.tabs-pane-side .tab.is-auto-wait {
+  border-color: $C-GREEN-52;
 }
 
 /* id + name: the part of the row that gives way. ``min-width: 0`` lets it

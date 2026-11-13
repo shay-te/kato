@@ -7,6 +7,8 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 
 vi.mock('../api.js', () => ({
+  // The header's Hand over asks once per task; hidden here.
+  fetchHandoverAvailability: vi.fn().mockResolvedValue({ available: false, reason: '' }),
   // The header now shows a status chip per agent, polled from here.
   fetchTaskAgentStatus: vi.fn().mockResolvedValue({ backends: [] }),
   finishTask: vi.fn().mockResolvedValue({ ok: true, body: { finished: true } }),

@@ -18,6 +18,7 @@ from kato_core_lib.data_layers.data.fields import (
     RepositoryFields,
     TaskTags,
 )
+from kato_core_lib.helpers.autopilot_store import AUTO_WAIT, AUTOPILOT
 from review_loop_core_lib.review_loop_core_lib.runner import (
     DEFAULT_MAX_ROUNDS,
     MAX_ROUNDS_LIMIT,
@@ -182,6 +183,14 @@ def review_rounds_from_tag(tag: object) -> int:
     return rounds if 1 <= rounds <= MAX_ROUNDS_LIMIT else 0
 
 
-def has_autopilot_tag(tags: object) -> bool:
-    """Whether ``tags`` carry ``kato:autopilot`` (any case)."""
-    return any(normalized_text(tag).lower() == TaskTags.AUTOPILOT for tag in tags or ())
+def automation_level_from_tags(tags: object) -> str:
+    """How far the ticket's tags let kato take the task by itself:
+    ``'auto-wait'`` (``kato:auto-wait``), ``'autopilot'`` (``kato:autopilot``),
+    or ''. Auto-wait wins when both are there: not pressing Done is the
+    stricter statement. Any case."""
+    names = {normalized_text(tag).lower() for tag in tags or ()}
+    if TaskTags.AUTO_WAIT in names:
+        return AUTO_WAIT
+    if TaskTags.AUTOPILOT in names:
+        return AUTOPILOT
+    return ''

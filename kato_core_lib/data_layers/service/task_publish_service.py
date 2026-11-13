@@ -25,6 +25,13 @@ from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
     repository_conventions_text,
 )
 from kato_core_lib.data_layers.data.fields import PullRequestFields
+from kato_core_lib.data_layers.service.pull_request_lookup import LookupPaused
+from kato_core_lib.data_layers.service.task_moves import (
+    DONE,
+    IN_REVIEW,
+    OPERATOR_PRESSED_DONE,
+    TaskMoves,
+)
 from kato_core_lib.helpers.deadline import run_all_with_deadline, run_with_deadline
 from kato_core_lib.helpers.late_binding import provider_for
 from kato_core_lib.helpers.publish_conventions_gate_utils import (
@@ -1292,9 +1299,19 @@ class TaskPublishService(object):
         for repository in repos:
             branch_name = self._repository_service.build_branch_name(task_obj, repository)
             try:
+                # Asked NOW, never a remembered answer: a stale "none" would
+                # open a duplicate.
                 existing = self._repository_service.find_pull_requests(
-                    repository, source_branch=branch_name,
+                    repository, source_branch=branch_name, cached=False,
                 )
+            except LookupPaused as paused:
+                # "Could not ask" is not "none": opening one now could be a
+                # duplicate. Said, and the operator presses again later.
+                self.logger.warning(
+                    'on-demand PR for task %s: %s: %s', normalized, repository.id, paused,
+                )
+                failed.append({'repository_id': repository.id, 'error': str(paused)})
+                continue
             except Exception:
                 self.logger.exception(
                     'on-demand PR for task %s: PR lookup failed in repository %s',
@@ -1465,19 +1482,16 @@ class TaskPublishService(object):
                 pr_result.get('failed_repositories'),
             )
         else:
+            moves = TaskMoves(self._task_state_service, logger=self.logger)
             try:
                 if by_operator and self._is_plan_subtask(normalized):
                     # The one move to done — every observer of "done" hears it
                     # (release notes, Slack, containers, the plan board).
-                    self._task_state_service.move_task_to_done(normalized)
+                    moves.move(normalized, DONE, OPERATOR_PRESSED_DONE)
                     moved_to_done = True
                 else:
-                    self._task_state_service.move_task_to_review(normalized)
+                    moves.move(normalized, IN_REVIEW, OPERATOR_PRESSED_DONE)
                     moved_to_review = True
-                self.logger.info(
-                    'finished planning session for task %s: moved to %s',
-                    normalized, 'Done' if moved_to_done else 'In Review',
-                )
             except Exception as exc:
                 move_error = str(exc) or exc.__class__.__name__
                 # Full traceback to the kato terminal so the operator can
@@ -1565,8 +1579,11 @@ class TaskPublishService(object):
         """``(pull_requests, permanent_error)`` for the publish-state check.
 
         ``task_publish_state`` is fetched on tab-load and after button
-        clicks (NOT polled), so a direct provider call is fine — no cache,
-        no background threads. Wrapped so a transient provider error (429,
+        clicks (NOT polled). The answer may be remembered
+        (``PullRequestLookup``, cleared the moment kato opens a pull request),
+        so a many-repository task's tab does not cost a call per repository
+        every time it opens, and a host that said 429 is not asked again until
+        its pause ends. Wrapped so a transient provider error (429,
         network) degrades to "no PR known" instead of failing the whole
         response: the git buttons gate on workspace presence and stay usable
         regardless of provider health. One warning line, never a traceback.

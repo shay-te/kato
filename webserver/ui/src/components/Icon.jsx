@@ -115,6 +115,8 @@ const LINE_ICONS = {
   'stop': 'M6 6h12v12H6z',
   'play': 'M6 4l14 8-14 8z',
   'send': 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
+  // A person and an arrow: give the task to someone else.
+  'user-handover': 'M15 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M8.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM16 11h6M19 8l3 3-3 3',
   'history': 'M3.05 13A9 9 0 1 0 6 5.3L3 8M3 3v5h5M12 7v5l4 2',
   'pin': 'M12 17v5M9 10.8V4h6v6.8l2 3.2H7z',
   'spinner': 'M21 12a9 9 0 1 1-6.2-8.6',

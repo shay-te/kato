@@ -375,6 +375,14 @@ to preserve every rule) until it outgrew its own timeout and silently stopped.
 `KATO_ARCHITECTURE_DOC_PATH` is read exactly once, at boot, to adopt an old file as the lessons
 document (`LessonsService.adopt_legacy_document`); its earlier lessons are queued for the editor.
 
+**Extraction (the task's own lesson, after Done) has its own budget: `_LESSON_EXTRACTION_TIMEOUT_SECONDS` (600s)**,
+beside the other one-shot budgets in `kato_core_lib.py` (publish conventions 45s, editor 1800s). It used the shared
+120s and timed out on UNA-3416 — a 453-character prompt that takes ~12s idle, run beside the Done push, PR, Slack
+and other agents while the Claude CLI retried a busy API itself. Nothing waits on it (background thread). Its context
+is cut to `EXTRACTION_CONTEXT_MAX_CHARS` (start + end, `bounded_context`; candidates too). A one-shot that does not
+finish is ONE warning line (`LessonsService._ask`; any other exception keeps its traceback); the task's own lesson is
+skipped, but candidates promoted for it are already pending files and are filed later — nothing staged is lost.
+
 ### Standing instructions — the operator's own text in every task's prompt
 Settings → Prompts → Standing instructions (`KATO_STANDING_INSTRUCTIONS`, a `textarea` schema field
 of General lifted with `panel: 'prompts'`, ≤ `STANDING_INSTRUCTIONS_MAX_CHARS` — the system prompt is
@@ -552,8 +560,15 @@ outcome's colour otherwise, kept once seen; `PlanQueueTabBadge`: amber/orange/gr
 newest plan FINISHED — `plan_queue_finished` on the tab list ← `PlanQueueService.finished_sources`; no fetch per
 row) — then pencil, pin, ×. **The review loop and split-plan BUTTONS are in the task toolbar** (`ReviewLoopButton`,
 `PlanQueueButton`, their own group before the prompts): they moved into the rows for a day and the operator
-asked for them back ("on the tab I want to see only indication it was done or not"). No width resizing, no
-scroll chevrons, no sub-task second row — removed with their code.
+asked for them back ("on the tab I want to see only indication it was done or not"). No scroll chevrons, no
+sub-task second row — removed with their code.
+**A CLICK on the kato logo PINS the rail open** (`toggleTaskMenuPinned`, `stores/taskMenuStore.js`; hover still opens
+it over the page as before): pinned it ignores the pointer, Escape and a press outside, and it is DOCKED — the page
+gives up its width (`#root` padding = `--task-rail-docked-width`, set by `TabList`'s `useDockedRailWidth` while pinned)
+— and its right edge (`TaskMenuResizer`) drags its width (240–640px, double-click = 360, arrow keys ±16). The width is
+also how wide the hover menu opens (`--task-rail-open-width`). Pin + width remembered per browser
+(`kato.taskMenu.pinned.v1` / `.width.v1`). A second click unpins and collapses. The nav's class is `is-docked`, NOT
+`is-pinned` (that is a pinned ROW).
 **Rows are in start order, the latest-started LAST** — decided ONLY by `_in_start_order` (`webserver/kato_webserver/app.py`,
 the record's `created_at_epoch`, ties by id); the UI keeps it after pins and dragged rows. It was the folders' names (task-number order).
 **A group folds:** a main task's row carries a toggle (chevron + its sub-task count, always shown). Folded
@@ -763,6 +778,42 @@ Not pressed (said in the task's status feed, the task left to the operator): a `
 CLEAN (stuck, max rounds, stopped, failed, nothing to review), the done token during a running loop (ignored as
 before). A finished Done now also drops the task's parked "Approve push" entry (it was just published). Anyone
 who can tag the ticket can turn this on: it skips the operator's look before the push (the PR is still reviewed).
+
+**`kato:auto-wait`: the same road, and it stops before Done.** Auto mode, the work, then the review loop — the default
+rounds unless the ticket's own `kato:review-loop:<n>` names them (`AgentService._review_loop_rounds`) — and then the
+task waits for the operator's own Done: never a push, a PR or a ticket move of its own, whatever the loop says
+(`AutopilotFinisher` asks the level; only `autopilot` presses). Its done token never publishes (in a chat it starts the
+loop), and `KATO_AUTO_PUSH_ENABLED` does not skip its park (`_should_pause_for_push_approval`). With both tags auto-wait
+wins — not pressing Done is the stricter statement. ONE store holds the level: `helpers/autopilot_store.py`
+(`automation_level` → `'autopilot' | 'auto-wait' | ''`, `~/.kato/autopilot_tasks.json` as `{task: level}`; an older file —
+a plain list — still reads as autopilot), set from the tags by `kato_tag_utils.automation_level_from_tags`; Auto mode and
+the agent's "finish by yourself" section ask `runs_by_itself` / the level. The tab list carries `automation`; an
+auto-wait row in the tasks rail has a green border (`.tabs-pane-side .tab.is-auto-wait`, kept collapsed too).
+
+### Hand over a task to another kato user (the header's "Hand over")
+```
+header ⇄ (lifecycle group, before Stop; hidden unless GET /api/sessions/<t>/handover → available)
+  → picker: GET …/handover/users (the tracker's assignable people) → pick one
+  → UnpushedWorkWarning purpose="handover" (their kato clones from the remote) → POST …/handover {handle, name}
+  → TaskHandover.hand_over: 409 while the agent is mid-turn (running_agents.is_mid_turn)
+     1. assign_verified (tracker_assignment.py: assign + READ BACK)   ← fails → nothing else runs
+     2. tag kato:wait-editing                                          ← fails → stops: never released untagged
+     3. clear_pickup_block(delete_own=True) (pickup_block.py): delete the BLOCKING comments THIS account wrote
+     4. comment "kato: retry approved — handed over to <name> by <agent_name()>…" (an override every kato honours)
+     5. TaskMoves → Open (HANDED_OVER)  ← LAST ticket write: their kato sees it only once all of the above is on it
+     6. stop_task_agent (task_agent_stop.py — the chat's Stop, one helper for both); the workspace is kept
+```
+Each step is reported (`formatHandoverResult`: problems red, first). ONE home each, gated by
+`tests/test_task_handover.py` `SingleOwnerGateTests`: `assign_issue` only in `tracker_assignment.py` (the plan
+queue's release uses it too — it now reads the assignee back), `delete_comment` only in `pickup_block.py` (the plan
+queue's "released again" note uses it with `delete_own=False`), `list_assignable_users` only in `task_handover.py`.
+A person's comment is never deleted (author must be the token's `current_user()` AND worded as blocking); a comment
+worded like kato's but written by someone else is cleared by step 4's override instead. Trackers: `supports_handover`
+(on top of `supports_subtasks`) — YouTrack (Assignee field's user bundle, else `/api/users`; `DELETE` comment) and Jira
+(`user/assignable/search`, people only; `DELETE` comment). GitHub / GitLab / Bitbucket / no tracker / a LOCAL task:
+the button is hidden (`unavailable_reason`). Kato cannot know who runs a kato: anyone assignable is listed. Written
+from the trackers' docs; not yet run against a live YouTrack/Jira (the bundle read may need project-admin read access —
+it falls back to every user).
 
 ### Plan queue (split a plan into small dependent tasks)
 ```
@@ -1171,6 +1222,21 @@ scan → get_new_pull_request_comments() on PRs in "In Review"
 
 **`is_question_comment` heuristic:** requires `?` ending + question start word + no fix keywords + ≤400 chars. Conservative — defaults to fix-mode on ambiguity.
 
+**Which PRs a task has is asked of the host through ONE lookup, rarely:** `pull_request_lookup.py`
+`PullRequestLookup`, behind `RepositoryService.find_pull_requests` / `pull_request_states` (the one host call is
+`RepositoryService._ask_host_for_pull_requests`; `tests/test_pull_request_lookup.py` `SingleLookupGateTests` fails
+on any other). The review scan used to search the host once per repository of every In Review task whose ticket
+links no PR, every 50s — UNA-3211's twenty repositories were twenty Bitbucket calls a scan, until it answered only
+429. Now: an answer (a PR, or none) is remembered `ANSWER_TTL_SECONDS` (600) per (repo, branch, title prefix,
+state); a PR kato opens clears its branch at once (`create_pull_request` → `forget`), one opened outside kato is
+found within the TTL; a 429 pauses EVERY lookup on that host (`Retry-After`, else 120s, max 900s) — a remembered
+answer, even an old one, is used while paused, else `LookupPaused` ("could not ask", never "no PR"). The scan
+handles each repository on its own: a host error is one warning line (never a traceback that dropped the task's
+other repositories) and paused repositories are summed up in one line per scan. `cached=False` (the operator's
+Create PR — it must not open a duplicate — and the merge probes via `pull_request_states`) always asks, but never
+during a pause; Create PR then reports the repository failed instead of creating. Comment listing on a known PR
+still runs every scan.
+
 ### Safeguard-flag fallback (retry on a lower model version)
 When the API's safeguards refuse a turn (`... safeguards flagged this session ... Details:
 [cyber]` — a server-side AUP refusal, not a transport error; the SAME prompt fails the same way
@@ -1314,16 +1380,34 @@ so the page never formats a model id. Figures are API-equivalent ESTIMATES (a su
 token) and the footnote says so. Do not add a second price table or compute cost in JS.
 
 ### False-success guards (important — previously bugs)
-- **A task kato works on says In Progress on its ticket — through ONE mover:** `task_in_progress.py`
-  `TaskInProgress`. Kato's own start (`move`: a refusal stops the run, or the next scan would start it twice), a
-  `kato:wait-planning`/`kato:wait-editing` chat (`try_move`, FIRST — before the clone and the spawn, which took a
-  minute with the ticket still Open — and also when its chat already runs), and the queue scan
-  (`move_if_agent_working`, in `process_assigned_task` after the plan-step gate: a QUEUE ticket whose agent is
-  mid-turn — `running_agents.is_mid_turn` — is moved and nothing else starts on it). The gap it closes: a failed
-  run moves its ticket back to Open (`handle_started_task_failure`); the operator typed "continue" and the agent
-  worked on while the ticket said Open — every autopilot task after a 403. Only WORK moves it forward: an idle chat
-  left after a failed run does not undo the failure handler's Open. Never call `move_task_to_in_progress` anywhere
-  else. Tests: `tests/test_task_in_progress.py`, real local-task store + real state services, no mocks.
+- **A finished background job never holds a chat busy.** A session is "working" after its turn ends only while a
+  background job it started (`run_in_background`, Monitor, Workflow) has not REPORTED finished — ONE rule, two
+  copies pinned equal: `claude_core_lib/session/background_jobs.py` (`BackgroundJobs`, the server's `is_working`,
+  caught up incrementally from the append-only event log) and `webserver/ui/src/utils/backgroundJobs.js` (the
+  reducer's `awaitingBackground`). Both run `tests/fixtures/background_jobs_cases.json`
+  (`tests/test_background_jobs_parity.py` runs the JS with node) — add a case there, never to one side. The CLI
+  (2.1.322) reports jobs as `system/task_started` (`tool_use_id`, `is_backgrounded`), `task_updated` (`patch.status`),
+  `task_notification` and `background_tasks_changed` (its own list of what runs); an older CLI only as a
+  `<task-notification>` user message. It used to be "the last turn used a background tool": UNA-3416 started an
+  `npm install` in the background, the job reported back 25s later INSIDE the same turn, the turn ended — and the
+  session read working for 11h: kato's own run waited out its 30-min idle limit and three review loops each
+  waited 2h ("the chat was not free for 7200s"). A job outlives a newer turn (the operator asking "still
+  running?" must not drop it); only its report, the session closing, or the server's busy correction ends it.
+- **Every ticket move goes through ONE service: `task_moves.py` `TaskMoves`** (In Progress / In Review / Open /
+  Done, every tracker and local tasks — the state service below picks the configured field and state, the client
+  only makes the call). `move` raises (kato's own start — a ticket left in the queue would be started twice — a
+  publish, an operator's Done); `try_move` logs and answers False (a planning chat, a failed run's way back to Open).
+  Never call `move_task_to_*` / `move_task_to_state` / `move_issue_to_state` anywhere else:
+  `tests/test_task_moves.py` `SingleMoverGateTests` reads the source and fails naming file:line. Done still announces
+  through `TaskStateService.move_task_to_done` (one observer list). What it fixed: In Progress had three copies,
+  and the gaps left tickets in Open while kato worked — a planning ticket moved only after the clone + spawn (now
+  FIRST, and also when its chat already runs), and a failed run moves its ticket back to Open
+  (`handle_started_task_failure`) while the operator's "continue" moved nothing: the queue scan now runs
+  `move_if_agent_working` (in `process_assigned_task`, after the plan-step gate) — a QUEUE ticket whose agent is
+  mid-turn (`running_agents.is_mid_turn`) moves and nothing else starts on it. Only WORK moves it: an idle chat left
+  after a failed run does not undo the failure handler's Open. Tests: real `LocalAwareTaskStateService` +
+  `LocalTaskStore`, every real caller, 100% coverage, no mocks. The pattern is AGENTS.md → "One capability = ONE
+  service, tested, and GATED".
 - **A chat's own `<KATO_TASK_DONE>` is not proof the operator signed off.** The sentinel callback
   (`AgentService.finish_from_done_marker`, wired onto every spawned session — chats included) used to
   publish unconditionally once off the autopilot/review-loop branches: push, open a PR, move to review,

@@ -9,6 +9,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 )
 from provider_client_base.provider_client_base.data.issue_record import IssueRecord
 from provider_client_base.provider_client_base.data.subtask import IssueComment, IssueStatus
+from provider_client_base.provider_client_base.data.tracker_user import TrackerUser
 from provider_client_base.provider_client_base.helpers.mention_utils import (
     extract_all_mention_tokens,
 )
@@ -58,6 +59,7 @@ from provider_client_base.provider_client_base.client.issue_client_base import (
 class JiraClient(IssueClientBase):
     provider_name = 'jira'
     supports_subtasks = True
+    supports_handover = True
     MAX_TEXT_ATTACHMENT_CHARS = 5000
     # Jira's own ceiling for one page of search results / comments.
     _PAGE_SIZE = 100
@@ -267,6 +269,38 @@ class JiraClient(IssueClientBase):
             body=self._adf_to_text(comment.get(JiraCommentFields.BODY)),
             created_at=iso_utc(comment.get(JiraCommentFields.CREATED)),
         )
+
+    def list_assignable_users(self, issue_id: str) -> list[TrackerUser]:
+        """Who Jira lets ``issue_id`` be assigned to (``user/assignable/search``),
+        by name — people only: app accounts and deactivated ones are left out.
+        The answer is a bare list, paged until a page comes back short."""
+        users = self._paginate_items(
+            '/rest/api/3/user/assignable/search',
+            params={'issueKey': issue_id, 'startAt': 0, 'maxResults': self._PAGE_SIZE},
+            next_ref=self._next_user_page,
+        )
+        found: dict[str, TrackerUser] = {}
+        for user in users:
+            if not isinstance(user, dict) or user.get('active') is False:
+                continue
+            if str(user.get('accountType') or 'atlassian') != 'atlassian':
+                continue
+            account_id = text_from_mapping(user, JiraCommentFields.ACCOUNT_ID)
+            if account_id and account_id not in found:
+                name = text_from_mapping(user, JiraCommentFields.DISPLAY_NAME) or account_id
+                found[account_id] = TrackerUser(account_id, name)
+        return sorted(found.values(), key=lambda user: (user.name.lower(), user.handle))
+
+    @staticmethod
+    def _next_user_page(response, path, params, page_items):
+        page_size = int(params.get('maxResults') or 0)
+        if not page_size or len(page_items) < page_size:
+            return None
+        return path, {**params, 'startAt': int(params.get('startAt') or 0) + page_size}
+
+    def delete_comment(self, issue_id: str, comment_id: str) -> None:
+        response = self._delete_with_retry(f'/rest/api/3/issue/{issue_id}/comment/{comment_id}')
+        self.raise_for_status_with_detail(response)
 
     def current_user(self) -> str:
         """The accountId this client works as, from ``/rest/api/3/myself``.

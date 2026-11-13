@@ -5,7 +5,12 @@ import {
   CODEX_EVENT, CODEX_ITEM, isCodexTerminal,
 } from '../constants/codexEvent.js';
 import { ENTRY_SOURCE } from '../constants/entrySource.js';
-import { isTaskNotificationEvent } from '../utils/MessageFilter.js';
+import {
+  emptyBackgroundJobs,
+  hasBackgroundJobs,
+  hasBackgroundWorkflow,
+  observeBackgroundEvent,
+} from '../utils/backgroundJobs.js';
 import { safeParseJSON } from '../utils/sse.js';
 
 export const SESSION_LIFECYCLE = {
@@ -73,9 +78,9 @@ function emptyTaskState() {
     sharedCounts: new Map(),
     lifecycle: SESSION_LIFECYCLE.CONNECTING,
     turnInFlight: false,
-    // The just-closed turn scheduled a long background wait (Monitor /
-    // run_in_background) and is blocked on it — still "working", not idle.
-    // Cleared when the next turn starts or the session closes.
+    // A background job it started (Monitor / Workflow / run_in_background)
+    // has not reported back — still "working", not idle. Cleared by that
+    // job's report, or when the session closes.
     awaitingBackground: false,
     // Monotonic count of turns that actually ENDED (a ``result`` event).
     //
@@ -94,39 +99,14 @@ function emptyTaskState() {
     // ultracode orchestrator), so the status surfaces read "workflow" in
     // its own colour rather than the generic "working".
     backgroundIsWorkflow: false,
-    // Transient: a background-wait tool_use was seen in the OPEN turn, so
-    // the upcoming RESULT knows to flip ``awaitingBackground``.
-    turnHasBackgroundWait: false,
-    // Transient sibling: that background wait was a Workflow.
-    turnHasWorkflow: false,
+    // The background jobs still running (``utils/backgroundJobs.js`` — the
+    // server's rule, pinned by tests/test_background_jobs_parity.py).
+    // ``awaitingBackground`` / ``backgroundIsWorkflow`` are read off it after
+    // every event.
+    backgroundJobs: emptyBackgroundJobs(),
     pendingPermission: null,
     lastEventAt: 0,
   };
-}
-
-// Tools that park the agent on a long-running wait (it scheduled work and
-// is blocked on its result). MUST match the backend
-// StreamingClaudeSession._BACKGROUND_WAIT_TOOLS ({'Monitor', 'Workflow'}).
-const BACKGROUND_WAIT_TOOLS = new Set(['Monitor', 'Workflow']);
-// The subset that is a background WORKFLOW — surfaced as its own status.
-const WORKFLOW_TOOLS = new Set(['Workflow']);
-
-function eventBackgroundWaitTools(raw) {
-  const content = raw && raw.message && raw.message.content;
-  if (!Array.isArray(content)) { return { wait: false, workflow: false }; }
-  let wait = false;
-  let workflow = false;
-  for (const block of content) {
-    if (!block || block.type !== 'tool_use') { continue; }
-    if (WORKFLOW_TOOLS.has(block.name)) { wait = true; workflow = true; }
-    else if (BACKGROUND_WAIT_TOOLS.has(block.name)) { wait = true; }
-    else if (block.input && block.input.run_in_background === true) { wait = true; }
-  }
-  return { wait, workflow };
-}
-
-function eventHasBackgroundWaitTool(raw) {
-  return eventBackgroundWaitTools(raw).wait;
 }
 
 function readCachedState(taskId) {
@@ -595,8 +575,7 @@ export function reducer(state, action) {
           turnInFlight: false,
           awaitingBackground: false,
           backgroundIsWorkflow: false,
-          turnHasBackgroundWait: false,
-          turnHasWorkflow: false,
+          backgroundJobs: emptyBackgroundJobs(),
         };
       }
       return { ...state, lifecycle: action.value };
@@ -628,10 +607,9 @@ export function reducer(state, action) {
       //
       // ``is_working`` on the server already covers BOTH cases: it returns
       // true for an in-flight turn AND for a closed turn still blocked on
-      // background work (``_turn_scheduled_background_wait``). So
-      // ``working: false`` means idle in every sense, and the transient
-      // ``turnHas*`` flags must go too — otherwise the next RESULT re-derives
-      // the background wait from a turn that is long over.
+      // background work (``BackgroundJobs``). So ``working: false`` means idle
+      // in every sense, and the jobs tracked from the replay must go too —
+      // otherwise a job from a turn long over would hold the tab busy.
       return withServerBusyState(state, action.working);
     default:
       return state;
@@ -731,6 +709,7 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
     next.turnInFlight = false;
     next.awaitingBackground = false;
     next.backgroundIsWorkflow = false;
+    next.backgroundJobs = emptyBackgroundJobs();
     return next;
   }
   if (raw?.type === CODEX_EVENT.TURN_STARTED
@@ -738,6 +717,7 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
     next.turnInFlight = true;
     next.awaitingBackground = false;
     next.backgroundIsWorkflow = false;
+    next.backgroundJobs = emptyBackgroundJobs();
     return next;
   }
 
@@ -775,23 +755,12 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
         // server's own ``working`` flag instead (see ``liveKind``), which is
         // the same fact every background tab already reads. One fact, both
         // surfaces, no disagreement to arbitrate.
-        next.awaitingBackground = false;
-        next.backgroundIsWorkflow = false;
+        next.backgroundJobs = emptyBackgroundJobs();
       }
       break;
     case CLAUDE_EVENT.USER:
-      // A background job reporting back. This is the ONE signal that the
-      // agent has stopped waiting — without it the flag could only be
-      // cleared by the session ending, which would leave a "background" chip
-      // standing over a session that finished its work hours ago.
-      //
-      // Recognised through ``isTaskNotificationEvent``, the same predicate
-      // that hides these from the transcript, so there is one answer to
-      // "what is a task notification" rather than two that can drift.
-      if (isTaskNotificationEvent({ source: ENTRY_SOURCE.SERVER, raw })) {
-        next.awaitingBackground = false;
-        next.backgroundIsWorkflow = false;
-      }
+      // A background job reporting back (an older CLI's <task-notification>)
+      // is read by the job tracker below, with the CLI's own task events.
       applyPermissionTransition(next, raw, state, { strict: true });
       break;
     case CLAUDE_EVENT.ASSISTANT: {
@@ -809,35 +778,30 @@ function reduceIncomingEvent(state, raw, receivedAtEpoch) {
       // Nothing is lost by keeping it: the derivation gives ``turnInFlight``
       // precedence, so a live turn still shows WORKING; this only decides
       // what the status falls back to once that turn ends.
-      const bg = eventBackgroundWaitTools(raw);
-      if (bg.wait) { next.turnHasBackgroundWait = true; }
-      if (bg.workflow) { next.turnHasWorkflow = true; }
+      // A background call in this turn is picked up by the job tracker below.
       break;
     }
     case CLAUDE_EVENT.RESULT:
-      // RESULT ends the turn AND clears pending. If the turn scheduled a
-      // background wait (Monitor / Workflow / run_in_background), stay
-      // "working" (awaitingBackground) until that work REPORTS BACK — see the
-      // task-notification branch above — or the session closes.
-      //
-      // ``||`` not ``=``: a turn that starts no background work must not
-      // cancel a job still running from an earlier one.
+      // RESULT ends the turn AND clears pending. A background job it (or an
+      // earlier turn) started keeps the session "working"
+      // (awaitingBackground) until that job REPORTS BACK — read by the job
+      // tracker below — or the session closes.
       next.turnInFlight = false;
       next.turnsCompleted = (state.turnsCompleted || 0) + 1;
-      next.awaitingBackground = (
-        !!state.turnHasBackgroundWait || !!state.awaitingBackground
-      );
-      next.backgroundIsWorkflow = (
-        !!state.turnHasWorkflow || !!state.backgroundIsWorkflow
-      );
-      next.turnHasBackgroundWait = false;
-      next.turnHasWorkflow = false;
       applyPermissionTransition(next, raw, state, { strict: true });
       break;
     default:
       applyPermissionTransition(next, raw, state, { strict: true });
       break;
   }
+  // Background jobs: started by a background call or the CLI's task_started,
+  // over once REPORTED (task_notification / task_updated / the CLI's
+  // background_tasks_changed list / an older <task-notification>) — in the
+  // same turn or a later one. "The last turn used a background tool" never
+  // ended for a job that finished inside its own turn (UNA-3416: busy for 11h).
+  next.backgroundJobs = observeBackgroundEvent(state.backgroundJobs, raw);
+  next.awaitingBackground = hasBackgroundJobs(next.backgroundJobs);
+  next.backgroundIsWorkflow = hasBackgroundWorkflow(next.backgroundJobs);
   return next;
 }
 
@@ -889,8 +853,7 @@ function withServerBusyState(state, working) {
     turnInFlight: !!working,
     awaitingBackground: false,
     backgroundIsWorkflow: false,
-    turnHasBackgroundWait: false,
-    turnHasWorkflow: false,
+    backgroundJobs: emptyBackgroundJobs(),
   };
 }
 

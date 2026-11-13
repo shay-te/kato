@@ -1012,8 +1012,8 @@ describe('useSessionStream — the host correction covers the background wait', 
   });
 
   test('the correction also drops a half-open turn\'s pending wait', () => {
-    // The tool_use replayed but its result did not — so ``turnHasBackgroundWait``
-    // is set and no RESULT has consumed it yet. Left behind, the NEXT result
+    // The tool_use replayed but its result did not — so the job tracker holds
+    // a job no report has ended yet. Left behind, the NEXT result
     // (a real, unrelated turn) would resurrect the wait from a turn long over.
     const { result } = renderHook(() => useSessionStream('T1'));
     emitLive(monitorCall);

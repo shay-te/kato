@@ -27,6 +27,7 @@ from utils_core_lib.utils_core_lib.text_utils import (
     normalized_text,
     text_from_attr,
 )
+from kato_core_lib.data_layers.service.pull_request_lookup import PullRequestLookup
 from kato_core_lib.data_layers.service.repository_inventory_service import (
     RepositoryInventoryService,
 )
@@ -713,13 +714,16 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         description: str = '',
         commit_message: str = '',
     ) -> dict[str, str]:
-        return self._publication_service.create_pull_request(
+        created = self._publication_service.create_pull_request(
             repository,
             title,
             source_branch,
             description=description,
             commit_message=commit_message,
         )
+        # The review scan finds it now, not when a remembered "none" expires.
+        self.pull_request_lookup.forget(repository, source_branch)
+        return created
 
     def update_source_to_task_branch(
         self,
@@ -942,6 +946,16 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
             pull_request_id,
         )
 
+    @property
+    def pull_request_lookup(self) -> PullRequestLookup:
+        """THE way a branch's pull requests are asked of the host (remembered,
+        paused on a 429) — see ``pull_request_lookup``."""
+        lookup = self.__dict__.get('_pull_request_lookup')
+        if lookup is None:
+            lookup = PullRequestLookup(self._ask_host_for_pull_requests)
+            self.__dict__['_pull_request_lookup'] = lookup
+        return lookup
+
     def find_pull_requests(
         self,
         repository,
@@ -949,13 +963,32 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
         source_branch: str = '',
         title_prefix: str = '',
         state: str = PullRequestStates.OPEN,
+        cached: bool = True,
     ) -> list[dict[str, str]]:
-        return self._publication_service.find_pull_requests(
+        """The branch's open pull requests. ``cached``: an answer up to
+        ``ANSWER_TTL_SECONDS`` old will do (polls, the UI); False asks now (an
+        operator about to open one). Raises ``LookupPaused`` while the host
+        asked kato to slow down and nothing remembered answers."""
+        if not self._publication_service._ensure_pr_api_or_log_once(repository, 'lookup'):
+            # No pull request API for it (a dependency repo with no token):
+            # logged once per process, and no pull requests is the answer.
+            return []
+        return self.pull_request_lookup.find(
             repository,
             source_branch=source_branch,
             title_prefix=title_prefix,
             state=state,
+            cached=cached,
         )
+
+    def _ask_host_for_pull_requests(
+        self, repository, *, source_branch: str, title_prefix: str, state: str,
+    ) -> list[dict[str, str]]:
+        """The one call that reaches the host — only ``PullRequestLookup`` makes it."""
+        lookup = {'source_branch': source_branch, 'state': state}
+        if title_prefix:
+            lookup['title_prefix'] = title_prefix
+        return self._pull_request_data_access(repository).find_pull_requests(**lookup)
 
     def pull_request_states(
         self,
@@ -984,9 +1017,8 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
                 f'for repository {repository.id}'
             )
         self._prepare_pull_request_api(repository)
-        return self._pull_request_data_access(repository).find_pull_requests(
-            source_branch=branch,
-            state=PullRequestStates.ALL,
+        return self.pull_request_lookup.find(
+            repository, source_branch=branch, state=PullRequestStates.ALL, cached=False,
         )
 
     def decline_open_pull_requests(self, repository, *, source_branch: str) -> list[dict[str, str]]:

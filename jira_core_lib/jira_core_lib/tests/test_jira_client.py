@@ -2248,3 +2248,69 @@ class JiraClientIssueReadTests(unittest.TestCase):
         client = _make_client()
         with patch.object(client, '_get', return_value=mock_response(json_data=None)):
             self.assertEqual(client._fetch_issue_field('PROJ-1', 'priority'), '')
+
+
+class JiraClientHandoverTests(unittest.TestCase):
+    """Who an issue can go to (``user/assignable/search``), and deleting a comment."""
+
+    _PATH = '/rest/api/3/user/assignable/search'
+
+    def test_it_can_hand_an_issue_over(self) -> None:
+        self.assertTrue(JiraClient.supports_handover)
+
+    def test_lists_people_by_name_without_apps_inactive_or_repeats(self) -> None:
+        client = _make_client()
+        response = mock_response(json_data=[
+            {'accountId': 'acc-z', 'displayName': 'Zoe', 'accountType': 'atlassian', 'active': True},
+            {'accountId': 'acc-a', 'displayName': 'Adam'},
+            {'accountId': 'app-1', 'displayName': 'Automation', 'accountType': 'app'},
+            {'accountId': 'acc-x', 'displayName': 'Left', 'active': False},
+            {'accountId': 'acc-a', 'displayName': 'Adam again'},
+            {'accountId': 'acc-n'},
+            {'displayName': 'No id'},
+            'junk',
+        ])
+        with patch.object(client, '_get', return_value=response) as mock_get:
+            users = client.list_assignable_users('PROJ-9')
+        mock_get.assert_called_once_with(
+            self._PATH, params={'issueKey': 'PROJ-9', 'startAt': 0, 'maxResults': 100},
+        )
+        self.assertEqual([(user.handle, user.name) for user in users],
+                         [('acc-n', 'acc-n'), ('acc-a', 'Adam'), ('acc-z', 'Zoe')])
+
+    def test_follows_the_pages_until_one_comes_back_short(self) -> None:
+        client = _make_client()
+        pages = [
+            mock_response(json_data=[{'accountId': 'a1', 'displayName': 'A1'},
+                                     {'accountId': 'a2', 'displayName': 'A2'}]),
+            mock_response(json_data=[{'accountId': 'a3', 'displayName': 'A3'}]),
+        ]
+        with patch.object(JiraClient, '_PAGE_SIZE', 2), \
+             patch.object(client, '_get', side_effect=pages) as mock_get:
+            users = client.list_assignable_users('PROJ-9')
+        self.assertEqual([user.handle for user in users], ['a1', 'a2', 'a3'])
+        self.assertEqual(mock_get.call_args_list, [
+            call(self._PATH, params={'issueKey': 'PROJ-9', 'startAt': 0, 'maxResults': 2}),
+            call(self._PATH, params={'issueKey': 'PROJ-9', 'startAt': 2, 'maxResults': 2}),
+        ])
+
+    def test_no_page_size_is_one_page(self) -> None:
+        self.assertIsNone(JiraClient._next_user_page(None, '/p', {'startAt': 0}, [1]))
+
+    def test_a_refused_read_raises(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_get', return_value=_http_error_response(403)):
+            with self.assertRaises(HTTPError):
+                client.list_assignable_users('PROJ-9')
+
+    def test_delete_comment_deletes_it(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_delete', return_value=mock_response(json_data={})) as delete:
+            client.delete_comment('PROJ-9', '10001')
+        delete.assert_called_once_with('/rest/api/3/issue/PROJ-9/comment/10001')
+
+    def test_a_refused_delete_raises(self) -> None:
+        client = _make_client()
+        with patch.object(client, '_delete', return_value=_http_error_response(403)):
+            with self.assertRaises(HTTPError):
+                client.delete_comment('PROJ-9', '10001')
