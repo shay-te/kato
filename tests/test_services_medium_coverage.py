@@ -176,18 +176,6 @@ class WaitPlanningServiceTests(unittest.TestCase):
         service._mark_workspace_waiting_for_operator(Task(id='PROJ-1'))
         service.logger.exception.assert_called_once()
 
-    def test_move_to_in_progress_swallows_exception(self) -> None:
-        # Lines 182-183: ``task_state_service`` raises → log + continue.
-        from kato_core_lib.data_layers.data.task import Task
-        task_state = MagicMock()
-        task_state.move_task_to_in_progress.side_effect = RuntimeError(
-            'state move failed',
-        )
-        service = self._service(task_state_service=task_state)
-        service.logger = MagicMock()
-        service._move_to_in_progress(Task(id='PROJ-1'))
-        service.logger.exception.assert_called_once()
-
     def test_resolve_planning_context_empty_repositories(self) -> None:
         # Line 197: ``return _PlanningContext(cwd='', expected_branch='')``.
         from kato_core_lib.data_layers.data.task import Task

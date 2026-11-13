@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from kato_core_lib.data_layers.data.fields import TaskTags
 from kato_core_lib.data_layers.data.task import Task
 from kato_core_lib.helpers.autopilot_store import is_autopilot, set_autopilot
+from kato_core_lib.data_layers.service.task_in_progress import CHAT_OPENED_FOR_IT, TaskInProgress
 from kato_core_lib.data_layers.service.workspace_provisioning_service import (
     provision_task_workspace_clones,
 )
@@ -182,16 +183,20 @@ class WaitPlanningService(object):
                 tag,
             )
             return skip_task_result(task.id, [])
+        # Planning is work in progress: the ticket leaves the queue NOW. Before
+        # the clone and the chat's start, which take a minute or more (it used
+        # to move only after them, so the ticket sat in Open while kato was
+        # already on it), and also when its chat already runs: this is called
+        # only for tasks still in the queue, so a live chat here means an
+        # earlier move failed or someone moved the ticket back to Open. Once
+        # moved it leaves the queue, so this is not repeated every scan.
+        TaskInProgress(self._task_state_service, logger=self.logger).try_move(
+            task.id, CHAT_OPENED_FOR_IT,
+        )
         if self._is_chat_already_alive(task):
             return skip_task_result(task.id, [])
         context = self.resolve_planning_context(task)
         self._spawn_planning_session(task, context, mode)
-        # Planning is real work — move the ticket out of the inbox so
-        # it doesn't get picked up by another agent / scanned again as
-        # "needs to start". Idempotent on the ticket side, and only
-        # called on the fresh-spawn branch (the alive guard above
-        # protects the steady state).
-        self._move_to_in_progress(task)
         return skip_task_result(task.id, [])
 
     def observe_planning_hold(self, task: Task) -> None:
@@ -455,18 +460,6 @@ class WaitPlanningService(object):
             self.logger.exception(
                 'failed to mark planning workspace %s as operator-driven',
                 task.id,
-            )
-
-    def _move_to_in_progress(self, task: Task) -> None:
-        """Best-effort ticket-state move. Failures log but never block the chat."""
-        try:
-            self._task_state_service.move_task_to_in_progress(task.id)
-            self.logger.info(
-                'task %s moved to in progress for planning session', task.id,
-            )
-        except Exception:
-            self.logger.exception(
-                'failed to move planning task %s to in progress', task.id,
             )
 
     def resolve_planning_context(self, task: Task) -> _PlanningContext:

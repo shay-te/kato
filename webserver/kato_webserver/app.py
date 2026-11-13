@@ -7246,17 +7246,17 @@ def _records_as_dicts(
                 pending_permission_session_ids,
                 pending_permission_tool_by_task,
             )
-            for record in session_manager.list_records()
+            for record in _in_start_order(session_manager.list_records())
         ]
     # Skip kato's own lessons-state dirs (``lessons/`` / ``lesson-candidates/``)
     # — they live inside KATO_WORKSPACES_ROOT next to the task clones, so the
     # workspace walk lists them, but they are NOT tasks and must never show as
     # tabs (the "lesson-candidates"/"lessons" phantom-tab bug). Lessons stay in
     # files; they just don't get a UI tab.
-    workspace_records = [
+    workspace_records = _in_start_order(
         record for record in workspace_manager.list_workspaces()
         if not is_reserved_workspace_dirname(getattr(record, 'task_id', ''))
-    ]
+    )
     session_ids_by_task = _session_ids_by_task(session_manager)
     backend_by_task = _backend_by_task(session_manager, workspace_records)
     awaiting_push = getattr(getattr(agent_service, 'publish', agent_service), 'is_awaiting_push_approval', None)
@@ -7281,6 +7281,33 @@ def _records_as_dicts(
         )
         for record in workspace_records
     ]
+
+
+def _in_start_order(records) -> list:
+    """The tasks menu's order: the task started first at the top, the one
+    started latest LAST.
+
+    THE one place the rail's order is decided: the UI keeps this order (after
+    the operator's pins and any rows they dragged), sub-tasks keep it inside
+    their group, and Tab / Ctrl+Tab walk it. "Started" is when kato first made
+    the task's record (``created_at_epoch``, kept by every later write). It
+    used to be the workspace folders' names, so the rail read in task-number
+    order. A record with no start time sorts first; equal times by task id.
+    """
+    return sorted(records, key=_start_order_key)
+
+
+def _start_order_key(record) -> tuple[float, str]:
+    def field(name: str):
+        if isinstance(record, dict):
+            return record.get(name)
+        return getattr(record, name, None)
+
+    try:
+        started = float(field('created_at_epoch') or 0.0)
+    except (TypeError, ValueError):
+        started = 0.0
+    return started, str(field('task_id') or '').lower()
 
 
 def _review_loop_summaries(agent_service) -> dict[str, dict]:

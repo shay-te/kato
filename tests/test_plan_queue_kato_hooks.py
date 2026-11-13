@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import types
 import unittest
 from types import SimpleNamespace
@@ -73,6 +74,10 @@ class PickupGateTests(unittest.TestCase):
         agent._task_preflight_service = self._preflight(lambda task: wait_reason)
         agent._task_preflight_service.prepare_task_execution_context = Mock(return_value=None)
         agent._task_repository_service = Mock()
+        # No live chat: the queue scan's "its agent is working" check passes.
+        agent._session_manager = None
+        agent._task_state_service = None
+        agent.logger = logging.getLogger('test_plan_queue_kato_hooks')
         agent._triage_service = Mock(handle_task=Mock(return_value=None))
         agent._wait_planning_service = Mock(handle_task=Mock(return_value={'id': 'PROJ-12', 'planning': True}))
         return agent

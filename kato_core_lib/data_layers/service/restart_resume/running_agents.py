@@ -16,12 +16,16 @@ def running_task_ids(session_manager) -> list[str]:
     found: set[str] = set()
     for record in records:
         task_id = str(getattr(record, 'task_id', '') or '').strip()
-        if task_id and _mid_turn(session_manager, task_id):
+        if task_id and is_mid_turn(session_manager, task_id):
             found.add(task_id)
     return sorted(found)
 
 
-def _mid_turn(session_manager, task_id: str) -> bool:
+def is_mid_turn(session_manager, task_id: str) -> bool:
+    """Is ``task_id``'s live chat working, or waiting for the operator's
+    approval inside its turn? False when it cannot be told."""
+    if session_manager is None:
+        return False
     try:
         session = session_manager.get_session(task_id)
         if session is None or not getattr(session, 'is_alive', False):

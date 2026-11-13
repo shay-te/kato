@@ -218,6 +218,64 @@ class WebserverAppTests(unittest.TestCase):
         # The summary is what every surface actually displays.
         self.assertEqual(payload[0]['task_summary'], 'short summary')
 
+    def test_the_tab_list_is_in_start_order_the_latest_started_last(self):
+        """The rail reads by when each task was started, never by task number.
+
+        Real workspace records on disk: the folders sort UNA-1, UNA-2, UNA-3
+        by name (the old order), but UNA-3 was started first and UNA-1 last.
+        """
+        from workspace_core_lib.workspace_core_lib.data_layers.data_access.workspace_data_access import (
+            WorkspaceDataAccess,
+        )
+        from workspace_core_lib.workspace_core_lib.data_layers.service.workspace_service import (
+            WorkspaceService,
+        )
+        with tempfile.TemporaryDirectory() as root:
+            workspaces = WorkspaceService(WorkspaceDataAccess(root=root))
+            for task_id, started in (('UNA-1', 300.0), ('UNA-2', 200.0), ('UNA-3', 100.0)):
+                record = workspaces.create(task_id=task_id, task_summary=task_id)
+                record.created_at_epoch = started
+                workspaces.data_access.save(record)
+            # A later write keeps when the task was started.
+            workspaces.update_status('UNA-3', 'review')
+
+            payload = create_app(
+                session_manager=_FakeManager(records=[]), workspace_manager=workspaces,
+            ).test_client().get('/api/sessions').get_json()
+
+        self.assertEqual([row['task_id'] for row in payload], ['UNA-3', 'UNA-2', 'UNA-1'])
+
+    def test_without_workspaces_the_sessions_are_in_start_order_too(self):
+        manager = _FakeManager(records=[
+            _FakeRecord(task_id='PROJ-1', created_at_epoch=30.0),
+            _FakeRecord(task_id='PROJ-2', created_at_epoch=10.0),
+            _FakeRecord(task_id='PROJ-3', created_at_epoch=20.0),
+        ])
+
+        payload = create_app(session_manager=manager).test_client().get('/api/sessions').get_json()
+
+        self.assertEqual([row['task_id'] for row in payload], ['PROJ-2', 'PROJ-3', 'PROJ-1'])
+
+    def test_start_order_no_start_time_first_then_ties_by_task_id(self):
+        from kato_webserver.app import _in_start_order
+        records = [
+            {'task_id': 'B-2', 'created_at_epoch': 5.0},
+            SimpleNamespace(task_id='b-1', created_at_epoch=5.0),
+            {'task_id': 'C-1', 'created_at_epoch': 'not a time'},
+            {'task_id': 'D-1'},
+            {'task_id': 'A-9', 'created_at_epoch': 1.0},
+        ]
+
+        ordered = _in_start_order(records)
+
+        def task_id_of(record):
+            return record['task_id'] if isinstance(record, dict) else record.task_id
+
+        self.assertEqual(
+            [task_id_of(record) for record in ordered],
+            ['C-1', 'D-1', 'A-9', 'b-1', 'B-2'],
+        )
+
     def test_session_detail_endpoint_includes_recent_events_when_session_alive(self):
         live_session = MagicMock()
         live_session.is_alive = True

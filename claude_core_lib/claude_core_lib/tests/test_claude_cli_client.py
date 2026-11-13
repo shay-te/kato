@@ -214,6 +214,38 @@ class ClaudeCliClientTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'exited with status 2'):
                 client.implement_task(build_task())
 
+    def test_a_failed_exit_says_the_cli_s_reason_not_its_whole_result_event(self) -> None:
+        # Seen on a review run: the error was a screen of JSON around one line.
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        event = {
+            'type': 'result', 'subtype': 'success', 'is_error': True, 'num_turns': 1,
+            'duration_api_ms': 0, 'api_error_status': 403, 'session_id': 'd9a5',
+            'usage': {'input_tokens': 0, 'output_tokens': 0},
+            'result': 'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare',
+        }
+        completed = _completed(json.dumps(event), returncode=1)
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            return_value=completed,
+        ):
+            with self.assertRaises(RuntimeError) as raised:
+                client.implement_task(build_task())
+        self.assertEqual(
+            str(raised.exception),
+            'Claude CLI exited with status 1: '
+            'Failed to authenticate. API Error: 403 Attention Required! | Cloudflare',
+        )
+
+    def test_a_failed_exit_with_no_reason_keeps_what_the_cli_printed(self) -> None:
+        client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
+        completed = _completed('not json at all', returncode=3)
+        with patch(
+            'claude_core_lib.claude_core_lib.cli_client.subprocess.run',
+            return_value=completed,
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'exited with status 3: not json at all'):
+                client.implement_task(build_task())
+
     def test_implement_task_raises_when_payload_reports_error(self) -> None:
         client = ClaudeCliClient(binary='claude', repository_root_path='/tmp/x')
         completed = _completed(

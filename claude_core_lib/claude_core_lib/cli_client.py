@@ -36,6 +36,7 @@ from utils_core_lib.utils_core_lib.text_utils import (
 from claude_core_lib.claude_core_lib.helpers.effort_levels import (
     FALLBACK_EFFORT_LEVELS,
 )
+from claude_core_lib.claude_core_lib.helpers.result_failure import failure_reason
 from claude_core_lib.claude_core_lib.helpers.spawn_utils import (
     append_additional_dirs,
     append_model_effort_flags,
@@ -784,12 +785,18 @@ class ClaudeCliClient(CliAgentSharedBehaviour):
         session_id_value = fix_session_id(payload.get('session_id', ''))
 
         if completed.returncode != 0:
-            detail = stderr or condensed_text(stdout) or 'no output'
+            # The CLI's own reason first ("Failed to authenticate. API Error:
+            # 403 …"): the whole ``result`` event used to be the message, a
+            # screen of JSON around the one line that says what happened. The
+            # log keeps everything the CLI printed.
+            detail = (
+                failure_reason(payload) or stderr or condensed_text(stdout) or 'no output'
+            )
             self.logger.error(
                 'Claude CLI returned exit code %s for %s: %s',
                 completed.returncode,
                 log_label,
-                detail,
+                stderr or condensed_text(stdout) or 'no output',
             )
             raise RuntimeError(
                 f'Claude CLI exited with status {completed.returncode}: {detail}'

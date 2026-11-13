@@ -554,6 +554,8 @@ row) — then pencil, pin, ×. **The review loop and split-plan BUTTONS are in t
 `PlanQueueButton`, their own group before the prompts): they moved into the rows for a day and the operator
 asked for them back ("on the tab I want to see only indication it was done or not"). No width resizing, no
 scroll chevrons, no sub-task second row — removed with their code.
+**Rows are in start order, the latest-started LAST** — decided ONLY by `_in_start_order` (`webserver/kato_webserver/app.py`,
+the record's `created_at_epoch`, ties by id); the UI keeps it after pins and dragged rows. It was the folders' names (task-number order).
 **A group folds:** a main task's row carries a toggle (chevron + its sub-task count, always shown). Folded
 (remembered per browser, `kato.tabs.collapsedGroups`, `readCollapsedGroups` in `pinnedTabs.js`) hides its
 sub-tasks EXCEPT the one on screen, so the menu always shows where you are; a hidden one waiting for you turns
@@ -1312,6 +1314,16 @@ so the page never formats a model id. Figures are API-equivalent ESTIMATES (a su
 token) and the footnote says so. Do not add a second price table or compute cost in JS.
 
 ### False-success guards (important — previously bugs)
+- **A task kato works on says In Progress on its ticket — through ONE mover:** `task_in_progress.py`
+  `TaskInProgress`. Kato's own start (`move`: a refusal stops the run, or the next scan would start it twice), a
+  `kato:wait-planning`/`kato:wait-editing` chat (`try_move`, FIRST — before the clone and the spawn, which took a
+  minute with the ticket still Open — and also when its chat already runs), and the queue scan
+  (`move_if_agent_working`, in `process_assigned_task` after the plan-step gate: a QUEUE ticket whose agent is
+  mid-turn — `running_agents.is_mid_turn` — is moved and nothing else starts on it). The gap it closes: a failed
+  run moves its ticket back to Open (`handle_started_task_failure`); the operator typed "continue" and the agent
+  worked on while the ticket said Open — every autopilot task after a 403. Only WORK moves it forward: an idle chat
+  left after a failed run does not undo the failure handler's Open. Never call `move_task_to_in_progress` anywhere
+  else. Tests: `tests/test_task_in_progress.py`, real local-task store + real state services, no mocks.
 - **A chat's own `<KATO_TASK_DONE>` is not proof the operator signed off.** The sentinel callback
   (`AgentService.finish_from_done_marker`, wired onto every spawned session — chats included) used to
   publish unconditionally once off the autopilot/review-loop branches: push, open a PR, move to review,

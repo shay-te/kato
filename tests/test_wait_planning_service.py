@@ -294,5 +294,77 @@ class HoldChatScreenshotTests(unittest.TestCase):
         self.assertEqual(service._planning_context(build_task(), [], '', '').attachment_paths, ())
 
 
+class HoldMovesTicketToInProgressTests(unittest.TestCase):
+    """A planning ticket leaves Open as soon as kato takes it — not after the clone."""
+
+    def _service(self, *, chat_alive=False, move_fails=False):
+        from unittest.mock import Mock
+        events = []
+        manager = Mock()
+        manager.get_session.return_value = (
+            Mock(is_alive=True) if chat_alive else None
+        )
+        repositories = Mock()
+        repositories.resolve_task_repositories.side_effect = (
+            lambda *_a, **_k: events.append('clone') or []
+        )
+        state = Mock()
+
+        def move(task_id):
+            events.append(('move', task_id))
+            if move_fails:
+                raise RuntimeError('the tracker refused')
+
+        state.move_task_to_in_progress.side_effect = move
+        runner = Mock()
+        runner.start_session.side_effect = lambda **_k: events.append('chat')
+        service = WaitPlanningService(
+            session_manager=manager,
+            repository_service=repositories,
+            task_state_service=state,
+            planning_session_runner=runner,
+        )
+        return service, events
+
+    def test_moved_before_the_clone_and_the_chat(self) -> None:
+        service, events = self._service()
+        service.handle_task(build_task(task_id='UNA-1', tags=['kato:wait-planning']))
+        self.assertEqual(events, [('move', 'UNA-1'), 'clone', 'chat'])
+
+    def test_wait_editing_is_moved_too(self) -> None:
+        service, events = self._service()
+        service.handle_task(build_task(task_id='UNA-1', tags=['kato:wait-editing']))
+        self.assertEqual(events[0], ('move', 'UNA-1'))
+
+    def test_moved_when_its_chat_already_runs_and_nothing_else_happens(self) -> None:
+        # Only queue (Open) tasks get here: a live chat on one means the earlier
+        # move failed or someone moved the ticket back. It used to stay Open.
+        service, events = self._service(chat_alive=True)
+        result = service.handle_task(build_task(task_id='UNA-1', tags=['kato:wait-planning']))
+        self.assertEqual(events, [('move', 'UNA-1')])
+        self.assertIsNotNone(result)
+
+    def test_a_refused_move_still_opens_the_chat(self) -> None:
+        service, events = self._service(move_fails=True)
+        with self.assertLogs(service.logger, level='ERROR'):
+            result = service.handle_task(
+                build_task(task_id='UNA-1', tags=['kato:wait-planning']),
+            )
+        self.assertEqual(events, [('move', 'UNA-1'), 'clone', 'chat'])
+        self.assertIsNotNone(result)
+
+    def test_a_task_without_a_hold_tag_is_not_moved(self) -> None:
+        service, events = self._service()
+        self.assertIsNone(service.handle_task(build_task(task_id='UNA-1', tags=[])))
+        self.assertEqual(events, [])
+
+    def test_no_streaming_backend_no_move(self) -> None:
+        # No chat can open (OpenHands): the ticket is not claimed for one.
+        service, events = self._service()
+        service._session_manager = None
+        service.handle_task(build_task(task_id='UNA-1', tags=['kato:wait-planning']))
+        self.assertEqual(events, [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -9,6 +9,7 @@ from kato_core_lib.data_layers.service.agent_state_registry import AgentStateReg
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
+from kato_core_lib.data_layers.service.task_in_progress import KATO_STARTED_IT, TaskInProgress
 from kato_core_lib.data_layers.service.task_state_service import TaskStateService
 from kato_core_lib.validation.repository_connections import (
     RepositoryConnectionsValidator,
@@ -63,6 +64,7 @@ from kato_core_lib.validation.model_access import TaskModelAccessValidator
 from kato_core_lib.helpers.task_execution_utils import (
     apply_testing_message,
     implementation_succeeded,
+    skip_task_result,
     testing_failed_result,
     testing_succeeded,
 )
@@ -970,6 +972,13 @@ class AgentService(MissionStepLoggerMixin, Service):
         if waiting is not None:
             return waiting
 
+        # Its agent is working on it right now, yet its ticket is in the queue
+        # (this list): a run that failed moved it back to Open and the operator
+        # typed "continue". The work is in progress — the ticket says so — and
+        # nothing else starts on it: a run is already going.
+        if self._task_in_progress().move_if_agent_working(task.id, self._session_manager):
+            return skip_task_result(task.id, [])
+
         # No in-memory "already processed" short-circuit. The ticket system
         # (state + comments) is the single source of truth: successful tasks
         # have already been moved out of the scanned states, and skipped/
@@ -1375,11 +1384,14 @@ class AgentService(MissionStepLoggerMixin, Service):
 
 
 
+    def _task_in_progress(self) -> TaskInProgress:
+        # Built per use from the current state service — stateless, and tests
+        # swap ``_task_state_service`` after construction.
+        return TaskInProgress(self._task_state_service, logger=self.logger)
+
     def _start_task_processing(self, task: Task, prepared_task: PreparedTaskContext) -> bool:
         try:
-            self._log_task_step(task.id, 'moving issue to in progress')
-            self._task_state_service.move_task_to_in_progress(task.id)
-            self._log_task_step(task.id, 'moved issue to in progress')
+            self._task_in_progress().move(task.id, KATO_STARTED_IT)
         except Exception as exc:
             self._task_failure_handler.handle_task_failure(task, exc, prepared_task=prepared_task)
             return False
