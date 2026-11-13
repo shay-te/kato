@@ -1,39 +1,26 @@
 import { useEffect, useState } from 'react';
 import { createPubSub } from './pubsub.js';
 
-// "The operator just moved to another task with the keyboard" (Tab / Ctrl+Tab).
-// The task switcher (the Cmd+Tab-style overlay) shows while those keep coming
-// and fades out a moment after the last one — with the tasks menu closed, a
-// keyboard switch otherwise happens with nothing on screen saying where you
-// went.
+// Is the task switcher (the Cmd+Tab-style overlay) on screen? Only while the
+// operator HOLDS Tab / Ctrl+Tab: a quick press switches the task with nothing
+// else on screen (the tasks menu's highlight already moves), and a press still
+// down ``TASK_SWITCHER_REVEAL_MS`` later shows where they are until they let go
+// (``useTaskTabShortcuts`` + ``utils/keyHold.js``).
 
-export const TASK_SWITCHER_HOLD_MS = 900;
+export const TASK_SWITCHER_REVEAL_MS = 300;
 
-let seq = 0;
-const pubsub = createPubSub(() => seq);
+let shown = false;
+const pubsub = createPubSub(() => shown);
 
-export function announceTaskSwitch() {
-  seq += 1;
+export function setTaskSwitcherShown(next) {
+  const value = !!next;
+  if (value === shown) { return; }
+  shown = value;
   pubsub.emit();
 }
 
-// True from a switch until ``TASK_SWITCHER_HOLD_MS`` after the latest one.
 export function useTaskSwitcherVisible() {
-  const [visible, setVisible] = useState(false);
-  useEffect(() => {
-    let seen = seq;
-    let timer = null;
-    const unsubscribe = pubsub.subscribe((current) => {
-      if (current === seen) { return; }  // the replay every subscribe gets
-      seen = current;
-      setVisible(true);
-      clearTimeout(timer);
-      timer = setTimeout(() => setVisible(false), TASK_SWITCHER_HOLD_MS);
-    });
-    return () => {
-      clearTimeout(timer);
-      unsubscribe();
-    };
-  }, []);
+  const [visible, setVisible] = useState(shown);
+  useEffect(() => pubsub.subscribe(setVisible), []);
   return visible;
 }

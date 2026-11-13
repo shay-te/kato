@@ -8,10 +8,12 @@
 //   - claimed events get preventDefault so DOM focus doesn't also move.
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 
 import { useTaskTabShortcuts } from './useTaskTabShortcuts.js';
-import * as taskSwitchStore from '../stores/taskSwitchStore.js';
+import {
+  TASK_SWITCHER_REVEAL_MS, setTaskSwitcherShown, useTaskSwitcherVisible,
+} from '../stores/taskSwitchStore.js';
 
 const SESSIONS = [
   { task_id: 'A' }, { task_id: 'B' }, { task_id: 'C' },
@@ -25,6 +27,10 @@ function press(key, { shift = false, ctrl = false, meta = false,
   });
   target.dispatchEvent(event);
   return event;
+}
+
+function release(key, target = window) {
+  target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }));
 }
 
 function mount(props) {
@@ -159,21 +165,6 @@ describe('useTaskTabShortcuts', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  test('a switch announces itself, so the switcher overlay can show where it landed', () => {
-    const seen = [];
-    const { unmount } = renderHook(() => taskSwitchStore.useTaskSwitcherVisible());
-    unmount();
-    const spy = vi.spyOn(taskSwitchStore, 'announceTaskSwitch');
-    try {
-      mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
-      press('Tab');
-      seen.push(spy.mock.calls.length);
-    } finally {
-      spy.mockRestore();
-    }
-    expect(seen).toEqual([1]);
-  });
-
   test('Ctrl+Tab and Ctrl+Shift+Tab walk the tasks like Tab', () => {
     mount({ sessions: SESSIONS, activeTaskId: 'B', onSelect });
     const next = press('Tab', { ctrl: true });
@@ -265,5 +256,102 @@ describe('useTaskTabShortcuts', () => {
     });
     press('Tab');
     expect(onSelect).toHaveBeenCalledWith('B');
+  });
+});
+
+// A quick press only switches; the switcher overlay shows only while the press
+// is HELD past TASK_SWITCHER_REVEAL_MS, and goes when it is let go.
+describe('useTaskTabShortcuts: the switcher shows only on a hold', () => {
+  let onSelect;
+  let shown;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    onSelect = vi.fn();
+    document.body.innerHTML = '';
+    shown = renderHook(() => useTaskSwitcherVisible()).result;
+  });
+
+  afterEach(() => {
+    act(() => setTaskSwitcherShown(false));
+    vi.useRealTimers();
+  });
+
+  const wait = (ms) => act(() => { vi.advanceTimersByTime(ms); });
+
+  test('a quick Tab switches with nothing on screen', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab');
+    wait(TASK_SWITCHER_REVEAL_MS - 50);
+    act(() => release('Tab'));
+    wait(1000);
+    expect(onSelect).toHaveBeenCalledWith('B');
+    expect(shown.current).toBe(false);
+  });
+
+  test('Tab held shows the switcher until it is let go', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab');
+    wait(TASK_SWITCHER_REVEAL_MS);
+    expect(shown.current).toBe(true);
+    act(() => release('Tab'));
+    expect(shown.current).toBe(false);
+  });
+
+  test('held, the hold outlives the switch it made (the hook re-renders on the new task)', () => {
+    const view = mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab');
+    view.rerender({ sessions: SESSIONS, activeTaskId: 'B', onSelect });
+    wait(TASK_SWITCHER_REVEAL_MS);
+    expect(shown.current).toBe(true);
+    press('Tab');  // auto-repeat goes on through the tasks
+    expect(onSelect).toHaveBeenLastCalledWith('C');
+    act(() => release('Tab'));
+    expect(shown.current).toBe(false);
+  });
+
+  test('Ctrl+Tab lasts while Ctrl does: Tab can be tapped on through the tasks', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab', { ctrl: true });
+    act(() => release('Tab'));
+    wait(TASK_SWITCHER_REVEAL_MS);
+    expect(shown.current).toBe(true);
+    act(() => release('Control'));
+    expect(shown.current).toBe(false);
+  });
+
+  test('a quick Ctrl+Tab shows nothing', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab', { ctrl: true });
+    act(() => { release('Tab'); release('Control'); });
+    wait(1000);
+    expect(onSelect).toHaveBeenCalledWith('B');
+    expect(shown.current).toBe(false);
+  });
+
+  test('leaving the window ends a hold (its keyup never comes)', () => {
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab');
+    wait(TASK_SWITCHER_REVEAL_MS);
+    act(() => window.dispatchEvent(new Event('blur')));
+    expect(shown.current).toBe(false);
+  });
+
+  test('unmounting mid-hold hides it', () => {
+    const view = mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab');
+    wait(TASK_SWITCHER_REVEAL_MS);
+    act(() => view.unmount());
+    expect(shown.current).toBe(false);
+  });
+
+  test('a Tab left to a text field holds nothing', () => {
+    const input = document.createElement('textarea');
+    document.body.appendChild(input);
+    input.focus();
+    mount({ sessions: SESSIONS, activeTaskId: 'A', onSelect });
+    press('Tab', { target: input });
+    wait(1000);
+    expect(shown.current).toBe(false);
   });
 });

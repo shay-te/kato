@@ -1,12 +1,12 @@
-// The Cmd+Tab-style switcher: while Tab / Ctrl+Tab move between tasks, the
-// tasks show in the middle of the screen, the one just landed on highlighted;
-// it fades a moment after the last press.
+// The Cmd+Tab-style switcher: while Tab / Ctrl+Tab are HELD, the tasks show in
+// the middle of the screen, the one landed on highlighted (when it shows is the
+// hook's: useTaskTabShortcuts.hook.test.jsx).
 
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, afterEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 
 import TaskSwitcher from './TaskSwitcher.jsx';
-import { TASK_SWITCHER_HOLD_MS, announceTaskSwitch } from '../stores/taskSwitchStore.js';
+import { setTaskSwitcherShown } from '../stores/taskSwitchStore.js';
 
 const session = (task_id, extra = {}) => ({ task_id, task_summary: `name of ${task_id}`, status: 'active', ...extra });
 const SESSIONS = [
@@ -16,7 +16,7 @@ const SESSIONS = [
 ];
 const ORDER = ['UNA-1', 'UNA-7', 'B-2'];
 
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { act(() => setTaskSwitcherShown(false)); });
 
 function renderOn(activeTaskId, extra = {}) {
   return render(
@@ -25,14 +25,14 @@ function renderOn(activeTaskId, extra = {}) {
 }
 
 describe('TaskSwitcher', () => {
-  test('nothing on screen until a keyboard switch', () => {
+  test('nothing on screen until a press is held', () => {
     const { container } = renderOn('UNA-1');
     expect(container.querySelector('.task-switcher')).toBeNull();
   });
 
-  test('a switch shows every task in the menu\'s order, the one landed on highlighted', () => {
+  test('held, it shows every task in the menu\'s order, the one landed on highlighted', () => {
     const { container } = renderOn('UNA-7');
-    act(() => announceTaskSwitch());
+    act(() => setTaskSwitcherShown(true));
     const items = [...container.querySelectorAll('.task-switcher-item')];
     expect(items.map((li) => li.dataset.taskId)).toEqual(ORDER);
     expect(items[1]).toHaveClass('is-active');
@@ -43,15 +43,11 @@ describe('TaskSwitcher', () => {
     expect(items[0].querySelector('.status-dot')).not.toBeNull();
   });
 
-  test('it fades a moment after the last press, and every press keeps it up', () => {
-    vi.useFakeTimers();
+  test('let go, it goes; told twice, nothing changes', () => {
     const { container } = renderOn('UNA-1');
-    act(() => announceTaskSwitch());
-    act(() => { vi.advanceTimersByTime(TASK_SWITCHER_HOLD_MS - 100); });
-    act(() => announceTaskSwitch());
-    act(() => { vi.advanceTimersByTime(TASK_SWITCHER_HOLD_MS - 100); });
+    act(() => { setTaskSwitcherShown(true); setTaskSwitcherShown(true); });
     expect(container.querySelector('.task-switcher')).not.toBeNull();
-    act(() => { vi.advanceTimersByTime(200); });
+    act(() => setTaskSwitcherShown(false));
     expect(container.querySelector('.task-switcher')).toBeNull();
   });
 
@@ -60,7 +56,7 @@ describe('TaskSwitcher', () => {
     const { container } = render(
       <TaskSwitcher sessions={many} order={many.map((s) => s.task_id)} activeTaskId="T-15" />,
     );
-    act(() => announceTaskSwitch());
+    act(() => setTaskSwitcherShown(true));
     const ids = [...container.querySelectorAll('.task-switcher-item')].map((li) => li.dataset.taskId);
     expect(ids).toHaveLength(9);
     expect(ids).toContain('T-15');

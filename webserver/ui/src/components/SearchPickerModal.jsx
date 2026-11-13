@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { cx } from '../utils/cx.js';
+import Icon from './Icon.jsx';
 import ModalShell from './ModalShell.jsx';
 import ModalFooterActions from './ModalFooterActions.jsx';
 
@@ -25,6 +26,10 @@ import ModalFooterActions from './ModalFooterActions.jsx';
 //
 // ``extra`` is anything the caller shows between the list and the buttons — an
 // option that goes with the confirm (Hand over's "also delete it from my tasks").
+//
+// Every picker looks the same (``search-picker`` on the shell: the rounder
+// card, the search field with its icon, rows that are a list rather than boxes,
+// a tick on the row picked); a picker only says what goes IN a row.
 export default function SearchPickerModal({
   ariaLabel,
   title,
@@ -89,18 +94,22 @@ export default function SearchPickerModal({
     <ModalShell
       ariaLabel={ariaLabel}
       title={title}
-      extraClass={extraClass}
+      extraClass={cx('search-picker', extraClass)}
       onClose={onClose}
     >
       <p className="adopt-session-modal-help">{helpText}</p>
-      <input
-        type="text"
-        className="adopt-session-search"
-        placeholder={searchPlaceholder}
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        autoFocus
-      />
+      <label className="search-picker-search">
+        <Icon name="search" className="search-picker-search-icon" />
+        <input
+          type="text"
+          className="adopt-session-search"
+          placeholder={searchPlaceholder}
+          aria-label={searchPlaceholder}
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          autoFocus
+        />
+      </label>
       {multiple && (
         <div className="adopt-session-picked">
           <div className="adopt-session-bulk">
@@ -175,12 +184,13 @@ export default function SearchPickerModal({
               {multiple && (
                 <span className="adopt-session-check" aria-hidden="true">{checked ? '✓' : ''}</span>
               )}
-              {renderRow(item)}
+              <span className="search-picker-row-body">{renderRow(item)}</span>
+              {!multiple && checked && <Icon name="check" className="search-picker-tick" />}
             </button>
           );
         })}
       </div>
-      {extra}
+      {extra && <div className="search-picker-extra">{extra}</div>}
       <ModalFooterActions
         onCancel={onClose}
         onConfirm={confirm}

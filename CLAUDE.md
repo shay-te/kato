@@ -577,8 +577,11 @@ sub-tasks EXCEPT the one on screen, so the menu always shows where you are; a hi
 the toggle orange (the header badge's colour and source). Tab / Ctrl+Tab still walk folded sub-tasks.
 **Task switcher (Cmd+Tab-style):** Tab / Shift+Tab and Ctrl+Tab / Ctrl+Shift+Tab move between tasks in the menu's
 order (`useTaskTabShortcuts`; Ctrl+Tab works even in a text field; in a plain browser the browser keeps Ctrl+Tab for
-itself, the desktop app does not). Each switch `announceTaskSwitch()`es; `TaskSwitcher` shows the tasks centred,
-the landed one highlighted, and fades `TASK_SWITCHER_HOLD_MS` after the last press. Proven in headless Chromium
+itself, the desktop app does not). **A quick press only switches** (the rail's highlight moves; nothing pops up).
+`TaskSwitcher` shows the tasks centred, the landed one highlighted, only while the press is HELD past
+`TASK_SWITCHER_REVEAL_MS` (300ms) — Tab held down, or Ctrl kept down over Ctrl+Tab, as Cmd+Tab does on Cmd — and goes
+when it is let go or the window loses focus. Tap-or-hold is `utils/keyHold.js` `createKeyHold` (no React, timers
+injectable): use it for any other "reveal only on a hold" shortcut. Proven in headless Chromium
 (Playwright) against a real kato webserver: the rail collapsed to codes, expanded over the page with nothing
 moving, rows grouped, footer labels on screen, the switcher came and went.
 
@@ -808,7 +811,10 @@ Each step is reported (`formatHandoverResult`: problems red, first). **"Their ka
 checkbox, TICKED every time it opens) is step 2: unticked, their kato is meant to start on the ticket by itself, unwatched,
 so the tag is removed rather than merely not added (a ticket handed on usually arrived wearing it). Only a literal
 `false` unticks it — the API helper and the route both read anything else (an older UI sending nothing) as "wait".
-`landed` then needs only assign + Open (`LANDING_STEPS_UNTAGGED`). **"Also delete it from my tasks"** (the picker's
+`landed` then needs only assign + Open (`LANDING_STEPS_UNTAGGED`). Both choices are switches (`.kato-switch`: a real
+checkbox drawn as one) in one rounded group under the list. **Every picker has ONE look** — `SearchPickerModal` puts
+`search-picker` on the shell (rounder card, search icon, rows as a list, a tick on the picked row) and a picker only
+renders what goes IN a row; do not style a picker of its own. **"Also delete it from my tasks"** (the picker's
 checkbox, unticked every time it opens) runs the tab's own delete (App's `doForgetTask` → `DELETE …/workspace`, no
 second dialog, never `?done=1`) only once the result's `landed` is true — assign, tag (when asked for) AND Open all
 done (`task_handover.LANDING_STEPS`); otherwise the task is kept and the toast says so. Not offered for a task a plan THIS

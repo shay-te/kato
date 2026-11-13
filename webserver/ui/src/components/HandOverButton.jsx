@@ -4,6 +4,7 @@ import { useBusyAction } from '../hooks/useBusyAction.js';
 import { usePickerData } from '../hooks/usePickerData.js';
 import { toastResult } from '../stores/toastStore.js';
 import { apiErrorMessage } from '../utils/apiError.js';
+import { avatarColor, avatarInitials } from '../utils/avatar.js';
 import { BusyIcon } from './Icon.jsx';
 import SearchPickerModal from './SearchPickerModal.jsx';
 import UnpushedWorkWarning, { WARNING_PURPOSE } from './UnpushedWorkWarning.jsx';
@@ -14,11 +15,11 @@ export const HANDOVER_TOOLTIP = 'Hand over — give this task to a teammate: kat
   + 'the agent here, and THEIR kato picks it up. '
   + "Anyone the ticket can be assigned to is listed — kato cannot tell who runs a kato.";
 
-// "Their kato waits for them": ticked every time the picker opens — unticked,
-// their kato works on the ticket with no one watching.
-export const WAIT_FOR_THEM_HINT = 'Their kato opens it as a chat and does nothing until they write in it (kato:wait-editing).';
-export const START_BY_ITSELF_HINT = 'Unticked: their kato starts working on it by itself on its next scan, '
-  + 'with no one watching. A kato:wait-editing tag already on the ticket is taken off.';
+// "Their kato waits for them": on every time the picker opens — off, their kato
+// works on the ticket with no one watching. The two read about as long, so
+// flipping the switch does not move the dialog.
+export const WAIT_FOR_THEM_HINT = 'Their kato opens it as a chat and waits until they write in it (kato:wait-editing).';
+export const START_BY_ITSELF_HINT = 'Their kato starts on it by itself, unwatched. Any kato:wait-editing tag is taken off.';
 
 // Why "also delete it from my tasks" cannot be ticked yet / at all, when the
 // server's own answer is not in hand. Missing = not offered: never a delete on
@@ -148,8 +149,7 @@ function HandOverPicker({ taskId, offerRemoveHere, onClose, onPick }) {
       ariaLabel="Hand over this task"
       title={`Hand over ${taskId}`}
       onClose={onClose}
-      helpText={`Their kato picks it up: the ticket is assigned to them, ${
-        waitForThem ? 'tagged kato:wait-editing' : 'left without kato:wait-editing'} and moved to Open.`}
+      helpText="Their kato picks it up: the ticket is assigned to them and moved to Open."
       searchPlaceholder="Search by name or login…"
       query={query}
       onQueryChange={setQuery}
@@ -163,24 +163,30 @@ function HandOverPicker({ taskId, offerRemoveHere, onClose, onPick }) {
       busyLabel="Handing over…"
       onConfirm={(user) => onPick({ user, waitForThem, removeHere: removeHere && !removeHereReason })}
       extra={(
-        <>
-          <WaitForThemOption checked={waitForThem} onChange={setWaitForThem} />
+        <div className="handover-options">
+          <HandoverOption
+            id="handover-wait-for-them"
+            label="Their kato waits for them"
+            hint={waitForThem ? WAIT_FOR_THEM_HINT : START_BY_ITSELF_HINT}
+            checked={waitForThem}
+            onChange={setWaitForThem}
+          />
           {offerRemoveHere && (
-            <RemoveHereOption
-              taskId={taskId}
+            <HandoverOption
+              id="handover-remove-here"
+              label="Also delete it from my tasks"
+              hint={removeHereReason
+                ? `Not offered — ${removeHereReason}.`
+                : `Once the ticket is theirs, ${taskId} is deleted here like the tab's ✕: its workspace, chat and `
+                  + 'containers. Kept if the hand-over does not get through.'}
               checked={removeHere && !removeHereReason}
-              reason={removeHereReason}
+              disabled={!!removeHereReason}
               onChange={setRemoveHere}
             />
           )}
-        </>
-      )}
-      renderRow={(user) => (
-        <div className="adopt-session-row-top">
-          <span className="adopt-session-cwd">{user.name}</span>
-          {user.name !== user.handle && <span className="adopt-session-meta">{user.handle}</span>}
         </div>
       )}
+      renderRow={(user) => <Person user={user} />}
     />
   );
 }
@@ -206,42 +212,42 @@ function useRemoveHereReason(taskId, offered) {
   return reason;
 }
 
-function WaitForThemOption({ checked, onChange }) {
+// A person the ticket can go to: a monogram (the diff comments' own,
+// utils/avatar.js — one colour per name), the name, and the tracker's login
+// when it says something the name does not.
+function Person({ user }) {
   return (
-    <label className="forget-task-done handover-option" htmlFor="handover-wait-for-them">
-      <input
-        id="handover-wait-for-them"
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-      <span>
-        <strong>Their kato waits for them</strong>
-        <span className="forget-task-done-hint">{checked ? WAIT_FOR_THEM_HINT : START_BY_ITSELF_HINT}</span>
+    <span className="handover-person">
+      <span
+        className="handover-avatar"
+        style={{ backgroundColor: avatarColor(user.name || user.handle) }}
+        aria-hidden="true"
+      >
+        {avatarInitials(user.name || user.handle)}
       </span>
-    </label>
+      <span className="handover-person-name">{user.name}</span>
+      {user.name !== user.handle && <span className="handover-person-handle">{user.handle}</span>}
+    </span>
   );
 }
 
-function RemoveHereOption({ taskId, checked, reason, onChange }) {
+// One choice that goes with the hand-over: what it is, what it does, and a
+// switch (a real checkbox, drawn as a switch).
+function HandoverOption({ id, label, hint, checked, disabled = false, onChange }) {
   return (
-    <label className="forget-task-done handover-option" htmlFor="handover-remove-here">
+    <label className={disabled ? 'handover-option is-disabled' : 'handover-option'} htmlFor={id}>
+      <span className="handover-option-text">
+        <span className="handover-option-label">{label}</span>
+        <span className="handover-option-hint">{hint}</span>
+      </span>
       <input
-        id="handover-remove-here"
+        id={id}
         type="checkbox"
+        className="kato-switch"
         checked={checked}
-        disabled={!!reason}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
-      <span>
-        <strong>Also delete it from my tasks</strong>
-        <span className="forget-task-done-hint">
-          {reason
-            ? `Not offered — ${reason}.`
-            : `Once the ticket is theirs, ${taskId} is deleted here like the tab's ✕: its workspace, chat and containers. `
-              + 'Kept if the hand-over does not get through.'}
-        </span>
-      </span>
     </label>
   );
 }

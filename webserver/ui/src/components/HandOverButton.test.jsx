@@ -165,27 +165,25 @@ describe('HandOverButton', () => {
       return dialog;
     }
 
-    test('ticked: the ticket is tagged kato:wait-editing, and the picker says so', async () => {
+    test('on: the ticket is tagged kato:wait-editing, and the picker says so', async () => {
       const { container } = await shown();
       const dialog = await openPicker(container);
       expect(waits(dialog)).toBeChecked();
       expect(within(dialog).getByText(WAIT_FOR_THEM_HINT)).toBeTruthy();
-      expect(within(dialog).getByText(/tagged kato:wait-editing and moved to Open/)).toBeTruthy();
     });
 
-    test('unticked: their kato starts on it by itself, said before and sent', async () => {
+    test('off: their kato starts on it by itself, said before and sent', async () => {
       const { container } = await shown();
       const dialog = await openPicker(container);
       fireEvent.click(waits(dialog));
       expect(waits(dialog)).not.toBeChecked();
       expect(within(dialog).getByText(START_BY_ITSELF_HINT)).toBeTruthy();
-      expect(within(dialog).getByText(/left without kato:wait-editing and moved to Open/)).toBeTruthy();
       fireEvent.click(within(dialog).getByText('Jane Doe'));
       fireEvent.click(within(dialog).getByRole('button', { name: 'Hand over' }));
       await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: false }));
     });
 
-    test('unticked and warned about unpushed work, the choice survives the warning', async () => {
+    test('off and warned about unpushed work, the choice survives the warning', async () => {
       fetchTaskUnpushedWork.mockResolvedValue(UNPUSHED);
       const { container } = await shown();
       const dialog = await openPicker(container);
@@ -196,7 +194,16 @@ describe('HandOverButton', () => {
       await waitFor(() => expect(handOverTask).toHaveBeenCalledWith('UNA-1', 'jane', 'Jane Doe', { waitForThem: false }));
     });
 
-    test('ticked again every time the picker opens', async () => {
+    test('a person reads as initials, name and login; the login only when it says more', async () => {
+      const { container } = await shown();
+      const dialog = await openPicker(container);
+      expect(within(dialog).getByText('JD')).toBeTruthy();
+      expect(within(dialog).getByText('jane')).toBeTruthy();
+      expect(within(dialog).getAllByText('zed')).toHaveLength(1);  // name == login: shown once
+      expect(within(dialog).getByText('ZE')).toBeTruthy();
+    });
+
+    test('on again every time the picker opens', async () => {
       const { container } = await shown();
       let dialog = await openPicker(container);
       fireEvent.click(waits(dialog));

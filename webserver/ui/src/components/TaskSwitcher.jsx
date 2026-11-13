@@ -9,11 +9,11 @@ import { useTaskSwitcherVisible } from '../stores/taskSwitchStore.js';
 // task you landed on stays in it, with its neighbours either side.
 const WINDOW = 9;
 
-// The Cmd+Tab-style overlay: while the operator moves between tasks with Tab /
-// Ctrl+Tab, the tasks show in the middle of the screen in the tasks menu's
-// order, the one just landed on highlighted. It fades a moment after the last
-// press (``taskSwitchStore``). Nothing to click: switching already happened on
-// each press, as it always has; this only shows where you are.
+// The Cmd+Tab-style overlay: while the operator HOLDS Tab / Ctrl+Tab, the tasks
+// show in the middle of the screen in the tasks menu's order, the one landed on
+// highlighted; letting go hides it, and a quick press never shows it
+// (``taskSwitchStore``). Nothing to click: switching already happened on each
+// press, as it always has; this only shows where you are.
 //
 // Each dot is ``deriveAgentStatus``'s own — the one derivation every status
 // surface renders (the menu rows included); nothing here decides a status.

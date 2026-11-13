@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { createKeyHold } from '../utils/keyHold.js';
 import { modalOrDrawerOpen } from '../utils/modalOpen.js';
-import { announceTaskSwitch } from '../stores/taskSwitchStore.js';
+import { TASK_SWITCHER_REVEAL_MS, setTaskSwitcherShown } from '../stores/taskSwitchStore.js';
 
 /**
  * Tab / Shift+Tab — and Ctrl+Tab / Ctrl+Shift+Tab — cycle the tasks, in the
@@ -25,7 +26,11 @@ import { announceTaskSwitch } from '../stores/taskSwitchStore.js';
  *
  * Only Tab with no modifier or with Ctrl alone is claimed (Shift picks the
  * direction); Cmd / Alt combinations are left alone so they can't shadow OS
- * shortcuts.
+ * shortcuts (macOS keeps Cmd+Tab for itself anyway).
+ *
+ * A quick press only switches. The task switcher overlay shows only while the
+ * press is HELD past ``TASK_SWITCHER_REVEAL_MS`` — Tab held down, or Ctrl kept
+ * down over Ctrl+Tab — and goes when it is let go (``utils/keyHold.js``).
  */
 function isEditableTarget(el) {
   if (!el) { return false; }
@@ -39,6 +44,30 @@ function isEditableTarget(el) {
 export function useTaskTabShortcuts({
   sessions, activeTaskId, onSelect, visibleOrder,
 }) {
+  // One hold for the page's life: the keydown listener below is re-added on
+  // every switch (its deps change), and a hold must outlive that.
+  const holdRef = useRef(null);
+  if (holdRef.current === null) {
+    holdRef.current = createKeyHold({
+      thresholdMs: TASK_SWITCHER_REVEAL_MS,
+      onHold: () => setTaskSwitcherShown(true),
+      onRelease: () => setTaskSwitcherShown(false),
+    });
+  }
+
+  useEffect(() => {
+    const hold = holdRef.current;
+    const onKeyUp = (event) => hold.keyUp(event.key);
+    const onBlur = () => hold.cancel();
+    window.addEventListener('keyup', onKeyUp, true);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keyup', onKeyUp, true);
+      window.removeEventListener('blur', onBlur);
+      hold.cancel();
+    };
+  }, []);
+
   useEffect(() => {
     function onKeyDown(event) {
       if (event.key !== 'Tab') { return; }
@@ -66,6 +95,9 @@ export function useTaskTabShortcuts({
       // We're taking over Tab — stop the browser from also moving
       // DOM focus, which would fight the task switch.
       event.preventDefault();
+      // Held, this press reveals the switcher; Ctrl+Tab's hold lasts while
+      // Ctrl does, so Tab can be tapped on through the tasks.
+      holdRef.current.press(event.ctrlKey ? 'Control' : 'Tab');
 
       const back = event.shiftKey;
       const current = ids.indexOf(activeTaskId);
@@ -79,8 +111,6 @@ export function useTaskTabShortcuts({
       const nextId = ids[nextIndex];
       if (nextId && nextId !== activeTaskId) {
         onSelect(nextId);
-        // The switcher overlay shows where this landed (Cmd+Tab-style).
-        announceTaskSwitch();
       }
     }
     window.addEventListener('keydown', onKeyDown);
