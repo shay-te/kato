@@ -594,6 +594,20 @@ test('a re-check is never described as reading the whole change', () => {
 });
 
 
+// UNA-3454: tests that already failed before the task never block a review —
+// the round says how many, in amber, and the two kinds read apart.
+test('a test run with tests that already failed before the task says how many, in amber', () => {
+  const run = { passed: true, summary: '274 passed', command: 'jest',
+    already_failing: ['a.test.js: name missing (same stashed)'],
+    cannot_run: ['tests/test_b.py: core_lib is not installed'] };
+  assert.equal(testsReportText(run),
+    'Tests passed — 274 passed (jest) · 1 could not run here · 1 already failing before this task');
+  assert.equal(testsTone(run), 'warn');
+  assert.equal(testsTone({ passed: true, already_failing: ['a'] }), 'warn');
+  assert.equal(testsReportText({ passed: true, already_failing: ['a', 'b'] }),
+    'Tests passed · 2 already failing before this task');
+});
+
 // UNA-3406: tests that could not start in the task's folder never blocked a
 // review again — and the round says so, in amber, not as a clean pass.
 test('a test run with tests that could not run here says how many, in amber', () => {

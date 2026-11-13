@@ -61,6 +61,33 @@ describe('ReviewLoopRoundList', () => {
     expect(run).toHaveTextContent("tests.test_pdf_service: No module named 'cloudinary'");
   });
 
+  // UNA-3454: tests that already failed before the task are listed apart too.
+  test('a test run lists what already failed before the task, apart from failures', () => {
+    const tested = { ...failedRound, outcome: 'clean', reviewed_at: 5, test_runs: [{
+      passed: true, command: 'jest', summary: '274 passed', failures: [],
+      already_failing: ['src/__tests__/tabs.test.js › one row: expects 11, gets 12 (same stashed)'],
+    }] };
+    const { container } = renderList({ loop: { rounds: [tested] }, list: { endReason: '' } });
+    fireEvent.click(container.querySelector('.review-loop-round button'));
+    const run = container.querySelector('.review-loop-tests');
+    expect(run).toHaveClass('is-warn');
+    expect(run).toHaveTextContent('Tests passed — 274 passed (jest) · 1 already failing before this task');
+    expect(run).toHaveTextContent('Already failing before this task — not sent to be fixed:');
+    expect(run).toHaveTextContent('expects 11, gets 12 (same stashed)');
+    expect(run).not.toHaveTextContent('Could not run here');
+  });
+
+  // UNA-3454: a round that ended before its review shows the loop's whole end
+  // reason as its summary — one line, all of it on hover, never over the clock.
+  test('an unreviewed round\'s long end reason is one line with all of it on hover', () => {
+    const reason = 'the tests still fail after 3 fixes in round 1 (src/a.test.js › x; src/b.test.js › y)';
+    const stuck = { ...failedRound, outcome: 'stuck', reviewed_at: 0, findings: [] };
+    const { container } = renderList({ loop: { rounds: [stuck] }, list: { endReason: reason } });
+    const summary = container.querySelector('.review-loop-round-counts');
+    expect(summary).toHaveTextContent(reason);
+    expect(summary).toHaveAttribute('title', reason);
+  });
+
   test('a running round reads as before', () => {
     renderList({ list: { endReason: '' } });
     expect(screen.getByText('not reviewed yet')).toBeInTheDocument();

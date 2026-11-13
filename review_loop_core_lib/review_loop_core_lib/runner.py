@@ -41,6 +41,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Callable
 
@@ -72,6 +73,7 @@ from review_loop_core_lib.review_loop_core_lib.diff import (
 from review_loop_core_lib.review_loop_core_lib.findings_prompt import (
     build_findings_prompt,
 )
+from review_loop_core_lib.review_loop_core_lib.older_failures import changed_paths, hold_to_the_task
 from review_loop_core_lib.review_loop_core_lib.progress import LoopMemory, loop_memory
 from review_loop_core_lib.review_loop_core_lib.ports import (
     ChatChannel,
@@ -719,23 +721,30 @@ class ReviewLoopRunner(object):
         """
         fixes_before = review_round.tests_fixes
         while True:
-            digest = candidate_digest(self._diff_source(self._task_id))
+            diffs = self._diff_source(self._task_id)
+            digest = candidate_digest(diffs)
             if not review_round.test_runs and memory.tests_digest == digest:
                 return False
             step = review_round.tests_step(digest)
             if step is TestsStep.DONE:
                 return review_round.tests_fixes > fixes_before
             if step is TestsStep.RUN:
-                self._verify_tests(review_round, digest)
+                self._verify_tests(review_round, digest, changed=changed_paths(diffs))
             elif step is TestsStep.AWAIT_FIX:
                 prompt, dispatched_at = self._nudge(review_round, failing_tests=True)
                 self._await_fix(review_round, prompt, dispatched_at, decisions=False)
             else:
                 self._send_failing_tests(review_round, review_follows=review_follows)
 
-    def _verify_tests(self, review_round: ReviewRound, digest: str) -> TestReport:
+    def _verify_tests(
+        self, review_round: ReviewRound, digest: str, *, changed: Iterable[str] = (),
+    ) -> TestReport:
         """Have the main chat run the tests on the current tree — the change
-        ``digest`` names, which a pass covers and nothing else — and report."""
+        ``digest`` names, which a pass covers and nothing else — and report.
+
+        ``changed``: the files that change touches. A test the chat calls
+        "already failing" that names one of them is held to the task
+        (``older_failures``)."""
         latest = review_round.tests
         prompt = build_tests_prompt(
             wording=self._wording,
@@ -751,7 +760,7 @@ class ReviewLoopRunner(object):
             self._store.write_artifact(
                 self.snapshot(), review_round.number, ArtifactKind.TESTS, reply.text,
             )
-        report = parse_test_report(reply.text, now=reply.received_at)
+        report = hold_to_the_task(parse_test_report(reply.text, now=reply.received_at), changed)
         report.diff_digest = digest
         with self._lock:
             review_round.test_runs.append(report)

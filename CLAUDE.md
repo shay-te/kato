@@ -703,6 +703,12 @@ bool is the pick, anything else the default. The defaults live twice — `REVIEW
   shown (amber, "could not run here"), never sent to be fixed, never blocks the review. UNA-3406 spent all 3 fix
   turns on "No module named 'cloudinary'" and ended STUCK. An import error of a module the task added or changed is
   still a failure (the prompt says so), and the chat is told not to install or fake the missing piece.
+  A test that ALREADY FAILED the same way before the task (on the branch it starts from — the chat checks it, e.g. with
+  the task's changes stashed, and says how) goes in `already_failing`: shown ("already failing before this task"),
+  never sent, never blocks. UNA-3454 spent all 3 fix turns on four tests the chat called "same on master" every time —
+  the operator had already filed them as follow-up tasks — and ended STUCK. The chat's word is checked where it can be
+  (`older_failures.hold_to_the_task`): an entry that names a file the task changed is moved back to `failures`. A run
+  reported `passed: false` with nothing in `failures` but set-apart tests counts as passed (`parse_test_report`).
   The last round fixes its tests too — its review comes after. Only if the code moves on
   during a review are they run again after it: a fix there closes the round `tests_fixed`
   (the next round reviews it); on the last round nothing is sent → MAX_ROUNDS.

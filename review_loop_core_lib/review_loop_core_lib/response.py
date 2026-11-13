@@ -89,12 +89,20 @@ def parse_test_report(text: str, *, now: float = 0.0) -> TestReport:
     if payload is None:
         return TestReport(reported_at=now)
     passed = payload.get('passed')
+    failures = _report_items(payload.get('failures'))
+    cannot_run = _report_items(payload.get('cannot_run'))
+    already_failing = _report_items(payload.get('already_failing'))
+    passed = None if passed is None else bool(passed)
+    if passed is False and not failures and (cannot_run or already_failing):
+        # Nothing failed that this task could fix: what is left was set apart.
+        passed = True
     return TestReport(
-        passed=None if passed is None else bool(passed),
+        passed=passed,
         command=str(payload.get('command', '') or '').strip(),
         summary=str(payload.get('summary', '') or '').strip(),
-        failures=_report_items(payload.get('failures')),
-        cannot_run=_report_items(payload.get('cannot_run')),
+        failures=failures,
+        cannot_run=cannot_run,
+        already_failing=already_failing,
         reported_at=now,
     )
 

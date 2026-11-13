@@ -362,12 +362,17 @@ class TestReport(object):
     #: 'cloudinary'" and the loop ended STUCK on code nobody could change.
     #: Last, so a positional construction keeps its order.
     cannot_run: list[str] = field(default_factory=list)
+    #: Tests that already failed the same way before this task, on the branch
+    #: it starts from (``older_failures``). Shown, never sent to be fixed,
+    #: never a failure. Last, for the same reason.
+    already_failing: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             'passed': self.passed, 'command': self.command,
             'summary': self.summary, 'failures': list(self.failures),
             'cannot_run': list(self.cannot_run),
+            'already_failing': list(self.already_failing),
             'reported_at': self.reported_at, 'diff_digest': self.diff_digest,
         }
 
@@ -380,6 +385,7 @@ class TestReport(object):
             summary=str(data.get('summary', '')),
             failures=[str(item) for item in data.get('failures', []) or []],
             cannot_run=[str(item) for item in data.get('cannot_run', []) or []],
+            already_failing=[str(item) for item in data.get('already_failing', []) or []],
             reported_at=float(data.get('reported_at', 0.0)),
             diff_digest=str(data.get('diff_digest') or ''),
         )

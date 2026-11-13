@@ -45,3 +45,6 @@ node_modules/
 # Apple code-signing certs — NEVER commit
 *.p12
 kato.p12
+
+# Local plan notes — never pushed
+/plans/

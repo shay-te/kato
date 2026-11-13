@@ -36,6 +36,7 @@ from review_loop_core_lib.review_loop_core_lib.data.state import (
     SelfCheckTurn,
     TestReport,
 )
+from review_loop_core_lib.review_loop_core_lib.older_failures import CHANGED_BY_TASK_NOTE
 from review_loop_core_lib.review_loop_core_lib.ports import LoopWording
 from review_loop_core_lib.review_loop_core_lib.response import (
     parse_self_check,
@@ -63,9 +64,10 @@ def self_check(clean: bool, fixed: int = 0, summary: str = '') -> str:
 
 
 def test_report(passed: bool, *, failures=(), summary: str = '', command: str = 'pytest',
-                cannot_run=()) -> str:
+                cannot_run=(), already_failing=()) -> str:
     body = json.dumps({'passed': passed, 'command': command, 'summary': summary,
-                       'failures': list(failures), 'cannot_run': list(cannot_run)})
+                       'failures': list(failures), 'cannot_run': list(cannot_run),
+                       'already_failing': list(already_failing)})
     return f'Ran them.\n{TEST_REPORT_OPEN}\n{body}\n{TEST_REPORT_CLOSE}'
 
 
@@ -187,6 +189,62 @@ class TestsGateTests(_Stages):
         (run,) = state.rounds[0].test_runs
         self.assertEqual(run.cannot_run, missing)
         self.assertEqual(state.rounds[0].tests_fixes, 0)
+
+    # A loop spent all three fix turns on four tests the chat reported "same on
+    # master" every time — the operator had already filed them as follow-up
+    # tasks — and ended STUCK on code the task never touched. A test that
+    # already failed before the task is listed apart, never sent to be fixed.
+    def test_tests_that_already_failed_before_the_task_never_block_the_review(self) -> None:
+        older = ['src/__tests__/fieldOrder.test.js › lists every field: name missing (same with the change stashed)']
+        chat = ScriptedChat(tests=[test_report(True, summary='274 passed', already_failing=older)])
+        reviewer = FakeReviewer(reply())
+        state = self.run_loop(chat, reviewer, verify_tests=True)
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests'])  # no fix turn
+        self.assertEqual(len(reviewer.prompts), 1)
+        (run,) = state.rounds[0].test_runs
+        self.assertEqual(run.already_failing, older)
+        self.assertEqual(run.failures, [])
+
+    def test_a_chat_that_still_says_failed_with_only_older_failures_left_has_passed(self) -> None:
+        older = ['src/__tests__/tabs.test.js › one row of tabs: expects 11, gets 12 (same on master)']
+        chat = ScriptedChat(tests=[test_report(False, summary='3 failed', already_failing=older)])
+        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests'])
+
+    def test_an_older_failure_that_names_a_file_this_task_changed_is_sent_to_be_fixed(self) -> None:
+        self.tree.files['src/app.test.js'] = 'it(1)\n'
+        claimed = 'src/app.test.js › adds: expected 2 (same on master)'
+        chat = ScriptedChat(tests=[
+            test_report(False, already_failing=[claimed]),
+            test_report(True, summary='all green'),
+        ])
+        self.edit_on(chat, 'tests_fix')
+        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests', 'tests_fix', 'tests'])
+        first = state.rounds[0].test_runs[0]
+        self.assertIs(first.passed, False)
+        self.assertEqual(first.already_failing, [])
+        self.assertEqual(first.failures, [claimed + CHANGED_BY_TASK_NOTE])
+        self.assertIn(claimed + CHANGED_BY_TASK_NOTE, chat.delivered[1][0])
+
+    def test_the_chat_is_told_what_already_failing_means_and_to_check_it(self) -> None:
+        chat = ScriptedChat(tests=[
+            test_report(False, failures=['test_divide: ZeroDivisionError']),
+            test_report(True, summary='all green'),
+        ])
+        self.edit_on(chat, 'tests_fix')
+        self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+        ask, fix = chat.delivered[0][0], chat.delivered[1][0]
+        self.assertIn('"already_failing": []', ask)
+        self.assertIn('ALREADY FAILED the same way before this task', ask)
+        self.assertIn('one you did not check is a failure', ask)
+        self.assertIn('names a file this task changed', ask)
+        self.assertIn('already failed the same way before this task', fix)
 
     def test_the_chat_is_told_what_cannot_run_means_and_not_to_fake_it(self) -> None:
         chat = ScriptedChat(tests=[
@@ -652,10 +710,32 @@ class StateAndParsingTests(unittest.TestCase):
         self.assertEqual(report.cannot_run, ["tests.test_pdf: No module named 'cloudinary'"])
         again = TestReport.from_dict(json.loads(json.dumps(report.to_dict())))
         self.assertEqual(again.cannot_run, report.cannot_run)
-        # A report saved before ``cannot_run`` existed reads as none.
+        # A report saved before ``cannot_run`` / ``already_failing`` existed reads as none.
         self.assertEqual(TestReport.from_dict({'passed': True}).cannot_run, [])
+        self.assertEqual(TestReport.from_dict({'passed': True}).already_failing, [])
         self.assertEqual(parse_test_report(
             f'{TEST_REPORT_OPEN}\n{{"passed": true, "cannot_run": "oops"}}\n{TEST_REPORT_CLOSE}').cannot_run, [])
+
+    def test_already_failing_reads_as_lines_and_round_trips(self) -> None:
+        body = json.dumps({
+            'passed': True, 'failures': [],
+            'already_failing': [{'test': 'tabs.test.js', 'reason': 'expects 11, gets 12 (same stashed)'}],
+        })
+        report = parse_test_report(f'{TEST_REPORT_OPEN}\n{body}\n{TEST_REPORT_CLOSE}')
+        self.assertEqual(report.already_failing, ['tabs.test.js: expects 11, gets 12 (same stashed)'])
+        self.assertEqual(TestReport.from_dict(json.loads(json.dumps(report.to_dict()))).already_failing,
+                         report.already_failing)
+
+    def test_passed_false_holds_while_anything_this_task_can_fix_failed(self) -> None:
+        def parsed(**payload) -> TestReport:
+            return parse_test_report(f'{TEST_REPORT_OPEN}\n{json.dumps(payload)}\n{TEST_REPORT_CLOSE}')
+        # Only things set apart are left: nothing this task can fix failed.
+        self.assertIs(parsed(passed=False, already_failing=['a']).passed, True)
+        self.assertIs(parsed(passed=False, cannot_run=['b']).passed, True)
+        # A real failure, or a failed run with nothing listed at all, stays failed.
+        self.assertIs(parsed(passed=False, failures=['c'], already_failing=['a']).passed, False)
+        self.assertIs(parsed(passed=False, summary='broke').passed, False)
+        self.assertIsNone(parsed(command='x').passed)
 
     def test_new_fields_round_trip_and_old_states_default(self) -> None:
         state = ReviewLoopState.new('T-1', max_rounds=3, now=1.0, self_check=True,

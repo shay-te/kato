@@ -3,7 +3,9 @@ import Icon from '../Icon.jsx';
 // One collapsible row of the review loop view — a round, or one of the main
 // chat's self-check turns. The header always shows what it is, what it found,
 // how long it took (or, while it runs, its running clock) and its outcome;
-// open, it shows ``children``.
+// open, it shows ``children``. The summary is ONE line, cut with "…" (all of
+// it on hover): a round that ended before its review shows the loop's whole
+// end reason there, and wrapped it ran over the clock beside it.
 export default function ReviewLoopRow({
   className, name, tag = null, summary, timing = null, outcome, expanded, onToggle, children, ...rest
 }) {
@@ -20,7 +22,9 @@ export default function ReviewLoopRow({
         <Icon name={chevron} />
         <span className="review-loop-round-name">{name}</span>
         {tag}
-        <span className="review-loop-round-counts">{summary}</span>
+        <span className="review-loop-round-counts" title={typeof summary === 'string' ? summary : undefined}>
+          {summary}
+        </span>
         {duration}
         <span className="review-loop-round-outcome">{outcome}</span>
       </button>

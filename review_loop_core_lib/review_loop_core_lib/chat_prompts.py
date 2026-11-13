@@ -92,7 +92,7 @@ turn: only run and report.
 End your reply with exactly one test report block and nothing after it:
 
 {TEST_REPORT_OPEN}
-{{"passed": true, "command": "the command(s) you ran", "summary": "41 passed, 0 failed", "failures": [], "cannot_run": []}}
+{{"passed": true, "command": "the command(s) you ran", "summary": "41 passed, 0 failed", "failures": [], "cannot_run": [], "already_failing": []}}
 {TEST_REPORT_CLOSE}
 
 `passed` is false if anything that ran failed; list each failure (test name and
@@ -101,8 +101,15 @@ reason no change to this task's code can fix — a package or sibling library th
 folder does not have installed, a database or service that is not running — goes
 in `cannot_run` (test name and why), not in `failures`, and does not make
 `passed` false. Do not install anything or fake the missing piece. An import
-error for a module this task added or changed IS a failure. If the project has
-no tests, say so in `summary` and set `passed` to true.''', wording)
+error for a module this task added or changed IS a failure.
+
+A test that ALREADY FAILED the same way before this task — on the branch this
+task starts from, without this task's change — goes in `already_failing` (test
+name, the reason, and how you checked: for example, the same failure with this
+task's changes stashed), not in `failures`, and does not make `passed` false.
+Only a test you actually checked that way: one you did not check is a failure,
+and so is any test that names a file this task changed. If the project has no
+tests, say so in `summary` and set `passed` to true.''', wording)
 
 
 def build_tests_fix_prompt(
@@ -121,7 +128,10 @@ Fix the code so they pass — at the root cause. If a test itself is wrong, fix
 the test and say why. A test that cannot even start here for a reason no change
 to this task's code can fix (a package or sibling library not installed in this
 folder, a service not running) is not yours to fix: do not install or fake
-anything — say so, and the next run lists it apart. Run the tests again before
+anything — say so, and the next run lists it apart. Neither is a test that
+already failed the same way before this task, on the branch it starts from:
+check that (for example, with this task's changes stashed), say so, and the
+next run lists it apart too. Run the tests again before
 you finish. The loop runs them again when you are done, and
 no further review starts until they pass: if you cannot make them pass, say
 exactly what blocks you. Do not commit, push or run git.''', wording)

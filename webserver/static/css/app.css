@@ -13405,18 +13405,28 @@ button.settings-prompt-editor-head {
 }
 
 .review-loop-round-name {
+  flex-shrink: 0;
   font-weight: 600;
+  white-space: nowrap;
 }
 
+/* One line, cut with "…" (ReviewLoopRow puts all of it in the title). The
+   name, clock and outcome beside it never shrink: wrapped, a long end reason
+   ran over the clock. */
 .review-loop-round-counts {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: rgba(245, 245, 247, 0.65);
 }
 
 .review-loop-round-duration {
+  flex-shrink: 0;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   color: rgba(245, 245, 247, 0.42);
 }
 
@@ -13426,6 +13436,8 @@ button.settings-prompt-editor-head {
 }
 
 .review-loop-round-outcome {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;

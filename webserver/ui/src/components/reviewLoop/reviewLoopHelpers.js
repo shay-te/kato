@@ -482,7 +482,12 @@ export function testsReportText(tests) {
     const detail = [tests.summary, tests.command && `(${tests.command})`].filter(Boolean).join(' ');
     const passed = detail ? `Tests passed — ${detail}` : 'Tests passed';
     const notRun = (tests.cannot_run || []).length;
-    return notRun ? `${passed} · ${notRun} could not run here` : passed;
+    const older = (tests.already_failing || []).length;
+    return [
+      passed,
+      notRun && `${notRun} could not run here`,
+      older && `${older} already failing before this task`,
+    ].filter(Boolean).join(' · ');
   }
   if (tests.passed === false) {
     const failing = (tests.failures || []).length;
@@ -492,9 +497,12 @@ export function testsReportText(tests) {
 }
 
 // The test result's colour family: good | warn (passed, but some tests could
-// not run here) | bad | neutral (not reported).
+// not run here or already failed before this task) | bad | neutral (not reported).
 export function testsTone(tests) {
-  if (tests?.passed === true) { return (tests.cannot_run || []).length ? 'warn' : 'good'; }
+  if (tests?.passed === true) {
+    const setApart = (tests.cannot_run || []).length + (tests.already_failing || []).length;
+    return setApart ? 'warn' : 'good';
+  }
   if (tests?.passed === false) { return 'bad'; }
   return 'neutral';
 }

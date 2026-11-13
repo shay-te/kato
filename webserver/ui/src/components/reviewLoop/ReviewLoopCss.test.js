@@ -113,3 +113,16 @@ test('the reviewing dot is the loop\'s indigo, pulsing — steady for reduced mo
   assert.match(ruleBody('.tab-tooltip-dot.status-reviewing'), /background: #a78bfa/);
 });
 
+// UNA-3454: the header's summary is one line cut with "…"; the name, the clock
+// and the outcome never shrink, so a long end reason cannot run over them.
+test('the round header keeps its summary to one line and never squeezes the clock', () => {
+  const counts = ruleBody('.review-loop-round-counts');
+  for (const [property, value] of [['overflow', 'hidden'], ['text-overflow', 'ellipsis'], ['white-space', 'nowrap']]) {
+    assert.match(counts, new RegExp(`${property}\\s*:\\s*${value}\\s*;`));
+  }
+  for (const selector of ['.review-loop-round-name', '.review-loop-round-duration', '.review-loop-round-outcome']) {
+    const body = ruleBody(selector);
+    assert.match(body, /flex-shrink\s*:\s*0\s*;/, `${selector} must not shrink`);
+    assert.match(body, /white-space\s*:\s*nowrap\s*;/, `${selector} must not wrap`);
+  }
+});
