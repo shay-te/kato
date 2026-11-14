@@ -276,6 +276,10 @@ class Plan(object):
     # when set, the proposer only maps them — one step per file, briefs as
     # written — and ``plan_markdown`` is the folder's overview, if it had one.
     split_files: list[SplitFile] = field(default_factory=list)
+    # How the operator wants the plan split, in their own words ('' = the
+    # default rules): every request for this plan's split carries it — the
+    # first, a retry, a repair and each revision.
+    split_instructions: str = ''
     repository_ids: list[str] = field(default_factory=list)
     mode: PlanMode = PlanMode.LOCAL
     # The host that releases this plan's steps (TRACKER / FOLLOWED): its own
@@ -317,6 +321,7 @@ class Plan(object):
         source_summary: str = '',
         model: str = '',
         split_files=(),
+        split_instructions: str = '',
     ) -> 'Plan':
         return cls(
             plan_id=uuid.uuid4().hex,
@@ -326,6 +331,7 @@ class Plan(object):
             plan_markdown=plan_markdown,
             plan_digest=hashlib.sha256(plan_markdown.encode('utf-8')).hexdigest(),
             split_files=list(split_files),
+            split_instructions=split_instructions,
             repository_ids=list(repository_ids),
             model=model,
             created_at=now,
@@ -373,6 +379,7 @@ class Plan(object):
             'plan_markdown': self.plan_markdown,
             'plan_digest': self.plan_digest,
             'split_files': [split_file.to_dict() for split_file in self.split_files],
+            'split_instructions': self.split_instructions,
             'repository_ids': list(self.repository_ids),
             'mode': self.mode.value,
             'driver': self.driver,
@@ -406,6 +413,7 @@ class Plan(object):
             plan_markdown=str(data.get('plan_markdown', '') or ''),
             plan_digest=str(data.get('plan_digest', '') or ''),
             split_files=[SplitFile.from_dict(item) for item in _dicts(data.get('split_files'))],
+            split_instructions=str(data.get('split_instructions', '') or ''),
             repository_ids=_strings(data.get('repository_ids')),
             mode=_enum(PlanMode, data.get('mode'), PlanMode.LOCAL),
             driver=str(data.get('driver', '') or ''),

@@ -26,7 +26,9 @@ import {
   reviewLoopSentence,
   reviewLoopSignature,
   reviewLoopSteps,
+  resumingReviewLoop,
   roundOutcomeLabel,
+  startingReviewLoop,
   roundTiming,
   reviewerModelChoice,
   reviewerModelName,
@@ -617,4 +619,36 @@ test('a test run with tests that could not run here says how many, in amber', ()
   assert.equal(testsTone(run), 'warn');
   assert.equal(testsTone({ passed: true, cannot_run: [] }), 'good');
   assert.equal(testsReportText({ passed: true }), 'Tests passed');
+});
+
+
+// The click shows the loop at once (stores/reviewLoopPendingStore.js): a
+// running loop with no phase yet, which every surface words "starting".
+test('a loop just started reads "starting" on the chip, the sentence and the tracker', () => {
+  const stages = { self_check: false, verify_tests: true, confirm_clean: true, extra_sweep: false };
+  const loop = startingReviewLoop({ maxRounds: 3, stages, model: 'sonnet' }, NOW);
+  assert.equal(isReviewLoopRunning(loop), true);
+  assert.equal(loop.loop_id, '');
+  assert.equal(loop.verify_tests, true);
+  assert.equal(loop.model, 'sonnet');
+  assert.equal(reviewLoopChip(loop, NOW + 2).text, '1/3 · starting · 2s');
+  assert.equal(reviewLoopSentence(loop, NOW + 2), 'Round 1 of 3 · starting · 2s');
+  assert.deepEqual(reviewLoopSteps(loop, NOW + 2).map(({ label, state }) => [label, state]),
+    [['Starting the loop', 'current']]);
+  assert.deepEqual(startingReviewLoop({ maxRounds: 5 }, NOW).model, '');
+});
+
+test('a loop just resumed keeps its rounds and id, and picks up — never its last step', () => {
+  const stuck = {
+    loop_id: 'L', status: 'stuck', phase: 'done', round: 1, max_rounds: 3, reason: 'tests still fail',
+    tests_failing: true, tests_fixes: 4, resume: "send round 1's failing tests to the chat",
+    started_at: NOW - 600, phase_started_at: NOW - 60, finished_at: NOW - 30,
+  };
+  const loop = resumingReviewLoop(stuck, NOW);
+  assert.equal(loop.loop_id, 'L');
+  assert.equal(isReviewLoopRunning(loop), true);
+  assert.equal(loop.reason, '');
+  assert.equal(loop.resume, '');
+  assert.equal(reviewLoopSignature(loop) === reviewLoopSignature(stuck), false);
+  assert.deepEqual(reviewLoopSteps(loop, NOW).map(({ label }) => label), ['Picking up where it stopped']);
 });

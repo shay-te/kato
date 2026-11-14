@@ -232,6 +232,23 @@ class TestsGateTests(_Stages):
         self.assertEqual(first.failures, [claimed + CHANGED_BY_TASK_NOTE])
         self.assertIn(claimed + CHANGED_BY_TASK_NOTE, chat.delivered[1][0])
 
+    # UNA-3454, the second time: four failures the chat proved older ("same
+    # failure with this task's changes stashed") stayed in its failures because
+    # each imported a changed file, and the loop ended STUCK again. Importing
+    # changed code does not make an older failure the task's: only its own test
+    # file being changed does.
+    def test_an_older_failure_that_only_imports_changed_code_never_blocks_the_review(self) -> None:
+        self.tree.files['src/store/system/systemStore.js'] = 'export const tabs = 12\n'
+        older = ('src/__tests__/tabs.test.js › one row of tabs: expects 11, gets 12 (same failure with this '
+                 "task's changes stashed; imports src/store/system/systemStore.js)")
+        chat = ScriptedChat(tests=[test_report(True, summary='274 passed', already_failing=[older])])
+        state = self.run_loop(chat, FakeReviewer(reply()), verify_tests=True)
+
+        self.assertEqual(state.status, ReviewLoopStatus.CLEAN, state.reason)
+        self.assertEqual(chat.kinds, ['tests'])  # no fix turn
+        (run,) = state.rounds[0].test_runs
+        self.assertEqual((run.passed, run.failures, run.already_failing), (True, [], [older]))
+
     def test_the_chat_is_told_what_already_failing_means_and_to_check_it(self) -> None:
         chat = ScriptedChat(tests=[
             test_report(False, failures=['test_divide: ZeroDivisionError']),
@@ -243,7 +260,9 @@ class TestsGateTests(_Stages):
         self.assertIn('"already_failing": []', ask)
         self.assertIn('ALREADY FAILED the same way before this task', ask)
         self.assertIn('one you did not check is a failure', ask)
-        self.assertIn('names a file this task changed', ask)
+        self.assertIn('own test file this task added or changed', ask)
+        self.assertIn('only imports or exercises code this task\nchanged DOES go in `already_failing`', ask)
+        self.assertIn('even one that imports code this task changed', fix)
         self.assertIn('already failed the same way before this task', fix)
 
     def test_the_chat_is_told_what_cannot_run_means_and_not_to_fake_it(self) -> None:

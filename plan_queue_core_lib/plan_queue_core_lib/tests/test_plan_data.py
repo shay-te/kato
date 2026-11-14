@@ -22,6 +22,7 @@ def _full_plan() -> Plan:
     plan.status = PlanStatus.RUNNING
     plan.reason = 'why'
     plan.notes = 'notes'
+    plan.split_instructions = 'At most 3 tasks.'
     plan.start_mode = 'implement'
     plan.step_model = 'm2'
     plan.effort = 'high'
@@ -73,6 +74,8 @@ class PlanDataTests(unittest.TestCase):
         self.assertEqual(plan.steps[0].merge.to_dict(), MergeCheck().to_dict())
         self.assertEqual(plan.revisions[0].number, 0)
         self.assertEqual(Plan.from_dict({}).steps, [])
+        # A plan saved before split instructions existed has none.
+        self.assertEqual(Plan.from_dict({}).split_instructions, '')
 
     def test_merge_check_tolerates_a_bad_record(self) -> None:
         check = MergeCheck.from_dict({'attempts': -4, 'forced': 'yes', 'repos': [{'state': '??'}]})

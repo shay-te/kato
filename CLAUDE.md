@@ -707,7 +707,10 @@ bool is the pick, anything else the default. The defaults live twice — `REVIEW
   the task's changes stashed, and says how) goes in `already_failing`: shown ("already failing before this task"),
   never sent, never blocks. UNA-3454 spent all 3 fix turns on four tests the chat called "same on master" every time —
   the operator had already filed them as follow-up tasks — and ended STUCK. The chat's word is checked where it can be
-  (`older_failures.hold_to_the_task`): an entry that names a file the task changed is moved back to `failures`. A run
+  (`older_failures.hold_to_the_task`): an entry naming a TEST file the task added or changed (`is_test_file`) is moved
+  back to `failures`. Only test files: a test that merely IMPORTS changed code is still an older failure when it fails
+  the same way stashed. The first rule ("names any changed file", in the prompt too) made the chat keep four tests it
+  had proven older as failures, "each imports a file this task changed", and UNA-3454 went STUCK a second time. A run
   reported `passed: false` with nothing in `failures` but set-apart tests counts as passed (`parse_test_report`).
   The last round fixes its tests too — its review comes after. Only if the code moves on
   during a review are they run again after it: a fix there closes the round `tests_fixed`
@@ -751,6 +754,14 @@ finished unseen; it also raises the "finished" toast) + a done-or-not mark on th
 menu + "where is it now" chip beside the header title,
 centre-pane view with the round picker (remembered in `kato.reviewLoopRounds.v1`),
 transcript label.
+
+**Start / Resume show at once.** Where a loop is rides the 5-second session list, so a click changed nothing
+on screen for seconds. The click now puts a placeholder (`startingReviewLoop` / `resumingReviewLoop`: running,
+NO phase — words "starting", tracker "Starting the loop" / "Picking up where it stopped") in
+`stores/reviewLoopPendingStore.js`; kato's answer replaces it; `useSessions` lays it over the polled list until the
+poll's loop signature moves past the one at the click (or the request fails, or 30s), so every surface that reads
+`session.review_loop` switches together — do not add a second "starting" flag to a surface. A placeholder never
+counts as "seen running" (a refused Resume must not toast "finished"); Stop waits for kato's answer.
 
 **Resume** (the view's Resume button → `POST /api/sessions/<id>/review-loop/resume`): a
 STOPPED / FAILED / INTERRUPTED / STUCK loop picks up — the SAME loop (loop_id, rounds, ledger,
@@ -860,6 +871,12 @@ it falls back to every user).
       → a step whose every parent is satisfied → ready → released (local: create LOCAL-n
         "UNA-1234 · Task n: …" IN_PROGRESS + start the chat in the plan's start mode)
 ```
+**The operator says how to split it, before the split** ("instead of millions of tiny tasks"): the tab's "How to
+split it" box (`planSplitInstructionsPref.js`, remembered for the next split, always on screen) goes with "Propose a
+split of plan.md" as `split_instructions` → `Plan.split_instructions` → every request for that plan's split (first,
+repair, Try again, each revision) carries it after the rules, as winning over them (only the format and `MAX_STEPS`
+hold). Never with a split written as files (kept as written: refused). The proposing view quotes it back. The prompt
+no longer asks for "small" tasks: the word pulled against its own "prefer fewer, meaningful tasks".
 **Each task plans first by default.** Approve carries "Plan each task first" (ticked): `start_mode=plan` —
 a local step's chat opens in Plan mode; a shared sub-task gets `kato:wait-planning` AT CREATION
 (`TrackerStepLauncher.prepare`; a failed tag fails the create, never "runs unplanned"), so every kato's

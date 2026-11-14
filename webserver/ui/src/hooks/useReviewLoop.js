@@ -4,10 +4,17 @@ import { toastResult } from '../stores/toastStore.js';
 import { useBusyAction } from './useBusyAction.js';
 import {
   isReviewLoopRunning,
+  resumingReviewLoop,
   reviewLoopOutcome,
   reviewLoopSentence,
   reviewLoopSignature,
+  startingReviewLoop,
 } from '../components/reviewLoop/reviewLoopHelpers.js';
+import {
+  clearReviewLoopPending,
+  markReviewLoopPending,
+  settleReviewLoopPending,
+} from '../stores/reviewLoopPendingStore.js';
 import { readReviewLoopRounds } from '../components/reviewLoop/reviewLoopRoundsPref.js';
 import { readReviewLoopStages } from '../components/reviewLoop/reviewLoopStagesPref.js';
 import { readReviewLoopModel } from '../components/reviewLoop/reviewLoopModelPref.js';
@@ -49,15 +56,21 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
   useFinishAnnouncement(announceFinish ? summary : null, taskId, taskSummary);
 
   // The round limit, the stages and the model are read at click time: whatever
-  // the view shows is what runs.
-  const [starting, start] = useBusyAction(() => startReviewLoop(taskId, {
-    maxRounds: readReviewLoopRounds(),
-    stages: readReviewLoopStages(),
-    model: readReviewLoopModel(),
-  }), {
+  // the view shows is what runs. The click shows the loop starting AT ONCE
+  // (reviewLoopPendingStore); kato's answer, then the poll, take over.
+  const [starting, start] = useBusyAction(() => {
+    const picks = {
+      maxRounds: readReviewLoopRounds(),
+      stages: readReviewLoopStages(),
+      model: readReviewLoopModel(),
+    };
+    markReviewLoopPending(taskId, startingReviewLoop(picks, Date.now() / 1000), summary);
+    return untilAnswered(taskId, startReviewLoop(taskId, picks));
+  }, {
     onDone: (result) => {
       // A new loop is running: the last one's open / closed rounds go.
       if (result?.ok) { forgetLoopExpansion(taskId); }
+      settleOrClear(taskId, result);
       announceStart(result, taskId, taskSummary);
     },
   });
@@ -66,13 +79,23 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
   });
   // The SAME loop picks up where it stopped, so what the operator opened and
   // closed in it stays as it was (unlike Run again).
-  const [resuming, resume] = useBusyAction(() => resumeReviewLoop(taskId), {
-    onDone: (result) => { announceResume(result, taskId, taskSummary); },
+  const [resuming, resume] = useBusyAction(() => {
+    markReviewLoopPending(taskId, resumingReviewLoop(summary, Date.now() / 1000), summary);
+    return untilAnswered(taskId, resumeReviewLoop(taskId));
+  }, {
+    onDone: (result) => {
+      settleOrClear(taskId, result);
+      announceResume(result, taskId, taskSummary);
+    },
   });
 
+  // The rounds shown are the shown loop's: a new loop starting must not sit
+  // over the last one's rounds until they are fetched again.
+  const loop = detail.taskId === taskId ? detail.loop : null;
+  const sameLoop = !summary || !loop || loop.loop_id === summary.loop_id;
   return {
     summary,
-    detail: detail.taskId === taskId ? detail.loop : null,
+    detail: sameLoop ? loop : null,
     running: isReviewLoopRunning(summary),
     start,
     starting,
@@ -83,12 +106,29 @@ export function useReviewLoop(session, { withDetail = false, announceFinish = fa
   };
 }
 
+// A request that throws must not leave its "starting" loop on screen.
+async function untilAnswered(taskId, request) {
+  try {
+    return await request;
+  } catch (error) {
+    clearReviewLoopPending(taskId);
+    throw error;
+  }
+}
+
+function settleOrClear(taskId, result) {
+  if (result?.ok) { settleReviewLoopPending(taskId, result.body?.loop || null); }
+  else { clearReviewLoopPending(taskId); }
+}
+
 function useFinishAnnouncement(summary, taskId, taskSummary) {
   const lastSeenRef = useRef(null);
   useEffect(() => {
     const previous = lastSeenRef.current;
+    // A loop only clicked (no phase yet: reviewLoopPendingStore) was never
+    // seen running: a resume kato refused must not toast "finished".
     lastSeenRef.current = summary
-      ? { taskId, loopId: summary.loop_id, running: isReviewLoopRunning(summary) }
+      ? { taskId, loopId: summary.loop_id, running: isReviewLoopRunning(summary) && Boolean(summary.phase) }
       : null;
     // Only a loop watched while RUNNING that is now finished: opening a task
     // whose loop ended an hour ago must not toast.

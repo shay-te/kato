@@ -229,6 +229,31 @@ class PlanQueueRouteTests(unittest.TestCase):
         self._proposed()
         self.assertEqual(self._post('/api/sessions/T-1/plan-queue').status_code, 409)  # one at a time
 
+    # The operator says how to split plan.md before the split ("not millions
+    # of tiny tasks"): the plan keeps it and every request for the split carries it.
+    def test_the_operators_split_instructions_reach_the_plan_and_the_split_request(self) -> None:
+        self.assertEqual(
+            self._post('/api/sessions/T-1/plan-queue', {'split_instructions': ['at most 3']}).status_code, 400,
+        )
+        response = self._post('/api/sessions/T-1/plan-queue', {'split_instructions': 'At most 3 tasks.'})
+        self.assertEqual(response.status_code, 202, response.get_json())
+        plan_id = response.get_json()['plan_id']
+        self.assertEqual(response.get_json()['split_instructions'], 'At most 3 tasks.')
+        self.assertTrue(wait_until(lambda: self.queue.get(plan_id).status == PlanStatus.PROPOSED))
+        self.assertIn('At most 3 tasks.', self.queue._proposals._proposer.prompts[0])
+        self.assertEqual(self.client.get(f'/api/plan-queues/{plan_id}').get_json()['split_instructions'],
+                         'At most 3 tasks.')
+
+    def test_the_boxs_limit_is_the_servers(self) -> None:
+        # One limit in two languages: the box must never let the operator type
+        # instructions the server then refuses.
+        import re
+        from plan_queue_core_lib.plan_queue_core_lib.service import MAX_SPLIT_INSTRUCTIONS_CHARS
+        pref = (Path(__file__).resolve().parents[1] / 'ui' / 'src' / 'components' / 'planQueue'
+                / 'planSplitInstructionsPref.js')
+        found = re.search(r'MAX_SPLIT_INSTRUCTIONS_CHARS = (\d+);', pref.read_text(encoding='utf-8'))
+        self.assertEqual(int(found.group(1)), MAX_SPLIT_INSTRUCTIONS_CHARS)
+
     def test_an_empty_plan_file_is_no_plan(self) -> None:
         (self.root / 'ws' / 'T-1' / 'plan.md').write_text('   ', encoding='utf-8')
         self.assertEqual(self._post('/api/sessions/T-1/plan-queue').status_code, 400)

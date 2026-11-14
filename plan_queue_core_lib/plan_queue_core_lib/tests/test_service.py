@@ -12,6 +12,7 @@ from plan_queue_core_lib.plan_queue_core_lib.graph import StepDraft
 from plan_queue_core_lib.plan_queue_core_lib.service import (
     MAX_FEEDBACK_CHARS,
     MAX_PLAN_CHARS,
+    MAX_SPLIT_INSTRUCTIONS_CHARS,
     PlanQueueService,
 )
 from plan_queue_core_lib.plan_queue_core_lib.store import PlanQueueStore
@@ -80,6 +81,28 @@ class ServiceTests(unittest.TestCase):
             with self.assertRaises(PlanQueueError) as caught:
                 self.service.propose('SRC-1', **case)
             self.assertEqual(caught.exception.kind, ErrorKind.INVALID)
+
+    def test_the_operators_split_instructions_are_kept_on_the_plan(self) -> None:
+        plan = self.service.propose('SRC-1', plan_markdown='# The plan', repository_ids=['api', 'web'],
+                                    split_instructions='  At most 3 tasks.\n')
+        self.assertEqual(plan.split_instructions, 'At most 3 tasks.')
+        self.assertTrue(wait_until(lambda: self.service.get(plan.plan_id).status == PlanStatus.PROPOSED))
+        self.assertEqual(self.service.get(plan.plan_id).split_instructions, 'At most 3 tasks.')
+
+    def test_split_instructions_too_long_or_for_a_split_written_as_files_are_refused(self) -> None:
+        with self.assertRaises(PlanQueueError) as caught:
+            self.service.propose('SRC-1', plan_markdown='p', repository_ids=['api'],
+                                 split_instructions='x' * (MAX_SPLIT_INSTRUCTIONS_CHARS + 1))
+        self.assertEqual(caught.exception.kind, ErrorKind.INVALID)
+        self.assertIn('too long', str(caught.exception))
+        from plan_queue_core_lib.plan_queue_core_lib.data.plan import SplitFile
+        with self.assertRaises(PlanQueueError) as caught:
+            self.service.propose('SRC-1', plan_markdown='', repository_ids=['api'],
+                                 split_files=[SplitFile('split/01-a.md', 'do a'), SplitFile('split/02-b.md', 'do b')],
+                                 split_instructions='merge them')
+        self.assertEqual(caught.exception.kind, ErrorKind.INVALID)
+        self.assertIn('kept as written', str(caught.exception))
+        self.assertIsNone(self.service.plan_for_source('SRC-1'))
 
     def test_the_host_can_refuse_a_proposal(self) -> None:
         self.service._can_propose = lambda task_id: f'{task_id} has no clone'

@@ -184,6 +184,10 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
         workspace_manager = app.config.get('WORKSPACE_MANAGER')
         record = workspace_manager.get(task_id) if workspace_manager is not None else None
         split_folder = body.get('split_folder')
+        # How the operator wants plan.md split, in their own words (optional).
+        instructions = body.get('split_instructions') or ''
+        if not isinstance(instructions, str):
+            return jsonify({'error': '"split_instructions" must be text'}), 400
         split_files = []
         if split_folder:
             # The operator's own split: its files become the steps as written;
@@ -206,6 +210,7 @@ def register_plan_queue_routes(app: Flask, *, effort_levels: Callable[[], list[s
             source_summary=str(getattr(record, 'task_summary', '') or ''),
             model=model,
             split_files=split_files,
+            split_instructions=instructions,
         ), 202)
 
     @app.post('/api/plan-queues/<plan_id>/revise')

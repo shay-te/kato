@@ -14778,6 +14778,44 @@ button.settings-prompt-editor-head {
   color: #c8c8cd;
 }
 
+/* How the operator wants plan.md split: a label, the box, what it does. */
+.plan-split-instructions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plan-split-instructions-label {
+  color: #c8c8cd;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-split-instructions textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+/* While the agent splits: what the operator asked for, quoted back. */
+.plan-split-instructions-sent {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 2px solid #525252;
+  color: #c8c8cd;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.plan-split-instructions-sent-label {
+  color: #a3a3a3;
+  font-weight: 600;
+}
+
 .plan-queue-error {
   margin: 0;
   color: #f87171;
@@ -15057,7 +15095,8 @@ button.settings-prompt-editor-head {
 
 .plan-step-title-input,
 .plan-step-brief textarea,
-.plan-proposal-revise textarea {
+.plan-proposal-revise textarea,
+.plan-split-instructions textarea {
   padding: 6px 8px;
   background: #2a2a2a;
   border: 1px solid rgba(255, 255, 255, 0.06);

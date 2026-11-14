@@ -19,6 +19,12 @@ import PlanProposal from './PlanProposal.jsx';
 import { PLAN_STATUS_TEXT, isBoardStatus } from './planQueueHelpers.js';
 import { planAction } from './planQueueActions.js';
 import { planQueueChanges } from './planQueueViewStore.js';
+import {
+  MAX_SPLIT_INSTRUCTIONS_CHARS,
+  readSplitInstructions,
+  useSplitInstructions,
+  writeSplitInstructions,
+} from './planSplitInstructionsPref.js';
 
 // The split happens in the task's chat — the operator watches it there and
 // tells the agent what to change; the tab shows the result.
@@ -73,13 +79,18 @@ export default function PlanQueueView({ taskId, onOpenTask = null }) {
     setStartedId(body.plan_id);
     onPlan(body);
   };
+  // The operator's split instructions go with a split of plan.md, read at the
+  // click (a split written as files is kept exactly as written).
+  const request = (splitFolder) => ({
+    splitFolder, splitInstructions: splitFolder ? '' : readSplitInstructions(),
+  });
   const propose = (splitFolder = '') => run(
-    () => proposePlanQueue(taskId, { splitFolder }), 'The plan was not split', started,
+    () => proposePlanQueue(taskId, request(splitFolder)), 'The plan was not split', started,
   );
   // From a failed split: throw it away (it created nothing) and start again.
   const startOver = (splitFolder = '') => run(async () => {
     const dropped = await discardPlanQueue(plan.plan_id);
-    return dropped?.ok ? proposePlanQueue(taskId, { splitFolder }) : dropped;
+    return dropped?.ok ? proposePlanQueue(taskId, request(splitFolder)) : dropped;
   }, 'The plan was not split', started);
 
   let content;
@@ -94,6 +105,12 @@ export default function PlanQueueView({ taskId, onOpenTask = null }) {
       <div className="plan-queue-start">
         <p role="status">{PLAN_STATUS_TEXT.proposing}</p>
         <p className="plan-queue-note">{IN_CHAT_NOTE}</p>
+        {plan.split_instructions ? (
+          <blockquote className="plan-split-instructions-sent" aria-label="How you asked for it to be split">
+            <span className="plan-split-instructions-sent-label">How you asked for it to be split</span>
+            {plan.split_instructions}
+          </blockquote>
+        ) : null}
         <button type="button" className="plan-action is-danger" disabled={busy}
           data-tooltip="Stop waiting for this split. The agent's chat is not stopped — use the chat's Stop for that."
           onClick={() => run(() => controlPlanQueue(plan.plan_id, 'stop'), 'The proposal was not cancelled', onPlan)}>
@@ -163,7 +180,7 @@ function SplitStart({ folders, busy, onPropose, intro = '' }) {
   return (
     <div className="plan-queue-start">
       <p>
-        {intro || 'Split this task\'s plan into small tasks that wait for each other. You review the '
+        {intro || 'Split this task\'s plan into tasks that wait for each other. You review the '
           + 'tasks and approve them like a plan before anything starts.'}
       </p>
       {folders.map((folder) => (
@@ -180,11 +197,36 @@ function SplitStart({ folders, busy, onPropose, intro = '' }) {
           </span>
         </div>
       ))}
+      <SplitInstructions disabled={busy} />
       <button type="button" className={cx('plan-action', !folders.length && 'is-primary')}
-        data-tooltip="The agent reads plan.md in the chat and proposes the tasks and their order."
+        data-tooltip="The agent reads plan.md in the chat and proposes the tasks and their order, the way you described above."
         disabled={busy} onClick={() => onPropose('')}>
         Propose a split of plan.md
       </button>
     </div>
+  );
+}
+
+// How the operator wants plan.md split, before the agent splits it: the split
+// follows it over kato's own rules on how to cut the work. Remembered for the
+// next split (planSplitInstructionsPref), and always on screen here.
+function SplitInstructions({ disabled }) {
+  const text = useSplitInstructions();
+  return (
+    <label className="plan-split-instructions" htmlFor="plan-split-instructions">
+      <span className="plan-split-instructions-label">How to split it <span className="plan-queue-note">(optional)</span></span>
+      <textarea
+        id="plan-split-instructions"
+        rows={3}
+        value={text}
+        maxLength={MAX_SPLIT_INSTRUCTIONS_CHARS}
+        disabled={disabled}
+        placeholder={'e.g. At most 4 tasks. One task per repository. Keep the database migration in its own task.'}
+        onChange={(event) => writeSplitInstructions(event.target.value)}
+      />
+      <span className="plan-queue-note">
+        The agent follows this over its own rules on how to cut the work. Kept for your next split.
+      </span>
+    </label>
   );
 }

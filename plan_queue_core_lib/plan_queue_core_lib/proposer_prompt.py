@@ -74,16 +74,20 @@ def build_propose_prompt(
     feedback: str = '',
     problem: str = '',
     per_step_repositories: bool = True,
+    instructions: str = '',
 ) -> str:
     """The proposer's instructions.
 
     ``wrapped_plan`` is the plan text already framed as untrusted by the host.
     ``previous_steps`` + ``feedback`` turn this into a revision of an earlier
     split; ``problem`` is why the last reply could not be used, so the next
-    one can fix exactly that.
+    one can fix exactly that. ``instructions`` is how the operator wants it
+    split, in their own words: it overrides the default rules on how to cut it.
     """
     parts = [
-        f'Split the approved plan "{plan_title}" into small, separately reviewable '
+        # Not "small" tasks: the word pulled against "prefer fewer, meaningful
+        # tasks" below, and splits came back as many tiny tasks.
+        f'Split the approved plan "{plan_title}" into separately reviewable '
         'tasks. Each task becomes its own change, reviewed and merged on its own. '
         'Read the code as much as you need to split well; do not change anything.',
         '',
@@ -106,6 +110,14 @@ def build_propose_prompt(
             '- "repositories" lists only repositories from the list above; leave it empty '
             'to mean all of them.',
         )
+    if instructions.strip():
+        parts += [
+            '',
+            'How the operator wants it split, in their own words. Follow this; where it '
+            'disagrees with the rules above, it wins (only the answer\'s format and the '
+            f'limit of {MAX_STEPS} tasks still hold):',
+            instructions.strip(),
+        ]
     previous = [_draft_dict(draft, per_step=per_step_repositories) for draft in previous_steps]
     example = _example(_FORMAT_EXAMPLE, per_step_repositories)
     return '\n'.join(parts + _closing(guidance, previous, feedback, problem, example))

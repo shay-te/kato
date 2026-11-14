@@ -64,6 +64,7 @@ import {
 import { toast, toastStore } from '../../stores/toastStore.js';
 import PlanQueueButton from './PlanQueueButton.jsx';
 import PlanQueueView from './PlanQueueView.jsx';
+import { _resetSplitInstructions } from './planSplitInstructionsPref.js';
 import PlanQueueTabBadge from './PlanQueueTabBadge.jsx';
 import { planQueueChanges, planQueueView } from './planQueueViewStore.js';
 
@@ -116,6 +117,8 @@ function serve(detail, state = detail.status) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.removeItem('kato.planSplitInstructions.v1');
+  _resetSplitInstructions();
   fetchPlanQueues.mockResolvedValue({ plans: [] });
   fetchPlanQueue.mockResolvedValue(plan());
   fetchPlanQueueSplitFolders.mockResolvedValue({ folders: [] });
@@ -214,7 +217,45 @@ describe('PlanQueueView — before a split exists', () => {
 
     expect(await screen.findByText(/splitting the plan in this task's chat/)).toBeInTheDocument();
     expect(screen.getByText(/tell the agent there what to change/)).toBeInTheDocument();
-    expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: '' });
+    expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: '', splitInstructions: '' });
+  });
+
+  // "Instead of millions of tiny tasks": the operator says how to split it
+  // before the agent does, and it is remembered for the next split.
+  test('the operator says how to split plan.md; it goes with the split and is quoted back', async () => {
+    proposePlanQueue.mockReturnValue(ok(plan({ status: 'proposing', steps: [] })));
+    fetchPlanQueue.mockResolvedValue(plan({
+      status: 'proposing', steps: [], split_instructions: 'At most 3 tasks, one per repository.',
+    }));
+    const { unmount } = render(<PlanQueueView taskId="UNA-1" />);
+    const box = screen.getByRole('textbox', { name: /How to split it/ });
+    expect(box).toHaveValue('');
+    expect(box).toHaveAttribute('maxLength', '4000');
+    fireEvent.change(box, { target: { value: 'At most 3 tasks, one per repository.' } });
+    unmount();
+
+    // A tab switch (or a reload, or the next task) keeps what was typed.
+    render(<PlanQueueView taskId="UNA-1" />);
+    expect(screen.getByRole('textbox', { name: /How to split it/ })).toHaveValue('At most 3 tasks, one per repository.');
+    fireEvent.click(screen.getByRole('button', { name: 'Propose a split of plan.md' }));
+
+    expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', {
+      splitFolder: '', splitInstructions: 'At most 3 tasks, one per repository.',
+    });
+    const quoted = await screen.findByRole('blockquote', { name: 'How you asked for it to be split' });
+    expect(quoted).toHaveTextContent('At most 3 tasks, one per repository.');
+  });
+
+  test('a split written as files is kept as written: no instructions go with it', async () => {
+    fetchPlanQueueSplitFolders.mockResolvedValue({ folders: [{ path: 'tasks', files: 3, context: '' }] });
+    proposePlanQueue.mockReturnValue(ok(plan({ status: 'proposing', steps: [] })));
+    fetchPlanQueue.mockResolvedValue(plan({ status: 'proposing', steps: [] }));
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.change(screen.getByRole('textbox', { name: /How to split it/ }), { target: { value: 'merge them' } });
+    fireEvent.click(await screen.findByRole('button', { name: 'Use the split in tasks/' }));
+    await waitFor(() => expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: 'tasks', splitInstructions: '' }));
+    expect(await screen.findByText(/splitting the plan in this task's chat/)).toBeInTheDocument();
+    expect(screen.queryByRole('blockquote')).toBeNull();
   });
 
   test('a proposal can be cancelled while it runs', async () => {
@@ -252,7 +293,7 @@ describe('PlanQueueView — before a split exists', () => {
     expect(screen.getByText('Or start over:')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Use the split in tasks/' }));
 
-    await waitFor(() => expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: 'tasks' }));
+    await waitFor(() => expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: 'tasks', splitInstructions: '' }));
     expect(discardPlanQueue.mock.invocationCallOrder[0]).toBeLessThan(proposePlanQueue.mock.invocationCallOrder[0]);
     expect(await screen.findByText(/splitting the plan in this task's chat/)).toBeInTheDocument();
   });
@@ -297,7 +338,7 @@ describe('PlanQueueView — before a split exists', () => {
 
     fireEvent.click(useFolder);
 
-    await waitFor(() => expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: 'tasks' }));
+    await waitFor(() => expect(proposePlanQueue).toHaveBeenCalledWith('UNA-1', { splitFolder: 'tasks', splitInstructions: '' }));
     expect(await screen.findByText(/splitting the plan in this task's chat/)).toBeInTheDocument();
   });
 

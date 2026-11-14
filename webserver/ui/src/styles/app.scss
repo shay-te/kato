@@ -14589,6 +14589,37 @@ button.settings-prompt-editor-head {
   color: $C-NEUTRAL-79;
 }
 
+/* How the operator wants plan.md split: a label, the box, what it does. */
+.plan-split-instructions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: $SPACE-4;
+}
+
+.plan-split-instructions-label { color: $C-NEUTRAL-79; font-size: $TEXT-12; font-weight: 600; }
+
+.plan-split-instructions textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+/* While the agent splits: what the operator asked for, quoted back. */
+.plan-split-instructions-sent {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: $SPACE-2;
+  margin: 0;
+  padding: $SPACE-6 $SPACE-10;
+  border-left: 2px solid $C-NEUTRAL-32;
+  color: $C-NEUTRAL-79;
+  font-size: $TEXT-12;
+  white-space: pre-wrap;
+}
+
+.plan-split-instructions-sent-label { color: $C-NEUTRAL-64; font-weight: 600; }
+
 .plan-queue-error { margin: 0; color: $C-RED-71; font-size: $TEXT-12; }
 .plan-queue-note { margin: 0; color: $C-NEUTRAL-64; font-size: $TEXT-12; }
 .plan-queue-again { display: flex; justify-content: flex-end; }
@@ -14804,7 +14835,8 @@ button.settings-prompt-editor-head {
 
 .plan-step-title-input,
 .plan-step-brief textarea,
-.plan-proposal-revise textarea {
+.plan-proposal-revise textarea,
+.plan-split-instructions textarea {
   padding: $SPACE-6 $SPACE-8;
   background: $C-NEUTRAL-16;
   border: 1px solid $C-NEUTRAL-100-A06;

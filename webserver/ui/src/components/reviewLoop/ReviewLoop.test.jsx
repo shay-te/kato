@@ -20,6 +20,8 @@ import { _resetReviewLoopRounds, readReviewLoopRounds } from './reviewLoopRounds
 import { _resetReviewLoopStages, readReviewLoopStages } from './reviewLoopStagesPref.js';
 import { _resetReviewLoopModel, readReviewLoopModel, writeReviewLoopModel } from './reviewLoopModelPref.js';
 import { toastStore } from '../../stores/toastStore.js';
+import { _resetReviewLoopPending } from '../../stores/reviewLoopPendingStore.js';
+import { useSessions } from '../../hooks/useSessions.js';
 import { forgetLoopExpansion } from '../../utils/reviewLoopExpandMemory.js';
 
 const ROUNDS_KEY = 'kato.reviewLoopRounds.v1';
@@ -58,6 +60,9 @@ function round(number, overrides = {}) {
 function fakeKato() {
   const kato = {
     loop: null, artifacts: {}, requests: [], startBodies: [],
+    // ``listed``: the loop the 5-second session list carries. ``hold``: a
+    // promise Start / Resume wait on before kato answers them.
+    listed: null, hold: null,
     // The chat's model catalogue, and the reviewer's own default — pinned,
     // so not one of the catalogue's aliases.
     models: [{ id: 'opus', label: 'Opus 5.5', default: true }, { id: 'sonnet', label: 'Sonnet 5.5' }],
@@ -73,12 +78,15 @@ function fakeKato() {
       return text === undefined ? respond(404, { error: 'no such round or artifact' }) : respond(200, { text });
     }
     if (url.endsWith('/review-loop/stop')) { return respond(200, { stopped: true }); }
+    if (url === '/api/sessions') { return respond(200, [session(kato.listed)]); }
     if (url.endsWith('/review-loop/resume')) {
+      if (kato.hold) { await kato.hold; }
       if (!kato.loop?.resume) { return respond(409, { error: 'there is nothing to resume' }); }
       const resumed = summary({ resumes: 1, resume_note: kato.loop.resume, resume: '' });
       return respond(202, { loop: { ...resumed, rounds: kato.loop.rounds } });
     }
     if (url.endsWith('/review-loop') && method === 'POST') {
+      if (kato.hold) { await kato.hold; }
       const body = JSON.parse(init.body || '{}');
       kato.startBodies.push(body);
       const started = summary({ round: 1, phase: 'reviewing', max_rounds: body.max_rounds || 5 });
@@ -103,6 +111,7 @@ beforeEach(() => {
   _resetReviewLoopModel();
   // What one test opened must not decide what the next one sees first.
   forgetLoopExpansion('UNA-1');
+  _resetReviewLoopPending();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
@@ -419,6 +428,110 @@ describe('ReviewLoopPane — where the loop is and every round', () => {
     expect(screen.getByText(/independent reviewer reads the whole change/)).toBeInTheDocument();
     expect(screen.getByText(/Pick how many rounds above, then Start/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument();
+  });
+});
+
+// Where a loop is rides the 5-second session list, so a click used to change
+// nothing on screen until kato answered AND the list was polled again (~3s).
+// Wired as the app wires it — the list from useSessions feeding every surface.
+describe('Start and Resume show at once — before kato answers or the list is polled again', () => {
+  function LiveTask() {
+    const { sessions } = useSessions();
+    const live = sessions.find((entry) => entry.task_id === 'UNA-1');
+    if (!live) { return null; }
+    return (
+      <>
+        <ReviewLoopChip loop={live.review_loop || null} taskId="UNA-1" />
+        <ReviewLoopButton session={live} />
+        <ReviewLoopPane session={live} onClose={() => {}} />
+      </>
+    );
+  }
+
+  function holdKatosAnswer() {
+    let release;
+    kato.hold = new Promise((done) => { release = done; });
+    return () => { kato.hold = null; release(); };
+  }
+
+  function newToasts() {
+    let list = [];
+    const unsubscribe = toastStore.subscribe((entries) => { list = entries; });
+    const old = new Set(list.map((entry) => entry.id));
+    return { titles: () => list.filter((entry) => !old.has(entry.id)).map((entry) => entry.title), unsubscribe };
+  }
+
+  test('Run again: starting the moment it is clicked, then kato\'s loop', async () => {
+    const clean = summary({ status: 'clean', phase: 'done', round: 2 });
+    kato.listed = clean;
+    kato.loop = { ...clean, rounds: [round(1), round(2)] };
+    const release = holdKatosAnswer();
+    render(<LiveTask />);
+    fireEvent.click(await screen.findByRole('button', { name: /run again/i }));
+
+    // kato has not answered, the list has not been polled again:
+    expect(screen.getByText('Starting the loop').closest('li')).toHaveClass('is-current');
+    expect(screen.getByText(/^1\/5 · starting/)).toBeInTheDocument(); // the header chip
+    expect(screen.getByRole('button', { name: /stop/i })).toBeDisabled(); // nothing to stop yet
+    expect(screen.queryByRole('button', { name: /run again/i })).toBeNull();
+    expect(screen.queryByText('Stages')).toBeNull();
+    // The last loop's rounds do not sit under the new one.
+    await waitFor(() => expect(kato.requests.filter((r) => r === 'GET /api/sessions/UNA-1/review-loop').length).toBe(2));
+    expect(screen.queryByText('Round 2')).toBeNull();
+
+    release();
+    expect(await screen.findByText('Reviewing the whole change')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /stop/i })).toBeEnabled();
+    expect(kato.startBodies).toEqual([{ ...DEFAULT_STAGES, max_rounds: 5 }]);
+  });
+
+  test('Resume: picking up the moment it is clicked', async () => {
+    const stopped = summary({ status: 'stopped', phase: 'done', resume: 'run round 2’s review again' });
+    kato.listed = stopped;
+    kato.loop = { ...stopped, rounds: [round(1)] };
+    const release = holdKatosAnswer();
+    render(<LiveTask />);
+    fireEvent.click(await screen.findByRole('button', { name: /resume/i }));
+    expect(screen.getByText('Picking up where it stopped').closest('li')).toHaveClass('is-current');
+    expect(screen.queryByRole('button', { name: /resume/i })).toBeNull();
+    release();
+    expect(await screen.findByText('Fixing in the main chat')).toBeInTheDocument();
+  });
+
+  test('a refused Resume goes back to the loop as it was, and never says it finished', async () => {
+    const failed = summary({ status: 'failed', phase: 'done', resume: 'run round 2’s review again' });
+    kato.listed = failed;
+    kato.loop = { ...failed, resume: '', rounds: [] }; // resumed elsewhere meanwhile: 409
+    const release = holdKatosAnswer();
+    const toasts = newToasts();
+    render(<LiveTask />);
+    fireEvent.click(await screen.findByRole('button', { name: /resume/i }));
+    expect(screen.getByText('Picking up where it stopped')).toBeInTheDocument();
+
+    release();
+    await waitFor(() => expect(toasts.titles()).toContain('Couldn’t resume the review loop'));
+    expect(screen.getByRole('button', { name: /resume/i })).toBeInTheDocument();
+    expect(screen.queryByText('Picking up where it stopped')).toBeNull();
+    expect(toasts.titles()).not.toContain('Review loop finished');
+    toasts.unsubscribe();
+  });
+
+  test('a refused Start goes back to the last loop', async () => {
+    const clean = summary({ status: 'clean', phase: 'done', round: 2 });
+    kato.listed = clean;
+    kato.loop = { ...clean, rounds: [] };
+    vi.stubGlobal('fetch', ((answer) => async (url, init = {}) => (
+      url.endsWith('/review-loop') && (init.method || '').toUpperCase() === 'POST'
+        ? { ok: false, status: 409, statusText: '', json: async () => ({ error: 'a review loop is already running' }) }
+        : answer(url, init)
+    ))(globalThis.fetch));
+    const toasts = newToasts();
+    render(<LiveTask />);
+    fireEvent.click(await screen.findByRole('button', { name: /run again/i }));
+    await waitFor(() => expect(toasts.titles()).toContain('Couldn’t start the review loop'));
+    expect(screen.getByRole('button', { name: /run again/i })).toBeInTheDocument();
+    expect(screen.queryByText('Starting the loop')).toBeNull();
+    toasts.unsubscribe();
   });
 });
 

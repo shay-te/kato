@@ -44,7 +44,8 @@ export default function ReviewLoopPane({ session, onClose }) {
   const action = running ? (
     <>
       <ReviewLoopModelName model={summary?.model || ''} />
-      <button type="button" className="review-loop-pane-action is-stop" onClick={stop} disabled={stopping}>
+      {/* Until kato answers the click there is no loop on its side to stop. */}
+      <button type="button" className="review-loop-pane-action is-stop" onClick={stop} disabled={stopping || busy}>
         <BusyIcon busy={stopping} idle="stop" />
         <span>Stop</span>
       </button>

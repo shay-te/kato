@@ -908,10 +908,14 @@ function taskPlanQueueUrl(taskId, suffix = '') {
 // Ask an agent to split the task's plan.md — or, with ``splitFolder``, to take
 // the split the operator already wrote as files in that folder of the task
 // (202 with the new plan).
-export function proposePlanQueue(taskId, { model = '', splitFolder = '' } = {}) {
+// ``splitInstructions``: how the operator wants plan.md split, in their own
+// words (a split written as files is kept as written, so never with one).
+export function proposePlanQueue(taskId, { model = '', splitFolder = '', splitInstructions = '' } = {}) {
   const body = {};
   if (model) { body.model = model; }
   if (splitFolder) { body.split_folder = splitFolder; }
+  const instructions = String(splitInstructions || '').trim();
+  if (instructions && !splitFolder) { body.split_instructions = instructions; }
   return postEnvelope(taskPlanQueueUrl(taskId), body);
 }
 

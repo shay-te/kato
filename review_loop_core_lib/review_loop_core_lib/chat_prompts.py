@@ -107,9 +107,12 @@ A test that ALREADY FAILED the same way before this task — on the branch this
 task starts from, without this task's change — goes in `already_failing` (test
 name, the reason, and how you checked: for example, the same failure with this
 task's changes stashed), not in `failures`, and does not make `passed` false.
-Only a test you actually checked that way: one you did not check is a failure,
-and so is any test that names a file this task changed. If the project has no
-tests, say so in `summary` and set `passed` to true.''', wording)
+Only a test you actually checked that way: one you did not check is a failure.
+A test whose own test file this task added or changed is never already failing:
+it is this task's test. A test that only imports or exercises code this task
+changed DOES go in `already_failing` when it fails exactly the same way with
+this task's changes stashed: that check is what shows the task did not cause it.
+If the project has no tests, say so in `summary` and set `passed` to true.''', wording)
 
 
 def build_tests_fix_prompt(
@@ -129,9 +132,10 @@ the test and say why. A test that cannot even start here for a reason no change
 to this task's code can fix (a package or sibling library not installed in this
 folder, a service not running) is not yours to fix: do not install or fake
 anything — say so, and the next run lists it apart. Neither is a test that
-already failed the same way before this task, on the branch it starts from:
-check that (for example, with this task's changes stashed), say so, and the
-next run lists it apart too. Run the tests again before
+already failed the same way before this task, on the branch it starts from,
+even one that imports code this task changed: check that (for example, with
+this task's changes stashed), say so, and the next run lists it apart too.
+Run the tests again before
 you finish. The loop runs them again when you are done, and
 no further review starts until they pass: if you cannot make them pass, say
 exactly what blocks you. Do not commit, push or run git.''', wording)

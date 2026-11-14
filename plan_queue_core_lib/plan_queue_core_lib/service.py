@@ -72,6 +72,7 @@ from plan_queue_core_lib.plan_queue_core_lib.ticking import PlanTicker, apply_re
 DEFAULT_TICK_SECONDS = 5.0
 MAX_PLAN_CHARS = 200_000
 MAX_FEEDBACK_CHARS = 8000
+MAX_SPLIT_INSTRUCTIONS_CHARS = 4000
 
 
 class PlanQueueService(object):
@@ -346,16 +347,32 @@ class PlanQueueService(object):
         source_summary: str = '',
         model: str = '',
         split_files: Sequence[SplitFile] = (),
+        split_instructions: str = '',
     ) -> Plan:
         """Start proposing a split of ``plan_markdown`` — or, with
         ``split_files``, a mapping of the split the operator already wrote (one
-        step per file; ``plan_markdown`` is then the split's overview, if any)."""
+        step per file; ``plan_markdown`` is then the split's overview, if any).
+
+        ``split_instructions``: how the operator wants the plan split, in their
+        own words. Only for a split of the plan — a split written as files is
+        kept exactly as written."""
         text = str(plan_markdown or '').strip()
         files = _checked_split_files(split_files)
+        instructions = str(split_instructions or '').strip()
         if not text and not files:
             raise PlanQueueError('the task has no plan to split', ErrorKind.INVALID)
         if len(text) > MAX_PLAN_CHARS:
             raise PlanQueueError('the plan is too large to split', ErrorKind.INVALID)
+        if len(instructions) > MAX_SPLIT_INSTRUCTIONS_CHARS:
+            raise PlanQueueError(
+                f'the split instructions are too long (at most {MAX_SPLIT_INSTRUCTIONS_CHARS} characters)',
+                ErrorKind.INVALID,
+            )
+        if instructions and files:
+            raise PlanQueueError(
+                'a split written as files is kept as written: split instructions are for splitting the plan',
+                ErrorKind.INVALID,
+            )
         repositories = [str(repo) for repo in repository_ids if str(repo)]
         if not repositories:
             raise PlanQueueError('the task has no repositories', ErrorKind.INVALID)
@@ -370,7 +387,7 @@ class PlanQueueService(object):
         plan = Plan.new(
             source_task_id, plan_markdown=text, repository_ids=repositories,
             now=self._clock(), title=title, source_summary=source_summary, model=model,
-            split_files=files,
+            split_files=files, split_instructions=instructions,
         )
         plan = self._registry.add(plan)
         self._proposals.start(plan)

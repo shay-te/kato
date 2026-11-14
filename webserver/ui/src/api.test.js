@@ -12,6 +12,7 @@ import {
   fetchModels,
   fetchPendingPermissions,
   handOverTask,
+  proposePlanQueue,
   refreshAgentBackends,
   postChatMessage,
   updateTaskSource,
@@ -472,6 +473,19 @@ test('handOverTask: their kato waits for them unless the call says false', async
   assert.equal(JSON.parse(calls[1].init.body).wait_for_them, false);
   assert.equal(JSON.parse(calls[2].init.body).wait_for_them, true);
   assert.deepEqual(await handOverTask('', 'jane'), { ok: false, error: 'no task id' });
+});
+
+test('proposePlanQueue: split instructions go only with a split of plan.md', async () => {
+  const calls = _stubFetch({ ok: true, status: 202, json: async () => ({ plan_id: 'p1' }) });
+  await proposePlanQueue('UNA-1', { splitInstructions: '  At most 3 tasks.\n' });
+  await proposePlanQueue('UNA-1', { splitInstructions: '   ' });
+  await proposePlanQueue('UNA-1', { splitFolder: 'tasks', splitInstructions: 'merge them' });
+  await proposePlanQueue('UNA-1');
+  assert.equal(calls[0].url, '/api/sessions/UNA-1/plan-queue');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { split_instructions: 'At most 3 tasks.' });
+  assert.deepEqual(JSON.parse(calls[1].init.body), {});
+  assert.deepEqual(JSON.parse(calls[2].init.body), { split_folder: 'tasks' });  // kept as written
+  assert.deepEqual(JSON.parse(calls[3].init.body), {});
 });
 
 test('updateTaskSource: one repository goes in the body; none means every one', async () => {

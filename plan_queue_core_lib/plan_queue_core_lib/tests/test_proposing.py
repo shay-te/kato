@@ -97,6 +97,31 @@ class ProposingTests(unittest.TestCase):
         self.assertIn('"old"', proposer.prompts[0])
         self.assertIn('fewer steps', proposer.prompts[0])
 
+    # "Instead of millions of tiny tasks": the operator says how to split it
+    # before the split, and every request for it carries that — the first,
+    # the repair after a bad reply, and a revision.
+    def test_the_operators_split_instructions_ride_every_request(self) -> None:
+        proposer = FakeProposer(BAD, GOOD)
+        plan = self._run(self._worker(proposer), self._plan(split_instructions='At most 3 tasks, one per repo.'))
+        self.assertEqual(plan.status, PlanStatus.PROPOSED)
+        for prompt in proposer.prompts:  # the first ask and the repair
+            self.assertIn('How the operator wants it split, in their own words.', prompt)
+            self.assertIn('it wins (only the answer\'s format and the limit of 25 tasks still hold):\n'
+                          'At most 3 tasks, one per repo.', prompt)
+        revising = FakeProposer(GOOD)
+        self._run(self._worker(revising), plan, feedback='merge the last two')
+        self.assertIn('At most 3 tasks, one per repo.', revising.prompts[0])
+        self.assertIn('merge the last two', revising.prompts[0])
+
+    def test_no_instructions_no_section_and_never_small_tasks(self) -> None:
+        proposer = FakeProposer(GOOD)
+        self._run(self._worker(proposer), self._plan(split_instructions='   '))
+        self.assertNotIn('How the operator wants it split', proposer.prompts[0])
+        # "small" pulled against "prefer fewer, meaningful tasks": splits came back tiny.
+        self.assertIn('into separately reviewable tasks', proposer.prompts[0])
+        self.assertNotIn('into small', proposer.prompts[0])
+        self.assertIn('Prefer fewer, meaningful tasks over many tiny ones.', proposer.prompts[0])
+
     def test_cancelling_drops_the_result(self) -> None:
         gate = threading.Event()
         worker = self._worker(FakeProposer(GOOD, gate=gate))

@@ -145,6 +145,51 @@ export function isReviewLoopRunning(loop) {
   return loop?.status === REVIEW_LOOP_STATUS.RUNNING;
 }
 
+// What a loop looks like from the operator's click until kato answers
+// (stores/reviewLoopPendingStore.js): running, with no phase yet — which every
+// surface words as "starting". kato never sends a running loop without one.
+export function startingReviewLoop({ maxRounds, stages = {}, model = '' }, nowSeconds) {
+  return {
+    loop_id: '',
+    status: REVIEW_LOOP_STATUS.RUNNING,
+    phase: '',
+    round: 1,
+    max_rounds: maxRounds,
+    started_at: nowSeconds,
+    phase_started_at: nowSeconds,
+    finished_at: 0,
+    waiting_for: '',
+    reason: '',
+    counts: null,
+    ...stages,
+    model,
+    self_check_turn: 0,
+    sweep: false,
+    rechecked_files: 0,
+    round_reviewed: false,
+    tests_failing: false,
+    tests_fixes: 0,
+    resumes: 0,
+    resume_note: '',
+    resume: '',
+  };
+}
+
+// The same, for Resume: the SAME loop, running again, its next step unknown.
+export function resumingReviewLoop(loop, nowSeconds) {
+  return {
+    ...loop,
+    status: REVIEW_LOOP_STATUS.RUNNING,
+    phase: '',
+    phase_started_at: nowSeconds,
+    finished_at: 0,
+    waiting_for: '',
+    reason: '',
+    resume: '',
+    resuming: true,
+  };
+}
+
 // The loop's independent reviewer is reading the change right now — the one
 // phase where nothing of it shows in the chat (agentStatus reads this).
 export function isReviewLoopReviewing(loop) {
@@ -376,6 +421,11 @@ const CURRENT_STEP = {
 // Empty for a loop that is not running.
 export function reviewLoopSteps(loop, nowSeconds) {
   if (!isReviewLoopRunning(loop)) { return []; }
+  if (!loop.phase) {
+    // Clicked, kato not answered yet (startingReviewLoop / resumingReviewLoop).
+    const label = loop.resuming ? 'Picking up where it stopped' : 'Starting the loop';
+    return trackSteps(['start'], { start: label }, 0, loop, nowSeconds);
+  }
   if (loop.phase === REVIEW_LOOP_PHASE.SELF_CHECK) { return selfCheckSteps(loop, nowSeconds); }
   if (loop.tests_failing) { return testsFixSteps(loop, nowSeconds); }
   if (loop.phase === REVIEW_LOOP_PHASE.VERIFYING) { return verifyingSteps(loop, nowSeconds); }

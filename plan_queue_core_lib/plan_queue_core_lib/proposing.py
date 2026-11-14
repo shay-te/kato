@@ -167,6 +167,7 @@ class ProposalWorker(object):
             feedback=feedback,
             problem=problem,
             per_step_repositories=self._per_step_repositories,
+            instructions=plan.split_instructions,
         )
 
     def _record(self, started: Plan, proposal: SplitProposal | None, error: str) -> None:

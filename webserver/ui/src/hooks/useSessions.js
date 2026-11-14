@@ -1,6 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchSessionList } from '../api.js';
 import { reuseUnchanged } from '../utils/reuseUnchanged.js';
+import {
+  dropCaughtUpReviewLoops,
+  usePendingReviewLoops,
+  withPendingReviewLoops,
+} from '../stores/reviewLoopPendingStore.js';
 import { usePolling } from './usePolling.js';
 
 const REFRESH_INTERVAL_MS = 5000;
@@ -20,6 +25,10 @@ const taskIdOf = (session) => session?.task_id;
 // A poll that fails AFTER a good load deliberately leaves ``sessions`` alone:
 // showing the last known tabs beats blanking the strip because one tick
 // missed.
+//
+// A review loop the operator just started or resumed is laid over the polled
+// list until the poll catches up (stores/reviewLoopPendingStore.js), so every
+// surface that reads ``session.review_loop`` switches at the click.
 export function useSessions() {
   const [sessions, setSessions] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -40,5 +49,9 @@ export function useSessions() {
 
   usePolling(refresh, REFRESH_INTERVAL_MS);
 
-  return { sessions, refresh, loaded, reachable };
+  const pendingLoops = usePendingReviewLoops();
+  useEffect(() => { dropCaughtUpReviewLoops(sessions); }, [sessions]);
+  const shown = useMemo(() => withPendingReviewLoops(sessions, pendingLoops), [sessions, pendingLoops]);
+
+  return { sessions: shown, refresh, loaded, reachable };
 }
