@@ -27,6 +27,13 @@ from lid_awake_core_lib.lid_awake_core_lib.windows_crash_guard import (
 
 POWERSHELL = shutil.which('powershell') or shutil.which('pwsh')
 
+# A correct run of the watchdog ends in a second or two; this limit only catches
+# a hang. It was 20s, and a stale-heartbeat run timed out on a busy CI machine
+# while the watchdog had nothing to wait for: PowerShell's own start (its first
+# one builds caches) took the time. That first start now happens once, in
+# setUpClass, and every run gets a limit no healthy start comes near.
+FINISHES_WITHIN_SECONDS = 120
+
 
 class GuardTestCase(unittest.TestCase):
     def setUp(self):
@@ -142,6 +149,17 @@ class InstallTests(GuardTestCase):
 class RealWatchdogTests(GuardTestCase):
     """The real script in a real PowerShell, against a stand-in ``powercfg``."""
 
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        try:
+            subprocess.run(
+                [POWERSHELL, '-NoProfile', '-NonInteractive', '-Command', 'exit 0'],
+                capture_output=True, timeout=FINISHES_WITHIN_SECONDS, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            pass  # a PowerShell that cannot even start fails every test below, by name
+
     def setUp(self):
         super().setUp()
         self.calls = self.root / 'calls.txt'
@@ -160,7 +178,7 @@ class RealWatchdogTests(GuardTestCase):
             render_watchdog(self.heartbeat, self.identity.saved), encoding='utf-8',
         )
 
-    def _run(self, timeout=20):
+    def _run(self, timeout=FINISHES_WITHIN_SECONDS):
         return subprocess.run(
             [POWERSHELL, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
              '-File', str(self.identity.script)],
