@@ -49,6 +49,23 @@ class RepositoryIgnoredByConfigError(ValueError):
     """
 
 
+def git_host_settings_place(provider: str) -> str:
+    """Where an operator sets a git host's connection — never an env var name."""
+    return f'Settings → Git provider → {provider_label(provider)}'
+
+
+
+def _with_article(name: str) -> str:
+    """"a GitHub", "an Azure DevOps"."""
+    return f'{"an" if name[:1].upper() in "AEIOU" else "a"} {name}'
+
+def missing_bitbucket_email_message(repository_id: str) -> str:
+    return (
+        f'missing Bitbucket API email for repository {repository_id}; add your Atlassian '
+        f'account email in {git_host_settings_place("bitbucket")}'
+    )
+
+
 class PullRequestApiNotSetUp(ValueError):
     """The pull request API of a repository's host is not set up (no token, no
     address, an unknown host…). A settings problem with its own words, never
@@ -774,12 +791,12 @@ class RepositoryInventoryService(Service):
         if not remote_url:
             return (
                 f'{opening}: it is not in the repository list, so its git host is '
-                'unknown. Check that REPOSITORY_ROOT_PATH still finds it.'
+                'unknown. Check that the repositories folder in Settings → Repositories still finds it.'
             )
         host = urlparse(remote_web_base_url(remote_url)).hostname or 'its remote'
         return (
             f'{opening}: {host} is not a git host kato recognises. If it runs GitHub '
-            'or GitLab, set GITHUB_API_BASE_URL or GITLAB_API_BASE_URL to its API address.'
+            'or GitLab, set its API address in Settings → Git provider → GitHub or GitLab.'
         )
 
     def _resolved_pull_request_api_values(
@@ -870,21 +887,18 @@ class RepositoryInventoryService(Service):
     ) -> None:
         if not provider_base_url:
             raise PullRequestApiNotSetUp(
-                f'missing pull request API base URL for repository {repository_id}'
+                f'missing pull request API base URL for repository {repository_id}; '
+                f'set the API address in {git_host_settings_place(provider)}'
             )
         if token:
             if provider != 'bitbucket' or api_email:
                 return
-            raise PullRequestApiNotSetUp(
-                f'missing Bitbucket API email for repository {repository_id}'
-            )
-        # Settings is where an operator sets a token — never an env var name.
-        label = provider_label(provider)
+            raise PullRequestApiNotSetUp(missing_bitbucket_email_message(repository_id))
         raise PullRequestApiNotSetUp(
             missing_pull_request_token_message(
                 repository_id,
                 provider,
-                f'add a {label} token in Settings → Git provider → {label}',
+                f'add {_with_article(provider_label(provider))} token in {git_host_settings_place(provider)}',
             )
         )
 
@@ -916,11 +930,9 @@ class RepositoryInventoryService(Service):
             ('token', token),
         ) if not value]
         if missing:
-            raise PullRequestApiNotSetUp(self._incomplete_configuration_message(repository, missing))
+            raise PullRequestApiNotSetUp(self._incomplete_configuration_message(repository, missing, provider))
         if provider_base_url and 'bitbucket' in provider_base_url.lower() and not api_email:
-            raise PullRequestApiNotSetUp(
-                f'missing Bitbucket API email for repository {repository.id}'
-            )
+            raise PullRequestApiNotSetUp(missing_bitbucket_email_message(repository.id))
         config = OmegaConf.create(
             {
                 'provider': provider,
@@ -949,7 +961,7 @@ class RepositoryInventoryService(Service):
         return owner, repo_slug
 
     @staticmethod
-    def _incomplete_configuration_message(repository, missing: list[str]) -> str:
+    def _incomplete_configuration_message(repository, missing: list[str], provider: str = '') -> str:
         """Which part is missing, and — for an owner or name — the remote kato
         read them from (any user and password left out). The bare "incomplete
         configuration" left the operator nothing to check."""
@@ -957,11 +969,13 @@ class RepositoryInventoryService(Service):
             f'incomplete pull request configuration for repository {repository.id}: '
             f'no {", ".join(missing)}'
         )
+        if provider and {'token', 'pull request API address'} & set(missing):
+            message = f'{message}; set it in {git_host_settings_place(provider)}'
         if not {'owner', 'repository name'} & set(missing):
             return message
         remote_url = text_from_attr(repository, 'remote_url')
         if not remote_url:
-            return f'{message}. It has no remote kato knows: check that REPOSITORY_ROOT_PATH finds it.'
+            return f'{message}. It has no remote kato knows: check that Settings → Repositories finds it.'
         return f'{message}. kato could not read them from its remote {_without_credentials(remote_url)}.'
 
     def _review_url(self, repository, source_branch: str, destination_branch: str) -> str:

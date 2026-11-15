@@ -419,7 +419,11 @@ class PullRequestDataAccessIncompleteTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError) as caught:
             service._pull_request_data_access(repo)
-        self.assertEqual(str(caught.exception), 'incomplete pull request configuration for repository r: no token')
+        self.assertEqual(
+            str(caught.exception),
+            'incomplete pull request configuration for repository r: no token; '
+            'set it in Settings → Git provider → GitHub',
+        )
 
     def test_an_owner_and_name_missing_from_the_inventory_are_read_off_its_remote(self) -> None:
         # A repository listed by hand carries a remote but no owner or name.
@@ -451,7 +455,7 @@ class PullRequestDataAccessIncompleteTests(unittest.TestCase):
         service = _make_service()
         repo = SimpleNamespace(id='r', provider='github', provider_base_url='https://api.github.com',
                                owner='', repo_slug='', token='t', remote_url='')
-        with self.assertRaisesRegex(ValueError, 'no remote kato knows: check that REPOSITORY_ROOT_PATH finds it'):
+        with self.assertRaisesRegex(ValueError, 'no remote kato knows: check that Settings → Repositories finds it'):
             service._pull_request_data_access(repo)
 
     def test_raises_on_incomplete_config(self) -> None:

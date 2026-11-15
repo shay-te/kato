@@ -40,6 +40,14 @@ def _load_settings_into_env() -> None:
     if not isinstance(data, dict):
         return
     for key, value in data.items():
+        # An EMPTY value is unset, never exported — the same rule as the
+        # `kato up` launcher (scripts/_script_utils.layered_env; a test pins
+        # the two equal). The Settings form saves a cleared field as "", and
+        # omegaconf reads a set-but-empty var as "" instead of its default: a
+        # cleared JIRA_ISSUE_STATES stopped kato booting ("states must not be
+        # empty"), and an empty token hid the one a credential source gives.
+        if value is None or str(value) == "":
+            continue
         os.environ.setdefault(str(key), str(value))
 
 

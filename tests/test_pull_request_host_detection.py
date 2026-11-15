@@ -152,7 +152,7 @@ class HostDetectionTests(unittest.TestCase):
 
         self.assertIn('unable to determine pull request provider for repository api', str(caught.exception))
         self.assertIn('git.other.example', str(caught.exception))
-        self.assertIn('GITLAB_API_BASE_URL', str(caught.exception))
+        self.assertIn('Settings → Git provider → GitHub or GitLab', str(caught.exception))
 
     def test_a_secret_in_the_remote_never_reaches_the_message(self) -> None:
         repository = self.repository('https://bot:hunter2@git.other.example/team/api.git')
@@ -181,7 +181,7 @@ class HostDetectionTests(unittest.TestCase):
             service._prepare_pull_request_api(SimpleNamespace(id='gone', local_path='/somewhere'))
 
         self.assertIn('not in the repository list', str(caught.exception))
-        self.assertIn('REPOSITORY_ROOT_PATH', str(caught.exception))
+        self.assertIn('Settings → Repositories', str(caught.exception))
 
     # ----- a plain remote costs nothing -----
 

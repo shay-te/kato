@@ -1684,6 +1684,17 @@ warns naming both. A duplicate in a hand-written `repositories:` list still rais
 - Each core-lib has its own `tests/` folder inside it
 - Top-level `tests/` is for kato integration tests only
 - Key test files: `test_task_publisher.py`, `test_startup_validator.py`, `test_repository_connections_validator.py`, `test_review_comment_question_mode.py`
+- **A chain from Settings to a running client is proven END TO END, never only with stubs.**
+  `tests/test_git_hosts_end_to_end.py`: every git host (GitHub https + ssh, GitLab, Bitbucket, Azure DevOps) × every way
+  of signing in (pasted, "use my git login" through real `git credential fill`, environment, nothing set) × every way
+  kato starts (`kato up`'s launcher, the desktop sidecar, Test connection's child): the real settings file the form
+  saves (cleared fields as ""), the real launchers, main's first boot step, kato's real config and repository walk,
+  and `_prepare_pull_request_api` + the host's client. Test connection must answer exactly what the boot runs with.
+  Thousands of stubbed tests passed while "use my git login" never reached a client (KAN-1): each stubbed the step that
+  broke. A new git host, sign-in way or launcher goes into that matrix. Mutation-checked: a boot that skips the
+  source, a launcher that exports "", and an env-var name back in a message each fail it. The desktop sidecar's
+  loader skips empty values like the launcher's (`LaunchersAgreeTests` pins them equal). Every "not set up" message
+  names `git_host_settings_place(provider)` (Settings → Git provider → <host>), never an env var.
 - **Never hand a mock process to a real kill.** `int(MagicMock())` is 1: three tests sent SIGKILL to pid 1 and
   process GROUP 1, which killed GitHub's runner ("the hosted runner lost communication"). The kill helpers now
   refuse pid/group ≤ 1 (`process_liveness.kill_process_tree`, `streaming._process_group_of`); mock the kill anyway.
