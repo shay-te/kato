@@ -12,9 +12,15 @@ vi.mock('../api.js', () => ({
   fetchAllSettings: vi.fn(),
   updateAllSettings: vi.fn(),
   fetchDirectoryListing: vi.fn(),
+  fetchQuickStart: vi.fn(),
+  fetchQuickStartChecks: vi.fn(),
+  fetchAgentUpgradeStatus: vi.fn(),
 }));
 
-import { fetchTaskProviders, fetchSettings, fetchAllSettings } from '../api.js';
+import {
+  fetchTaskProviders, fetchSettings, fetchAllSettings, fetchQuickStart, fetchAgentUpgradeStatus,
+} from '../api.js';
+import { fireEvent } from '@testing-library/react';
 import SetupModeGate from './SetupModeGate.jsx';
 
 beforeEach(() => {
@@ -29,6 +35,14 @@ beforeEach(() => {
   fetchSettings.mockResolvedValue({
     ok: true,
     body: { repository_root_path: { value: '' } },
+  });
+  fetchAgentUpgradeStatus.mockResolvedValue({ state: 'idle' });
+  fetchQuickStart.mockReset();
+  fetchQuickStart.mockResolvedValue({
+    claude: { installed: true, version: '2.1.325', logged_in: true, install: null },
+    git: { installed: true, version: '2.43.0', install: null },
+    folders: [{ path: '/home/me/dev', repositories: 3 }],
+    new_folder: '/home/me/code', home: '/home/me', folder: '',
   });
 });
 
@@ -113,7 +127,7 @@ describe('SetupModeGate', () => {
     expect(document.querySelector('.setup-gate-error pre').textContent).toBe(error);
   });
 
-  test('shows the welcome gate with the wizard when booted unconfigured', () => {
+  test('a first run opens quick start; the ticket-system wizard is one link away and back', async () => {
     render(
       <SetupModeGate
         status={{ setup_mode: true, needs_config: true, missing: ['x'] }}
@@ -123,11 +137,26 @@ describe('SetupModeGate', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Welcome to Kato')).toBeInTheDocument();
     expect(screen.getByText('Setup required')).toBeInTheDocument();
-    // New users must see that configuration comes first — and that it's
-    // all doable right here, no terminal.
-    expect(screen.getByText(/isn't configured yet/)).toBeInTheDocument();
     expect(screen.getByText(/No terminal needed/)).toBeInTheDocument();
-    // The wizard's first single-action step is live inside the gate.
+    // Quick start, not a ticket system first.
+    expect(await screen.findByRole('button', { name: /Start kato/ })).toBeInTheDocument();
+    expect(screen.queryByText('Where do your tickets live?')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Connect a ticket system instead' }));
     expect(screen.getByText('Where do your tickets live?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '← Back to quick start' }));
+    expect(await screen.findByRole('button', { name: /Start kato/ })).toBeInTheDocument();
+  });
+
+  test('a kato that cannot connect shows the wizard, never quick start', () => {
+    render(
+      <SetupModeGate
+        status={{ setup_mode: true, needs_config: false, missing: [], setup_error: 'x', setup_kind: 'cannot_connect' }}
+        onRefreshStatus={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Where do your tickets live?')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '← Back to quick start' })).toBeNull();
+    expect(fetchQuickStart).not.toHaveBeenCalled();
   });
 });

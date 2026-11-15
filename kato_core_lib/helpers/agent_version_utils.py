@@ -35,6 +35,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+from pathlib import Path
 
 
 def _config_env() -> dict:
@@ -509,11 +510,79 @@ def upgrade_plan(env: dict | None = None, backend: str = '') -> dict:
             return plan
     if npm_usable:
         return _npm_plan(plan, npm, package, backend)
+    if AgentBackend.is_a(backend, AgentBackend.CLAUDE) and _is_bare_name(binary):
+        return _native_install_plan(plan)
     plan['reason'] = (
         f'no supported upgrade path for {binary} on this host '
         '(npm not on PATH and the CLI has no self-updater) — use the download page'
     )
     return plan
+
+
+# A FIRST install of Claude Code on a host with no npm — a fresh machine has
+# no Node. Anthropic's own native installer (code.claude.com/docs/en/setup):
+# fixed strings, never built from input. It puts the CLI in ~/.local/bin.
+_CLAUDE_INSTALL_POSIX = 'curl -fsSL https://claude.ai/install.sh | bash'
+_CLAUDE_INSTALL_WINDOWS = 'irm https://claude.ai/install.ps1 | iex'
+
+
+def _native_install_plan(plan: dict) -> dict:
+    if os.name == 'nt':
+        shell = shutil.which('powershell') or shutil.which('pwsh')
+        if not shell:
+            plan['reason'] = 'installing Claude Code needs PowerShell, which is not on PATH'
+            return plan
+        plan.update(
+            allowed=True, manager='installer', command=_CLAUDE_INSTALL_WINDOWS,
+            argv=[shell, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                  '-Command', _CLAUDE_INSTALL_WINDOWS],
+        )
+        return plan
+    bash, curl = shutil.which('bash'), shutil.which('curl')
+    if not (bash and curl):
+        plan['reason'] = (
+            'installing Claude Code needs curl and bash, and this host is missing '
+            + ' and '.join(name for name, found in (('curl', curl), ('bash', bash)) if not found)
+        )
+        return plan
+    # pipefail: a download that fails must fail the install, not hand bash an
+    # empty script that "succeeds".
+    plan.update(
+        allowed=True, manager='installer', command=_CLAUDE_INSTALL_POSIX,
+        argv=[bash, '-c', f'set -o pipefail; {_CLAUDE_INSTALL_POSIX}'],
+    )
+    return plan
+
+
+def _is_bare_name(binary: str) -> bool:
+    """A command name looked up on PATH, not a path the operator pointed at
+    (an install into ~/.local/bin would not be the binary they configured)."""
+    return bool(binary) and '/' not in binary and '\\' not in binary
+
+
+def native_install_dir() -> Path:
+    """Where Claude Code's native installer puts the CLI."""
+    return Path.home() / '.local' / 'bin'
+
+
+def add_native_install_dir_to_path(environ: dict | None = None) -> bool:
+    """Put ``~/.local/bin`` on this process's PATH when the native installer
+    put ``claude`` there and PATH does not have it.
+
+    The installer adds that folder to the SHELL's profile, which a kato already
+    running (or started from a shell opened before the install) never reads —
+    so a CLI installed a minute ago was "not found". Every later spawn and
+    ``shutil.which`` looks at this process's PATH. Returns whether it changed.
+    """
+    environ = os.environ if environ is None else environ
+    directory = native_install_dir()
+    if not (directory / ('claude.exe' if os.name == 'nt' else 'claude')).is_file():
+        return False
+    parts = [part for part in environ.get('PATH', '').split(os.pathsep) if part]
+    if any(Path(part).expanduser() == directory for part in parts):
+        return False
+    environ['PATH'] = os.pathsep.join([str(directory), *parts])
+    return True
 
 
 def upgrade_command_str(env: dict | None = None, backend: str = '') -> str:
@@ -579,6 +648,7 @@ UPGRADE_SUCCESS_MESSAGE = (
     'upgraded — new tasks & chats use it immediately; an in-flight chat '
     'applies it on its next start (no kato restart needed)'
 )
+INSTALL_SUCCESS_MESSAGE = 'installed — kato uses it right away'
 
 
 def upgrade_agent_cli(env: dict | None = None, runner=None, backend: str = '') -> dict:

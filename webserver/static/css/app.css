@@ -11494,6 +11494,209 @@ button.settings-prompt-editor-head {
   color: #c8c8cd;
 }
 
+/* Quick start (first run): Claude Code, git and the code folder — each a step
+ * with a mark (green ready, amber to do, spinner busy) — then Start. */
+.quick-start {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px 24px; /* the wizard's own */
+}
+
+.quick-start-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quick-start-step {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+}
+
+.quick-start-step-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.quick-start-step.is-ready .quick-start-step-mark {
+  background: rgba(52, 211, 153, 0.16);
+  color: #79f2c0;
+}
+
+.quick-start-step.is-todo .quick-start-step-mark {
+  background: rgba(245, 158, 11, 0.1);
+  color: #fde68a;
+}
+
+.quick-start-step.is-busy .quick-start-step-mark {
+  color: #2997ff;
+}
+
+.quick-start-step-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.quick-start-step-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #f5f5f7;
+}
+
+.quick-start-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #a3a3a3;
+}
+
+.quick-start-actions,
+.quick-start-code,
+.quick-start-go {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.quick-start-command {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: #c8c8cd;
+}
+
+.quick-start-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quick-start-progress progress {
+  width: 100%;
+  height: 6px;
+  accent-color: #0a84ff;
+}
+
+.quick-start-sign-in {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.quick-start-input {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 6px 10px;
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  color: #f5f5f7;
+  font: inherit;
+  font-size: 13px;
+}
+
+.quick-start-input:focus {
+  outline: none;
+  border-color: #0a84ff;
+}
+
+.quick-start-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.quick-start-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.quick-start-folder:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.quick-start-folder.is-picked {
+  border-color: rgba(10, 132, 255, 0.4);
+  background: rgba(10, 132, 255, 0.18);
+}
+
+.quick-start-folder input {
+  margin: 0;
+  accent-color: #0a84ff;
+}
+
+.quick-start-folder-path {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  color: #f5f5f7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-start-folder-count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+.quick-start-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-start-link {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #2997ff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quick-start-link:hover {
+  text-decoration: underline;
+}
+
+.quick-start-foot {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #a3a3a3;
+}
+
+.setup-gate-back {
+  margin: 16px 24px 0;
+}
+
 /* The ticket system could not be reached: the tracker's own words, whole. */
 .setup-wizard-connection-error {
   margin: 0 0 12px;

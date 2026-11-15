@@ -8,7 +8,7 @@ import { toast } from '../stores/toastStore.js';
 export const SETUP_FINISHED_NOTE = {
   kind: 'success',
   title: 'Kato is running',
-  message: 'Next: create your first task with the button in the task strip. To open pull requests, '
+  message: 'Next: create your first task — “Create your first task”, on the left. To open pull requests, '
     + 'kato needs your git host login — Settings → Git providers.',
   durationMs: 20000,
 };

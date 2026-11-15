@@ -199,6 +199,40 @@ export function upgradeAgentCli(backend = '') {
   return postEnvelope('/api/agent-version/upgrade', backend ? { backend } : {});
 }
 
+// Quick start — the first run that finds what it can and asks only the rest
+// (quick_start_routes.py). Installing Claude Code is upgradeAgentCli('claude').
+export function fetchQuickStart() {
+  return fetchJson('/api/setup/quick-start');
+}
+
+export function fetchQuickStartChecks() {
+  return fetchJson('/api/setup/quick-start/checks');
+}
+
+export function saveQuickStart({ folder, create = false }) {
+  return postEnvelope('/api/setup/quick-start', { folder, create: create === true });
+}
+
+export function startClaudeSignIn() {
+  return postEnvelope('/api/setup/claude-sign-in', {});
+}
+
+export function fetchClaudeSignIn() {
+  return fetchJson('/api/setup/claude-sign-in');
+}
+
+export function sendClaudeSignInCode(code) {
+  return postEnvelope('/api/setup/claude-sign-in/code', { code });
+}
+
+export function cancelClaudeSignIn() {
+  return postEnvelope('/api/setup/claude-sign-in/cancel', {});
+}
+
+export function openGitInstaller() {
+  return postEnvelope('/api/setup/install-git', {});
+}
+
 export function fetchAgentUpgradeStatus() {
   // Progress snapshot of the in-flight (or last) upgrade:
   // { state, percent, step, command, lines, ok, message, version_before,

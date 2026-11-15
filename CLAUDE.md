@@ -1112,6 +1112,33 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   Written from Atlassian's docs, not yet run against a live Jira.
 
 ### First run (what a new user meets)
+- **Quick start asks only what kato cannot find** (operator: "ask the minimum, and all must work on a fresh machine").
+  `SetupModeGate` opens `QuickStart` on a first run: three steps, then **Start kato**. Each is found, or fixed on the
+  screen with no terminal (`kato_core_lib/data_layers/service/quick_start/`, one job per module;
+  `quick_start_routes.py`):
+  - **Claude Code** (`agent_check`, read fresh, never cached): not installed → **Install** runs the in-app upgrade job
+    (`upgradeAgentCli('claude')`, one progress bar), whose plan falls back to Anthropic's NATIVE installer
+    (`curl -fsSL https://claude.ai/install.sh | bash`, PowerShell `irm …install.ps1 | iex`; `set -o pipefail`) when
+    there is no npm (a fresh machine has no Node) and `claude` is a bare name. It lands in `~/.local/bin`, which an
+    already-running kato's PATH lacks, so `add_native_install_dir_to_path` runs after the install and at boot
+    (`main`). Signed out → **Sign in** runs `claude auth login` (`claude_sign_in.ClaudeSignIn`, stdin a PIPE, never
+    the terminal): it opens the browser, prints a link (shown — inside WSL no browser opens), then waits for a code on
+    its input ("Paste code here if prompted >", NO newline: read char by char); a code pasted on the screen is written
+    to it. `logged_in: None` (cannot tell) is usable, never "signed out".
+  - **git** (`git_check`): on a Mac `/usr/bin/git` is a stand-in without Apple's tools, so `xcode-select -p` is asked
+    first and the stand-in never runs (it pops a dialog); **Install git** opens `xcode-select --install`. Elsewhere the
+    command is shown.
+  - **Your code** (`code_folders`): folders in home and one level in, ranked by repositories DIRECTLY in them, then in
+    all (by the total, `~/Desktop` beat `~/Desktop/dev` by counting copies); a parent holding exactly a child's
+    repositories gives way to it; kato's workspaces excluded; folder names only, 3s budget. None → `~/code`, created
+    on Start.
+  Start = ONE write (`settings.save_quick_start`): `KATO_AGENT_BACKEND=claude`, `REPOSITORY_ROOT_PATH`, and
+  `KATO_ISSUE_PLATFORM=local` unless a tracker is set — unset they mean OpenHands and YouTrack, both needing keys.
+  The backend change re-execs kato in place (as before). The 6-step wizard is the "Connect a ticket system instead"
+  link (and what `cannot_connect` shows). Proven on a real kato with an empty HOME and a bare PATH
+  (`/usr/bin:/bin:/usr/sbin:/sbin`): the Install button ran the real installer and the step moved to sign-in; with a
+  signed-in stand-in `claude`, Start left setup mode in 10s, `missing: []`. The agent CLI upgrade job also reads the
+  version back for the CLI it ran for (`backend`), not the configured one (a Codex upgrade was checked against Claude).
 - **Repositories:** every repository under `REPOSITORY_ROOT_PATH` is one kato works in. There is NO per-repository
   approval — it was removed entirely (2026-11-04) because it blocked every new user and annoyed every old one;
   do not bring one back. The only ways to keep kato out of a repository are the two fields on Settings →

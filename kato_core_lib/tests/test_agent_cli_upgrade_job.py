@@ -76,6 +76,39 @@ class UpgradeJobTests(unittest.TestCase):
         self.assertEqual(status['version_after'], '2.1.222')
         self.assertIn('2.1.179 → 2.1.222', status['message'])
 
+    # A first install during setup: nothing is configured yet (= OpenHands, no
+    # CLI), so a version read for the CONFIGURED backend found nothing and a
+    # good install was reported as a failure. It reads the CLI the job ran for.
+    def test_the_version_is_read_back_for_the_cli_the_job_ran_for(self):
+        installed = job.installed_version
+        installed.side_effect = lambda env, backend='': None if not backend else '2.1.300'
+        job.start(env={}, spawner=_spawner(['ok']), backend='claude')
+        snap = _wait_for_finish()
+        self.assertTrue(snap['ok'], snap['message'])
+        self.assertEqual(snap['version_after'], '2.1.300')
+        installed.side_effect = None
+
+    def test_a_first_install_finds_the_new_cli_and_says_installed(self):
+        installer = {**_ALLOWED_PLAN, 'manager': 'installer',
+                     'command': 'curl -fsSL https://claude.ai/install.sh | bash'}
+        job.upgrade_plan.return_value = installer
+        job.installed_version.return_value = None  # nothing there before
+        with mock.patch.object(job, 'add_native_install_dir_to_path') as on_path:
+            job.start(spawner=_spawner(['✔ Claude Code successfully installed!']),
+                      verifier=lambda env: '2.1.325')
+            snap = _wait_for_finish()
+        on_path.assert_called_once_with()
+        self.assertTrue(snap['ok'])
+        self.assertEqual(snap['message'], 'installed — kato uses it right away (2.1.325)')
+        self.assertEqual(snap['command'], 'curl -fsSL https://claude.ai/install.sh | bash')
+
+    def test_an_upgrade_does_not_touch_path(self):
+        with mock.patch.object(job, 'add_native_install_dir_to_path') as on_path:
+            job.start(spawner=_spawner(['ok']), verifier=lambda env: '2.1.300')
+            snap = _wait_for_finish()
+        on_path.assert_not_called()
+        self.assertTrue(snap['message'].startswith('upgraded'))
+
     def test_output_is_captured_for_the_log_tail(self):
         job.start(env={}, spawner=_spawner(['first line', 'second line']),
                   verifier=lambda env: '2.1.222')

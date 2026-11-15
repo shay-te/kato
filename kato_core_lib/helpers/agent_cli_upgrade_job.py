@@ -28,7 +28,9 @@ import threading
 import time
 
 from kato_core_lib.helpers.agent_version_utils import (
+    INSTALL_SUCCESS_MESSAGE,
     UPGRADE_SUCCESS_MESSAGE,
+    add_native_install_dir_to_path,
     installed_version,
     reset_latest_version_cache,
     upgrade_plan,
@@ -151,15 +153,20 @@ def start(
         _state['_floor'] = 3
         _state['_floor_at'] = time.time()
         _thread = threading.Thread(
-            target=_run, args=(plan, env, spawner, verifier),
+            target=_run, args=(plan, env, spawner, verifier, backend),
             name='agent-cli-upgrade', daemon=True,
         )
         _thread.start()
         return _public(_state)
 
 
-def _run(plan: dict, env, spawner, verifier) -> None:
-    """Worker body — stream the command, then verify the installed version."""
+def _run(plan: dict, env, spawner, verifier, backend: str = '') -> None:
+    """Worker body — stream the command, then verify the installed version.
+
+    The version read back is ``backend``'s, the CLI the job ran for: read for
+    the CONFIGURED backend it was a Codex upgrade checked against Claude, and a
+    first install during setup (nothing configured yet = OpenHands, no CLI)
+    reported a successful install as a failure."""
     spawn = spawner or _default_spawner
     try:
         code, timed_out = _stream_command(plan['argv'], spawn)
@@ -176,8 +183,11 @@ def _run(plan: dict, env, spawner, verifier) -> None:
 
     _set(percent=_VERIFY_PERCENT, step='Verifying new version…')
     reset_latest_version_cache()
+    installing = plan['manager'] == 'installer'
+    if installing:
+        add_native_install_dir_to_path()
     try:
-        after = (verifier or installed_version)(env)
+        after = verifier(env) if verifier else installed_version(env, backend=backend)
     except Exception:
         after = None
     with _lock:
@@ -192,7 +202,7 @@ def _run(plan: dict, env, spawner, verifier) -> None:
         ))
         return
     changed = f' ({before} → {after})' if before and before != after else f' ({after})'
-    _finish(ok=True, message=UPGRADE_SUCCESS_MESSAGE + changed)
+    _finish(ok=True, message=(INSTALL_SUCCESS_MESSAGE if installing else UPGRADE_SUCCESS_MESSAGE) + changed)
 
 
 def _stream_command(argv: list, spawn) -> tuple[int, bool]:

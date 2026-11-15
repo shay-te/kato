@@ -371,6 +371,51 @@ class UpgradePlanTests(unittest.TestCase):
         self.assertFalse(plan['allowed'])
         self.assertIn('no supported upgrade path', plan['reason'])
 
+    # A fresh machine: no claude and no npm (no Node). Anthropic's own native
+    # installer needs neither, so the install button still has something to run.
+    def test_a_fresh_host_with_no_npm_gets_the_native_installer(self):
+        def which(name):
+            return {'bash': '/bin/bash', 'curl': '/usr/bin/curl'}.get(name)
+
+        with mock.patch.object(avu.os, 'name', 'posix'), \
+                mock.patch.object(avu.shutil, 'which', side_effect=which):
+            plan = avu.upgrade_plan(self.ENABLED)
+        self.assertTrue(plan['allowed'], plan['reason'])
+        self.assertEqual(plan['manager'], 'installer')
+        self.assertEqual(plan['command'], 'curl -fsSL https://claude.ai/install.sh | bash')
+        self.assertEqual(plan['argv'], [
+            '/bin/bash', '-c', 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash',
+        ])
+
+    def test_the_native_installer_says_what_the_host_is_missing(self):
+        with mock.patch.object(avu.os, 'name', 'posix'), \
+                mock.patch.object(avu.shutil, 'which', side_effect=lambda name: '/bin/bash' if name == 'bash' else None):
+            plan = avu.upgrade_plan(self.ENABLED)
+        self.assertFalse(plan['allowed'])
+        self.assertIn('missing curl', plan['reason'])
+
+    def test_on_windows_the_native_installer_runs_in_powershell(self):
+        with mock.patch.object(avu.os, 'name', 'nt'), \
+                mock.patch.object(avu.shutil, 'which', side_effect=lambda name: 'C:/ps/powershell.exe' if name == 'powershell' else None):
+            plan = avu.upgrade_plan(self.ENABLED)
+        self.assertEqual(plan['manager'], 'installer')
+        self.assertEqual(plan['command'], 'irm https://claude.ai/install.ps1 | iex')
+        self.assertEqual(plan['argv'][0], 'C:/ps/powershell.exe')
+        self.assertEqual(plan['argv'][-1], 'irm https://claude.ai/install.ps1 | iex')
+        with mock.patch.object(avu.os, 'name', 'nt'), mock.patch.object(avu.shutil, 'which', return_value=None):
+            refused = avu.upgrade_plan(self.ENABLED)
+        self.assertFalse(refused['allowed'])
+        self.assertIn('PowerShell', refused['reason'])
+
+    def test_a_configured_binary_path_is_never_replaced_by_a_native_install(self):
+        # An install into ~/.local/bin would not be the binary they pointed at.
+        env = {**self.ENABLED, 'KATO_CLAUDE_BINARY': '/opt/tools/claude'}
+        with mock.patch.object(avu.os, 'name', 'posix'), \
+                mock.patch.object(avu.shutil, 'which', side_effect=lambda name: {'bash': '/bin/bash', 'curl': '/usr/bin/curl'}.get(name)):
+            plan = avu.upgrade_plan(env)
+        self.assertFalse(plan['allowed'])
+        self.assertIn('no supported upgrade path', plan['reason'])
+
     def test_missing_binary_still_plans_an_npm_install(self):
         # "claude not found on PATH" is exactly when the operator most needs the
         # install button — there is nothing to detect, so npm is the answer.
@@ -531,3 +576,47 @@ class DefaultConfigEnvTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class NativeInstallPathTests(unittest.TestCase):
+    """A CLI the native installer just put in ~/.local/bin must be found by the
+    kato that is already running: the installer only edits the shell's profile."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        home = mock.patch.object(avu.Path, 'home', return_value=self.home)
+        home.start()
+        self.addCleanup(home.stop)
+        self.bin = self.home / '.local' / 'bin'
+
+    def _install(self):
+        self.bin.mkdir(parents=True)
+        (self.bin / ('claude.exe' if avu.os.name == 'nt' else 'claude')).write_text('')
+
+    def test_the_folder_goes_first_on_path_once_the_cli_is_there(self):
+        self._install()
+        environ = {'PATH': avu.os.pathsep.join(['/usr/bin', '/bin'])}
+        self.assertTrue(avu.add_native_install_dir_to_path(environ))
+        self.assertEqual(environ['PATH'].split(avu.os.pathsep), [str(self.bin), '/usr/bin', '/bin'])
+        self.assertFalse(avu.add_native_install_dir_to_path(environ))  # once is enough
+
+    def test_nothing_changes_without_the_cli_or_with_the_folder_already_there(self):
+        environ = {'PATH': '/usr/bin'}
+        self.assertFalse(avu.add_native_install_dir_to_path(environ))
+        self.assertEqual(environ['PATH'], '/usr/bin')
+        self._install()
+        environ = {'PATH': avu.os.pathsep.join(['/usr/bin', str(self.bin)])}
+        self.assertFalse(avu.add_native_install_dir_to_path(environ))
+        empty = {}
+        self.assertTrue(avu.add_native_install_dir_to_path(empty))
+        self.assertEqual(empty['PATH'], str(self.bin))
+
+    def test_the_process_environment_is_the_default(self):
+        self._install()
+        with mock.patch.dict(avu.os.environ, {'PATH': '/usr/bin'}):
+            self.assertTrue(avu.add_native_install_dir_to_path())
+            self.assertTrue(avu.os.environ['PATH'].startswith(str(self.bin)))

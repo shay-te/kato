@@ -1617,6 +1617,8 @@ def create_app(
     register_handover_routes(app)
     from kato_webserver.claude_models_routes import register_claude_models_routes
     register_claude_models_routes(app)
+    from kato_webserver.quick_start_routes import register_quick_start_routes
+    register_quick_start_routes(app)
     return app
 
 

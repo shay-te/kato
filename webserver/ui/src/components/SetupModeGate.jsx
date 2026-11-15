@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import QuickStart from './QuickStart.jsx';
 import SetupWizard from './SetupWizard.jsx';
 
 // Full-screen gate shown ONLY when kato booted unconfigured
@@ -8,13 +10,19 @@ import SetupWizard from './SetupWizard.jsx';
 //
 // ``hidden`` (drawer open) hides the overlay WITHOUT unmounting, so the
 // Settings drawer paints on top while the wizard keeps its typed state.
+//
+// A first run gets QUICK START: Claude Code, git and the code folder, each found
+// or fixed on the screen, and nothing else asked. The full wizard (a ticket
+// system first) is one link away, and is what a kato that cannot connect shows.
 export default function SetupModeGate({ status, hidden = false, onRefreshStatus, onOpenFullSettings }) {
+  const [wizard, setWizard] = useState(false);
   if (!status || !status.setup_mode) {
     return null;
   }
   // Set up already, and a service it needs could not be reached (a token
   // that expired, a host that is down): not a first run, and not "welcome".
   const cannotConnect = status.setup_kind === 'cannot_connect';
+  const quick = !cannotConnect && !wizard;
   return (
     <div
       className={'setup-gate' + (hidden ? ' is-hidden' : '')}
@@ -32,7 +40,9 @@ export default function SetupModeGate({ status, hidden = false, onRefreshStatus,
             {cannotConnect
               ? 'Your settings are saved — kato keeps trying by itself. Fix what the error names, '
                 + 'below or in Settings.'
-              : 'Kato isn\'t configured yet — new here? This quick setup gets it running. No terminal needed.'}
+              : quick
+                ? 'Two checks and a folder — kato looks for them itself. No terminal needed.'
+                : 'Connect your ticket system, then kato picks up the tasks assigned to you.'}
           </p>
           {Boolean(status.setup_error) && (
             <div className="setup-gate-error" role="alert">
@@ -42,11 +52,22 @@ export default function SetupModeGate({ status, hidden = false, onRefreshStatus,
             </div>
           )}
         </header>
-        <SetupWizard
-          status={status}
-          onRefreshStatus={onRefreshStatus}
-          onOpenFullSettings={onOpenFullSettings}
-        />
+        {quick ? (
+          <QuickStart onStarted={onRefreshStatus} onUseWizard={() => setWizard(true)} />
+        ) : (
+          <>
+            {!cannotConnect && (
+              <button type="button" className="quick-start-link setup-gate-back" onClick={() => setWizard(false)}>
+                ← Back to quick start
+              </button>
+            )}
+            <SetupWizard
+              status={status}
+              onRefreshStatus={onRefreshStatus}
+              onOpenFullSettings={onOpenFullSettings}
+            />
+          </>
+        )}
       </div>
     </div>
   );
