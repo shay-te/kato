@@ -11,6 +11,7 @@ from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
     repository_conventions_text,
 )
 from kato_core_lib.helpers.git_host_refusal_utils import refusal_hint
+from kato_core_lib.helpers.said_once_utils import SaidOnce
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
@@ -64,6 +65,20 @@ from kato_core_lib.helpers.review_comment_utils import (
 from kato_core_lib.helpers.task_lookup_utils import find_task_by_id
 from utils_core_lib.utils_core_lib.text_utils import normalized_text, text_from_attr
 
+_URL = re.compile(r'\s*(?:for url:\s*)?https?://\S+', re.IGNORECASE)
+
+
+def _without_urls(error: object) -> str:
+    """The host's reason without the per-repository address, so the same
+    refusal reads the same for every repository."""
+    return _URL.sub('', str(error or '')).strip() or error.__class__.__name__
+
+
+def _host_of(repository) -> str:
+    provider = text_from_attr(repository, 'provider')
+    return provider_label(provider) if provider else 'the git host'
+
+
 class ReviewCommentService(Service):
     """Handle review-comment polling, fix publication, and comment resolution."""
 
@@ -109,6 +124,11 @@ class ReviewCommentService(Service):
         self._poll_gate_logged_enabled = True
         # Lookups the current scan skipped because the host paused kato (429).
         self._paused_lookups: list[LookupPaused] = []
+        # Lookups the current scan could not make, by host: said ONCE at the
+        # end of the scan (not a line per repository, not again every scan).
+        self._failed_lookups: dict[str, list[tuple[str, str, Exception]]] = {}
+        self._answered_hosts: set[str] = set()
+        self._said = SaidOnce()
         self.logger = logger or configure_logger(self.__class__.__name__)
 
     @property
@@ -445,6 +465,8 @@ class ReviewCommentService(Service):
         forgotten = {fid.lower() for fid in forgotten_task_ids()}
         skipped_forgotten: list[str] = []
         self._paused_lookups: list[LookupPaused] = []
+        self._failed_lookups = {}
+        self._answered_hosts = set()
         for task in self._task_service.get_review_tasks():
             task_id = str(getattr(task, 'id', '') or '').strip()
             if task_id.lower() in forgotten:
@@ -467,11 +489,14 @@ class ReviewCommentService(Service):
                     continue
                 seen.add(key)
                 contexts.append(context)
+        self._say_failed_lookups()
         self._say_paused_lookups()
-        if skipped_forgotten:
-            # Make the skip visible: a silent ``continue`` left "kato keeps
-            # resurrecting a task I deleted" impossible to diagnose. One line
-            # per scan, listing what was held back.
+        # Make the skip visible: a silent ``continue`` left "kato keeps
+        # resurrecting a task I deleted" impossible to diagnose. Said when the
+        # set changes — it was the same line on every scan, 38 in 400.
+        if not skipped_forgotten:
+            self._said.ended('forgotten')
+        elif self._said.say('forgotten', ', '.join(sorted(skipped_forgotten))):
             self.logger.info(
                 'review scan skipped %d forgotten task(s) — re-adopt to resume: %s',
                 len(skipped_forgotten),
@@ -529,15 +554,37 @@ class ReviewCommentService(Service):
             self._paused_lookups.append(paused)
             return []
         except Exception as exc:
-            self.logger.warning(
-                'review scan: could not look up the pull requests of task %s in %s '
-                '(branch %s): %s%s',
-                task.id, getattr(repository, 'id', ''), branch_name, exc, refusal_hint(exc),
+            self._failed_lookups.setdefault(_host_of(repository), []).append(
+                (str(getattr(task, 'id', '') or ''), str(getattr(repository, 'id', '') or ''), exc),
             )
             self._report_git_host(repository, exc)
             return []
+        self._answered_hosts.add(_host_of(repository))
         self._report_git_host(repository)
         return found
+
+    def _say_failed_lookups(self) -> None:
+        """One line per host for this scan's failed lookups — and only when it
+        is news: the same refusal on every scan is the banner's to show."""
+        for host, failures in self._failed_lookups.items():
+            by_reason: dict[str, list[str]] = {}
+            for _task_id, repository_id, exc in failures:
+                by_reason.setdefault(_without_urls(exc), []).append(repository_id)
+            news = '; '.join(f'{reason} ({", ".join(sorted(set(ids)))})' for reason, ids in sorted(by_reason.items()))
+            if not self._said.say(f'lookup:{host}', news):
+                continue
+            tasks = sorted({task_id for task_id, _repository_id, _exc in failures if task_id})
+            count = len({repository_id for _t, repository_id, _e in failures})
+            self.logger.warning(
+                'review scan: could not look up the pull requests of %s in %d %s on %s: %s%s. '
+                'Said once — kato repeats it only if it changes, and the banner shows it until %s answers.',
+                'task ' + tasks[0] if len(tasks) == 1 else 'tasks ' + ', '.join(tasks),
+                count, 'repository' if count == 1 else 'repositories', host, news,
+                refusal_hint(failures[0][2]), host,
+            )
+        for host in self._answered_hosts - set(self._failed_lookups):
+            if self._said.ended(f'lookup:{host}'):
+                self.logger.info('review scan: %s answers the pull request lookups again', host)
 
     def _report_git_host(self, repository, error: Exception | None = None) -> None:
         """Tell connection_health how ``repository``'s git host answered."""
@@ -551,6 +598,10 @@ class ReviewCommentService(Service):
 
     def _say_paused_lookups(self) -> None:
         if not self._paused_lookups:
+            self._said.ended('paused')
+            return
+        # Said when the count changes — its seconds-left tick down every scan.
+        if not self._said.say('paused', str(len(self._paused_lookups))):
             return
         longest = max(self._paused_lookups, key=lambda paused: paused.seconds_left)
         self.logger.warning(
@@ -705,13 +756,19 @@ class ReviewCommentService(Service):
                 pull_request_id,
             )
         except Exception as exc:
-            self.logger.exception(
-                'failed to fetch pull request comments for repository %s pull request %s',
-                repository_id,
-                pull_request_id,
-            )
+            # Once per failure, not a traceback on every scan.
+            if self._said.say(f'comments:{repository_id}:{pull_request_id}', _without_urls(exc)):
+                self.logger.warning(
+                    'review scan: could not read the comments of pull request %s in %s: %s%s',
+                    pull_request_id, repository_id, exc, refusal_hint(exc),
+                )
             self._report_git_host(repository, exc)
             return []
+        if self._said.ended(f'comments:{repository_id}:{pull_request_id}'):
+            self.logger.info(
+                'review scan: the comments of pull request %s in %s can be read again',
+                pull_request_id, repository_id,
+            )
         self._report_git_host(repository)
         return comments
 

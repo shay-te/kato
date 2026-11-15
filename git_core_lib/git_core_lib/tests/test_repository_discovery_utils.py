@@ -73,6 +73,19 @@ class DiscoverGitRepositoriesTests(unittest.TestCase):
         self.assertIn('real', names)
         self.assertNotIn('pkg', names)
 
+    def test_skips_hidden_folders_but_not_a_hidden_root(self) -> None:
+        hidden = self.root / '.test-home' / 'code' / 'api'
+        hidden.mkdir(parents=True)
+        _make_git_dir(hidden)
+        real = self.root / 'real'
+        real.mkdir()
+        _make_git_dir(real)
+        names = [Path(r.local_path).name for r in discover_git_repositories(str(self.root))]
+        self.assertEqual(names, ['real'])
+        # Pointed AT a hidden folder, its repositories are found.
+        inside = [Path(r.local_path).name for r in discover_git_repositories(str(self.root / '.test-home'))]
+        self.assertEqual(inside, ['api'])
+
     def test_discovers_repositories_nested_inside_another_repository(self) -> None:
         # Regression: an operator's workspace folder is itself a git
         # checkout (e.g. ``dev-una``) but the individually-cloned repos

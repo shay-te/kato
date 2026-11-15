@@ -221,6 +221,15 @@ two new lines every 50s ("no need to print it millions of times, use a rotating 
 "still alive" line: spin it here. A setting that is missing (`PullRequestApiNotSetUp`, a `ValueError`) is one
 warning line, never a traceback.
 
+**A standing condition is SAID ONCE** (`helpers/said_once_utils.py` `SaidOnce`): said when it starts, again only
+when it changes, once when it ends — never on every scan. The review scan printed "skipped 10 forgotten task(s)" 38
+times in 400 lines and one 403 per repository per scan (twenty for UNA-3211); now a host's failed lookups are ONE
+summary line per host at the end of the scan (`_say_failed_lookups`: reason → repositories), the forgotten set and the
+paused count are said when they change, and a comment read that fails is one warning (no traceback) until it reads
+again. The banner shows what lasts; the terminal says what HAPPENS. Keep the said text stable (no counters, seconds or
+per-request URLs — `_without_urls`). Discovery skips hidden folders (`git_core_lib`): repositories in leftover test
+homes under the repositories folder were offered as the operator's and warned about as duplicates.
+
 ### Startup (UI-first)
 ```
 main() → KatoInstance.init(cfg, defer_validation=True)  ← builds the service, does NOT validate yet

@@ -396,8 +396,29 @@ class ReviewScanTests(_Setup):
             contexts = service._review_pull_request_contexts()
         self.assertEqual([c['repository_id'] for c in contexts], ['fine'])
         self.assertEqual(len(logs.output), 1)
-        self.assertIn('could not look up the pull requests of task UNA-3211 in broken', logs.output[0])
+        self.assertIn('could not look up the pull requests of task UNA-3211 in 1 repository', logs.output[0])
+        self.assertIn('(broken)', logs.output[0])
         self.assertNotIn('Traceback', '\n'.join(logs.output))
+
+    def test_the_same_failure_is_said_once_not_on_every_scan_and_its_end_once(self) -> None:
+        # 2026-11-15: twenty identical 403 lines per scan, every 50 seconds.
+        repositories = [_repository(f'repo-{n}') for n in range(3)] + [_repository('fine')]
+        for n in range(3):
+            self.host.errors[f'repo-{n}'] = [_http_error(403)] * 3
+        service = self._scan_service(repositories, [self._task()])
+        with self.assertLogs(self.logger, level='INFO') as logs:
+            service._review_pull_request_contexts()
+            service._review_pull_request_contexts()   # the same refusal: nothing new to say
+            for n in range(3):
+                self.host.errors[f'repo-{n}'] = []
+            service._review_pull_request_contexts()   # it answers again
+            service._review_pull_request_contexts()
+        lines = [line for line in logs.output if 'review scan' in line]
+        refused = [line for line in lines if 'could not look up' in line]
+        self.assertEqual(len(refused), 1, lines)
+        self.assertIn('in 3 repositories', refused[0])
+        self.assertIn('(repo-0, repo-1, repo-2)', refused[0])
+        self.assertEqual(sum('answers the pull request lookups again' in line for line in lines), 1, lines)
 
     def test_a_429_stops_the_scan_firing_the_rest_into_the_limit_and_says_so_once(self) -> None:
         repositories = [_repository(f'repo-{n}') for n in range(20)]

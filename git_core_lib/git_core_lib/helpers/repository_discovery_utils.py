@@ -104,6 +104,12 @@ def discover_git_repositories(
             directory
             for directory in dir_names
             if directory not in DISCOVERY_SKIP_DIRS
+            # A hidden folder is tool state (.vscode, .idea, .terraform, a
+            # test run's throwaway home), never one of the operator's own
+            # repositories — the repositories found in leftover test homes
+            # were offered as theirs and warned about as duplicates. The root
+            # itself may be hidden; only what is found inside it is skipped.
+            and not directory.startswith('.')
             and directory.lower() not in ignored_folder_names
             and os.path.normcase(os.path.join(current_root, directory)) not in skipped_walk_paths
         ]
