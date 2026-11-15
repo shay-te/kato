@@ -198,8 +198,15 @@ class _Scenario(object):
             load()
             return dict(os.environ)
 
-    def run(self, mode: str) -> dict:
-        env = {**(self.desktop_env() if mode == 'desktop' else self.launcher_env()), 'PYTHONPATH': str(_ROOT)}
+    def env_for(self, mode: str) -> dict:
+        """The env kato starts with. Reads the PROCESS env (patched): call it
+        from one thread only — two at once restore each other's patch and
+        leave a scenario's HOME behind for every test after."""
+        return {**(self.desktop_env() if mode == 'desktop' else self.launcher_env()), 'PYTHONPATH': str(_ROOT)}
+
+    @staticmethod
+    def run(mode: str, env: dict) -> dict:
+        """Thread-safe: touches nothing but its own child process."""
         done = subprocess.run(
             [sys.executable, '-c', _CHILD, 'test' if mode == 'test' else 'boot', str(_CONFIG_DIR)],
             env=env, cwd=str(_ROOT), capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL,
@@ -220,8 +227,9 @@ class GitHostsEndToEndTests(unittest.TestCase):
         base = Path(cls._tmp.name)
         scenarios = {name: _Scenario(base, name, spec) for name, spec in SCENARIOS.items()}
         jobs = [(name, mode) for name in scenarios for mode in MODES]
+        envs = [scenarios[name].env_for(mode) for name, mode in jobs]  # one thread
         with ThreadPoolExecutor(max_workers=6) as pool:
-            answers = list(pool.map(lambda job: scenarios[job[0]].run(job[1]), jobs))
+            answers = list(pool.map(lambda job_env: _Scenario.run(job_env[0][1], job_env[1]), zip(jobs, envs)))
         cls.answers = dict(zip(jobs, answers))
 
     @classmethod
