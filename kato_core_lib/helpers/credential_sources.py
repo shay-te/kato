@@ -21,8 +21,9 @@ re-resolved on a short TTL) from the live source. So rotation and expiry
 handle themselves, and kato writes no long-lived secret to disk — which
 is strictly better than the paste path it replaces.
 
-Precedence is unchanged: a token exported in the real shell still wins
-over everything here, exactly like every other setting.
+Precedence is the settings store's one rule (``settings_first_env``): the
+source chosen in Settings decides the token — a token the environment carries
+(a stale ``.env`` loaded into the terminal) never answers instead of it.
 
 This module is the kato-side GLUE — it knows kato's key names and its
 settings file. The reusable probes live in the libs
@@ -217,8 +218,9 @@ def discover_credential_sources(provider: str, base_url: str = '') -> list[dict]
 def resolved_credential_env(settings) -> dict[str, str]:
     """``{TOKEN_KEY: token}`` for every provider configured to use a source.
 
-    Only fills a token that is EMPTY in ``settings`` — an explicitly
-    pasted token, or one exported in the shell, still wins. A source that
+    Only fills a token that is EMPTY in ``settings`` — a pasted token wins
+    (``settings_first_env`` has already dropped one the environment merely
+    carried, so the chosen source decides). A source that
     resolves to nothing (CLI signed out since setup) yields no key, so
     the normal "missing credential" path reports it instead of kato
     booting with a silently empty token.

@@ -77,7 +77,7 @@ def main() -> int:
     if rc != 0:
         return rc
 
-    # Precedence: real shell env > ~/.kato/settings.json (the Settings UI).
+    # Precedence: ~/.kato/settings.json (the Settings UI) > the shell env.
     # A missing/empty settings.json is fine — kato boots into SETUP MODE
     # and the first-run wizard collects everything from the browser.
     env = layered_env(os.environ, read_kato_settings_file())

@@ -18,10 +18,7 @@ import logging
 from kato_core_lib.helpers.instance_lock_utils import INSTANCE_RESTART_ENV, hold_instance_lock
 from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.logging_utils import configure_logger, enable_log_file
-from kato_core_lib.helpers.kato_settings_store_utils import (
-    load_kato_settings_into_environ,
-    load_resolved_credentials_into_environ,
-)
+from kato_core_lib.helpers.kato_settings_store_utils import load_kato_settings_into_environ
 from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
     sleep_with_countdown_spinner,
@@ -51,8 +48,6 @@ from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
 
 
 _STATUS_BROADCASTER = StatusBroadcaster()
-# The token keys this process filled from a credential source (never the tokens).
-_RESOLVED_CREDENTIAL_KEYS: list[str] = []
 install_status_broadcast_handler(_STATUS_BROADCASTER)
 
 # Shared between the scan loop thread and the Flask webserver thread.
@@ -137,12 +132,13 @@ def main(cfg: DictConfig) -> int:
     # to the SHELL's profile, which a kato started from an older shell (or a
     # service) never read: put it on this process's PATH before anything looks.
     add_agent_install_dirs_to_path()
-    # A git host set to "use my git login" / "use my gh login" has only that
-    # SOURCE in settings.json: resolve it into a token now, before anything is
-    # built from the env (and before the "is kato configured" check).
-    _RESOLVED_CREDENTIAL_KEYS[:] = load_resolved_credentials_into_environ()
-    for key in _RESOLVED_CREDENTIAL_KEYS:
-        logger.info('%s: taken from its credential source in Settings', key)
+    # Settings first, before anything is built from the env (and before the
+    # "is kato configured" check): every saved value wins over the environment
+    # kato was started from (a stale .env loaded into the terminal), and a git
+    # host set to "use my git login" / "use my gh login" gets its token now.
+    for key in load_kato_settings_into_environ():
+        if key.endswith('_API_TOKEN'):
+            logger.info('%s: from Settings', key)
     # Missing config no longer hard-exits at the terminal: kato boots into
     # SETUP MODE (the planning UI runs so the operator configures via the
     # Settings drawer) instead of dying. The SECURITY gates below (bypass /
@@ -598,9 +594,9 @@ def _wait_until_configured_then_finish_setup(
 
     Each tick re-evaluates ``collect_config_errors`` over the SAME layered
     env the ``/api/config-status`` endpoint uses (``effective_config_env``:
-    process env > settings.json), so the UI's "you're all set" and
+    settings.json > process env), so the UI's "you're all set" and
     this loop can never disagree. Once complete, the newly-saved values are
-    loaded into the process env (shell still wins — hydra's
+    loaded into the process env (Settings win — hydra's
     ``${oc.env:...}`` reads resolve on access) and
     ``complete_setup()`` builds the real agent service.
 
@@ -738,10 +734,6 @@ def _restart_in_place(app) -> None:
         _restore_terminal()
         os._exit(_RESTART_EXIT_CODE)
         return  # unreachable in production; keeps mocked-_exit tests honest
-    # Tokens this process resolved from a credential source are not settings:
-    # the new process resolves them again (the source may have changed).
-    for key in _RESOLVED_CREDENTIAL_KEYS:
-        os.environ.pop(key, None)
     argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
     app.logger.warning('restarting kato in place: %s', ' '.join(argv))
     # The new process may start before this one has let go of the instance

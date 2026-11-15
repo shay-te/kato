@@ -8,7 +8,7 @@ not python (that's the "invalid choice: .../run_local.py" error).
 
 So we do what the launcher does, minus the re-exec:
   1. Load `~/.kato/settings.json` into the env (kato's precedence is
-     shell > settings.json) — a stdlib-only mirror of run_local.py's reader,
+     settings.json > the environment) — a stdlib-only mirror of run_local.py's reader,
      so the app honors the SAME config as your CLI (nothing lost).
   2. Run the real app entry — the `@hydra.main`-decorated
      `kato_core_lib.main.main` — DIRECTLY. Missing config isn't fatal: kato
@@ -23,8 +23,9 @@ from pathlib import Path
 
 
 def _load_settings_into_env() -> None:
-    """Fill env from `~/.kato/settings.json` (or `$KATO_SETTINGS_FILE`) for any
-    key the real shell didn't already set — shell wins. Tolerant: a missing or
+    """Put `~/.kato/settings.json` (or `$KATO_SETTINGS_FILE`) into the env:
+    a saved value WINS over the environment the app was started with, which
+    only fills what Settings leaves empty. Tolerant: a missing or
     corrupt file is a no-op (kato then boots into SETUP MODE). Mirrors
     scripts/_script_utils.read_kato_settings_file, which is itself a
     deliberate stdlib-only mirror — no kato import needed here.
@@ -48,7 +49,7 @@ def _load_settings_into_env() -> None:
         # empty"), and an empty token hid the one a credential source gives.
         if value is None or str(value) == "":
             continue
-        os.environ.setdefault(str(key), str(value))
+        os.environ[str(key)] = str(value)
 
 
 def _wire_ca_bundle() -> None:

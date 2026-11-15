@@ -302,21 +302,20 @@ def _repo_relative_path(path_arg: str, cwd: str) -> str | None:
 def _resolve_setting(key: str) -> dict:
     """Resolve one settings key across kato's two stores.
 
-    Precedence mirrors boot: live ``os.environ`` (shell or
-    already-loaded) > ``~/.kato/settings.json``. Returns
-    ``{value, source}`` where ``source`` is one of ``env`` /
-    ``kato_settings`` / ``unset`` so the UI can label where a value
-    lives. (``.env`` support was removed — settings.json is kato's
+    Precedence mirrors boot (``settings_first_env``): ``~/.kato/settings.json``
+    > the live ``os.environ``. Returns ``{value, source}`` where ``source`` is
+    one of ``kato_settings`` / ``env`` / ``unset`` so the UI can label where a
+    value lives. (``.env`` support was removed — settings.json is kato's
     only config file.)
     """
     from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
 
     live = os.environ.get(key, '')
     settings_value = read_kato_settings().get(key, '')
-    if live:
-        value, source = live, 'env'
-    elif settings_value:
+    if settings_value:
         value, source = settings_value, 'kato_settings'
+    elif live:
+        value, source = live, 'env'
     else:
         value, source = '', 'unset'
     return {

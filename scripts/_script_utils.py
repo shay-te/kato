@@ -130,27 +130,28 @@ def read_kato_settings_file() -> dict[str, str]:
 
 
 def layered_env(base_env, *sources) -> dict[str, str]:
-    """Compose a process env: ``base_env`` (the real shell) wins, then each
-    ``source`` fills only keys still unset — earlier sources beat later ones.
+    """Compose a process env: a non-empty value in a ``source`` (settings.json)
+    WINS over ``base_env`` (the shell); earlier sources beat later ones.
 
-    kato's documented precedence is
-    ``layered_env(os.environ, read_kato_settings_file())``
-    → **shell > ~/.kato/settings.json**. settings.json is kato's ONLY
-    config file — ``.env`` support was removed entirely (the first-run
-    wizard + Settings drawer replaced it).
+    kato's precedence is ``layered_env(os.environ, read_kato_settings_file())``
+    → **~/.kato/settings.json > the shell**: a value saved in Settings always
+    applies, and the shell only fills a key Settings leaves empty. It used to
+    be shell first, and a stale ``.env`` the editor loads into every terminal
+    kept an old Bitbucket token in kato's env — the new one saved in Settings
+    passed Test connection and was never used, even after a restart
+    (2026-11-15, operator: "no .env, only kato settings"). A stdlib copy of
+    kato's ``settings_first_env``; tests pin the two equal.
 
     An EMPTY value in a source is unset, never exported: the Settings form
     saves cleared fields as ``""``, and omegaconf reads a set-but-empty var as
     ``""`` — never reaching its ``${oc.env:KEY,"default"}`` default. Exported,
     a cleared ``JIRA_ISSUE_STATES`` wiped "To Do,Open" and kato could not boot
-    ("unable to validate jira: states must not be empty"). Same rule as
-    ``load_kato_settings_into_environ`` in kato itself. The real shell is
-    taken as it is: an empty var set there is the operator's own.
+    ("unable to validate jira: states must not be empty").
     """
     env = dict(base_env)
-    for source in sources:
+    for source in reversed(sources):
         for key, value in (source or {}).items():
             if value is None or str(value) == '':
                 continue
-            env.setdefault(str(key), str(value))
+            env[str(key)] = str(value)
     return env
