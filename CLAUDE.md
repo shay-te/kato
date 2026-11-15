@@ -288,6 +288,18 @@ app's output reader sees it (`says_quit`) and, when the process then ends, calls
 "the Kato service stopped". Marker and variable are pinned equal across Python and Rust
 (`tests/test_desktop_quits_with_kato.py`). A terminal kato never prints it. The desktop app must be rebuilt.
 
+### Windows code signing (desktop release) — `desktop/signing/README.md`
+Signed INSIDE `tauri build` (`signCommand` → `desktop/signing/sign-windows.ps1 %1`, Jsign → SSL.com eSigner cloud HSM),
+so the app, the sidecar, the NSIS plugins, the uninstaller and the installer are all signed + timestamped BEFORE the
+updater signatures are made. The sign command lives ONLY in a fragment `enable-windows-signing.ps1` writes to the
+runner's temp dir and passes with `--config` — never in `tauri.conf.json` / `tauri.windows.conf.json` (merged into every
+local build; `tests/test_windows_signing_setup.py` fails on it). Off until the repo variable `WINDOWS_SIGNING=esigner`
+(+ `ESIGNER_*` secrets): unsigned with a run warning, as before. On, `verify-windows-signatures.ps1` checks the installer,
+its 7-Zip contents and a silent install (the uninstaller is written at install time) and fails the job on any unsigned or
+untimestamped `.exe`/`.dll`. Why SSL.com: Azure Artifact Signing takes individuals only in the US/Canada (an Israeli
+ORGANIZATION qualifies since 2026-07). The Windows runner builds PyInstaller's bootloader from source (AV false positives);
+macOS/Linux untouched. Never: MOTW stripping, archive tricks, "turn off SmartScreen", installer Defender exclusions.
+
 ### Lid-closed running (Settings → "Keep running with the lid closed")
 ```
 tick every 15s (LidAwakeService, lid_awake_core_lib; always started, even with the setting off)
@@ -1112,10 +1124,23 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   Written from Atlassian's docs, not yet run against a live Jira.
 
 ### First run (what a new user meets)
-- **Quick start asks only what kato cannot find** (operator: "ask the minimum, and all must work on a fresh machine").
-  `SetupModeGate` opens `QuickStart` on a first run: three steps, then **Start kato**. Each is found, or fixed on the
-  screen with no terminal (`kato_core_lib/data_layers/service/quick_start/`, one job per module;
-  `quick_start_routes.py`):
+- **Quick start asks only what kato cannot find — and DECIDES NOTHING for the operator** (operator: "ask the minimum,
+  and all must work on a fresh machine"; then "let me choose the agent", "let them choose the folder, don't decide for
+  them"). `SetupModeGate` opens `QuickStart` on a first run: three steps, then **Start kato**. Nothing is pre-picked:
+  no agent chip, no folder (only what an earlier run saved). Each is checked, or fixed on the screen
+  (`kato_core_lib/data_layers/service/quick_start/`, one job per module; `quick_start_routes.py`):
+  - **Your agent** — chips: Claude Code | Codex | Grok | OpenCode (each marked "installed" when it is). The picked one
+    is checked fresh (`agent_check.agent_status`); missing → **Install** when the upgrade plan allows it (npm, or the
+    native installer for Claude Code), else its transport's OWN install words (`readiness_error`, uncached) + its
+    download page. Only Claude Code can say it is signed out, so only it blocks on sign-in (kato runs it); the others
+    show their own sign-in (`codex login`, `grok login`, `opencode auth login`) and count as ready once installed.
+    The pick is saved as `KATO_CHAT_AGENT` (`chat_agent_utils`, read fresh, Settings → General "Agent for new
+    tasks"); `KATO_AGENT_BACKEND` is still written `claude` (only Claude/OpenHands can run a ticket unattended).
+    A NEW task starts on that agent: `LocalTaskStarter.start` → `chat_agent_choice.start_on_chosen_agent` writes the
+    task's first chat record with that agent BEFORE the first spawn (the router routes by the record; the switch-agent
+    route does the same) — never for a task that already has a chat, an agent not wired, or the default. Then the
+    default agent's model/effort (Claude names) are dropped, and New task (`chatAgent` from config-status
+    `chat_agent`) shows "Runs on Codex" instead of Claude's pickers.
   - **Claude Code** (`agent_check`, read fresh, never cached): not installed → **Install** runs the in-app upgrade job
     (`upgradeAgentCli('claude')`, one progress bar), whose plan falls back to Anthropic's NATIVE installer
     (`curl -fsSL https://claude.ai/install.sh | bash`, PowerShell `irm …install.ps1 | iex`; `set -o pipefail`) when
@@ -1128,12 +1153,19 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   - **git** (`git_check`): on a Mac `/usr/bin/git` is a stand-in without Apple's tools, so `xcode-select -p` is asked
     first and the stand-in never runs (it pops a dialog); **Install git** opens `xcode-select --install`. Elsewhere the
     command is shown.
-  - **Your code** (`code_folders`): folders in home and one level in, ranked by repositories DIRECTLY in them, then in
-    all (by the total, `~/Desktop` beat `~/Desktop/dev` by counting copies); a parent holding exactly a child's
-    repositories gives way to it; kato's workspaces excluded; folder names only, 3s budget. None → `~/code`, created
-    on Start.
-  Start = ONE write (`settings.save_quick_start`): `KATO_AGENT_BACKEND=claude`, `REPOSITORY_ROOT_PATH`, and
-  `KATO_ISSUE_PLATFORM=local` unless a tracker is set — unset they mean OpenHands and YouTrack, both needing keys.
+  - **Your code** (`code_folders`): SUGGESTIONS, none picked — folders in home and one level in, ranked by repositories
+    DIRECTLY in them, then in all (by the total, `~/Desktop` beat `~/Desktop/dev` by counting copies); a parent holding
+    exactly a child's repositories gives way to it; kato's workspaces excluded; folder names only, 3s budget. None →
+    `~/code` offered (created on Start only if picked); "Another folder…" browses.
+  Start = ONE write (`settings.save_quick_start`): `KATO_CHAT_AGENT`, `KATO_AGENT_BACKEND=claude`, `REPOSITORY_ROOT_PATH`,
+  and `KATO_ISSUE_PLATFORM=local` unless a tracker is set — unset they mean OpenHands and YouTrack, both needing keys.
+  An agent installed where kato's PATH does not look is still found (`add_agent_install_dirs_to_path`, at boot and on
+  every check): Claude Code's own folders FIRST (`~/.local/bin`, the older alias-only `~/.claude/local`), then LAST,
+  only when an agent CLI is really in them, every nvm/fnm Node version's `bin` newest first (codex installed under
+  Node 20 while Node 22 is active read "not on this computer"), Volta, `~/.npm-global`, `~/.opencode/bin`, Homebrew.
+  The folder browser (`FolderBrowser`) opens on the home folder when its start folder cannot be listed (quick start's
+  `~/code` before it exists) and its Home button never needs a listing first — it used to dead-end. The native installer has its
+  own progress steps (`_INSTALLER_MILESTONES`): its silent download reads "Downloading Claude Code", not "Starting…".
   The backend change re-execs kato in place (as before). The 6-step wizard is the "Connect a ticket system instead"
   link (and what `cannot_connect` shows). Proven on a real kato with an empty HOME and a bare PATH
   (`/usr/bin:/bin:/usr/sbin:/sbin`): the Install button ran the real installer and the step moved to sign-in; with a

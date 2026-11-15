@@ -597,13 +597,13 @@ describe('SetupWizard step 5 — repositories folder', () => {
     await goToRepoStep();
     fireEvent.click(screen.getByRole('button', { name: 'Browse…' }));
 
-    await screen.findByText('📁 kato');
+    await screen.findByRole('button', { name: 'kato' });
     fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
 
     // The picked path landed in the input and the picker closed.
     const input = document.querySelector('.setup-wizard-input');
     expect(input.value).toBe('/Users/dev/Projects');
-    expect(screen.queryByText('📁 kato')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'kato' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Save & continue' })).not.toBeDisabled();
   });
 });

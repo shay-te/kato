@@ -22,6 +22,8 @@ from kato_core_lib.data_layers.service.local_task_service import (
     START_PERMISSION_MODE,
     opening_message,
 )
+from kato_core_lib.helpers.chat_agent_utils import chat_agent
+from kato_webserver.chat_agent_choice import start_on_chosen_agent
 from kato_core_lib.helpers.mission_logging_utils import log_mission_step
 from kato_core_lib.helpers.plan_mode_store import picked_mode_to_store
 from kato_webserver.prompt_attachment_store import list_attachment_paths
@@ -56,6 +58,12 @@ class LocalTaskStarter(object):
             mode = picked_mode_to_store(mode, task_id)
         self._set_mode(task_id, mode)
         _persist_mode(task_id, mode)
+        # The chat starts on the operator's chosen agent (quick start /
+        # Settings). A model or effort picked from the DEFAULT agent's list
+        # (a Claude model name) means nothing to another agent: that task runs
+        # on its own agent's default instead of failing at its first message.
+        if start_on_chosen_agent(self._app.config.get('SESSION_MANAGER'), task_id, chat_agent()):
+            model, effort = '', ''
         self._set_override('TASK_MODEL_OVERRIDES', task_id, str(model or '').strip())
         self._set_override('TASK_EFFORT_OVERRIDES', task_id, effort)
         self._background(lambda: self._prepare_and_start(task_id, start_mode), f'local-task-{task_id}')

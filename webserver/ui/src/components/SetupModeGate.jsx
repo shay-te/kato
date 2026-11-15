@@ -41,7 +41,7 @@ export default function SetupModeGate({ status, hidden = false, onRefreshStatus,
               ? 'Your settings are saved — kato keeps trying by itself. Fix what the error names, '
                 + 'below or in Settings.'
               : quick
-                ? 'Two checks and a folder — kato looks for them itself. No terminal needed.'
+                ? 'Pick your agent and your code folder — kato checks and installs the rest. No terminal needed.'
                 : 'Connect your ticket system, then kato picks up the tasks assigned to you.'}
           </p>
           {Boolean(status.setup_error) && (

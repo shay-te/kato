@@ -65,16 +65,20 @@ target OS** (Tauri can't cross-compile installers). Two steps per OS:
 | Target | Built on | Output |
 |---|---|---|
 | `.dmg` (+ `.app`) | **macOS** | `src-tauri/target/release/bundle/dmg/` |
-| `.msi` / NSIS `.exe` | **Windows** | `src-tauri/target/release/bundle/{msi,nsis}/` |
+| NSIS `.exe` | **Windows** | `src-tauri/target/release/bundle/nsis/` |
 | `.AppImage` / `.deb` | **Linux** | `src-tauri/target/release/bundle/{appimage,deb}/` |
 
-**Recommended: let CI make them.** `ci/release.yaml` is a GitHub Actions matrix
-(macOS + Windows + Ubuntu runners) that builds the sidecar + runs `tauri build`
-per OS on a version tag, and also emits the **updater feed**. Copy it to
-`.github/workflows/desktop-release.yaml` at the repo root to enable it (GitHub only
-runs workflows from there — it's the one file that can't physically live under
-`desktop/`). Then: **push a tag → CI produces all three installers + the update
-feed.** Locally you can `npm run build` for *your own* OS to smoke-test.
+**Recommended: let CI make them.** `.github/workflows/desktop-release.yaml` at
+the repo root is a GitHub Actions matrix (macOS + Windows + Ubuntu runners) that
+builds the sidecar + runs `tauri build` per OS on a `desktop-v*` tag, and also
+emits the **updater feed**. (`ci/release.yaml` here is an older copy; the
+workflow at the repo root is the one that runs.) Push a tag → CI produces all
+three installers + the update feed. Locally you can `npm run build` for *your
+own* OS to smoke-test — local builds are never code-signed.
+
+**Windows code signing** (so SmartScreen and Defender do not warn the people who
+download it): see [`signing/README.md`](signing/README.md) — which certificate,
+what to set up in GitHub, and how to check a release on a real Windows PC.
 
 ---
 

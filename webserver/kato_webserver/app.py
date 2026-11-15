@@ -370,6 +370,21 @@ def _validate_persist_and_respond(updates: dict, app: Flask | None = None):
     })
 
 
+def _new_task_chat_agent(app: Flask) -> str:
+    """The agent a new task's chat would start on, as ``start_on_chosen_agent``
+    decides it: the operator's pick when this kato has it wired and it is not
+    already the default; '' otherwise (the default agent)."""
+    from kato_core_lib.helpers.chat_agent_utils import chat_agent
+
+    agent = chat_agent()
+    manager = app.config.get('SESSION_MANAGER')
+    available = getattr(manager, 'available_backends', None)
+    default = getattr(manager, 'default_backend', None)
+    if not agent or not callable(available) or agent not in available():
+        return ''
+    return '' if callable(default) and agent == default() else agent
+
+
 def _live_settings_keys() -> frozenset[str]:
     """Schema keys :func:`_apply_live_settings` enforces without a restart."""
     from kato_core_lib.data_layers.service.lid_awake.settings import (
@@ -409,9 +424,11 @@ def _read_fresh_switch_keys() -> frozenset[str]:
         PUBLISH_FOLLOWS_PROJECT_CONVENTIONS_KEY,
     )
     from kato_core_lib.helpers.push_approval_gate_utils import AUTO_PUSH_ENABLED_KEY
+    from kato_core_lib.helpers.chat_agent_utils import CHAT_AGENT_KEY
 
     return AUTOMATION_SWITCH_KEYS | frozenset({
         AGENT_GIT_STRICT_KEY, AUTO_PUSH_ENABLED_KEY, PUBLISH_FOLLOWS_PROJECT_CONVENTIONS_KEY,
+        CHAT_AGENT_KEY,  # read fresh when a task starts
     })
 
 
@@ -2819,6 +2836,9 @@ def _register_http_routes(app: Flask) -> None:
             # The ticket system tasks come from ('local' = none: tasks are
             # made in kato), so the UI names the right one. Unset is YouTrack.
             'issue_platform': str(env.get('KATO_ISSUE_PLATFORM') or 'youtrack').strip().lower(),
+            # The agent a new task's chat starts on ('' = the configured one):
+            # New task offers Claude's models only when it is Claude.
+            'chat_agent': _new_task_chat_agent(app),
             # Why the last in-process start attempt failed ('' when none):
             # config can be COMPLETE yet still fail to start (bad token
             # fails connection validation). The wizard must show that

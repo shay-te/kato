@@ -11,7 +11,7 @@ import time
 import hydra
 from omegaconf import DictConfig
 
-from kato_core_lib.helpers.agent_version_utils import add_native_install_dir_to_path
+from kato_core_lib.helpers.agent_version_utils import add_agent_install_dirs_to_path
 from kato_core_lib.helpers.deadline import run_with_deadline
 import logging
 
@@ -129,7 +129,7 @@ def main(cfg: DictConfig) -> int:
     # Claude Code's native installer puts the CLI in ~/.local/bin and adds that
     # to the SHELL's profile, which a kato started from an older shell (or a
     # service) never read: put it on this process's PATH before anything looks.
-    add_native_install_dir_to_path()
+    add_agent_install_dirs_to_path()
     # Missing config no longer hard-exits at the terminal: kato boots into
     # SETUP MODE (the planning UI runs so the operator configures via the
     # Settings drawer) instead of dying. The SECURITY gates below (bypass /

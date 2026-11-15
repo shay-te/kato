@@ -205,12 +205,12 @@ export function fetchQuickStart() {
   return fetchJson('/api/setup/quick-start');
 }
 
-export function fetchQuickStartChecks() {
-  return fetchJson('/api/setup/quick-start/checks');
+export function fetchQuickStartChecks(agent) {
+  return fetchJson(`/api/setup/quick-start/checks?agent=${encodeURIComponent(agent || '')}`);
 }
 
-export function saveQuickStart({ folder, create = false }) {
-  return postEnvelope('/api/setup/quick-start', { folder, create: create === true });
+export function saveQuickStart({ agent, folder, create = false }) {
+  return postEnvelope('/api/setup/quick-start', { agent, folder, create: create === true });
 }
 
 export function startClaudeSignIn() {

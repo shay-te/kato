@@ -168,35 +168,60 @@ class GitCheckTests(unittest.TestCase):
 
 class AgentCheckTests(unittest.TestCase):
     def setUp(self) -> None:
-        on_path = mock.patch.object(agent_check, 'add_native_install_dir_to_path')
+        on_path = mock.patch.object(agent_check, 'add_agent_install_dirs_to_path')
         self.on_path = on_path.start()
         self.addCleanup(on_path.stop)
 
-    def test_a_missing_cli_says_whether_and_how_kato_can_install_it(self) -> None:
+    def test_a_missing_cli_says_whether_kato_can_install_it_and_how_by_hand(self) -> None:
         plan = {'allowed': True, 'command': 'curl -fsSL https://claude.ai/install.sh | bash', 'reason': ''}
-        status = agent_check.claude_status({}, version_of=lambda env, backend: None,
-                                           plan_for=lambda env, backend: plan)
+        status = agent_check.agent_status('claude', {}, version_of=lambda env, backend: None,
+                                          plan_for=lambda env, backend: plan,
+                                          readiness=lambda agent, binary: 'Claude CLI not found')
         self.assertEqual(status['installed'], False)
         self.assertEqual(status['install'], {'available': True, 'command': plan['command'], 'reason': ''})
+        self.assertEqual(status['help'], 'Claude CLI not found')
+        self.assertEqual(status['download'], 'https://code.claude.com/docs/en/setup')
         self.assertIsNone(status['logged_in'])
         self.on_path.assert_called_once_with()
 
-    def test_an_installed_cli_reports_whether_it_is_signed_in(self) -> None:
+    def test_an_installed_claude_reports_whether_it_is_signed_in(self) -> None:
         seen = {}
 
         def version_of(env, backend):
             seen['backend'] = backend
             return '2.1.325'
-        status = agent_check.claude_status({'KATO_CLAUDE_BINARY': '/opt/claude'}, version_of=version_of,
-                                           login_status=lambda binary: {'logged_in': False, 'binary': binary})
+        status = agent_check.agent_status('claude', {'KATO_CLAUDE_BINARY': '/opt/claude'}, version_of=version_of,
+                                          login_status=lambda binary: {'logged_in': False, 'binary': binary})
         self.assertEqual((status['installed'], status['version'], status['logged_in']), (True, '2.1.325', False))
         self.assertEqual((seen['backend'], status['binary']), ('claude', '/opt/claude'))
-        self.assertIsNone(status['install'])
+        self.assertEqual((status['install'], status['login_command']), (None, ''))
+
+    def test_the_other_agents_name_their_own_sign_in_and_kato_cannot_tell(self) -> None:
+        for agent, login in (('codex', 'codex login'), ('grok', 'grok login'), ('opencode', 'opencode auth login')):
+            with self.subTest(agent=agent):
+                status = agent_check.agent_status(agent, {}, version_of=lambda env, backend: '1.2.3')
+                self.assertEqual((status['installed'], status['logged_in'], status['login_command']), (True, None, login))
+                self.assertEqual(status['binary'], agent)
+                self.assertTrue(status['download'].startswith('https://'))
+
+    def test_a_missing_codex_without_npm_gets_its_own_install_words(self) -> None:
+        refused = {'allowed': False, 'command': '', 'reason': 'no supported upgrade path for codex'}
+        status = agent_check.agent_status('codex', {}, version_of=lambda env, backend: None,
+                                          plan_for=lambda env, backend: refused,
+                                          readiness=lambda agent, binary: 'Install Codex CLI: npm install -g @openai/codex')
+        self.assertFalse(status['install']['available'])
+        self.assertIn('npm install -g @openai/codex', status['help'])
+
+    def test_every_agent_in_tab_order(self) -> None:
+        statuses = agent_check.all_agents_status({}, version_of=lambda env, backend: '1.0.0',
+                                                 login_status=lambda binary: {'logged_in': True})
+        self.assertEqual(list(statuses), ['claude', 'codex', 'grok', 'opencode'])
+        self.assertIs(statuses['claude']['logged_in'], True)
 
     def test_the_real_sign_in_check_is_the_default(self) -> None:
         with mock.patch('claude_core_lib.claude_core_lib.helpers.auth_status.claude_login_status',
                         return_value={'logged_in': True, 'method': 'claude.ai'}):
-            status = agent_check.claude_status({}, version_of=lambda env, backend: '2.1.0')
+            status = agent_check.agent_status('claude', {}, version_of=lambda env, backend: '2.1.0')
         self.assertIs(status['logged_in'], True)
 
 
@@ -318,18 +343,27 @@ class ClaudeSignInTests(unittest.TestCase):
 
 
 class SaveQuickStartTests(_Home):
-    def save(self, folder, *, create=False, env=None) -> dict:
+    def save(self, folder, *, agent='claude', create=False, env=None) -> dict:
         self.written: list[dict] = []
-        return save_quick_start(folder, create=create, env=env or {}, write=self.written.append, home=self.home)
+        return save_quick_start(folder, agent=agent, create=create, env=env or {},
+                                write=self.written.append, home=self.home)
 
-    def test_the_three_settings_are_written_together(self) -> None:
+    def test_the_settings_are_written_together(self) -> None:
         (self.home / 'dev').mkdir()
-        saved = self.save(str(self.home / 'dev'))
+        saved = self.save(str(self.home / 'dev'), agent='codex')
         self.assertEqual(saved, {
-            'KATO_AGENT_BACKEND': 'claude', 'REPOSITORY_ROOT_PATH': str(self.home / 'dev'),
-            'KATO_ISSUE_PLATFORM': 'local',
+            'KATO_CHAT_AGENT': 'codex', 'KATO_AGENT_BACKEND': 'claude',
+            'REPOSITORY_ROOT_PATH': str(self.home / 'dev'), 'KATO_ISSUE_PLATFORM': 'local',
         })
         self.assertEqual(self.written, [saved])
+
+    def test_an_agent_kato_does_not_know_is_refused_before_anything_is_written(self) -> None:
+        (self.home / 'dev').mkdir()
+        for agent in ('', 'gpt-pilot'):
+            with self.subTest(agent=agent), self.assertRaises(QuickStartError) as caught:
+                self.save(str(self.home / 'dev'), agent=agent)
+            self.assertIn('pick the agent you use', str(caught.exception))
+            self.assertEqual(self.written, [])
 
     def test_a_ticket_system_already_set_is_kept(self) -> None:
         (self.home / 'dev').mkdir()
@@ -367,11 +401,13 @@ class SaveQuickStartTests(_Home):
         (self.home / 'dev').mkdir()
         settings = self.home / '.kato' / 'settings.json'
         with mock.patch.object(store, 'kato_settings_path', return_value=settings):
-            save_quick_start(str(self.home / 'dev'), create=False, env={}, write=store.write_kato_settings, home=self.home)
+            save_quick_start(str(self.home / 'dev'), agent='grok', create=False, env={},
+                             write=store.write_kato_settings, home=self.home)
         written = json.loads(settings.read_text())
         self.assertEqual(written['REPOSITORY_ROOT_PATH'], str(self.home / 'dev'))
         self.assertEqual(written['KATO_AGENT_BACKEND'], 'claude')
         self.assertEqual(written['KATO_ISSUE_PLATFORM'], 'local')
+        self.assertEqual(written['KATO_CHAT_AGENT'], 'grok')
 
 
 if __name__ == '__main__':

@@ -27,8 +27,12 @@ class QuickStartRoutesTests(unittest.TestCase):
         patches = [
             mock.patch.object(routes, 'effective_config_env', side_effect=lambda: dict(self.env)),
             mock.patch.object(routes, 'write_kato_settings', side_effect=self.written.append),
-            mock.patch.object(routes, 'claude_status', return_value={
-                'installed': True, 'version': '2.1.325', 'logged_in': True, 'binary': '/b/claude', 'install': None,
+            mock.patch.object(routes, 'agent_status', side_effect=lambda agent, env: {
+                'agent': agent, 'installed': True, 'version': '2.1.325', 'logged_in': True,
+                'binary': f'/b/{agent}', 'install': None,
+            }),
+            mock.patch.object(routes, 'all_agents_status', side_effect=lambda env: {
+                agent: {'agent': agent, 'installed': agent == 'claude'} for agent in ('claude', 'codex', 'grok', 'opencode')
             }),
             mock.patch.object(routes, 'git_status', return_value={'installed': True, 'version': '2.43.0', 'install': None}),
             mock.patch.object(routes.Path, 'home', return_value=self.home),
@@ -43,7 +47,8 @@ class QuickStartRoutesTests(unittest.TestCase):
     def test_the_screen_gets_the_checks_and_the_folders_found(self) -> None:
         (self.home / 'dev' / 'api' / '.git').mkdir(parents=True)
         body = self.client.get('/api/setup/quick-start').get_json()
-        self.assertEqual(body['claude']['version'], '2.1.325')
+        self.assertEqual(list(body['agents']), ['claude', 'codex', 'grok', 'opencode'])
+        self.assertEqual(body['agent'], '')  # nothing picked for the operator
         self.assertTrue(body['git']['installed'])
         self.assertEqual(body['folders'], [{'path': str(self.home / 'dev'), 'repositories': 1}])
         self.assertEqual(body['new_folder'], str(self.home / 'code'))
@@ -57,33 +62,48 @@ class QuickStartRoutesTests(unittest.TestCase):
             body = self.client.get('/api/setup/quick-start').get_json()
         self.assertEqual(body['folders'], [])
 
-    def test_the_polled_checks_carry_no_folder_search(self) -> None:
+    def test_a_pick_made_before_is_offered_again(self) -> None:
+        self.env['KATO_CHAT_AGENT'] = 'codex'
+        with mock.patch('kato_core_lib.helpers.chat_agent_utils.live_setting',
+                        side_effect=lambda key, env=None: self.env.get(key, '')):
+            body = self.client.get('/api/setup/quick-start').get_json()
+        self.assertEqual(body['agent'], 'codex')
+
+    def test_the_polled_checks_carry_the_picked_agent_and_no_folder_search(self) -> None:
         with mock.patch.object(routes, 'find_code_folders') as search:
-            body = self.client.get('/api/setup/quick-start/checks').get_json()
+            body = self.client.get('/api/setup/quick-start/checks?agent=grok').get_json()
+            fallback = self.client.get('/api/setup/quick-start/checks?agent=nonsense').get_json()
         search.assert_not_called()
-        self.assertEqual(set(body), {'claude', 'git'})
+        self.assertEqual(set(body), {'agent', 'git'})
+        self.assertEqual(body['agent']['agent'], 'grok')
+        self.assertEqual(fallback['agent']['agent'], 'claude')
 
     def test_save_writes_the_three_settings_or_says_why_not(self) -> None:
         (self.home / 'dev').mkdir()
-        response = self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'dev')})
+        response = self.client.post('/api/setup/quick-start', json={'agent': 'codex', 'folder': str(self.home / 'dev')})
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(self.written, [{
-            'KATO_AGENT_BACKEND': 'claude', 'REPOSITORY_ROOT_PATH': str(self.home / 'dev'),
-            'KATO_ISSUE_PLATFORM': 'local',
+            'KATO_CHAT_AGENT': 'codex', 'KATO_AGENT_BACKEND': 'claude',
+            'REPOSITORY_ROOT_PATH': str(self.home / 'dev'), 'KATO_ISSUE_PLATFORM': 'local',
         }])
-        refused = self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'code')})
+        no_agent = self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'dev')})
+        self.assertEqual(no_agent.status_code, 400)
+        self.assertIn('pick the agent you use', no_agent.get_json()['error'])
+        refused = self.client.post('/api/setup/quick-start', json={'agent': 'claude', 'folder': str(self.home / 'code')})
         self.assertEqual(refused.status_code, 400)
         self.assertIn('does not exist', refused.get_json()['error'])
-        created = self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'code'), 'create': True})
+        created = self.client.post('/api/setup/quick-start', json={
+            'agent': 'claude', 'folder': str(self.home / 'code'), 'create': True,
+        })
         self.assertEqual(created.get_json()['saved']['REPOSITORY_ROOT_PATH'], str(self.home / 'code'))
         # Only a literal true creates a folder.
-        self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'other'), 'create': 'yes'})
+        self.client.post('/api/setup/quick-start', json={'agent': 'claude', 'folder': str(self.home / 'other'), 'create': 'yes'})
         self.assertFalse((self.home / 'other').exists())
 
     def test_a_settings_file_that_cannot_be_written_is_a_500(self) -> None:
         (self.home / 'dev').mkdir()
         with mock.patch.object(routes, 'write_kato_settings', side_effect=PermissionError('read-only')):
-            response = self.client.post('/api/setup/quick-start', json={'folder': str(self.home / 'dev')})
+            response = self.client.post('/api/setup/quick-start', json={'agent': 'claude', 'folder': str(self.home / 'dev')})
         self.assertEqual(response.status_code, 500)
         self.assertIn('read-only', response.get_json()['error'])
 

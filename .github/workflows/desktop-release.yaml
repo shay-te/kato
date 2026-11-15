@@ -56,7 +56,7 @@ jobs:
       matrix:
         include:
           - { os: macos-latest,   note: "arm64 .dmg" }
-          - { os: windows-latest, note: ".msi / nsis .exe" }
+          - { os: windows-latest, note: "nsis .exe" }
           - { os: ubuntu-22.04,   note: ".AppImage / .deb" }
     runs-on: ${{ matrix.os }}
     steps:
@@ -72,11 +72,19 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
+      # Windows only: PyInstaller's bootloader is built from source here. The
+      # prebuilt one is in every PyInstaller app — malware included — which is
+      # why antivirus flags it (PyInstaller's own docs: "Building the
+      # Bootloader"). macOS and Linux keep the prebuilt wheel, as before.
       - name: Install kato + PyInstaller
         shell: bash
         run: |
           python scripts/install_python_deps.py python editable
-          python -m pip install pyinstaller
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            PYINSTALLER_COMPILE_BOOTLOADER=1 python -m pip install --no-binary pyinstaller pyinstaller
+          else
+            python -m pip install pyinstaller
+          fi
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
@@ -169,12 +177,44 @@ jobs:
             echo "draft=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Windows code signing (desktop/signing/README.md). Off until the
+      # repository variable WINDOWS_SIGNING is set: the build is then unsigned,
+      # with a warning on the run, exactly as before. On, it hands `tauri build`
+      # a config fragment whose signCommand signs every file Tauri ships — the
+      # app, the sidecar, the installer's plugins, the uninstaller and the
+      # installer — BEFORE the updater signatures are made over them. The
+      # secrets reach the sign command only through the environment.
+      - name: Java for Windows code signing
+        if: matrix.os == 'windows-latest' && vars.WINDOWS_SIGNING != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Windows code signing, when configured
+        id: winsign
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
+          ESIGNER_USERNAME: ${{ secrets.ESIGNER_USERNAME }}
+          ESIGNER_PASSWORD: ${{ secrets.ESIGNER_PASSWORD }}
+          ESIGNER_CREDENTIAL_ID: ${{ secrets.ESIGNER_CREDENTIAL_ID }}
+          ESIGNER_TOTP_SECRET: ${{ secrets.ESIGNER_TOTP_SECRET }}
+        run: ./desktop/signing/enable-windows-signing.ps1
+
       - name: Build + sign the Tauri app (emits installers + updater feed)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Read only by desktop/signing/sign-windows.ps1, which runs only when
+          # the step above turned Windows signing on.
+          ESIGNER_USERNAME: ${{ matrix.os == 'windows-latest' && secrets.ESIGNER_USERNAME || '' }}
+          ESIGNER_PASSWORD: ${{ matrix.os == 'windows-latest' && secrets.ESIGNER_PASSWORD || '' }}
+          ESIGNER_CREDENTIAL_ID: ${{ matrix.os == 'windows-latest' && secrets.ESIGNER_CREDENTIAL_ID || '' }}
+          ESIGNER_TOTP_SECRET: ${{ matrix.os == 'windows-latest' && secrets.ESIGNER_TOTP_SECRET || '' }}
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
@@ -182,12 +222,25 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: ${{ steps.release.outputs.draft == 'true' }}
           prerelease: false
+          # Empty everywhere but a signed Windows build.
+          args: ${{ steps.winsign.outputs.tauri_args }}
+
+      # What a person downloads must be signed through and through: the
+      # installer, what is inside it, and what it installs (the uninstaller
+      # included). Any unsigned or untimestamped file fails this job — the
+      # draft release then must not be published.
+      - name: Every shipped Windows file is signed and timestamped
+        if: matrix.os == 'windows-latest' && steps.winsign.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PUBLISHER: ${{ vars.WINDOWS_SIGNING_PUBLISHER }}
+        run: ./desktop/signing/verify-windows-signatures.ps1 -Publisher "$env:WINDOWS_SIGNING_PUBLISHER"
 
       # The installer THIS build made, kept for windows-sign: what SignPath
       # signs is the file built here — not a copy taken back out of the
       # release, which anything that can write the release could swap first.
       - name: Keep the unsigned installer for signing
-        if: matrix.os == 'windows-latest' && vars.SIGNPATH_PROJECT_SLUG != ''
+        if: matrix.os == 'windows-latest' && vars.SIGNPATH_PROJECT_SLUG != '' && vars.WINDOWS_SIGNING == ''
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-unsigned
@@ -214,7 +267,8 @@ jobs:
     # success()): the Windows installer that was built still gets signed, and
     # one that was not makes this job fail loudly instead of a draft silently
     # holding an unsigned installer.
-    if: ${{ !cancelled() && vars.SIGNPATH_PROJECT_SLUG != '' }}
+    # Never beside the in-build signing (WINDOWS_SIGNING): one signer, one publisher.
+    if: ${{ !cancelled() && vars.SIGNPATH_PROJECT_SLUG != '' && vars.WINDOWS_SIGNING == '' }}
     runs-on: ubuntu-latest
     # actions: read — SignPath reads this run's job and its artifact.
     permissions:

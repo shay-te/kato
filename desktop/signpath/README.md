@@ -1,5 +1,7 @@
 # Signing the Windows installer with SignPath
 
+> **Superseded while `WINDOWS_SIGNING` is set.** Windows signing now happens inside the release build with your own certificate ([`../signing/README.md`](../signing/README.md)), which signs every file, not only the installer. The SignPath job below never runs while that repository variable is set.
+
 > **Status:** the SignPath Foundation application was declined on 13 October 2026 for low public visibility (stars, forks, outside articles, discussions, institutional backing). They welcome a new application once the project is better known. The website no longer shows the signing policy; put the section below back on the download page before applying again.
 
 Unsigned, the Windows installer makes Microsoft Defender SmartScreen block it ("Windows protected your PC"). [SignPath Foundation](https://signpath.org/) signs open-source projects for free, and Kato qualifies on paper: MIT licence, public repository, and releases built only by GitHub Actions. The certificate is SignPath Foundation's, so Windows shows **SignPath Foundation** as the publisher.

@@ -205,6 +205,10 @@ SETTINGS_SCHEMA: list[dict] = [
             ('KATO_AGENT_BACKEND', 'select', 'Agent backend',
              'Which agent runs implementation/testing/review work.',
              {'options': ['openhands', 'claude']}),
+            ('KATO_CHAT_AGENT', 'select', 'Agent for new tasks',
+             'The agent a new task\'s chat starts on (Claude Code, Codex, Grok or OpenCode). '
+             'Tickets kato runs by itself still use the agent backend above.',
+             {'options': ['claude', 'codex', 'grok', 'opencode']}),
             ('KATO_LOG_LEVEL', 'select', 'Log level',
              'Root log verbosity.', {'options': LOG_LEVELS}),
             ('KATO_WORKFLOW_LOG_LEVEL', 'select', 'Workflow log level',

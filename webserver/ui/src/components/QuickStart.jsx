@@ -12,9 +12,12 @@ import {
 import { useAgentUpgrade } from '../hooks/useAgentUpgrade.js';
 import { cx } from '../utils/cx.js';
 import {
-  CLAUDE_STATE,
+  AGENT_STATE,
+  QUICK_START_AGENTS,
+  agentLabel,
+  agentState,
+  agentUsable,
   allChecksPass,
-  claudeState,
   homeRelative,
   initialFolder,
   repositoriesText,
@@ -23,23 +26,29 @@ import {
 import FolderBrowser from './FolderBrowser.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 
-// The first run: two checks and a folder, each found or fixed from here, then
-// Start. Nothing is typed unless kato could not find it: Claude Code (installed
-// and signed in from this screen — no terminal), git, and the folder holding
-// the most repositories. No ticket system: tasks are written in kato, and a
-// tracker is connected later (the link at the bottom opens the full wizard).
+// The first run: the agent the operator uses, git, and the folder their code is
+// in — then Start. The OPERATOR picks the agent (chips: Claude Code, Codex,
+// Grok, OpenCode) and the folder; kato never picks for them. It checks the
+// picked agent, installs it where it can, and runs Claude Code's sign-in from
+// here (the others name their own). No ticket system: tasks are written in
+// kato, and a tracker is connected later (the link at the bottom opens the full
+// wizard).
 //
 // While something is not ready the checks are asked again every few seconds,
-// so a sign-in finished in the browser, or a git install, turns green alone.
+// so a sign-in finished in the browser, or an install, turns green alone.
 const CHECK_EVERY_MS = 2500;
 
 export default function QuickStart({ onStarted, onUseWizard }) {
   const [screen, setScreen] = useState(null);
-  const [checks, setChecks] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [agent, setAgent] = useState('');
+  const [statuses, setStatuses] = useState({});
+  const [git, setGit] = useState(null);
   const [folder, setFolder] = useState(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState('');
+  const agentRef = useRef('');
+  agentRef.current = agent;
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +56,9 @@ export default function QuickStart({ onStarted, onUseWizard }) {
       .then((body) => {
         if (cancelled) { return; }
         setScreen(body);
-        setChecks({ claude: body.claude, git: body.git });
+        setStatuses(body.agents || {});
+        setGit(body.git || null);
+        setAgent(body.agent || '');
         setFolder(initialFolder(body));
       })
       .catch((error) => { if (!cancelled) { setLoadError(String(error?.message || error)); } });
@@ -55,19 +66,25 @@ export default function QuickStart({ onStarted, onUseWizard }) {
   }, []);
 
   const refreshChecks = useCallback(async () => {
+    const which = agentRef.current;
+    if (!which) { return; }
     try {
-      setChecks(await fetchQuickStartChecks());
+      const next = await fetchQuickStartChecks(which);
+      if (agentRef.current !== which) { return; }  // the operator picked another meanwhile
+      setStatuses((current) => ({ ...current, [which]: next.agent }));
+      setGit(next.git);
     } catch {
       // The next tick asks again; a missed one is not a finding.
     }
   }, []);
 
+  const checks = agent ? { agent: statuses[agent] || null, git } : null;
   const passing = allChecksPass(checks);
   useEffect(() => {
-    if (!screen || passing) { return undefined; }
+    if (!agent || passing) { return undefined; }
     const timer = setInterval(refreshChecks, CHECK_EVERY_MS);
     return () => clearInterval(timer);
-  }, [screen, passing, refreshChecks]);
+  }, [agent, passing, refreshChecks]);
 
   if (loadError) {
     return (
@@ -76,15 +93,20 @@ export default function QuickStart({ onStarted, onUseWizard }) {
       </div>
     );
   }
-  if (!screen || !checks) {
+  if (!screen) {
     return <div className="quick-start"><p className="quick-start-note" role="status">Looking at this computer…</p></div>;
   }
 
-  const blocker = startBlocker(checks, folder);
+  const pickAgent = (id) => {
+    setAgent(id);
+    agentRef.current = id;
+    refreshChecks();
+  };
+  const blocker = startBlocker({ agent, checks, folder });
   const start = async () => {
     setStarting(true);
     setStartError('');
-    const saved = await saveQuickStart({ folder: folder.path, create: folder.create });
+    const saved = await saveQuickStart({ agent, folder: folder.path, create: folder.create });
     if (!saved.ok) {
       setStarting(false);
       setStartError(saved.body?.error || saved.error || 'kato could not save it');
@@ -96,8 +118,14 @@ export default function QuickStart({ onStarted, onUseWizard }) {
   return (
     <div className="quick-start">
       <ol className="quick-start-steps">
-        <ClaudeStep claude={checks.claude} onChanged={refreshChecks} />
-        <GitStep git={checks.git} onChanged={refreshChecks} />
+        <AgentStep
+          key={agent || 'none'}
+          agent={agent}
+          statuses={statuses}
+          onPick={pickAgent}
+          onChanged={refreshChecks}
+        />
+        <GitStep git={git} onChanged={refreshChecks} />
         <FolderStep screen={screen} folder={folder} onPick={setFolder} />
       </ol>
       {startError && <p className="setup-wizard-error" role="alert">{startError}</p>}
@@ -140,9 +168,11 @@ function Step({ state, title, children }) {
   );
 }
 
-function ClaudeStep({ claude, onChanged }) {
-  const state = claudeState(claude);
-  const { progress, start: install } = useAgentUpgrade('claude');
+// The agent chips, then what the picked agent needs. Remounted per agent (its
+// key), so the install progress always belongs to the agent on screen; the
+// chips are locked while an install runs — one install at a time on a host.
+function AgentStep({ agent, statuses, onPick, onChanged }) {
+  const { progress, start: install } = useAgentUpgrade(agent);
   const installing = progress?.state === 'running';
   const doneInstalling = useRef(false);
   useEffect(() => {
@@ -154,54 +184,88 @@ function ClaudeStep({ claude, onChanged }) {
     if (progress?.state === 'running') { doneInstalling.current = false; }
   }, [progress, onChanged]);
 
-  if (state === CLAUDE_STATE.READY || state === CLAUDE_STATE.INSTALLED) {
-    return (
-      <Step state="ready" title="Claude Code">
-        <p className="quick-start-note">
-          {state === CLAUDE_STATE.READY ? 'Installed and signed in' : 'Installed'} — version {claude.version}.
-        </p>
-      </Step>
-    );
-  }
-  if (state === CLAUDE_STATE.SIGNED_OUT) {
-    return (
-      <Step state="todo" title="Claude Code">
-        <SignIn onChanged={onChanged} />
-      </Step>
-    );
-  }
-  const plan = claude?.install || {};
+  const status = agent ? statuses[agent] : null;
+  let state = 'todo';
+  if (installing) { state = 'busy'; } else if (agent && agentUsable(status)) { state = 'ready'; }
   return (
-    <Step state={installing ? 'busy' : 'todo'} title="Claude Code">
-      {installing ? (
-        <div className="quick-start-progress" role="status">
-          <progress max="100" value={progress.percent || 0} aria-label="Installing Claude Code" />
-          <span className="quick-start-note">{progress.step || 'Installing…'}</span>
+    <Step state={state} title="Your agent">
+      <div className="quick-start-chips" role="radiogroup" aria-label="Your agent">
+        {QUICK_START_AGENTS.map((choice) => (
+          <button
+            key={choice.id}
+            type="button"
+            role="radio"
+            aria-checked={agent === choice.id}
+            className={cx('quick-start-chip', agent === choice.id && 'is-picked')}
+            disabled={installing && agent !== choice.id}
+            onClick={() => onPick(choice.id)}
+          >
+            {choice.label}
+            {statuses[choice.id]?.installed && <span className="quick-start-chip-installed" title="Installed on this computer">installed</span>}
+          </button>
+        ))}
+      </div>
+      {agent
+        ? <AgentSetup agent={agent} status={status} progress={progress} install={install} onChanged={onChanged} />
+        : <p className="quick-start-note">Pick the one you use — kato checks it is installed and signed in.</p>}
+    </Step>
+  );
+}
+
+function AgentSetup({ agent, status, progress, install, onChanged }) {
+  const label = agentLabel(agent);
+  const state = agentState(status);
+  if (state === AGENT_STATE.READY || state === AGENT_STATE.INSTALLED) {
+    return (
+      <>
+        <p className="quick-start-note">
+          {state === AGENT_STATE.READY ? 'Installed and signed in' : 'Installed'} — version {status.version}.
+        </p>
+        {status.login_command && (
+          <p className="quick-start-note">
+            Signed in already? If not, sign in once with <code className="quick-start-command">{status.login_command}</code>.
+          </p>
+        )}
+      </>
+    );
+  }
+  if (state === AGENT_STATE.SIGNED_OUT) {
+    return <SignIn onChanged={onChanged} />;
+  }
+  if (progress?.state === 'running') {
+    return (
+      <div className="quick-start-progress" role="status">
+        <progress max="100" value={progress.percent || 0} aria-label={`Installing ${label}`} />
+        <span className="quick-start-note">{progress.step || 'Installing…'}</span>
+      </div>
+    );
+  }
+  const plan = status?.install || {};
+  return (
+    <>
+      <p className="quick-start-note">{label} is not on this computer yet.</p>
+      {progress?.state === 'error' && (
+        <p className="setup-wizard-error" role="alert">The install did not finish: {progress.message}</p>
+      )}
+      {plan.available ? (
+        <div className="quick-start-actions">
+          <button type="button" className="setup-wizard-btn setup-wizard-btn--primary" onClick={install}>
+            Install {label}
+          </button>
+          <code className="quick-start-command" title="What kato runs">{plan.command}</code>
         </div>
       ) : (
         <>
-          <p className="quick-start-note">Kato works through Claude Code, and it is not on this computer yet.</p>
-          {progress?.state === 'error' && (
-            <p className="setup-wizard-error" role="alert">The install did not finish: {progress.message}</p>
-          )}
-          {plan.available ? (
-            <div className="quick-start-actions">
-              <button type="button" className="setup-wizard-btn setup-wizard-btn--primary" onClick={install}>
-                Install Claude Code
-              </button>
-              <code className="quick-start-command" title="What kato runs">{plan.command}</code>
-            </div>
-          ) : (
-            <p className="quick-start-note">
-              {plan.reason ? `Kato cannot install it here: ${plan.reason}. ` : ''}
-              Install it from{' '}
-              <a href="https://code.claude.com/docs/en/setup" target="_blank" rel="noreferrer">code.claude.com/docs/en/setup</a>
-              , and this turns green by itself.
-            </p>
-          )}
+          {status?.help && <pre className="quick-start-help">{status.help.trim()}</pre>}
+          <p className="quick-start-note">
+            {status?.download && (
+              <>Get it from <a href={status.download} target="_blank" rel="noreferrer">{status.download}</a>
+                {' '}— this turns green by itself once it is installed.</>
+            )}
+          </p>
         </>
       )}
-    </Step>
+    </>
   );
 }
 
@@ -329,8 +393,8 @@ function FolderStep({ screen, folder, onPick }) {
     <Step state={folder?.path ? 'ready' : 'todo'} title="Your code">
       <p className="quick-start-note">
         {found.length
-          ? 'The folder kato works in. These hold git repositories:'
-          : 'No repositories found on this computer yet. Kato creates this folder — clone your repositories into it:'}
+          ? 'Pick the folder kato works in. These hold git repositories:'
+          : 'No repositories found on this computer yet. Pick a folder, or let kato create this one and clone your repositories into it:'}
       </p>
       <div className="quick-start-folders" role="radiogroup" aria-label="Your code folder">
         {offered.map((entry) => (
@@ -346,12 +410,13 @@ function FolderStep({ screen, folder, onPick }) {
           <FolderChoice path={homeRelative(folder.path, screen.home)} detail="your pick" picked onPick={() => {}} />
         )}
       </div>
-      <button type="button" className="quick-start-link" onClick={() => setBrowsing((open) => !open)}>
-        {browsing ? 'Close' : 'Another folder…'}
+      <button type="button" className="quick-start-link quick-start-browse" onClick={() => setBrowsing((open) => !open)}>
+        <Icon name={browsing ? 'xmark' : 'folder-open'} />
+        <span>{browsing ? 'Close' : 'Another folder…'}</span>
       </button>
       {browsing && (
         <FolderBrowser
-          initialPath={folder?.path || screen.home || '~'}
+          initialPath={(folder && !folder.create && folder.path) || screen.home || '~'}
           onPick={(path) => { onPick({ path, create: false }); setBrowsing(false); }}
           onClose={() => setBrowsing(false)}
         />

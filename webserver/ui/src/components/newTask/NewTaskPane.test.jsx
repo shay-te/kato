@@ -82,6 +82,23 @@ afterEach(() => {
 });
 
 describe('NewTaskPane', () => {
+  // Quick start's pick: a new task starts on Codex (or Grok, OpenCode). The
+  // model list is the default agent's — a Claude name would break that task —
+  // so the pane says where it runs and sends no model or effort.
+  test('a task that starts on another agent offers no Claude models and sends none', async () => {
+    const kato = fakeKato();
+    render(<NewTaskPane onCreated={vi.fn()} onHide={vi.fn()} chatAgent="codex" />);
+    expect(screen.getByText('Codex')).toBeInTheDocument();
+    expect(screen.getByText(/with its own default model/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Model')).toBeNull();
+    expect(screen.queryByLabelText('Effort')).toBeNull();
+    await fillIn();
+    fireEvent.click(screen.getByRole('button', { name: /Create/ }));
+    await waitFor(() => expect(kato.created).toHaveLength(1));
+    expect(kato.created[0].model).toBe('');
+    expect(kato.created[0].effort).toBe('');
+  });
+
   test('Plan is selected by default', async () => {
     fakeKato();
     renderPane();

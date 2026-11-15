@@ -1127,7 +1127,12 @@ export default function App() {
     let underStripPane = filePane;
     if (showingNewTask) {
       underStripPane = (
-        <NewTaskPane onCreated={handleNewTaskCreated} onHide={hideNewTask} onOpenSettings={openSettings} />
+        <NewTaskPane
+          onCreated={handleNewTaskCreated}
+          onHide={hideNewTask}
+          onOpenSettings={openSettings}
+          chatAgent={configStatus?.chat_agent || ''}
+        />
       );
     } else if (showingReviewLoop) {
       underStripPane = <ReviewLoopPane session={reviewLoopSession} onClose={handleCloseReviewLoopView} />;

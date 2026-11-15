@@ -2,27 +2,37 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  CLAUDE_STATE,
+  AGENT_STATE,
+  QUICK_START_AGENTS,
+  agentLabel,
+  agentState,
+  agentUsable,
   allChecksPass,
-  claudeState,
-  claudeUsable,
   homeRelative,
   initialFolder,
   repositoriesText,
   startBlocker,
 } from './quickStart.js';
 
-const READY = { claude: { installed: true, logged_in: true }, git: { installed: true } };
+const READY = { agent: { installed: true, logged_in: true }, git: { installed: true } };
 
-test('claude is missing, signed out, ready, or installed with no word on sign-in', () => {
-  assert.equal(claudeState(null), CLAUDE_STATE.MISSING);
-  assert.equal(claudeState({ installed: false }), CLAUDE_STATE.MISSING);
-  assert.equal(claudeState({ installed: true, logged_in: false }), CLAUDE_STATE.SIGNED_OUT);
-  assert.equal(claudeState({ installed: true, logged_in: true }), CLAUDE_STATE.READY);
-  assert.equal(claudeState({ installed: true, logged_in: null }), CLAUDE_STATE.INSTALLED);
-  // "cannot tell" is never read as signed out
-  assert.equal(claudeUsable({ installed: true, logged_in: null }), true);
-  assert.equal(claudeUsable({ installed: true, logged_in: false }), false);
+test('the four agents, in tab order, by the names people know', () => {
+  assert.deepEqual(QUICK_START_AGENTS.map((agent) => agent.id), ['claude', 'codex', 'grok', 'opencode']);
+  assert.equal(agentLabel('claude'), 'Claude Code');
+  assert.equal(agentLabel('opencode'), 'OpenCode');
+  assert.equal(agentLabel('mystery'), 'mystery');
+  assert.equal(agentLabel(null), '');
+});
+
+test('an agent is missing, signed out, ready, or installed with no word on sign-in', () => {
+  assert.equal(agentState(null), AGENT_STATE.MISSING);
+  assert.equal(agentState({ installed: false }), AGENT_STATE.MISSING);
+  assert.equal(agentState({ installed: true, logged_in: false }), AGENT_STATE.SIGNED_OUT);
+  assert.equal(agentState({ installed: true, logged_in: true }), AGENT_STATE.READY);
+  assert.equal(agentState({ installed: true, logged_in: null }), AGENT_STATE.INSTALLED);
+  // "cannot tell" (every agent but Claude Code) is never read as signed out
+  assert.equal(agentUsable({ installed: true, logged_in: null }), true);
+  assert.equal(agentUsable({ installed: true, logged_in: false }), false);
 });
 
 test('a folder reads the way people say it', () => {
@@ -37,20 +47,23 @@ test('a folder reads the way people say it', () => {
   assert.equal(repositoriesText(14), '14 repositories');
 });
 
-test('start picks the folder already set, else the best found, else the one to create', () => {
+test('no folder is picked for the operator — only one they chose before', () => {
   assert.deepEqual(initialFolder({ folder: '/set', folders: [{ path: '/a' }] }), { path: '/set', create: false });
-  assert.deepEqual(initialFolder({ folder: '', folders: [{ path: '/a' }, { path: '/b' }] }), { path: '/a', create: false });
-  assert.deepEqual(initialFolder({ folders: [], new_folder: '/home/code' }), { path: '/home/code', create: true });
-  assert.deepEqual(initialFolder(null), { path: '', create: true });
+  assert.equal(initialFolder({ folder: '', folders: [{ path: '/a' }] }), null);
+  assert.equal(initialFolder({ folders: [], new_folder: '/home/code' }), null);
+  assert.equal(initialFolder(null), null);
 });
 
-test('start says the first thing still missing, and nothing once all is there', () => {
-  assert.equal(startBlocker(null, { path: '/a' }), 'Checking this computer…');
-  assert.equal(startBlocker({ claude: { installed: false }, git: { installed: false } }, {}), 'Install Claude Code first.');
-  assert.equal(startBlocker({ claude: { installed: true, logged_in: false }, git: { installed: true } }, { path: '/a' }), 'Sign in to Claude first.');
-  assert.equal(startBlocker({ ...READY, git: { installed: false } }, { path: '/a' }), 'Install git first.');
-  assert.equal(startBlocker(READY, { path: '  ' }), 'Pick the folder your code is in.');
-  assert.equal(startBlocker(READY, { path: '/a' }), '');
+test('start says the first thing still missing, in the picked agent\'s name', () => {
+  assert.equal(startBlocker({ agent: '', checks: null, folder: { path: '/a' } }), 'Pick the agent you use.');
+  assert.equal(startBlocker({ agent: 'codex', checks: null, folder: { path: '/a' } }), 'Checking this computer…');
+  assert.equal(startBlocker({ agent: 'codex', checks: { agent: { installed: false }, git: { installed: true } }, folder: null }),
+    'Install Codex first.');
+  assert.equal(startBlocker({ agent: 'claude', checks: { agent: { installed: true, logged_in: false }, git: { installed: true } }, folder: { path: '/a' } }),
+    'Sign in to Claude Code first.');
+  assert.equal(startBlocker({ agent: 'grok', checks: { ...READY, git: { installed: false } }, folder: { path: '/a' } }), 'Install git first.');
+  assert.equal(startBlocker({ agent: 'grok', checks: READY, folder: null }), 'Pick the folder your code is in.');
+  assert.equal(startBlocker({ agent: 'grok', checks: READY, folder: { path: '/a' } }), '');
   assert.equal(allChecksPass(READY), true);
   assert.equal(allChecksPass({ ...READY, git: {} }), false);
   assert.equal(allChecksPass(null), false);

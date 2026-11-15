@@ -591,6 +591,18 @@ class NativeInstallPathTests(unittest.TestCase):
         home = mock.patch.object(avu.Path, 'home', return_value=self.home)
         home.start()
         self.addCleanup(home.stop)
+        # This machine's own account home is not the one under test.
+        account = mock.patch.object(avu, '_account_home', return_value=None)
+        account.start()
+        self.addCleanup(account.stop)
+        # The system folders (Homebrew, /usr/local/bin) are this machine's: left
+        # out, so what this computer has installed cannot decide a test.
+        fixed = mock.patch.object(
+            avu, 'other_install_dirs',
+            side_effect=lambda: avu._node_version_bins(self.home) + [self.home / '.volta' / 'bin'],
+        )
+        fixed.start()
+        self.addCleanup(fixed.stop)
         self.bin = self.home / '.local' / 'bin'
 
     def _install(self):
@@ -600,23 +612,116 @@ class NativeInstallPathTests(unittest.TestCase):
     def test_the_folder_goes_first_on_path_once_the_cli_is_there(self):
         self._install()
         environ = {'PATH': avu.os.pathsep.join(['/usr/bin', '/bin'])}
-        self.assertTrue(avu.add_native_install_dir_to_path(environ))
+        self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
         self.assertEqual(environ['PATH'].split(avu.os.pathsep), [str(self.bin), '/usr/bin', '/bin'])
-        self.assertFalse(avu.add_native_install_dir_to_path(environ))  # once is enough
+        self.assertFalse(avu.add_agent_install_dirs_to_path(environ))  # once is enough
 
     def test_nothing_changes_without_the_cli_or_with_the_folder_already_there(self):
         environ = {'PATH': '/usr/bin'}
-        self.assertFalse(avu.add_native_install_dir_to_path(environ))
+        self.assertFalse(avu.add_agent_install_dirs_to_path(environ))
         self.assertEqual(environ['PATH'], '/usr/bin')
         self._install()
         environ = {'PATH': avu.os.pathsep.join(['/usr/bin', str(self.bin)])}
-        self.assertFalse(avu.add_native_install_dir_to_path(environ))
+        self.assertFalse(avu.add_agent_install_dirs_to_path(environ))
         empty = {}
-        self.assertTrue(avu.add_native_install_dir_to_path(empty))
+        self.assertTrue(avu.add_agent_install_dirs_to_path(empty))
         self.assertEqual(empty['PATH'], str(self.bin))
+
+    # The older "local" install: ~/.claude/local/claude, reached through a
+    # shell alias no program sees — kato offered to install a second copy.
+    def test_the_older_local_install_is_found_too_and_the_native_one_comes_first(self):
+        local = self.home / '.claude' / 'local'
+        local.mkdir(parents=True)
+        (local / ('claude.exe' if avu.os.name == 'nt' else 'claude')).write_text('')
+        environ = {'PATH': '/usr/bin'}
+        self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
+        self.assertEqual(environ['PATH'].split(avu.os.pathsep), [str(local), '/usr/bin'])
+        self._install()
+        self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
+        self.assertEqual(environ['PATH'].split(avu.os.pathsep)[0], str(self.bin))
+        self.assertEqual(avu.claude_install_dirs(), [self.bin, local])
 
     def test_the_process_environment_is_the_default(self):
         self._install()
         with mock.patch.dict(avu.os.environ, {'PATH': '/usr/bin'}):
-            self.assertTrue(avu.add_native_install_dir_to_path())
+            self.assertTrue(avu.add_agent_install_dirs_to_path())
             self.assertTrue(avu.os.environ['PATH'].startswith(str(self.bin)))
+
+
+class OtherAgentInstallDirsTests(NativeInstallPathTests):
+    """An agent CLI npm installed under ANOTHER Node version (nvm, fnm) is
+    installed — it must not read "not on this computer" (codex under Node 20
+    while Node 22 is in use)."""
+
+    def _cli(self, folder, name):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / (f'{name}.exe' if avu.os.name == 'nt' else name)).write_text('')
+        return folder
+
+    def test_an_npm_cli_under_another_node_version_goes_last_on_path(self):
+        old = self._cli(self.home / '.nvm' / 'versions' / 'node' / 'v20.19.5' / 'bin', 'codex')
+        environ = {'PATH': avu.os.pathsep.join(['/current/node/bin', '/usr/bin'])}
+        self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
+        # The operator's own tools keep their order; the found folder is last.
+        self.assertEqual(environ['PATH'].split(avu.os.pathsep), ['/current/node/bin', '/usr/bin', str(old)])
+
+    def test_node_versions_newest_first_and_folders_without_an_agent_left_out(self):
+        v9 = self._cli(self.home / '.nvm' / 'versions' / 'node' / 'v9.11.2' / 'bin', 'grok')
+        v20 = self._cli(self.home / '.nvm' / 'versions' / 'node' / 'v20.19.5' / 'bin', 'codex')
+        (self.home / '.nvm' / 'versions' / 'node' / 'v22.13.0' / 'bin').mkdir(parents=True)  # node, no agent
+        fnm = self._cli(self.home / '.local' / 'share' / 'fnm' / 'node-versions' / 'v18.0.0' / 'installation' / 'bin',
+                        'opencode')
+        environ = {'PATH': '/usr/bin'}
+        self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
+        self.assertEqual(environ['PATH'].split(avu.os.pathsep), ['/usr/bin', str(v20), str(v9), str(fnm)])
+        self.assertFalse(avu.add_agent_install_dirs_to_path(environ))  # once is enough
+
+    def test_claude_code_own_folder_still_goes_first(self):
+        volta = self._cli(self.home / '.volta' / 'bin', 'opencode')
+        self._install()
+        environ = {'PATH': '/usr/bin'}
+        avu.add_agent_install_dirs_to_path(environ)
+        parts = environ['PATH'].split(avu.os.pathsep)
+        self.assertEqual((parts[0], parts[-1]), (str(self.bin), str(volta)))
+
+
+class UsualInstallPlacesTests(unittest.TestCase):
+    # A kato started with a scratch HOME (to try the first run) still finds the
+    # CLIs installed in the account's own home: codex under the operator's nvm
+    # read "not installed" there.
+    def test_the_accounts_own_home_is_searched_too_after_home(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as scratch, tempfile.TemporaryDirectory() as account, \
+                mock.patch.object(avu.Path, 'home', return_value=Path(scratch)), \
+                mock.patch.object(avu, '_account_home', return_value=Path(account)):
+            codex = Path(account) / '.nvm' / 'versions' / 'node' / 'v20.19.5' / 'bin'
+            codex.mkdir(parents=True)
+            (codex / 'codex').write_text('')
+            self.assertEqual(avu.claude_install_dirs()[2], Path(account) / '.local' / 'bin')
+            self.assertIn(codex, avu.other_install_dirs())
+            environ = {'PATH': '/usr/bin'}
+            self.assertTrue(avu.add_agent_install_dirs_to_path(environ))
+            self.assertEqual(environ['PATH'].split(avu.os.pathsep)[-1], str(codex))
+        with mock.patch.object(avu, '_account_home', return_value=Path.home()):
+            self.assertEqual(avu._homes(), [Path.home()])  # the same folder once
+
+    def test_the_account_home_comes_from_the_user_database(self):
+        import pwd
+        self.assertEqual(avu._account_home(), avu.Path(pwd.getpwuid(avu.os.getuid()).pw_dir))
+        with mock.patch.object(pwd, 'getpwuid', side_effect=KeyError('no such user')):
+            self.assertIsNone(avu._account_home())
+
+    def test_the_real_list_names_the_usual_places(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(avu.Path, 'home', return_value=Path(tmp)), \
+                mock.patch.object(avu, '_account_home', return_value=None):
+            (Path(tmp) / '.nvm' / 'versions' / 'node' / 'v20.1.0' / 'bin').mkdir(parents=True)
+            places = avu.other_install_dirs()
+        self.assertEqual(places[0], Path(tmp) / '.nvm' / 'versions' / 'node' / 'v20.1.0' / 'bin')
+        for expected in (Path(tmp) / '.volta' / 'bin', Path(tmp) / '.npm-global' / 'bin',
+                         Path(tmp) / '.opencode' / 'bin', Path('/opt/homebrew/bin'), Path('/usr/local/bin')):
+            self.assertIn(expected, places)
+        # %APPDATA%\\npm (npm's Windows prefix) is added only on Windows, where
+        # pathlib can build that path; it cannot be faked on another system.

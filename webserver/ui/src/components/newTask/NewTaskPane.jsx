@@ -7,6 +7,7 @@ import { toast, toastResult } from '../../stores/toastStore.js';
 import Icon, { BusyIcon } from '../Icon.jsx';
 import MarkdownContent from '../MarkdownContent.jsx';
 import NewTaskAgentPickers from './NewTaskAgentPickers.jsx';
+import { agentLabel } from '../../utils/quickStart.js';
 import NewTaskAttachments, { attachFiles } from './NewTaskAttachments.jsx';
 import NewTaskRepositories from './NewTaskRepositories.jsx';
 import NewTaskStartMode from './NewTaskStartMode.jsx';
@@ -23,7 +24,11 @@ import {
 // column beside it. Everything typed is kept as a draft in this browser.
 // ``onHide`` only returns the centre to the file view; the draft stays in its
 // tab. Discarding it is the tab's close, which asks first.
-export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }) {
+// ``chatAgent``: the agent a new task starts on when it is not the default
+// (quick start's pick — Codex, Grok, OpenCode). The model and effort lists are
+// the default agent's, so they are not offered then: the task runs on its own
+// agent's default, and its chat's picker changes it.
+export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null, chatAgent = '' }) {
   const draft = useNewTaskDraft();
   const [previewing, setPreviewing] = useState(false);
   const choices = useAgentChoices();
@@ -59,7 +64,8 @@ export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }
   }, [files]);
 
   const [creating, create] = useBusyAction(async () => {
-    const result = await createLocalTask(draftPayload(draft, { model, effort }), files);
+    const picked = chatAgent ? { model: '', effort: '' } : { model, effort };
+    const result = await createLocalTask(draftPayload(draft, picked), files);
     if (!result.ok) {
       toast.errorFromResult(result, { title: 'The task was not created' });
       return;
@@ -191,13 +197,20 @@ export default function NewTaskPane({ onCreated, onHide, onOpenSettings = null }
             value={draft.startMode}
             onChange={(startMode) => updateNewTaskDraft({ startMode })}
           />
-          <NewTaskAgentPickers
-            models={models}
-            levels={levels}
-            model={model}
-            effort={effort}
-            onChange={updateNewTaskDraft}
-          />
+          {chatAgent ? (
+            <p className="new-task-agent-note">
+              Runs on <strong>{agentLabel(chatAgent)}</strong>, with its own default model — change the
+              model in the task’s chat. (Settings → General → Agent for new tasks.)
+            </p>
+          ) : (
+            <NewTaskAgentPickers
+              models={models}
+              levels={levels}
+              model={model}
+              effort={effort}
+              onChange={updateNewTaskDraft}
+            />
+          )}
           {blockedHint}
           <button
             type="button"

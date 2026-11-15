@@ -93,7 +93,7 @@ class UpgradeJobTests(unittest.TestCase):
                      'command': 'curl -fsSL https://claude.ai/install.sh | bash'}
         job.upgrade_plan.return_value = installer
         job.installed_version.return_value = None  # nothing there before
-        with mock.patch.object(job, 'add_native_install_dir_to_path') as on_path:
+        with mock.patch.object(job, 'add_agent_install_dirs_to_path') as on_path:
             job.start(spawner=_spawner(['✔ Claude Code successfully installed!']),
                       verifier=lambda env: '2.1.325')
             snap = _wait_for_finish()
@@ -102,8 +102,44 @@ class UpgradeJobTests(unittest.TestCase):
         self.assertEqual(snap['message'], 'installed — kato uses it right away (2.1.325)')
         self.assertEqual(snap['command'], 'curl -fsSL https://claude.ai/install.sh | bash')
 
+    # The installer's own lines, as Anthropic's install.sh prints them: its
+    # silent download must read as a download, never as a stuck "Starting…".
+    def test_the_native_installer_reports_its_own_steps(self):
+        job.upgrade_plan.return_value = {**_ALLOWED_PLAN, 'manager': 'installer'}
+        job.installed_version.return_value = None
+        seen = []
+        gate = __import__('threading').Event()
+
+        class SlowInstaller(FakeProcess):
+            def __init__(self):
+                lines = ['Setting up Claude Code...', 'Checking installation status...',
+                         'Installing Claude Code native build latest...']
+                super().__init__(lines)
+                self.stdout = self._lines(lines)
+
+            def _lines(self, lines):
+                for line in lines:
+                    yield f'{line}\n'
+                seen.append(job.status())
+                gate.wait(5)
+                yield 'Setting up launcher and shell integration...\n'
+                yield '✔ Claude Code successfully installed!\n'
+
+        with mock.patch.object(job, 'add_agent_install_dirs_to_path'):
+            first = job.start(spawner=lambda argv: SlowInstaller(), verifier=lambda env: '2.1.325')
+            self.assertEqual(first['step'], 'Downloading the installer…')
+            deadline = time.monotonic() + 5
+            while not seen and time.monotonic() < deadline:
+                time.sleep(0.01)
+            gate.set()
+            done = _wait_for_finish()
+        self.assertEqual(seen[0]['step'], 'Downloading Claude Code — about a minute…')
+        self.assertGreaterEqual(seen[0]['percent'], 25)
+        self.assertLess(seen[0]['percent'], 85)
+        self.assertTrue(done['ok'])
+
     def test_an_upgrade_does_not_touch_path(self):
-        with mock.patch.object(job, 'add_native_install_dir_to_path') as on_path:
+        with mock.patch.object(job, 'add_agent_install_dirs_to_path') as on_path:
             job.start(spawner=_spawner(['ok']), verifier=lambda env: '2.1.300')
             snap = _wait_for_finish()
         on_path.assert_not_called()

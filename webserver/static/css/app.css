@@ -11582,6 +11582,72 @@ button.settings-prompt-editor-head {
   color: #c8c8cd;
 }
 
+.new-task-agent-note {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #a3a3a3;
+}
+
+/* The agent the operator uses: one chip each, in a row, the picked one lit. */
+.quick-start-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quick-start-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid #2a2a2a;
+  border-radius: 999px;
+  color: #c8c8cd;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.quick-start-chip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f5f5f7;
+}
+
+.quick-start-chip.is-picked {
+  border-color: #0a84ff;
+  background: rgba(10, 132, 255, 0.18);
+  color: #f5f5f7;
+}
+
+.quick-start-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.quick-start-chip:focus-visible {
+  outline: 2px solid #0a84ff;
+  outline-offset: 2px;
+}
+
+.quick-start-chip-installed {
+  font-size: 11px;
+  color: #79f2c0;
+}
+
+/* The agent's own words for installing it by hand. */
+.quick-start-help {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: #181818;
+  border-radius: 6px;
+  color: #c8c8cd;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 .quick-start-progress {
   display: flex;
   flex-direction: column;
@@ -11684,6 +11750,17 @@ button.settings-prompt-editor-head {
 
 .quick-start-link:hover {
   text-decoration: underline;
+}
+
+.quick-start-browse {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-browser-entry-icon {
+  flex: 0 0 auto;
+  color: #a3a3a3;
 }
 
 .quick-start-foot {
@@ -12074,6 +12151,13 @@ button.settings-prompt-editor-head {
   color: #fca5a5;
 }
 
+.folder-browser-note {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
 .folder-browser-list {
   margin: 0;
   padding: 4px;
@@ -12083,7 +12167,9 @@ button.settings-prompt-editor-head {
 }
 
 .folder-browser-entry {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 6px 8px;
   border: 0;

@@ -30,7 +30,7 @@ import time
 from kato_core_lib.helpers.agent_version_utils import (
     INSTALL_SUCCESS_MESSAGE,
     UPGRADE_SUCCESS_MESSAGE,
-    add_native_install_dir_to_path,
+    add_agent_install_dirs_to_path,
     installed_version,
     reset_latest_version_cache,
     upgrade_plan,
@@ -56,6 +56,26 @@ _MILESTONES = (
     (re.compile(r'\b(added|changed|updated|removed)\b[^\n]*\bpackages?\b|installed', re.I),
      85, 'Finishing install…'),
 )
+# Anthropic's native installer (a first install with no npm) prints its own
+# steps, and its long download — the minute a person waits — happens after
+# "Installing Claude Code native build" with nothing printed. Matched against
+# npm's list it sat on "Starting…" and then read "Installing…" for the whole
+# download, which looked stuck.
+_INSTALLER_MILESTONES = (
+    (re.compile(r'Setting up Claude Code', re.I), 10, 'Setting up…'),
+    (re.compile(r'Checking installation status', re.I), 15, 'Checking this computer…'),
+    (re.compile(r'Installing Claude Code native build', re.I), 25,
+     'Downloading Claude Code — about a minute…'),
+    (re.compile(r'Setting up launcher', re.I), 85, 'Finishing install…'),
+    (re.compile(r'successfully installed', re.I), 90, 'Installed'),
+)
+_STARTING_STEP = {'installer': 'Downloading the installer…'}
+
+
+def _milestones() -> tuple:
+    return _INSTALLER_MILESTONES if _state.get('manager') == 'installer' else _MILESTONES
+
+
 # The bar never creeps past this before the process actually exits — the last
 # stretch is reserved for the post-install version verification.
 _RUNNING_CEILING = 92
@@ -146,7 +166,7 @@ def start(
     with _lock:
         _state.update(
             _blank_state(),
-            state='running', percent=3, step='Starting…',
+            state='running', percent=3, step=_STARTING_STEP.get(plan['manager'], 'Starting…'),
             command=plan['command'], manager=plan['manager'],
             version_before=before, started_at=time.time(),
         )
@@ -185,7 +205,7 @@ def _run(plan: dict, env, spawner, verifier, backend: str = '') -> None:
     reset_latest_version_cache()
     installing = plan['manager'] == 'installer'
     if installing:
-        add_native_install_dir_to_path()
+        add_agent_install_dirs_to_path()
     try:
         after = verifier(env) if verifier else installed_version(env, backend=backend)
     except Exception:
@@ -262,7 +282,7 @@ def _record_line(line: str) -> None:
         if line:
             _state['lines'].append(line)
             del _state['lines'][:-_MAX_LINES]
-        for matcher, floor, label in _MILESTONES:
+        for matcher, floor, label in _milestones():
             if floor > _state['_floor'] and matcher.search(line):
                 _state['_floor'] = floor
                 _state['_floor_at'] = time.time()
@@ -279,8 +299,9 @@ def _crept_percent(snapshot: dict) -> int:
     with _lock:
         floor = _state.get('_floor', 0)
         floor_at = _state.get('_floor_at') or time.time()
+        milestones = _milestones()
     ceiling = next(
-        (m[1] for m in _MILESTONES if m[1] > floor), _RUNNING_CEILING,
+        (m[1] for m in milestones if m[1] > floor), _RUNNING_CEILING,
     )
     ceiling = min(ceiling, _RUNNING_CEILING)
     if ceiling <= floor:

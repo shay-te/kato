@@ -182,6 +182,12 @@ def binary_for_backend(backend: str, env: dict | None = None) -> str:
     return env.get(f'{prefix}_BINARY', '').strip() or AgentBackend.parse(backend).value
 
 
+def download_page(backend: str) -> str:
+    """Where a person gets ``backend``'s CLI ('' for a backend with none)."""
+    settings = _cli_settings(backend)
+    return settings[2] if settings is not None else ''
+
+
 def _min_version(backend: str, env: dict) -> str:
     settings = _cli_settings(backend)
     if settings is None:
@@ -565,23 +571,110 @@ def native_install_dir() -> Path:
     return Path.home() / '.local' / 'bin'
 
 
-def add_native_install_dir_to_path(environ: dict | None = None) -> bool:
-    """Put ``~/.local/bin`` on this process's PATH when the native installer
-    put ``claude`` there and PATH does not have it.
+def _account_home() -> Path | None:
+    """The account's own home folder, from the user database: where its tools
+    were installed, even when ``HOME`` points elsewhere (a service, a kato
+    started with a scratch home to try the first run). None where there is no
+    user database (Windows)."""
+    try:
+        import pwd
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, KeyError, AttributeError, OSError):
+        return None
 
-    The installer adds that folder to the SHELL's profile, which a kato already
-    running (or started from a shell opened before the install) never reads —
-    so a CLI installed a minute ago was "not found". Every later spawn and
-    ``shutil.which`` looks at this process's PATH. Returns whether it changed.
+
+def _homes() -> list[Path]:
+    """``HOME``, then the account's own home when it is another folder."""
+    homes = [Path.home()]
+    account = _account_home()
+    if account is not None and account not in homes:
+        homes.append(account)
+    return homes
+
+
+def claude_install_dirs() -> list[Path]:
+    """Where Claude Code's own installers put the CLI, newest first: the
+    native installer (``~/.local/bin``), and the older "local" install
+    (``~/.claude/local``) — reached through a shell ALIAS, which no program
+    sees, so kato found no ``claude`` on a computer that had one."""
+    return [folder for home in _homes()
+            for folder in (home / '.local' / 'bin', home / '.claude' / 'local')]
+
+
+AGENT_COMMANDS = ('claude', 'codex', 'grok', 'opencode')
+
+
+def _version_key(folder: Path) -> tuple:
+    return tuple(int(part) for part in re.findall(r'\d+', folder.name)[:3]) or (0,)
+
+
+def other_install_dirs() -> list[Path]:
+    """Where an agent CLI lands when its installer is not Claude Code's own.
+
+    npm installs a CLI into the ``bin`` of the Node version that was active at
+    the time — with nvm or fnm that is one of several, and the operator's
+    current one may be another (``codex`` under Node 20 while Node 22 is in
+    use: installed, yet "not found"). Every version is looked at, newest first;
+    then Volta, a custom npm prefix, Homebrew, and OpenCode's own installer.
+    """
+    found: list[Path] = []
+    for home in _homes():
+        found += _node_version_bins(home)
+        found += [home / '.volta' / 'bin', home / '.npm-global' / 'bin', home / '.opencode' / 'bin']
+    found += [Path('/opt/homebrew/bin'), Path('/usr/local/bin')]
+    if os.name == 'nt' and os.environ.get('APPDATA'):
+        found.append(Path(os.environ['APPDATA']) / 'npm')
+    return found
+
+
+# (glob under home, how many folders up the version folder is from ``bin``)
+_NODE_VERSION_BINS = (
+    ('.nvm/versions/node/*/bin', 1),
+    ('.local/share/fnm/node-versions/*/installation/bin', 2),
+    ('Library/Application Support/fnm/node-versions/*/installation/bin', 2),
+)
+
+
+def _node_version_bins(home: Path) -> list[Path]:
+    """The ``bin`` of every nvm / fnm Node version, newest version first."""
+    found: list[Path] = []
+    for pattern, up in _NODE_VERSION_BINS:
+        found += sorted(home.glob(pattern), key=lambda path, up=up: _version_key(path.parents[up - 1]), reverse=True)
+    return found
+
+
+def _has_agent(folder: Path, names: tuple[str, ...]) -> bool:
+    suffixes = ('.exe', '.cmd', '') if os.name == 'nt' else ('',)
+    return any((folder / f'{name}{suffix}').is_file() for name in names for suffix in suffixes)
+
+
+def add_agent_install_dirs_to_path(environ: dict | None = None) -> bool:
+    """Put the folders agent CLIs are installed in on this process's PATH,
+    each only when one of them is really there and PATH does not have it.
+
+    Installers add their folder to the SHELL's profile (or an alias, or the
+    Node version that was active then), which a kato already running — or the
+    shell the operator uses now — never reads: a CLI installed a minute ago, or
+    under another Node version, was "not found", and kato offered to install it
+    again. Claude Code's own folders go FIRST (a native install kato just made
+    must win over an older copy); every other folder goes LAST, so the
+    operator's own tools (their current Node first) keep their order. Every
+    later spawn and ``shutil.which`` reads this process's PATH. Returns
+    whether it changed.
     """
     environ = os.environ if environ is None else environ
-    directory = native_install_dir()
-    if not (directory / ('claude.exe' if os.name == 'nt' else 'claude')).is_file():
-        return False
     parts = [part for part in environ.get('PATH', '').split(os.pathsep) if part]
-    if any(Path(part).expanduser() == directory for part in parts):
+    present = {Path(part).expanduser() for part in parts}
+    first = [d for d in claude_install_dirs() if d not in present and _has_agent(d, ('claude',))]
+    seen = present | set(first)
+    last = []
+    for folder in other_install_dirs():
+        if folder not in seen and _has_agent(folder, AGENT_COMMANDS):
+            last.append(folder)
+            seen.add(folder)
+    if not first and not last:
         return False
-    environ['PATH'] = os.pathsep.join([str(directory), *parts])
+    environ['PATH'] = os.pathsep.join([*(str(d) for d in first), *parts, *(str(d) for d in last)])
     return True
 
 

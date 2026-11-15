@@ -153,6 +153,24 @@ def probe_chat_backends(binaries: dict | None = None) -> list[dict]:
     ]
 
 
+def readiness_error(backend: str, binary: str = '') -> str:
+    """Why ``backend``'s CLI cannot take a message, read FRESH ('' = it can).
+
+    The transport's own words (the install and sign-in commands included), for
+    a screen that asks again while the operator installs something — the
+    cached probe would hold the old answer for a minute.
+    """
+    key = str(backend or '').strip().lower()
+    try:
+        client = _build_probe_client(key, binary)
+        if client is None:
+            return f'unknown agent backend {key!r}'
+        client.validate_connection()
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        return str(exc).strip() or exc.__class__.__name__
+    return ''
+
+
 def reset_probe_cache() -> None:
     """Drop memoised results — used by tests and after a settings save."""
     with _lock:
