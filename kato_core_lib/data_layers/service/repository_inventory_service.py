@@ -10,6 +10,7 @@ from omegaconf import OmegaConf
 
 from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
+from kato_core_lib.data_layers.service.connection_health import provider_label
 from kato_core_lib.helpers.kato_tag_utils import repository_id_from_tag
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.release_notes_settings_utils import workspaces_root
@@ -46,6 +47,12 @@ class RepositoryIgnoredByConfigError(ValueError):
     task-failure handler can post an actionable comment instead of the
     catch-all "kato could not safely process this task" message.
     """
+
+
+class PullRequestApiNotSetUp(ValueError):
+    """The pull request API of a repository's host is not set up (no token, no
+    address, an unknown host…). A settings problem with its own words, never
+    a crash: callers say it in one line, without a traceback."""
 
 
 class RepositoryInventoryService(Service):
@@ -735,7 +742,7 @@ class RepositoryInventoryService(Service):
         provider = provider_from_url_string(remote_url) or self._provider_at_host_of(remote_url)
         if provider:
             return provider
-        raise ValueError(self._unknown_provider_message(repository.id, remote_url))
+        raise PullRequestApiNotSetUp(self._unknown_provider_message(repository.id, remote_url))
 
     @staticmethod
     def _remote_for_addresses(repository) -> str:
@@ -862,17 +869,23 @@ class RepositoryInventoryService(Service):
         api_email: str = '',
     ) -> None:
         if not provider_base_url:
-            raise ValueError(
+            raise PullRequestApiNotSetUp(
                 f'missing pull request API base URL for repository {repository_id}'
             )
         if token:
             if provider != 'bitbucket' or api_email:
                 return
-            raise ValueError(
+            raise PullRequestApiNotSetUp(
                 f'missing Bitbucket API email for repository {repository_id}'
             )
-        raise ValueError(
-            missing_pull_request_token_message(repository_id, provider)
+        # Settings is where an operator sets a token — never an env var name.
+        label = provider_label(provider)
+        raise PullRequestApiNotSetUp(
+            missing_pull_request_token_message(
+                repository_id,
+                provider,
+                f'add a {label} token in Settings → Git provider → {label}',
+            )
         )
 
     @staticmethod
@@ -903,9 +916,9 @@ class RepositoryInventoryService(Service):
             ('token', token),
         ) if not value]
         if missing:
-            raise ValueError(self._incomplete_configuration_message(repository, missing))
+            raise PullRequestApiNotSetUp(self._incomplete_configuration_message(repository, missing))
         if provider_base_url and 'bitbucket' in provider_base_url.lower() and not api_email:
-            raise ValueError(
+            raise PullRequestApiNotSetUp(
                 f'missing Bitbucket API email for repository {repository.id}'
             )
         config = OmegaConf.create(

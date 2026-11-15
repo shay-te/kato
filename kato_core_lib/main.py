@@ -18,9 +18,14 @@ import logging
 from kato_core_lib.helpers.instance_lock_utils import INSTANCE_RESTART_ENV, hold_instance_lock
 from kato_core_lib.helpers.kato_tag_utils import task_branch
 from kato_core_lib.helpers.logging_utils import configure_logger, enable_log_file
+from kato_core_lib.helpers.kato_settings_store_utils import (
+    load_kato_settings_into_environ,
+    load_resolved_credentials_into_environ,
+)
 from kato_core_lib.helpers.shell_status_utils import (
     clear_inline_status,
     sleep_with_countdown_spinner,
+    spinning_status,
     supports_inline_status,
 )
 from kato_core_lib.helpers.status_broadcaster_utils import (
@@ -46,6 +51,8 @@ from sandbox_core_lib.sandbox_core_lib.bypass_permissions_validator import (
 
 
 _STATUS_BROADCASTER = StatusBroadcaster()
+# The token keys this process filled from a credential source (never the tokens).
+_RESOLVED_CREDENTIAL_KEYS: list[str] = []
 install_status_broadcast_handler(_STATUS_BROADCASTER)
 
 # Shared between the scan loop thread and the Flask webserver thread.
@@ -130,6 +137,12 @@ def main(cfg: DictConfig) -> int:
     # to the SHELL's profile, which a kato started from an older shell (or a
     # service) never read: put it on this process's PATH before anything looks.
     add_agent_install_dirs_to_path()
+    # A git host set to "use my git login" / "use my gh login" has only that
+    # SOURCE in settings.json: resolve it into a token now, before anything is
+    # built from the env (and before the "is kato configured" check).
+    _RESOLVED_CREDENTIAL_KEYS[:] = load_resolved_credentials_into_environ()
+    for key in _RESOLVED_CREDENTIAL_KEYS:
+        logger.info('%s: taken from its credential source in Settings', key)
     # Missing config no longer hard-exits at the terminal: kato boots into
     # SETUP MODE (the planning UI runs so the operator configures via the
     # Settings drawer) instead of dying. The SECURITY gates below (bypass /
@@ -316,7 +329,9 @@ def main(cfg: DictConfig) -> int:
     # reconciliation moves into a background thread so the planning webserver
     # binds in ~seconds instead of after the ~minute validation tail.
     _load_hooks_or_refuse(app, logger)
+    _ensure_connection_recheck(app)
     _start_planning_webserver_if_enabled(app)
+    _ensure_connection_recheck(app)  # now the webserver exists: hand it over
     _register_shutdown_hook(app)
     boot_ready_event = threading.Event()
     threading.Thread(
@@ -445,7 +460,8 @@ def _finalize_configured_boot(
             )
             _flag_boot_validation_error(app, message)
             try:
-                sleep_fn(_CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS)
+                if _wait_or_apply_saved_settings(app, sleep_fn):
+                    return
             except (KeyboardInterrupt, SystemExit):
                 return
             continue
@@ -459,6 +475,73 @@ def _finalize_configured_boot(
     _start_post_boot_workers(app)
     ready_event.set()
     app.logger.info('kato is fully started — autonomous scanning enabled')
+
+
+# How often a start that could not connect looks for an operator's fix saved in
+# Settings while it waits to retry (a local file read, no network).
+_SAVED_SETTINGS_POLL_SECONDS = 2.0
+
+
+def _wait_or_apply_saved_settings(app, sleep_fn=time.sleep) -> bool:
+    """Wait out a failed start's retry interval — and stop waiting once the saved
+    connection settings change: kato then applies them through the ONE apply-and-
+    recheck service (``connection_recheck``: a restart, unless an agent works).
+    It used to retry with what it started with, so a fix saved in Settings never
+    reached it. True when kato is restarting (the boot loop ends)."""
+    from kato_core_lib.data_layers.service.connection_recheck import RESTARTING
+
+    recheck = getattr(app, 'connection_recheck', None)
+    waited = 0.0
+    while waited < _CONFIGURED_BOOT_VALIDATION_RETRY_SECONDS:
+        sleep_fn(_SAVED_SETTINGS_POLL_SECONDS)
+        waited += _SAVED_SETTINGS_POLL_SECONDS
+        if recheck is not None and recheck.settings_changed():
+            if recheck.recheck()['status'] == RESTARTING:
+                return True
+    return False
+
+
+def _ensure_connection_recheck(app):
+    """kato's one apply-and-recheck service (``connection_recheck``), built once
+    the agent service exists, and handed to the webserver ("Test connection" and
+    Save call it)."""
+    from kato_core_lib.data_layers.service.connection_recheck import ConnectionRecheck
+    from kato_core_lib.data_layers.service.restart_resume.running_agents import running_task_ids
+    from kato_core_lib.helpers.kato_settings_store_utils import read_kato_settings
+
+    check = getattr(getattr(app, 'service', None), 'validate_connections', None)
+    if not callable(check):
+        return None  # no agent service yet (setup mode), nothing to check with
+    recheck = getattr(app, 'connection_recheck', None)
+    if recheck is None:
+        recheck = ConnectionRecheck(
+            check=check,
+            saved_settings=read_kato_settings,
+            working_tasks=lambda: running_task_ids(getattr(app, 'session_manager', None)),
+            restart=lambda: _restart_soon(app),
+        )
+        app.connection_recheck = recheck
+    flask_app = getattr(app, 'planning_flask_app', None)
+    if flask_app is not None:
+        flask_app.config['CONNECTION_RECHECK'] = recheck
+    return recheck
+
+
+def _restart_soon(app, delay_seconds: float = 0.5) -> None:
+    """Restart kato to apply new connection settings — after a moment, so the
+    request that asked for it gets its answer first."""
+    _set_webserver_setup_error(app, (
+        'kato is restarting to use your new settings — this page reconnects by itself in a few seconds.'
+    ))
+
+    def _go() -> None:
+        time.sleep(delay_seconds)
+        try:
+            _restart_in_place(app)
+        except OSError:
+            app.logger.exception('restart failed — restart kato to use the new settings')
+
+    threading.Thread(target=_go, name='kato-apply-settings-restart', daemon=True).start()
 
 
 # What the UI's setup screen is for: a first run (the default), or a kato that
@@ -558,7 +641,7 @@ def _wait_until_configured_then_finish_setup(
         # would shadow a corrected value saved later in the UI (process env
         # outranks settings.json), wedging setup mode until a restart.
         env_snapshot = dict(os.environ)
-        _load_layered_config_into_environ()
+        load_kato_settings_into_environ()
         # SECURITY: the boot-time gates validated the env as it was at
         # startup. The operator may have saved gate-relevant flags DURING
         # setup (KATO_CLAUDE_BYPASS_PERMISSIONS / read-only pre-approval /
@@ -655,6 +738,10 @@ def _restart_in_place(app) -> None:
         _restore_terminal()
         os._exit(_RESTART_EXIT_CODE)
         return  # unreachable in production; keeps mocked-_exit tests honest
+    # Tokens this process resolved from a credential source are not settings:
+    # the new process resolves them again (the source may have changed).
+    for key in _RESOLVED_CREDENTIAL_KEYS:
+        os.environ.pop(key, None)
     argv = [sys.executable, '-m', 'kato_core_lib.main', *sys.argv[1:]]
     app.logger.warning('restarting kato in place: %s', ' '.join(argv))
     # The new process may start before this one has let go of the instance
@@ -723,26 +810,6 @@ def _set_webserver_setup_error(app, message: str) -> None:
     flask_app.config['SETUP_ERROR'] = message
 
 
-def _load_layered_config_into_environ() -> None:
-    """Load settings.json into the process env (shell wins).
-
-    One deliberate difference from ``load_kato_settings_into_environ``:
-    a key that is set-but-EMPTY in the process env is treated as unset
-    and gets overwritten. Everything else (the validators, the settings
-    UI, ``effective_config_env``) already treats empty as unset, so a
-    blank env var inherited at spawn must not shadow the value the
-    operator saves in the wizard forever. Callers snapshot/restore
-    ``os.environ`` around failed attempts, so no rollback list is needed.
-    """
-    from kato_core_lib.helpers.kato_settings_store_utils import (
-        read_kato_settings,
-    )
-
-    for key, value in read_kato_settings().items():
-        if value and not os.environ.get(key):
-            os.environ[key] = value
-
-
 def _mark_webserver_configured(app) -> None:
     """Flip the LIVE Flask app out of setup mode after ``complete_setup``.
 
@@ -758,6 +825,7 @@ def _mark_webserver_configured(app) -> None:
         return
     flask_app.config['AGENT_SERVICE'] = getattr(app, 'service', None)
     flask_app.config['NEEDS_CONFIG'] = False
+    _ensure_connection_recheck(app)
     # The routes were registered before this service existed, so a task tagged
     # ``kato:review-loop`` would otherwise park with no loop until a restart.
     if flask_app.config['AGENT_SERVICE'] is not None:
@@ -1970,6 +2038,16 @@ def _wait_for_boot_ready(
         continue
 
 
+SCAN_STARTED_TEXT = 'Scanning for new tasks and reviews'
+SCAN_FINISHED_TEXT = 'Scan complete'
+_SCAN_STATUS_LOGGER = 'kato.workflow.scan'
+
+
+def _publish_scan_status(message: str) -> None:
+    """To the UI's status feed only — the broadcaster, not the logger, so no
+    line lands on the terminal or in the log file."""
+    _STATUS_BROADCASTER.publish(level='INFO', logger_name=_SCAN_STATUS_LOGGER, message=message)
+
 def _run_task_scan_loop(
     app,
     *,
@@ -2017,10 +2095,15 @@ def _run_task_scan_loop(
         if force_scan_event is not None:
             force_scan_event.clear()
         _SCAN_IN_PROGRESS.set()
-        app.logger.info('Scanning for new tasks and reviews')
+        # A scan every few seconds is not news: it spins on the terminal's one
+        # status line (two new lines per scan filled the terminal), and its
+        # start/end reach only the UI's status feed. What a scan DOES — a task
+        # picked up, a failure — still logs as a line of its own.
+        _publish_scan_status(SCAN_STARTED_TEXT)
         try:
-            job.run()
-            app.logger.info('Scan complete')
+            with spinning_status(SCAN_STARTED_TEXT):
+                job.run()
+            _publish_scan_status(SCAN_FINISHED_TEXT)
         except Exception:
             app.logger.warning(
                 'task scan failed; retrying in %s seconds',

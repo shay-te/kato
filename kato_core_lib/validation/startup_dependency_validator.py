@@ -29,11 +29,19 @@ if TYPE_CHECKING:
 _SINGLE_BINARY_BACKENDS = frozenset({'claude', 'codex', 'grok', 'opencode'})
 
 
+# What each step checks, for whoever is told the outcome (connection_health:
+# the tracker step shares its key with the scan's task fetch).
+STEP_REPOSITORIES = 'repositories'
+STEP_TRACKER = 'tracker'
+STEP_AGENT = 'agent'
+
+
 @dataclass(frozen=True)
 class DependencyValidationStep(object):
     service_name: str
     validate: Callable[[], None]
     max_retries: int
+    kind: str = STEP_AGENT
 
 
 class StartupDependencyValidator(ValidationBase):
@@ -53,11 +61,16 @@ class StartupDependencyValidator(ValidationBase):
         self._skip_testing = bool(skip_testing)
         self._agent_backend = (str(agent_backend or '').strip().lower() or 'openhands')
 
-    def validate(self, logger) -> None:
+    def validate(self, logger, on_step: Callable[[str, str, Exception | None], None] | None = None) -> None:
+        """Run every step at once; raise one error naming every failure.
+        ``on_step(kind, service_name, error_or_None)`` hears each step's own
+        outcome — kato's one connection status (connection_health) is fed
+        from here, so the banner and this check never disagree."""
         repo_step = DependencyValidationStep(
             self._repository_validation_label(),
             self._repository_connections_validator.validate,
             0,
+            STEP_REPOSITORIES,
         )
         dependency_steps = self._dependency_steps()
         all_steps = [repo_step] + dependency_steps
@@ -75,6 +88,8 @@ class StartupDependencyValidator(ValidationBase):
         other_errors: list[tuple[str, str]] = []
         for step, future in futures:
             exc = future.exception()
+            if on_step is not None:
+                on_step(step.kind, step.service_name, exc)
             if exc is None:
                 continue
             summary = self._validation_failure_summary(step.service_name, exc, step.max_retries)
@@ -104,6 +119,7 @@ class StartupDependencyValidator(ValidationBase):
                 self._task_service.provider_name,
                 self._task_service.validate_connection,
                 self._task_service.max_retries,
+                STEP_TRACKER,
             ),
             DependencyValidationStep(
                 backend_label,

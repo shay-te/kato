@@ -1,4 +1,4 @@
-import { fetchGitProviders, updateGitProvider } from '../api.js';
+import { fetchGitProviders, testGitHostConnection, updateGitProvider } from '../api.js';
 import ProviderCredentialsPanel from './ProviderCredentialsPanel.jsx';
 
 // "Git provider" tab — credentials kato uses to clone / push / open PRs.
@@ -17,6 +17,7 @@ export default function GitProvidersSettingsPanel() {
     <ProviderCredentialsPanel
       fetchFn={fetchGitProviders}
       updateFn={updateGitProvider}
+      testFn={testGitHostConnection}
       labels={HOST_LABELS}
       defaultProvider="bitbucket"
       title="Git provider"

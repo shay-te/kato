@@ -1,4 +1,4 @@
-import { fetchTaskProviders, updateTaskProvider } from '../api.js';
+import { fetchTaskProviders, testTrackerConnection, updateTaskProvider } from '../api.js';
 import { NO_TRACKER, TICKET_SYSTEMS } from '../constants/ticketSystems.js';
 import ProviderCredentialsPanel from './ProviderCredentialsPanel.jsx';
 
@@ -16,6 +16,7 @@ export default function TaskProviderSettingsPanel() {
     <ProviderCredentialsPanel
       fetchFn={fetchTaskProviders}
       updateFn={updateTaskProvider}
+      testFn={({ provider, fields }) => testTrackerConnection({ platform: provider, fields })}
       labels={PROVIDER_LABELS}
       defaultProvider="youtrack"
       includeActive

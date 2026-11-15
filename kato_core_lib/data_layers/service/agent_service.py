@@ -6,6 +6,7 @@ import threading
 from core_lib.data_layers.service.service import Service
 
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.connection_health import report_startup_step
 from kato_core_lib.data_layers.service.task_failure_handler import TaskFailureHandler
 from kato_core_lib.data_layers.service.review_comment_service import ReviewCommentService
 from kato_core_lib.data_layers.service.task_publisher import TaskPublisher
@@ -735,7 +736,12 @@ class AgentService(MissionStepLoggerMixin, Service):
         return self._notification_service
 
     def validate_connections(self) -> None:
-        self._startup_validator.validate(self.logger)
+        """kato's own connection check; every step's outcome goes to the ONE
+        connection status (connection_health) the banner reads."""
+        self._startup_validator.validate(self.logger, on_step=self._report_startup_step)
+
+    def _report_startup_step(self, kind: str, service_name: str, error: Exception | None) -> None:
+        report_startup_step(getattr(self, 'connection_health', None), kind, service_name, error)
 
     def warm_up_repository_inventory(self) -> None:
         """Trigger repository auto-discovery in the background.

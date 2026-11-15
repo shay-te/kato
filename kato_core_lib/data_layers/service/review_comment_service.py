@@ -23,6 +23,7 @@ from provider_client_base.provider_client_base.helpers.mention_utils import (
     normalize_bot_identities,
 )
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
+from kato_core_lib.data_layers.service.connection_health import git_host_key, provider_label, report
 from kato_core_lib.data_layers.service.implementation_service import ImplementationService
 from kato_core_lib.data_layers.service.planning_session_runner import SessionStoppedByUserError
 from kato_core_lib.data_layers.service.pull_request_lookup import LookupPaused
@@ -76,12 +77,15 @@ class ReviewCommentService(Service):
         use_streaming_for_review_fixes: bool = False,
         workspace_manager=None,
         publish_conventions_writer=None,
+        connection_health=None,
     ) -> None:
         self._task_service = task_service
         self._implementation_service = implementation_service
         self._repository_service = repository_service
         self._state_registry = state_registry
         self._publish_conventions_writer = publish_conventions_writer
+        # Each git host's last answer, for the screen (connection_health.py).
+        self._connection_health = connection_health
         self._planning_session_runner = planning_session_runner
         self._use_streaming_for_review_fixes = bool(
             planning_session_runner is not None and use_streaming_for_review_fixes
@@ -517,7 +521,7 @@ class ReviewCommentService(Service):
         repositories are still checked. A host that is paused (it said 429)
         is counted, and said once at the end of the scan."""
         try:
-            return self._repository_service.find_pull_requests(
+            found = self._repository_service.find_pull_requests(
                 repository, source_branch=branch_name, title_prefix=title_prefix,
             )
         except LookupPaused as paused:
@@ -529,7 +533,18 @@ class ReviewCommentService(Service):
                 '(branch %s): %s',
                 task.id, getattr(repository, 'id', ''), branch_name, exc,
             )
+            self._report_git_host(repository, exc)
             return []
+        self._report_git_host(repository)
+        return found
+
+    def _report_git_host(self, repository, error: Exception | None = None) -> None:
+        """Tell connection_health how ``repository``'s git host answered."""
+        provider = text_from_attr(repository, 'provider')
+        report(
+            self._connection_health, git_host_key(provider), error=error,
+            label=provider_label(provider) if provider else 'the git host', kind='git_host',
+        )
 
     def _say_paused_lookups(self) -> None:
         if not self._paused_lookups:
@@ -678,17 +693,24 @@ class ReviewCommentService(Service):
     ) -> list[ReviewComment]:
         try:
             repository = self._repository_service.get_repository(repository_id)
-            return self._repository_service.list_pull_request_comments(
+        except Exception:
+            self.logger.exception('failed to find repository %s to fetch its comments', repository_id)
+            return []
+        try:
+            comments = self._repository_service.list_pull_request_comments(
                 repository,
                 pull_request_id,
             )
-        except Exception:
+        except Exception as exc:
             self.logger.exception(
                 'failed to fetch pull request comments for repository %s pull request %s',
                 repository_id,
                 pull_request_id,
             )
+            self._report_git_host(repository, exc)
             return []
+        self._report_git_host(repository)
+        return comments
 
     def _unprocessed_review_comments(
         self,

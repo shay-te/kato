@@ -1,11 +1,12 @@
 import json
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 from requests import HTTPError
 
 from jira_core_lib.jira_core_lib.client.jira_client import (
     JiraClient,
+    UNAUTHENTICATED_MESSAGE,
     _COMMENT_SECTION_TITLE,
     _TEXT_ATTACHMENTS_SECTION_TITLE,
     _SCREENSHOT_SECTION_TITLE,
@@ -111,14 +112,82 @@ class JiraClientInitTests(unittest.TestCase):
 
 
 class JiraClientValidateConnectionTests(unittest.TestCase):
+    def test_credentials_jira_does_not_accept_fail_loudly(self) -> None:
+        # Unauthenticated, Jira's search answers 200 with no issues: the check
+        # must not pass on that, or no task is ever found and nothing says why.
+        client = _make_client()
+        with patch.object(client, '_get', return_value=mock_response(status_code=401)) as mock_get:
+            with self.assertRaises(RuntimeError) as raised:
+                client.validate_connection('PROJ', 'developer', ['To Do'])
+        self.assertEqual(str(raised.exception), UNAUTHENTICATED_MESSAGE)
+        self.assertIn('api.atlassian.com/ex/jira', UNAUTHENTICATED_MESSAGE)
+        self.assertEqual([c.args[0] for c in mock_get.call_args_list],
+                         ['/rest/api/3/myself', '/_edge/tenant_info'])  # no search after it
+
+    def test_a_scoped_token_refused_at_the_site_is_told_the_exact_gateway_address(self) -> None:
+        client = _make_client()
+        answers = {
+            '/rest/api/3/myself': mock_response(status_code=401),
+            '/_edge/tenant_info': mock_response(json_data={'cloudId': 'cloud-123'}),
+        }
+        gateway = Mock()
+        gateway._get.return_value = mock_response(status_code=200, json_data={'accountId': 'a'})
+        with patch.object(client, '_get', side_effect=lambda path, **kwargs: answers[path]), \
+                patch.object(client, '_gateway_client', return_value=gateway) as make_gateway:
+            with self.assertRaises(RuntimeError) as raised:
+                client.validate_connection('PROJ', 'developer', ['To Do'])
+        self.assertIn('Set the API base URL to https://api.atlassian.com/ex/jira/cloud-123', str(raised.exception))
+        make_gateway.assert_called_once_with('https://api.atlassian.com/ex/jira/cloud-123')
+        gateway._get.assert_called_once_with('/rest/api/3/myself')
+
+    def test_the_gateway_is_only_suggested_when_it_really_accepts_the_credentials(self) -> None:
+        client = _make_client()
+        refused_too = Mock()
+        refused_too._get.return_value = mock_response(status_code=401)
+        cases = {
+            'refused there too': ({'cloudId': 'c'}, 200, refused_too),
+            'no cloud id at the site': ({}, 200, refused_too),
+            'tenant info not available': (None, 404, refused_too),
+        }
+        for name, (info, info_status, gateway) in cases.items():
+            with self.subTest(case=name):
+                answers = {
+                    '/rest/api/3/myself': mock_response(status_code=401),
+                    '/_edge/tenant_info': mock_response(status_code=info_status, json_data=info),
+                }
+                with patch.object(client, '_get', side_effect=lambda path, **kwargs: answers[path]), \
+                        patch.object(client, '_gateway_client', return_value=gateway):
+                    self.assertEqual(client._unauthenticated_message(), UNAUTHENTICATED_MESSAGE)
+        with patch.object(client, '_get', side_effect=ConnectionError('offline')):
+            self.assertEqual(client._gateway_accepting_these_credentials(), '')
+        already = JiraClient('https://api.atlassian.com/ex/jira/cloud-123', 'jira-token')
+        with patch.object(already, '_get') as never:
+            self.assertEqual(already._gateway_accepting_these_credentials(), '')
+        never.assert_not_called()
+
+    def test_the_gateway_client_carries_the_same_login(self) -> None:
+        client = _make_client()
+        probe = client._gateway_client('https://api.atlassian.com/ex/jira/c')
+        self.assertEqual((probe.base_url, probe.auth), ('https://api.atlassian.com/ex/jira/c', client.auth))
+
+    def test_another_whoami_failure_is_raised_with_its_detail(self) -> None:
+        client = _make_client()
+        refused = mock_response(status_code=403)
+        refused.raise_for_status.side_effect = RuntimeError('403 Forbidden')
+        with patch.object(client, '_get', return_value=refused):
+            with self.assertRaises(Exception):
+                client.validate_connection('PROJ', 'developer', ['To Do'])
+
     def test_queries_search_api_with_correct_jql(self) -> None:
         client = _make_client()
+        whoami = mock_response(json_data={'accountId': 'abc'})
         response = mock_response(json_data={'issues': []})
 
-        with patch.object(client, '_get', return_value=response) as mock_get:
+        with patch.object(client, '_get', side_effect=[whoami, response]) as mock_get:
             client.validate_connection('PROJ', 'developer', ['To Do', 'Open'])
 
-        mock_get.assert_called_once_with(
+        self.assertEqual(mock_get.call_args_list[0].args, ('/rest/api/3/myself',))
+        mock_get.assert_called_with(
             '/rest/api/3/search/jql',
             params={
                 'jql': 'project = "PROJ" AND assignee = "developer" AND status IN ("To Do", "Open") ORDER BY updated DESC',
@@ -130,8 +199,9 @@ class JiraClientValidateConnectionTests(unittest.TestCase):
 
     def test_raises_when_states_empty(self) -> None:
         client = _make_client()
-        with self.assertRaisesRegex(ValueError, 'states must not be empty'):
-            client.validate_connection('PROJ', 'developer', [])
+        with patch.object(client, '_get', return_value=mock_response(json_data={'accountId': 'abc'})):
+            with self.assertRaisesRegex(ValueError, 'states must not be empty'):
+                client.validate_connection('PROJ', 'developer', [])
 
 
 class JiraClientGetAssignedTasksTests(unittest.TestCase):
@@ -963,6 +1033,12 @@ class JiraClientStaticHelpersTests(unittest.TestCase):
         self.assertIn('"To Do", "In Progress"', result)
         self.assertIn('ORDER BY updated DESC', result)
 
+    def test_build_assigned_tasks_query_with_no_project_searches_every_project(self) -> None:
+        for project in ('', '  ', None):
+            with self.subTest(project=project):
+                result = JiraClient._build_assigned_tasks_query(project, 'alice', ['To Do'])
+                self.assertEqual(result, 'assignee = "alice" AND status IN ("To Do") ORDER BY updated DESC')
+
     def test_build_assigned_tasks_query_raises_for_empty_states(self) -> None:
         with self.assertRaisesRegex(ValueError, 'states must not be empty'):
             JiraClient._build_assigned_tasks_query('PROJ', 'alice', [])
@@ -1139,6 +1215,7 @@ class JiraClientFlowTests(unittest.TestCase):
     def test_full_flow_validate_then_get_tasks(self) -> None:
         client = JiraClient('https://company.atlassian.net', 'my-token')
 
+        whoami_response = mock_response(json_data={'accountId': 'abc'})
         validate_response = mock_response(json_data={'issues': []})
         issues_response = mock_response(
             json_data={
@@ -1148,7 +1225,7 @@ class JiraClientFlowTests(unittest.TestCase):
             }
         )
 
-        with patch.object(client, '_get', side_effect=[validate_response, issues_response]):
+        with patch.object(client, '_get', side_effect=[whoami_response, validate_response, issues_response]):
             client.validate_connection('ACME', 'alice', ['To Do'])
             records = client.get_assigned_tasks('ACME', 'alice', ['To Do'])
 

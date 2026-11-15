@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  isSecretKey, buildDraftFor, orderedProviders, providerOptionLabel,
+  connectionFixes, isSecretKey, isWorkflowField, buildDraftFor, orderedFieldKeys, orderedProviders, providerOptionLabel,
 } from './providerFields.js';
 
 
@@ -49,4 +49,33 @@ test('providerOptionLabel: says whether each host is set up, only when the serve
   assert.equal(providerOptionLabel('azure', labels, providers), 'Azure DevOps — set up');
   assert.equal(providerOptionLabel('bitbucket', labels, providers), 'Bitbucket — not set up');
   assert.equal(providerOptionLabel('gitlab', labels, providers), 'gitlab');
+});
+
+test('isWorkflowField: the start / review / done state fields, nothing else', () => {
+  for (const key of ['JIRA_PROGRESS_STATE', 'JIRA_PROGRESS_STATE_FIELD', 'YOUTRACK_REVIEW_STATE', 'GITHUB_DONE_STATE_FIELD']) {
+    assert.equal(isWorkflowField(key), true, key);
+  }
+  for (const key of ['JIRA_ISSUE_STATES', 'JIRA_API_TOKEN', 'JIRA_ASSIGNEE', '', null]) {
+    assert.equal(isWorkflowField(key), false, String(key));
+  }
+});
+
+test('orderedFieldKeys: the server order first, the rest after, unknown names dropped', () => {
+  const keys = ['JIRA_API_TOKEN', 'JIRA_ASSIGNEE', 'JIRA_DONE_STATE', 'JIRA_EMAIL', 'EXTRA'];
+  assert.deepEqual(
+    orderedFieldKeys(['JIRA_EMAIL', 'JIRA_API_TOKEN', 'NOT_A_FIELD', 'JIRA_ASSIGNEE', 'JIRA_DONE_STATE'], keys),
+    ['JIRA_EMAIL', 'JIRA_API_TOKEN', 'JIRA_ASSIGNEE', 'JIRA_DONE_STATE', 'EXTRA'],
+  );
+  assert.deepEqual(orderedFieldKeys(undefined, ['b', 'a']), ['b', 'a']);
+  assert.deepEqual(orderedFieldKeys(['a'], undefined), []);
+});
+
+test('connectionFixes: the gateway address kato named becomes a field to fill in, for Jira only', () => {
+  const said = 'Jira refused this token … Set the API base URL to https://api.atlassian.com/ex/jira/07cc605d-3220-485b-8a81-3b3f4742f64d — the same email';
+  assert.deepEqual(connectionFixes('jira', said), [{
+    key: 'JIRA_API_BASE_URL', value: 'https://api.atlassian.com/ex/jira/07cc605d-3220-485b-8a81-3b3f4742f64d', label: 'Use this address',
+  }]);
+  assert.deepEqual(connectionFixes('jira', 'HTTP 401'), []);
+  assert.deepEqual(connectionFixes('youtrack', said), []);
+  assert.deepEqual(connectionFixes('jira', null), []);
 });

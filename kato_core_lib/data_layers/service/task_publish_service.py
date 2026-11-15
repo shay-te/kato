@@ -26,6 +26,7 @@ from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
 )
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.data_layers.service.pull_request_lookup import LookupPaused
+from kato_core_lib.data_layers.service.repository_inventory_service import PullRequestApiNotSetUp
 from kato_core_lib.data_layers.service.task_moves import (
     DONE,
     IN_REVIEW,
@@ -236,6 +237,29 @@ def _push_problems(push_result: dict) -> dict[str, str]:
             problems[str(entry.get('repository_id'))] = str(entry.get('reason') or '')
     return problems
 
+
+
+def _not_published(push_result: dict, pr_result: dict) -> str:
+    """Why Done must not move the ticket; ``''`` when every repository's work
+    is on the remote with its pull request.
+
+    A repository whose push had a problem (``_push_problems``) or whose pull
+    request could not be opened. A pull request left out because it would be
+    empty is not one of them: that repository had nothing to review.
+    """
+    not_pushed = list(_push_problems(push_result))
+    no_pull_request = [
+        str(entry.get('repository_id'))
+        for entry in pr_result.get('failed_repositories') or []
+    ]
+    reasons = []
+    if not_pushed:
+        reasons.append(f'{", ".join(not_pushed)} did not reach the remote')
+    if no_pull_request:
+        reasons.append(f'no pull request for {", ".join(no_pull_request)}')
+    if not reasons:
+        return ''
+    return '; '.join(reasons) + ' — fix that and press Done again'
 
 class TaskPublishService(object):
     """Push / pull / merge / PR for one task's repositories."""
@@ -1371,6 +1395,16 @@ class TaskPublishService(object):
                 failed.append(
                     {'repository_id': repository.id, 'error': str(exc)},
                 )
+            except PullRequestApiNotSetUp as exc:
+                # A setting is missing (no token…): its words say where to set
+                # it. One line — a traceback made a settings gap look a crash.
+                self.logger.warning(
+                    'on-demand PR for task %s: no pull request for %s: %s',
+                    normalized, repository.id, exc,
+                )
+                failed.append(
+                    {'repository_id': repository.id, 'error': str(exc)},
+                )
             except RuntimeError as exc:
                 # The publish path raises bare RuntimeError for two
                 # well-known cases: "expected branch X but found Y"
@@ -1442,44 +1476,19 @@ class TaskPublishService(object):
         pr_result = self.create_pull_request_for_task(normalized)
         moved_to_review = False
         moved_to_done = False
-        move_error = ''
-        # False-success guard (mirrors task_publisher.py's NO_CHANGES
-        # rule): push_task/create_pull_request_for_task never raise —
-        # every per-repo failure is only recorded in their own
-        # 'failed_repositories' lists. Without this check, a task whose
-        # push AND PR creation both failed for every single repo (auth
-        # expired, remote unreachable, branch protection, ...) still
-        # moved to "In Review" unconditionally, implying a ready PR
-        # exists when nothing actually reached the remote. Idempotent
-        # no-ops (already pushed, PR already exists — no failures
-        # recorded at all) and partial successes still proceed exactly
-        # as before; this only blocks the all-repos-failed case.
-        any_failure = bool(_push_problems(push_result)) or bool(
-            pr_result.get('failed_repositories'),
-        )
-        # ``skipped_existing`` also holds repositories left out because a
-        # pull request would be empty (those carry a ``reason``). Only a pull
-        # request that really exists is a success: the empty kind let Done move
-        # a ticket to In Review with nothing pushed anywhere.
-        any_success = (
-            bool(push_result.get('pushed_repositories'))
-            or bool(pr_result.get('created_pull_requests'))
-            or any(
-                not entry.get('reason')
-                for entry in pr_result.get('skipped_existing') or []
-            )
-        )
-        if any_failure and not any_success:
-            move_error = (
-                'push and pull-request creation both failed for every '
-                'repository; not moving to In Review'
-            )
+        # The ticket moves only once EVERY repository's work is on the remote
+        # with its pull request (``_not_published``). It used to move when
+        # anything went up: KAN-1 pushed its one changed repository, its pull
+        # request failed (no GitHub token), and the ticket still went to In
+        # Review with nothing to review — "✓ ticket moved" under "✗ PR failed".
+        # Done is idempotent, so pressing it again once the cause is fixed
+        # pushes nothing twice, opens the missing pull request, then moves.
+        move_error = _not_published(push_result, pr_result)
+        if move_error:
             self.logger.warning(
-                'finish_task_planning_session: task %s had zero successes '
-                '(push failures=%s, PR failures=%s) — NOT moving to In Review',
+                'finish_task_planning_session: task %s not moved: %s',
                 normalized,
-                push_result.get('failed_repositories'),
-                pr_result.get('failed_repositories'),
+                move_error,
             )
         else:
             moves = TaskMoves(self._task_state_service, logger=self.logger)

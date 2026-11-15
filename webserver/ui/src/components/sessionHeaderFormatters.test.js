@@ -625,6 +625,31 @@ test('formatFinishResult: missing move-to-review surfaces the reason', () => {
   assert.match(out.message, /✗ ticket did NOT move to In Review: state field locked/);
 });
 
+test('formatFinishResult: pushed but no pull request — amber, and the ticket stays where it is', () => {
+  // KAN-1: the change went up, its pull request could not be opened, so the
+  // ticket must not read "moved to In Review" under "PR failed".
+  const out = formatFinishResult({
+    ok: true,
+    body: {
+      finished: false,
+      pushed: { pushed_repositories: ['shop-be'] },
+      pull_request: {
+        failed_repositories: [{
+          repository_id: 'shop-be',
+          error: 'missing pull request API token for repository shop-be; add a GitHub token in Settings → Git provider → GitHub',
+        }],
+      },
+      moved_to_review: false,
+      move_error: 'no pull request for shop-be — fix that and press Done again',
+    },
+  }, 'KAN-1');
+  assert.equal(out.title, 'Done — partial completion (KAN-1)');
+  assert.equal(out.kind, 'warning');
+  assert.match(out.message, /Settings → Git provider → GitHub/);
+  assert.match(out.message, /✗ ticket did NOT move to In Review: no pull request for shop-be — fix that and press Done again/);
+  assert.doesNotMatch(out.message, /✓ ticket moved/);
+});
+
 
 
 test('formatMergeResult: a blocked repo shows its real reason, not "already up to date"', () => {

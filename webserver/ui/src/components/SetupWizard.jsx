@@ -22,8 +22,9 @@ import {
   isCredentialSourceKey,
   usesDiscoveredCredential,
 } from '../utils/credentialSourceFields.js';
-import FolderBrowser from './FolderBrowser.jsx';
+import BrowseFolderButton from './BrowseFolderButton.jsx';
 import AgentCliStatus from './AgentCliStatus.jsx';
+import { useNativeFolderDialog } from '../hooks/useNativeFolderDialog.js';
 import { toast } from '../stores/toastStore.js';
 import { NO_TRACKER, TICKET_SYSTEMS } from '../constants/ticketSystems.js';
 
@@ -846,7 +847,7 @@ function StepAgentDetails({
 }
 
 function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
-  const [browsing, setBrowsing] = useState(false);
+  const dialog = useNativeFolderDialog();
   return (
     <div className="setup-wizard-body">
       <h3 className="setup-wizard-heading">Where are your repositories?</h3>
@@ -865,24 +866,15 @@ function StepRepositories({ repoRoot, setRepoRoot, saving, onBack, onSave }) {
             onChange={(ev) => setRepoRoot(ev.target.value)}
             placeholder="/Users/you/Projects"
           />
-          <button
-            type="button"
+          <BrowseFolderButton
+            dialog={dialog}
+            start={repoRoot.trim()}
+            prompt="Choose the folder your repositories are in"
             className="setup-wizard-btn setup-wizard-btn--browse"
-            onClick={() => setBrowsing((current) => !current)}
-          >
-            Browse…
-          </button>
-        </div>
-        {browsing && (
-          <FolderBrowser
-            initialPath={repoRoot.trim() || '~'}
-            onPick={(path) => {
-              setRepoRoot(path);
-              setBrowsing(false);
-            }}
-            onClose={() => setBrowsing(false)}
+            onPick={setRepoRoot}
           />
-        )}
+        </div>
+        {dialog.error && <p className="browse-folder-error" role="alert">{dialog.error}</p>}
       </div>
       <WizardSaveActions
         onBack={onBack}

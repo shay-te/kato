@@ -112,6 +112,23 @@ class ValidateEnvTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
+    def test_validate_agent_env_accepts_jira_with_no_project(self) -> None:
+        # An empty project searches every project the account sees; requiring
+        # one held kato in setup mode with Quick start spinning on "Starting".
+        errors = self._validate_agent_env(
+            {
+                'KATO_ISSUE_PLATFORM': 'jira',
+                'JIRA_API_BASE_URL': 'https://jira.example',
+                'JIRA_API_TOKEN': 'jira-token',
+                'JIRA_ASSIGNEE': 'developer',
+                'REPOSITORY_ROOT_PATH': '.',
+                'OPENHANDS_BASE_URL': 'http://localhost:3000',
+                'OPENHANDS_API_KEY': 'local',
+            }
+        )
+
+        self.assertEqual(errors, [])
+
     def test_validate_agent_env_accepts_github_issues_configuration(self) -> None:
         errors = self._validate_agent_env(
             {

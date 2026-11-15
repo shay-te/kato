@@ -82,7 +82,6 @@ export default function TabList({
   const menuPinned = useTaskMenuPinned();
   const menuWidth = useTaskMenuWidth();
   const [menuResizing, setMenuResizing] = useState(false);
-  useDockedRailWidth(menuPinned, menuWidth);
   // Pinned tab ids (in pin order). localStorage-backed so the
   // operator's preference survives reloads. Read lazily on mount;
   // every toggle re-persists. See utils/pinnedTabs.js for the rules.
@@ -469,6 +468,10 @@ export default function TabList({
   // a load says nothing yet (``useDelayedFlag``), and an empty panel must not
   // flash open over the screen.
   const heldOpen = empty && emptyStateMessage !== null;
+  // Held open (no task yet) it takes its own column too, like a pinned menu:
+  // lying over the page it hid the left of every banner above it ("Kato
+  // can't reach Jira" was under it on a first run).
+  useDockedRailWidth(menuPinned || heldOpen, menuWidth);
   return (
     <nav
       id="tabs-pane"
@@ -498,7 +501,7 @@ export default function TabList({
   );
 }
 
-// A pinned menu is docked: the page gives up its whole width
+// A pinned (or held-open) menu is docked: the page gives up its whole width
 // (``#root``'s left padding reads ``--task-rail-docked-width``), so nothing
 // lies under it. Unpinned, the page gives up only the collapsed rail.
 function useDockedRailWidth(pinned, width) {

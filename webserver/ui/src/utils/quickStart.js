@@ -57,13 +57,12 @@ export function initialFolder(screen) {
 }
 
 // Why Start is not offered yet ('' = it is). One reason, the first that holds.
+// Signing in is NOT one: the operator may sign in later — kato's main screen
+// asks again (ClaudeSignInBanner) — so a signed-out agent never holds kato back.
 export function startBlocker({ agent, checks, folder }) {
   if (!agent) { return 'Pick the agent you use.'; }
   if (!checks) { return 'Checking this computer…'; }
-  const label = agentLabel(agent);
-  const state = agentState(checks.agent);
-  if (state === AGENT_STATE.MISSING) { return `Install ${label} first.`; }
-  if (state === AGENT_STATE.SIGNED_OUT) { return `Sign in to ${label} first.`; }
+  if (agentState(checks.agent) === AGENT_STATE.MISSING) { return `Install ${agentLabel(agent)} first.`; }
   if (!checks.git?.installed) { return 'Install git first.'; }
   if (!String(folder?.path || '').trim()) { return 'Pick the folder your code is in.'; }
   return '';
@@ -72,4 +71,20 @@ export function startBlocker({ agent, checks, folder }) {
 // Everything checked is in place: nothing left to ask again.
 export function allChecksPass(checks) {
   return Boolean(checks) && agentUsable(checks.agent) && Boolean(checks.git?.installed);
+}
+
+// Whether the main screen asks about Claude Code's sign-in (ClaudeSignInBanner):
+// out of setup, and Claude Code is the agent in front — the open task's, else
+// the one new tasks start on ('' = the default, Claude Code).
+export function claudeSignInNeeded(configStatus, activeBackend = '') {
+  if (!configStatus || configStatus.setup_mode) { return false; }
+  return (activeBackend || configStatus.chat_agent || 'claude') === 'claude';
+}
+
+// kato's config check says "missing required agent env var: JIRA_API_TOKEN";
+// the screen says which setting, and the variable it is kept under.
+export function missingSettingText(problem) {
+  const text = String(problem || '').trim();
+  const match = /^missing required (?:agent )?env var: (\S+)$/i.exec(text);
+  return match ? `${match[1]} (not set)` : text;
 }

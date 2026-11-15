@@ -222,6 +222,18 @@ class MissingPullRequestTokenMessageTests(unittest.TestCase):
         msg = missing_pull_request_token_message('client', 'gitea')
         self.assertIn('<provider-token>', msg)
 
+    def test_the_callers_own_advice_replaces_the_env_var_advice(self) -> None:
+        msg = missing_pull_request_token_message('client', 'github', 'add a token on the settings page')
+        self.assertEqual(
+            msg,
+            'missing pull request API token for repository client; add a token on the settings page',
+        )
+        self.assertNotIn('GITHUB_API_TOKEN', msg)
+
+    def test_blank_advice_keeps_the_env_var_advice(self) -> None:
+        msg = missing_pull_request_token_message('client', 'github', '  ')
+        self.assertIn('set GITHUB_API_TOKEN', msg)
+
 
 if __name__ == '__main__':
     unittest.main()

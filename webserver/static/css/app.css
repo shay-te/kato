@@ -8769,6 +8769,43 @@ body.kato-resizing {
   border-left: 3px solid rgba(245, 158, 11, 0.65);
 }
 
+.connection-problem-banner {
+  align-items: flex-start;
+}
+
+.connection-problem-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.connection-problem-banner__error {
+  margin: 0;
+  max-height: 8em;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+}
+
+.claude-sign-in-banner {
+  align-items: flex-start;
+}
+
+.claude-sign-in-banner__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.claude-sign-in-banner__body .quick-start-note,
+.claude-sign-in-banner__body .setup-wizard-error {
+  margin: 0;
+}
+
 /* "CLI not found" genuinely blocks the backend — a slightly firmer accent,
  * still amber (never red). */
 .kato-version-banner--warn {
@@ -10235,9 +10272,11 @@ body.kato-resizing {
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(720px, 100vw);
+  width: min(940px, 100vw);
   background: #0a0a0a;
   border-left: 1px solid #2a2a2a;
+  border-radius: 16px 0 0 16px;
+  overflow: hidden;
   box-shadow: -8px 0 32px rgba(28, 28, 30, 0.62);
   z-index: 1000;
   display: flex;
@@ -10302,7 +10341,7 @@ body.kato-resizing {
   width: 100%;
   padding: 7px 11px;
   border: 1px solid #2a2a2a;
-  border-radius: 8px;
+  border-radius: 999px;
   background: #0a0a0a;
   color: #f5f5f7;
   font-size: 13px;
@@ -10323,7 +10362,7 @@ body.kato-resizing {
   overflow-y: auto;
   background: #0a0a0a;
   border: 1px solid #2a2a2a;
-  border-radius: 8px;
+  border-radius: 12px;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
@@ -10383,26 +10422,68 @@ body.kato-resizing {
     background: transparent;
   }
 }
-.settings-drawer-tabs {
+.settings-drawer-main {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #2a2a2a;
+}
+
+.settings-drawer-tabs {
+  flex: 0 0 196px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 10px;
+  overflow-y: auto;
+  border-right: 1px solid #2a2a2a;
   background: #0a0a0a;
+}
+
+.settings-drawer-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-drawer-nav-heading {
+  padding: 0 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #737373;
 }
 
 .settings-drawer-tab {
   background: transparent;
   border: 1px solid transparent;
   color: #a3a3a3;
-  padding: 6px 14px;
-  border-radius: 999px;
+  padding: 6px 10px;
+  border-radius: 10px;
   font-size: 13px;
+  text-align: left;
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
+@media (max-width: 760px) {
+  .settings-drawer-main {
+    flex-direction: column;
+  }
+  .settings-drawer-tabs {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid #2a2a2a;
+  }
+  .settings-drawer-nav-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+}
 .settings-drawer-tab:hover {
   color: #f5f5f7;
   background: rgba(255, 255, 255, 0.06);
@@ -10538,7 +10619,7 @@ body.kato-resizing {
 .settings-drawer-input {
   background: #0a0a0a;
   border: 1px solid #2a2a2a;
-  border-radius: 4px;
+  border-radius: 10px;
   color: #f5f5f7;
   padding: 8px 10px;
   font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -10606,7 +10687,7 @@ body.kato-resizing {
 .settings-drawer-action-primary,
 .settings-drawer-action-secondary {
   padding: 7px 16px;
-  border-radius: 4px;
+  border-radius: 999px;
   font-size: 12px;
   cursor: pointer;
   border: 1px solid;
@@ -11752,15 +11833,27 @@ button.settings-prompt-editor-head {
   text-decoration: underline;
 }
 
-.quick-start-browse {
+.browse-folder-button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.folder-browser-entry-icon {
-  flex: 0 0 auto;
-  color: #a3a3a3;
+.browse-folder-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #fca5a5;
+}
+
+.quick-start-typed-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-start-typed-folder .setup-wizard-input {
+  flex: 1;
+  min-width: 0;
 }
 
 .quick-start-foot {
@@ -11775,6 +11868,64 @@ button.settings-prompt-editor-head {
 }
 
 /* The ticket system could not be reached: the tracker's own words, whole. */
+/* "Test connection" in a provider settings tab (settings/ConnectionTest.jsx). */
+.connection-test {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.connection-test-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.connection-test-ok {
+  margin: 0;
+  font-size: 13px;
+  color: #79f2c0;
+}
+
+.connection-test-failed {
+  width: 100%;
+  font-size: 13px;
+  color: #fca5a5;
+}
+
+.connection-test-failed p {
+  margin: 0;
+}
+
+.connection-test-failed pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.connection-test-fix {
+  margin-top: 10px;
+}
+
+.connection-apply {
+  margin: 0 0 14px;
+  font-size: 13px;
+}
+
+.connection-apply--ok {
+  color: #79f2c0;
+}
+
+.connection-apply--note {
+  color: #c8c8cd;
+}
+
+.connection-apply--error {
+  color: #fca5a5;
+}
+
 .setup-wizard-connection-error {
   margin: 0 0 12px;
   padding: 10px 12px;
@@ -12030,9 +12181,9 @@ button.settings-prompt-editor-head {
 
 .credential-guide {
   margin: 0 0 16px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border: 1px solid #2a2a2a;
-  border-radius: 8px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.06);
   font-size: 12px;
   line-height: 1.6;
@@ -12058,10 +12209,57 @@ button.settings-prompt-editor-head {
   margin-top: 10px;
 }
 
-.credential-guide__summary {
+.credential-guide__summary,
+.settings-drawer-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   cursor: pointer;
   color: #f5f5f7;
-  list-style-position: outside;
+  list-style: none;
+}
+
+.credential-guide__summary::-webkit-details-marker,
+.settings-drawer-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.credential-guide__summary::before,
+.settings-drawer-advanced > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.credential-guide__how[open] > .credential-guide__summary::before,
+.settings-drawer-advanced[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.settings-drawer-advanced {
+  margin: 6px 0 14px;
+  padding: 12px 16px;
+  border: 1px solid #2a2a2a;
+  border-radius: 16px;
+}
+
+.settings-drawer-advanced > summary {
+  font-size: 13px;
+}
+
+.settings-drawer-advanced-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: #737373;
+}
+
+.settings-drawer-advanced[open] > .settings-drawer-fields {
+  margin-top: 12px;
 }
 
 .credential-guide__location {
@@ -12096,107 +12294,6 @@ button.settings-prompt-editor-head {
 
 .credential-guide__link:hover {
   text-decoration: underline;
-}
-
-.folder-browser {
-  margin-top: 10px;
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
-  background: #0a0a0a;
-  overflow: hidden;
-}
-
-.folder-browser-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid #2a2a2a;
-}
-
-.folder-browser-nav {
-  padding: 2px 10px;
-  border-radius: 4px;
-  border: 1px solid #2a2a2a;
-  background: transparent;
-  color: #f5f5f7;
-  font-size: 12px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.folder-browser-nav:hover:not(:disabled) {
-  border-color: #525252;
-}
-
-.folder-browser-nav:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.folder-browser-path {
-  font-size: 11px;
-  color: #a3a3a3;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-}
-
-.folder-browser-error {
-  margin: 0;
-  padding: 6px 10px;
-  font-size: 12px;
-  color: #fca5a5;
-}
-
-.folder-browser-note {
-  margin: 0;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: #a3a3a3;
-}
-
-.folder-browser-list {
-  margin: 0;
-  padding: 4px;
-  list-style: none;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.folder-browser-entry {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: #f5f5f7;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.folder-browser-entry:hover {
-  background: #2a2a2a;
-}
-
-.folder-browser-empty {
-  padding: 6px 8px;
-  font-size: 12px;
-  color: #a3a3a3;
-}
-
-.folder-browser-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 8px 10px;
-  border-top: 1px solid #2a2a2a;
 }
 
 /* ───── Composer: modes menu, commands menu, context meter ─────

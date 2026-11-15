@@ -53,6 +53,7 @@ class QuickStartRoutesTests(unittest.TestCase):
         self.assertEqual(body['folders'], [{'path': str(self.home / 'dev'), 'repositories': 1}])
         self.assertEqual(body['new_folder'], str(self.home / 'code'))
         self.assertEqual(body['home'], str(self.home))  # the screen shows ~/dev
+        self.assertIs(body['folder_dialog'], False)  # no folder dialog registered on this bare app
         self.assertEqual(body['folder'], '')
 
     def test_kato_own_workspaces_are_never_offered(self) -> None:
@@ -99,6 +100,17 @@ class QuickStartRoutesTests(unittest.TestCase):
         # Only a literal true creates a folder.
         self.client.post('/api/setup/quick-start', json={'agent': 'claude', 'folder': str(self.home / 'other'), 'create': 'yes'})
         self.assertFalse((self.home / 'other').exists())
+
+    def test_save_says_what_still_keeps_kato_from_starting(self) -> None:
+        (self.home / 'dev').mkdir()
+        body = {'agent': 'claude', 'folder': str(self.home / 'dev')}
+        with mock.patch('kato_core_lib.validate_env.collect_config_errors',
+                        return_value=['missing required agent env var: YOUTRACK_ASSIGNEE']) as check:
+            response = self.client.post('/api/setup/quick-start', json=body)
+        self.assertEqual(response.get_json()['missing'], ['missing required agent env var: YOUTRACK_ASSIGNEE'])
+        self.assertEqual(check.call_args.kwargs['mode'], 'all')  # the check the setup loop waits on
+        with mock.patch('kato_core_lib.validate_env.collect_config_errors', return_value=[]):
+            self.assertEqual(self.client.post('/api/setup/quick-start', json=body).get_json()['missing'], [])
 
     def test_a_settings_file_that_cannot_be_written_is_a_500(self) -> None:
         (self.home / 'dev').mkdir()

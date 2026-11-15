@@ -68,15 +68,21 @@ def fallback_web_base_url(repository) -> str:
     return provider_base_url
 
 
-def missing_pull_request_token_message(repository_id: str, provider: str) -> str:
-    """Return an actionable error message when a PR API token is missing."""
+def missing_pull_request_token_message(
+    repository_id: str,
+    provider: str,
+    how_to_fix: str = '',
+) -> str:
+    """Return an actionable error message when a PR API token is missing.
+
+    ``how_to_fix`` replaces the generic "set <ENV VAR>" advice with the host
+    application's own words — where its user really sets the token.
+    """
     env_key = {
         'github': 'GITHUB_API_TOKEN',
         'gitlab': 'GITLAB_API_TOKEN',
         'bitbucket': 'BITBUCKET_API_TOKEN',
         'azure': 'AZURE_API_TOKEN',
     }.get(provider, '<provider-token>')
-    return (
-        f'missing pull request API token for repository {repository_id}; '
-        f'set {env_key} or configure repository token explicitly'
-    )
+    fix = str(how_to_fix or '').strip() or f'set {env_key} or configure repository token explicitly'
+    return f'missing pull request API token for repository {repository_id}; {fix}'

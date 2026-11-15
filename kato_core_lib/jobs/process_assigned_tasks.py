@@ -7,6 +7,7 @@ from kato_core_lib.data_layers.data.fields import (
     ReviewCommentFields,
     StatusFields,
 )
+from kato_core_lib.data_layers.service.connection_health import TRACKER, ConnectionHealth, report
 from kato_core_lib.helpers.error_handling_utils import log_and_notify_failure
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.kato_core_lib import KatoCoreLib
@@ -46,10 +47,25 @@ def _sync_planning_holds(service) -> None:
         )
 
 
+def _fetch_assigned_tasks(service) -> list:
+    """The ticket system's assigned tasks — and connection_health told how it
+    answered, so a fetch that fails is on the screen, not only in the log."""
+    health = getattr(service, 'connection_health', None)
+    if not isinstance(health, ConnectionHealth):
+        health = None  # a test stub: nothing listening
+    try:
+        tasks = service.get_assigned_tasks()
+    except Exception as exc:
+        report(health, TRACKER, error=exc, label=health.tracker_label if health else '', kind='tracker')
+        raise
+    report(health, TRACKER)
+    return tasks
+
+
 def _dispatch_assigned_tasks(service) -> list[dict]:
     """Submit each assigned task; collect results from already-finished workers."""
     runner = getattr(service, 'parallel_task_runner', None)
-    assigned_tasks = service.get_assigned_tasks()
+    assigned_tasks = _fetch_assigned_tasks(service)
     if not _runner_has_real_concurrency(runner):
         # Legacy / single-worker path: run inline so the scan loop blocks
         # until each task is fully processed (preserves the original

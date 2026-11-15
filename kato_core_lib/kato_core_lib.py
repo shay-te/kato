@@ -107,6 +107,7 @@ from kato_core_lib.data_layers.service.plan_queue.done_nudge import PlanQueueDon
 from local_task_core_lib.local_task_core_lib.store import LocalTaskStore
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.issue_platform_utils import is_no_tracker
+from kato_core_lib.data_layers.service.connection_health import ConnectionHealth
 from kato_core_lib.helpers.ticket_image_utils import download_ticket_images
 from kato_core_lib.helpers.kato_config_utils import (
     resolved_agent_backend,
@@ -660,7 +661,11 @@ class KatoCoreLib(CoreLib):
             publish_max_retries=TaskPublisher.max_retries_from_config(open_cfg),
             publish_conventions_writer=self.publish_conventions_writer,
         )
+        # What kato could not reach on its last try (the ticket system, each git
+        # host) — the scan and the review scan report, the screen shows it.
+        self.connection_health = ConnectionHealth(tracker_label=str(open_cfg.issue_platform or 'youtrack'))
         review_comment_service = ReviewCommentService(
+            connection_health=self.connection_health,
             task_service=task_service,
             implementation_service=implementation_service,
             repository_service=repository_service,
@@ -738,6 +743,7 @@ class KatoCoreLib(CoreLib):
         # The Done button (push, PR, In Review) posts the task to Slack too,
         # and its toast says so.
         service.publish.announce_finished = self.slack_done_announcer.announce
+        service.connection_health = self.connection_health
         return service
 
 

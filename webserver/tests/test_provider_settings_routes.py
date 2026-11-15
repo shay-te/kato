@@ -79,6 +79,17 @@ class TaskProvidersGetTests(_ProviderRouteTestBase):
             resp = self._client().get('/api/task-providers')
         self.assertEqual(resp.get_json()['active'], 'jira')
 
+    def test_each_provider_says_its_order_and_each_field_its_real_default(self) -> None:
+        with patch.dict(os.environ, self._env({'KATO_ISSUE_PLATFORM': 'jira'})):
+            jira = self._client().get('/api/task-providers').get_json()['providers']['jira']
+        # JSON sorts the fields: the order is how the form shows them.
+        self.assertEqual(jira['order'][:3], ['JIRA_API_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN'])
+        self.assertEqual(sorted(jira['order']), sorted(jira['fields']))
+        # Jira's own defaults, read from the config files (never YouTrack's).
+        self.assertEqual(jira['fields']['JIRA_DONE_STATE_FIELD']['default'], 'status')
+        self.assertEqual(jira['fields']['JIRA_REVIEW_STATE']['default'], 'In Review')
+        self.assertEqual(jira['fields']['JIRA_API_TOKEN']['default'], '')
+
 
 class TaskProvidersPostTests(_ProviderRouteTestBase):
 
@@ -119,7 +130,7 @@ class TaskProvidersPostTests(_ProviderRouteTestBase):
             listed = self._client().get('/api/task-providers').get_json()
             resp = self._client().post('/api/task-providers', json={'active': 'local'})
         self.assertIn('local', listed['supported'])
-        self.assertEqual(listed['providers']['local'], {'fields': {}})
+        self.assertEqual(listed['providers']['local'], {'fields': {}, 'order': []})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(self._saved().get('KATO_ISSUE_PLATFORM'), 'local')
 

@@ -1,9 +1,6 @@
-# Kato Desktop — build the installers (.dmg / .msi / .AppImage) + updater feed
-# on a version tag. THIS is what actually produces the downloadable files.
-#
-# ▶ To enable: copy to  .github/workflows/desktop-release.yaml  at the REPO ROOT.
-#   GitHub only runs workflows from .github/workflows, so this one file can't
-#   physically live under desktop/ — it's kept here as the source of truth.
+# Kato Desktop — build the installers (.dmg / NSIS .exe / .AppImage) + updater
+# feed on a version tag. THIS is what actually produces the downloadable files
+# (and the only copy: desktop/ci/release.yaml was an older one, removed).
 #
 # On a tag like `desktop-v0.1.0`, each OS runner installs kato + PyInstaller,
 # freezes the sidecar, then runs the Tauri action to build + sign the installer

@@ -176,12 +176,6 @@ export function fetchConfigStatus() {
   return fetchJson('/api/config-status');
 }
 
-// Folder-picker listing for the "Browse…" button (wizard + Settings →
-// Repositories). Directory names only; the server never lists files.
-export function fetchDirectoryListing(path) {
-  return fetchJson(`/api/fs/dirs?path=${encodeURIComponent(path || '~')}`);
-}
-
 export async function fetchAgentVersion(force = false, backend = '') {
   // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
   // a CLI or settings change with no kato restart) — a POST, because probing
@@ -229,6 +223,12 @@ export function cancelClaudeSignIn() {
   return postEnvelope('/api/setup/claude-sign-in/cancel', {});
 }
 
+// The computer's own "choose a folder" dialog, opened by kato (folder_dialog_routes.py).
+// Waits while the operator chooses: { path } | { cancelled: true }.
+export function chooseFolderNatively({ start = '', prompt = '' } = {}) {
+  return postEnvelope('/api/fs/choose-folder', { start, prompt });
+}
+
 export function openGitInstaller() {
   return postEnvelope('/api/setup/install-git', {});
 }
@@ -265,8 +265,23 @@ export function updateTaskProvider(payload) {
 
 // Reach the ticket system with the settings saved right now: ``{ ok,
 // platform, error }``. kato's own validation query, run by the server.
-export function testTrackerConnection() {
-  return postEnvelope('/api/setup/test-tracker-connection', {});
+// kato's one apply-and-recheck (connection_routes.py): after a good test or a
+// save, the saved connection settings are put to work (kato restarts with them)
+// or kato's own check runs again — the banner follows its outcome.
+export function recheckConnections() {
+  return postEnvelope('/api/connections/recheck', {});
+}
+
+// A git host's "Test connection": the form's values, BEFORE Save, asked of
+// that host for a few of your repositories there.
+export function testGitHostConnection({ provider, fields = {} }) {
+  return postEnvelope('/api/git-providers/test', { provider, fields });
+}
+
+// No argument: the settings saved right now (the setup wizard). ``{ platform,
+// fields }``: what the Settings form holds, tested BEFORE Save.
+export function testTrackerConnection({ platform = '', fields = {} } = {}) {
+  return postEnvelope('/api/setup/test-tracker-connection', platform ? { platform, fields } : {});
 }
 
 // Credentials for `provider` that already exist on this machine (gh/glab

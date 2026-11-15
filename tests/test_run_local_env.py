@@ -38,6 +38,19 @@ class LayeredEnvTests(unittest.TestCase):
         self.assertEqual(env['B'], 'True')
 
 
+class EmptySettingIsUnsetTests(unittest.TestCase):
+    def test_a_cleared_setting_is_not_exported_so_its_default_applies(self) -> None:
+        settings = {'JIRA_ISSUE_STATES': '', 'JIRA_PROJECT': None, 'JIRA_ASSIGNEE': 'kato-bot'}
+        env = layered_env({}, settings, {'JIRA_ISSUE_STATES': 'from a later source'})
+        self.assertNotIn('JIRA_PROJECT', env)
+        self.assertEqual(env['JIRA_ASSIGNEE'], 'kato-bot')
+        # An empty value does not even block a later source: it is unset.
+        self.assertEqual(env['JIRA_ISSUE_STATES'], 'from a later source')
+
+    def test_an_empty_var_in_the_real_shell_is_the_operators_own(self) -> None:
+        self.assertEqual(layered_env({'JIRA_PROJECT': ''}, {'JIRA_PROJECT': 'KAN'})['JIRA_PROJECT'], '')
+
+
 class ReadKatoSettingsFileTests(unittest.TestCase):
     def test_reads_flat_json_via_env_override(self) -> None:
         with tempfile.TemporaryDirectory() as d:

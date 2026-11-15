@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from kato_core_lib.data_layers.service.quick_start import agent_check, code_folders, git_check
+from kato_core_lib.data_layers.service.quick_start import claude_sign_in
 from kato_core_lib.data_layers.service.quick_start.claude_sign_in import ClaudeSignIn, SignInError
 from kato_core_lib.data_layers.service.quick_start.settings import QuickStartError, save_quick_start
 
@@ -236,7 +237,13 @@ _FAKE_LOGIN = textwrap.dedent('''
     sys.stdout.write("Paste code here if prompted > ")
     sys.stdout.flush()
     code = sys.stdin.readline().strip()
-    sys.exit(0 if code == 'abc#123' else 1)
+    if code == 'abc#123':
+        sys.exit(0)
+    if code == 'quiet':
+        sys.exit(2)
+    sys.stdout.write("\\x1b[31mLogin failed: could not save the credentials\\x1b[0m\\n")
+    sys.stdout.write("See https://claude.example/help\\n")
+    sys.exit(1)
 ''')
 
 
@@ -252,6 +259,7 @@ class ClaudeSignInTests(unittest.TestCase):
         def spawn(argv, **kwargs):
             self.argv.append(argv)
             return subprocess.Popen([sys.executable, str(self.script), *extra], **kwargs)
+        options.setdefault('keychain_ready', lambda: True)  # the Mac's keychain is its own test below
         signing = ClaudeSignIn(spawn=spawn, **options)
         self.addCleanup(signing.cancel)
         return signing
@@ -281,7 +289,32 @@ class ClaudeSignInTests(unittest.TestCase):
         self.wait_for(signing, lambda status: status['asks_for_code'])
         signing.submit_code('nope')
         failed = self.wait_for(signing, lambda status: status['state'] != 'waiting')
-        self.assertEqual((failed['state'], failed['message']), ('failed', 'sign-in ended with exit code 1'))
+        # The CLI's own words, after its link, minus the prompt and its colours.
+        self.assertEqual((failed['state'], failed['message']), (
+            'failed', 'sign-in ended with exit code 1 — Login failed: could not save the credentials '
+            'See https://claude.example/help'))
+
+    def test_a_cli_that_says_nothing_more_fails_with_its_exit_code(self) -> None:
+        signing = self.sign_in()
+        signing.start('claude')
+        self.wait_for(signing, lambda status: status['asks_for_code'])
+        signing.submit_code('quiet')
+        failed = self.wait_for(signing, lambda status: status['state'] != 'waiting')
+        self.assertEqual(failed['message'], 'sign-in ended with exit code 2')
+
+    def test_why_it_failed_is_read_from_the_end_even_past_the_kept_output(self) -> None:
+        from kato_core_lib.data_layers.service.quick_start import claude_sign_in
+        self.assertEqual(claude_sign_in._failure_message(1, 'x' * 50 + '\nError: no keychain\n'),
+                         'sign-in ended with exit code 1 — ' + 'x' * 50 + ' Error: no keychain')
+        self.assertEqual(len(claude_sign_in._failure_message(1, 'y' * 5000)),
+                         len('sign-in ended with exit code 1 — ') + claude_sign_in.MAX_FAILURE_CHARS)
+        with mock.patch.object(claude_sign_in, 'MAX_OUTPUT_CHARS', 20):
+            signing = self.sign_in()
+            signing.start('claude')
+            self.wait_for(signing, lambda status: 'Paste code' in signing._tail)
+            signing.submit_code('nope')
+            failed = self.wait_for(signing, lambda status: status['state'] != 'waiting')
+        self.assertIn('Login failed: could not save the credentials', failed['message'])
 
     def test_a_code_kato_will_not_write_and_a_sign_in_not_waiting_are_refused(self) -> None:
         signing = self.sign_in()
@@ -335,11 +368,43 @@ class ClaudeSignInTests(unittest.TestCase):
         broken.stdout.close.assert_called_once_with()
 
     def test_a_cli_that_cannot_start_is_a_failed_sign_in(self) -> None:
-        signing = ClaudeSignIn(spawn=mock.Mock(side_effect=FileNotFoundError('no claude')))
+        signing = ClaudeSignIn(spawn=mock.Mock(side_effect=FileNotFoundError('no claude')), keychain_ready=lambda: True)
         failed = signing.start('/missing/claude')
         self.assertEqual(failed['state'], 'failed')
         self.assertIn('could not start /missing/claude', failed['message'])
         self.assertEqual(ClaudeSignIn().status()['state'], 'idle')
+
+
+class MacKeychainTests(unittest.TestCase):
+    """No keychain on a Mac: the sign-in would reach the account and then make
+    macOS offer to reset the keychain — so kato does not start it."""
+
+    def test_a_mac_with_no_keychain_starts_no_sign_in_and_says_why(self) -> None:
+        spawn = mock.Mock()
+        signing = ClaudeSignIn(spawn=spawn, keychain_ready=lambda: False)
+        failed = signing.start('claude')
+        self.assertEqual((failed['state'], failed['message']), ('failed', claude_sign_in.NO_KEYCHAIN_MESSAGE))
+        spawn.assert_not_called()
+
+    def test_only_a_clear_no_keychain_on_a_mac_says_not_ready(self) -> None:
+        def answers(code, out='', err=''):
+            return mock.Mock(return_value=subprocess.CompletedProcess([], code, stdout=out, stderr=err))
+        none = answers(1, err='security: SecKeychainCopyDefault: A default keychain could not be found.')
+        self.assertFalse(claude_sign_in.mac_keychain_ready(platform='darwin', run=none))
+        self.assertEqual(none.call_args.args[0], ['/usr/bin/security', 'default-keychain'])
+        self.assertIs(none.call_args.kwargs['stdin'], subprocess.DEVNULL)
+        cases = {
+            'a keychain': answers(0, out='    "/Users/me/Library/Keychains/login.keychain-db"'),
+            'some other failure': answers(1, err='security: something else went wrong'),
+            'no security program': mock.Mock(side_effect=FileNotFoundError('no security')),
+            'no answer in time': mock.Mock(side_effect=subprocess.TimeoutExpired('security', 5)),
+        }
+        for name, run in cases.items():
+            with self.subTest(case=name):
+                self.assertTrue(claude_sign_in.mac_keychain_ready(platform='darwin', run=run))
+        never = mock.Mock()
+        self.assertTrue(claude_sign_in.mac_keychain_ready(platform='linux', run=never))
+        never.assert_not_called()
 
 
 class SaveQuickStartTests(_Home):

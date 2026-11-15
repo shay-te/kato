@@ -15,7 +15,7 @@ vi.mock('../api.js', () => ({
   updateSettings: vi.fn(),
   fetchAllSettings: vi.fn(),
   updateAllSettings: vi.fn(),
-  fetchDirectoryListing: vi.fn(),
+  chooseFolderNatively: vi.fn(),
   fetchCredentialSources: vi.fn(),
   fetchAgentBackends: vi.fn(async () => ({
     backends: [{ id: 'claude', ready: true, error: '', logged_in: true }],
@@ -31,7 +31,7 @@ import {
   updateSettings,
   fetchAllSettings,
   updateAllSettings,
-  fetchDirectoryListing,
+  chooseFolderNatively,
   fetchCredentialSources,
 } from '../api.js';
 import SetupWizard from './SetupWizard.jsx';
@@ -587,24 +587,23 @@ describe('SetupWizard step 5 — repositories folder', () => {
     expect(screen.getByRole('button', { name: 'Save & continue' })).toBeDisabled();
   });
 
-  test('Browse… opens the folder picker and picking fills the input', async () => {
-    fetchDirectoryListing.mockResolvedValue({
-      path: '/Users/dev/Projects',
-      parent: '/Users/dev',
-      home: '/Users/dev',
-      dirs: [{ name: 'kato', path: '/Users/dev/Projects/kato' }],
-    });
+  test('Browse… opens the computer\'s own folder dialog and its pick fills the input', async () => {
+    chooseFolderNatively.mockResolvedValue({ ok: true, body: { path: '/Users/dev/Projects' } });
     await goToRepoStep();
     fireEvent.click(screen.getByRole('button', { name: 'Browse…' }));
 
-    await screen.findByRole('button', { name: 'kato' });
-    fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
-
-    // The picked path landed in the input and the picker closed.
     const input = document.querySelector('.setup-wizard-input');
-    expect(input.value).toBe('/Users/dev/Projects');
-    expect(screen.queryByRole('button', { name: 'kato' })).toBeNull();
+    await waitFor(() => expect(input.value).toBe('/Users/dev/Projects'));
+    expect(chooseFolderNatively).toHaveBeenCalledWith({ start: '', prompt: 'Choose the folder your repositories are in' });
     expect(screen.getByRole('button', { name: 'Save & continue' })).not.toBeDisabled();
+  });
+
+  test('where no folder dialog can open, it says to type the path', async () => {
+    chooseFolderNatively.mockResolvedValue({ ok: false, status: 501, body: { error: 'no folder dialog can open on this computer' } });
+    await goToRepoStep();
+    fireEvent.click(screen.getByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('type the folder\'s path instead');
+    expect(document.querySelector('.setup-wizard-input').value).toBe('');
   });
 });
 

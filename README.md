@@ -10,6 +10,10 @@
   <em>Kato will help you kick all your tasks.</em>
 </p>
 
+<p align="center">
+  <a href="https://aitoolreview.ai/tools/kato/#reviews"><img src="https://aitoolreview.ai/badges/kato.svg" alt="Kato reviews on AI Tool Review" height="24"></a>
+</p>
+
 **Kato is your autonomous coding sidekick.** Assign it a ticket in YouTrack, Jira, GitHub, GitLab, or Bitbucket — kato clones the repo, writes the code with Claude (or OpenHands), runs your tests, opens a pull request, and posts a summary back on the ticket. If reviewers leave PR comments, kato either fixes them or answers in the thread.
 
 You stay in control: review every diff before merging, chat with the agent live through the built-in planning UI, or pause kato before it pushes anything.

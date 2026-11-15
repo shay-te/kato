@@ -18,6 +18,7 @@ import { useEscapeKey } from '../hooks/useEscapeKey.js';
 import { cx } from '../utils/cx.js';
 import { buildSettingsIndex, filterSettingsIndex } from '../utils/settingsSearch.js';
 import { SETTINGS_TAB_REPOSITORIES } from '../constants/settingsTabs.js';
+import { groupSettingsTabs } from '../utils/settingsNavGroups.js';
 
 // Right-side drawer hosting every operator-editable setting under
 // tabs. A few tabs have bespoke logic (provider switchers,
@@ -291,26 +292,35 @@ export default function SettingsDrawer({
             </div>
           )}
         </div>
-        <nav className="settings-drawer-tabs" role="tablist">
-          {allTabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              className={`settings-drawer-tab ${tab === t.id ? 'is-active' : ''}`}
-              onClick={() => setTab(t.id)}
-              // Native title rather than the app's data-tooltip CSS: this list
-              // scrolls inside a narrow drawer, and a positioned
-              // pseudo-element would be clipped by the nav's own overflow.
-              title={t.description || undefined}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-        <div className="settings-drawer-body">
-          {panel}
+        <div className="settings-drawer-main">
+          {/* Grouped down the left (utils/settingsNavGroups.js); on a narrow
+              screen the groups wrap above the panel instead. */}
+          <nav className="settings-drawer-tabs" role="tablist" aria-orientation="vertical">
+            {groupSettingsTabs(allTabs).map((group) => (
+              <div key={group.label} className="settings-drawer-nav-group" role="presentation">
+                <div className="settings-drawer-nav-heading" role="presentation">{group.label}</div>
+                {group.tabs.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.id}
+                    className={`settings-drawer-tab ${tab === t.id ? 'is-active' : ''}`}
+                    onClick={() => setTab(t.id)}
+                    // Native title rather than the app's data-tooltip CSS: this list
+                    // scrolls inside the drawer, and a positioned pseudo-element
+                    // would be clipped by the nav's own overflow.
+                    title={t.description || undefined}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="settings-drawer-body">
+            {panel}
+          </div>
         </div>
       </aside>
     </>

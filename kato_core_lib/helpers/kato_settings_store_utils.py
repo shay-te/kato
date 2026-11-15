@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 
 from utils_core_lib.utils_core_lib.atomic_write import atomic_write_json
@@ -128,9 +129,9 @@ def _settings_with_resolved_credentials() -> dict[str, str]:
     """``read_kato_settings()`` plus any token resolved from a credential
     SOURCE (``<PROVIDER>_API_TOKEN_SOURCE``) instead of a pasted value.
 
-    Kept private and used by BOTH consumers below so the boot env and the
-    "is kato configured yet" check can never disagree about whether a
-    provider has a usable token. Import is local: credential_sources
+    The "is kato configured yet" check reads it; the boot gets the same tokens
+    from ``load_resolved_credentials_into_environ`` (the same resolver), so the
+    two can never disagree about whether a provider has a usable token. Import is local: credential_sources
     shells out to ``gh``/``git``, and nothing should pay for that just by
     importing the settings store.
     """
@@ -143,40 +144,76 @@ def _settings_with_resolved_credentials() -> dict[str, str]:
     return settings
 
 
+def config_env_with_form(form: Mapping[str, str]) -> dict[str, str]:
+    """``effective_config_env()`` with a settings form's values on top, as if
+    they were saved — so a connection can be tested BEFORE Save. A filled field
+    replaces; a cleared one is dropped, so its default applies (an empty value
+    passed on would kill the default instead). A credential source picked on
+    the form is resolved the way boot resolves one."""
+    env = effective_config_env()
+    for key, value in form.items():
+        text = str(value or '')
+        if text.strip():
+            env[key] = text
+        else:
+            env.pop(key, None)
+    try:
+        from kato_core_lib.helpers.credential_sources import resolved_credential_env
+        env.update(resolved_credential_env(env))
+    except Exception:  # noqa: BLE001 - discovery must never break the test
+        pass
+    return env
+
+
+def load_resolved_credentials_into_environ() -> list[str]:
+    """Put every token a credential SOURCE resolves to into ``os.environ``.
+
+    A provider set to "use my git login" / "use my gh login"
+    (``<PROVIDER>_API_TOKEN_SOURCE``) has no token in settings.json — only the
+    source. The boot exported settings.json as it is, so the clients never got
+    a token: Test connection (which resolves the source) said "Connected" while
+    every pull request failed with "missing pull request API token" (KAN-1,
+    2026-11-15). Every boot calls this first (``main``); a token already in the
+    process env — exported in the shell, pasted in Settings — wins.
+
+    Returns the keys it set (never the tokens). Never raises.
+    """
+    merged = {**read_kato_settings(), **{k: v for k, v in os.environ.items() if v}}
+    try:
+        from kato_core_lib.helpers.credential_sources import resolved_credential_env
+        resolved = resolved_credential_env(merged)
+    except Exception:  # noqa: BLE001 - discovery must never break the boot
+        return []
+    keys = []
+    for key, token in resolved.items():
+        if token and not os.environ.get(key):
+            os.environ[key] = token
+            keys.append(key)
+    return keys
+
+
 def load_kato_settings_into_environ() -> int:
-    """Inject ``~/.kato/settings.json`` into ``os.environ``.
+    """Inject ``~/.kato/settings.json`` into ``os.environ``, then the tokens
+    its credential sources resolve to (``load_resolved_credentials_into_environ``).
 
-    Real shell env vars win — a key already present in
-    ``os.environ`` is NOT overwritten. Returns the count of keys
-    actually inserted, for diagnostics.
-
-    A provider set to use a discovered credential source (the operator
-    picked "use my gh CLI login" instead of pasting a token) has its
-    token resolved HERE, at boot, from the live source.
+    A key the process env holds a value for wins. A key it has EMPTY is
+    unset: everything else (the validators, the settings UI,
+    ``effective_config_env``) treats empty as unset, so a blank var inherited
+    at spawn must not shadow the value the operator saved. Returns how many
+    keys it set.
 
     EMPTY VALUES ARE NOT EXPORTED. ``write_kato_settings`` keeps a cleared
-    key in the file on purpose — "kato treats empty as unset via the
-    ``${oc.env:KEY,"default"}`` pattern" — but that is only true for a key
-    that is genuinely ABSENT from the environment: omegaconf resolves a
-    set-but-empty var to ``''`` and never reaches the default. Exporting
-    ``''`` therefore silently disabled the default of every setting the
-    operator had cleared, and the whole config layer disagreed with
-    ``effective_config_env`` (which already merges non-empty values only).
-
-    The failure this caused: a cleared ``YOUTRACK_PROGRESS_STATE_FIELD``
-    resolved to ``''`` instead of ``"State"``, so
-    ``move_task_to_in_progress`` raised ``missing issue field id for: ''``,
-    the ticket stayed in Open, ``_start_task_processing`` returned False,
-    and the agent never ran for ANY task — every scan tick re-failed and
-    re-ran the task-failure restore over the workspace clones.
+    key in the file on purpose, but omegaconf resolves a set-but-empty var to
+    ``''`` and never reaches its ``${oc.env:KEY,"default"}`` default: a
+    cleared ``YOUTRACK_PROGRESS_STATE_FIELD`` once resolved to ``''`` instead
+    of ``"State"`` and no task could start.
     """
     added = 0
-    for key, value in _settings_with_resolved_credentials().items():
-        if key in os.environ or not value:
-            continue
-        os.environ[key] = value
-        added += 1
-    return added
+    for key, value in read_kato_settings().items():
+        if value and not os.environ.get(key):
+            os.environ[key] = value
+            added += 1
+    return added + len(load_resolved_credentials_into_environ())
 
 
 def effective_config_env() -> dict[str, str]:

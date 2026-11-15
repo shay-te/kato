@@ -15,12 +15,13 @@ vi.mock('../api.js', () => ({
   openGitInstaller: vi.fn(),
   upgradeAgentCli: vi.fn(),
   fetchAgentUpgradeStatus: vi.fn(),
-  fetchDirectoryListing: vi.fn(),
+  chooseFolderNatively: vi.fn(),
 }));
 vi.mock('../hooks/useAgentVersion.js', () => ({ refreshAgentVersion: vi.fn() }));
 vi.mock('../hooks/useCatalogRefresh.js', () => ({ refreshCatalogs: vi.fn() }));
 
 import * as api from '../api.js';
+import { NO_FOLDER_DIALOG } from '../hooks/useNativeFolderDialog.js';
 import QuickStart from './QuickStart.jsx';
 
 const READY_CLAUDE = { agent: 'claude', installed: true, version: '2.1.325', logged_in: true, install: null };
@@ -30,7 +31,7 @@ const GIT = { installed: true, version: '2.43.0', install: null };
 // What the server holds; ``checks`` answers for whichever agent is asked.
 let statuses;
 let git;
-function serve({ agents = {}, gitStatus = GIT, folders = [{ path: '/home/me/dev', repositories: 3 }], agent = '', folder = '' } = {}) {
+function serve({ agents = {}, gitStatus = GIT, folders = [{ path: '/home/me/dev', repositories: 3 }], agent = '', folder = '', folderDialog = false } = {}) {
   statuses = {
     claude: READY_CLAUDE,
     codex: MISSING('codex', { available: false, command: '', reason: 'no npm' }, 'Install Codex CLI:\n  npm install -g @openai/codex'),
@@ -41,6 +42,7 @@ function serve({ agents = {}, gitStatus = GIT, folders = [{ path: '/home/me/dev'
   git = gitStatus;
   api.fetchQuickStart.mockResolvedValue({
     agents: statuses, agent, git, folders, new_folder: '/home/me/code', home: '/home/me', folder,
+    folder_dialog: folderDialog,
   });
   api.fetchQuickStartChecks.mockImplementation(async (which) => ({ agent: statuses[which], git }));
 }
@@ -186,7 +188,7 @@ describe('QuickStart — each agent', () => {
     render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
     await startButton();
     fireEvent.click(chip('Claude Code'));
-    expect(await screen.findByText('Sign in to Claude Code first.')).toBeInTheDocument();
+    expect(await screen.findByText(/sign in with your Claude account now, or later/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in to Claude' }));
     expect(await screen.findByText(/A browser window opened to sign in/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open the sign-in page' })).toHaveAttribute('href', 'https://claude.com/cai/oauth/authorize?x=1');
@@ -195,6 +197,41 @@ describe('QuickStart — each agent', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Code from the sign-in page' }), { target: { value: '  abc#123 ' } });
     fireEvent.click(send);
     await waitFor(() => expect(api.sendClaudeSignInCode).toHaveBeenCalledWith('abc#123'));
+  });
+
+  test('Claude Code signed out never holds kato back: Start saves, the sign-in can come later', async () => {
+    serve({ agents: { claude: { agent: 'claude', installed: true, version: '2.1.325', logged_in: false, install: null } } });
+    const onStarted = vi.fn();
+    render(<QuickStart onStarted={onStarted} onUseWizard={vi.fn()} />);
+    await startButton();
+    fireEvent.click(chip('Claude Code'));
+    fireEvent.click(await screen.findByRole('radio', { name: '~/dev — 3 repositories' }));
+    expect(screen.getByRole('button', { name: 'Sign in to Claude' })).toBeInTheDocument();  // still offered
+    expect(await startButton()).toBeEnabled();
+    fireEvent.click(await startButton());
+    await waitFor(() => expect(onStarted).toHaveBeenCalled());
+    expect(api.saveQuickStart).toHaveBeenCalledWith({ agent: 'claude', folder: '/home/me/dev', create: false });
+  });
+
+  test('saved but still kept in setup: says what is missing instead of spinning', async () => {
+    serve();
+    api.saveQuickStart.mockResolvedValue({ ok: true, body: { ok: true, missing: [
+      'missing required agent env var: JIRA_API_TOKEN', 'repository root does not exist',
+    ] } });
+    const onStarted = vi.fn();
+    const onUseWizard = vi.fn();
+    render(<QuickStart onStarted={onStarted} onUseWizard={onUseWizard} />);
+    await startButton();
+    fireEvent.click(chip('Claude Code'));
+    fireEvent.click(await screen.findByRole('radio', { name: '~/dev — 3 repositories' }));
+    fireEvent.click(await startButton());
+    const missing = await screen.findByText(/kato can’t start yet/);
+    expect(missing.closest('[role="alert"]').querySelector('pre').textContent)
+      .toBe('JIRA_API_TOKEN (not set)\nrepository root does not exist');
+    expect(onStarted).not.toHaveBeenCalled();
+    expect(await startButton()).toHaveTextContent('Start kato');  // not "Starting kato…"
+    fireEvent.click(screen.getByRole('button', { name: 'Fix it in the setup wizard' }));
+    expect(onUseWizard).toHaveBeenCalled();
   });
 
   test('a refused code or a sign-in that cannot start says why; cancel ends it', async () => {
@@ -244,7 +281,7 @@ describe('QuickStart — each agent', () => {
     fireEvent.click(chip('Claude Code'));
     fireEvent.click(await screen.findByRole('button', { name: 'Sign in to Claude' }));
     await screen.findByText(/A browser window opened/);
-    expect(screen.queryByRole('textbox')).toBeNull();  // no code asked for
+    expect(screen.queryByRole('textbox', { name: 'Code from the sign-in page' })).toBeNull();  // no code asked for
     statuses.claude = READY_CLAUDE;
     await act(async () => { await vi.advanceTimersByTimeAsync(2600); });
     expect(await screen.findByText(/Installed and signed in/)).toBeInTheDocument();
@@ -266,7 +303,7 @@ describe('QuickStart — each agent', () => {
   });
 });
 
-describe('QuickStart — git, the folder browser, the wizard', () => {
+describe('QuickStart — git, the folder dialog, the wizard', () => {
   test('git missing on a Mac: kato opens Apple’s installer; elsewhere it shows the command', async () => {
     serve({ agent: 'claude', folder: '/home/me/dev', gitStatus: { installed: false, version: '', install: {
       command: 'xcode-select --install', text: 'Apple’s command line tools include git.', can_start: true,
@@ -286,30 +323,74 @@ describe('QuickStart — git, the folder browser, the wizard', () => {
     expect(screen.queryByRole('button', { name: 'Install git' })).toBeNull();
   });
 
-  test('another folder is picked from the browser and shown as the pick', async () => {
-    serve();
-    api.fetchDirectoryListing.mockImplementation(async (path) => (path === '/home/me/src'
-      ? { path: '/home/me/src', parent: '/home/me', home: '/home/me', dirs: [] }
-      : { path: '/home/me', parent: '/home', home: '/home/me', dirs: [{ name: 'src', path: '/home/me/src' }] }));
+  test('Browse… opens the computer\'s own folder dialog and its pick is used', async () => {
+    serve({ folderDialog: true });
+    api.chooseFolderNatively.mockResolvedValue({ ok: true, body: { path: '/Volumes/work/code' } });
     render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Another folder…' }));
-    fireEvent.click(await screen.findByRole('button', { name: /src/ }));
-    await screen.findByText('(no subfolders)');
-    fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
-    expect(await screen.findByRole('radio', { name: '~/src — your pick' })).toBeChecked();
-    expect(screen.queryByRole('button', { name: 'Use this folder' })).toBeNull();  // the browser closed
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('radio', { name: '/Volumes/work/code — your pick' })).toBeChecked();
+    expect(api.chooseFolderNatively).toHaveBeenCalledWith({ start: '/home/me', prompt: 'Choose the folder your code is in' });
+    expect(screen.queryByRole('textbox', { name: 'Folder path' })).toBeNull();  // nothing to type
   });
 
-  // ~/code is offered before it exists: the browser must not open there.
-  test('with the folder-to-create picked, the browser opens on the home folder', async () => {
-    serve({ folders: [] });
-    api.fetchDirectoryListing.mockResolvedValue({ path: '/home/me', parent: '/home', home: '/home/me', dirs: [] });
+  test('while the dialog is open the button says so; a cancel changes nothing', async () => {
+    serve({ folderDialog: true, folder: '/home/me/dev' });
+    let close;
+    api.chooseFolderNatively.mockImplementation(() => new Promise((done) => { close = done; }));
+    render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('button', { name: 'Choose it in the folder dialog…' })).toBeDisabled();
+    expect(api.chooseFolderNatively).toHaveBeenCalledWith({ start: '/home/me/dev', prompt: 'Choose the folder your code is in' });
+    await act(async () => { close({ ok: true, body: { cancelled: true } }); });
+    expect(screen.getByRole('radio', { name: '~/dev — 3 repositories' })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Browse…' })).toBeEnabled();
+  });
+
+  test('one already open says so; no dialog after all turns to typing the path', async () => {
+    serve({ folderDialog: true });
+    api.chooseFolderNatively.mockResolvedValueOnce({ ok: false, status: 409, body: { error: 'a folder dialog is already open — finish or cancel it first' } });
+    render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('a folder dialog is already open — finish or cancel it first');
+    api.chooseFolderNatively.mockResolvedValueOnce({ ok: false, status: 501, body: { error: 'no folder dialog can open on this computer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('textbox', { name: 'Folder path' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(NO_FOLDER_DIALOG);
+    expect(screen.queryByRole('button', { name: 'Browse…' })).toBeNull();
+  });
+
+  test('a kato that does not say whether a dialog can open still offers Browse…', async () => {
+    serve();
+    const { folder_dialog: _unsaid, ...older } = await api.fetchQuickStart();  // an older kato: no such field
+    api.fetchQuickStart.mockResolvedValue(older);
+    api.chooseFolderNatively.mockResolvedValue({ ok: false, status: 404, body: {} });
+    render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse…' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Restart kato to open the folder dialog');
+    expect(screen.queryByRole('textbox', { name: 'Folder path' })).toBeNull();
+  });
+
+  test('where no dialog can open, the folder\'s path is typed and used', async () => {
+    serve();
+    render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
+    const typed = await screen.findByRole('textbox', { name: 'Folder path' });
+    expect(screen.queryByRole('button', { name: 'Browse…' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use this folder' })).toBeDisabled();
+    fireEvent.change(typed, { target: { value: '  ~/src  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this folder' }));
+    expect(await screen.findByRole('radio', { name: '~/src — your pick' })).toBeChecked();
+    expect(api.chooseFolderNatively).not.toHaveBeenCalled();
+  });
+
+  // ~/code is offered before it exists: the dialog cannot open there.
+  test('with the folder-to-create picked, the dialog opens on the home folder', async () => {
+    serve({ folders: [], folderDialog: true });
+    api.chooseFolderNatively.mockResolvedValue({ ok: true, body: { cancelled: true } });
     render(<QuickStart onStarted={vi.fn()} onUseWizard={vi.fn()} />);
     await startButton();
     fireEvent.click(screen.getByRole('radio', { name: '~/code — new folder' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Another folder…' }));
-    await waitFor(() => expect(api.fetchDirectoryListing).toHaveBeenCalledWith('/home/me'));
-    expect(api.fetchDirectoryListing).not.toHaveBeenCalledWith('/home/me/code');
+    fireEvent.click(screen.getByRole('button', { name: 'Browse…' }));
+    await waitFor(() => expect(api.chooseFolderNatively).toHaveBeenCalledWith({ start: '/home/me', prompt: 'Choose the folder your code is in' }));
   });
 
   test('a folder picked on an earlier run that is not in the list is shown as the pick', async () => {

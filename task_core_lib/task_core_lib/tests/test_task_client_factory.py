@@ -253,6 +253,45 @@ class DefaultPathJiraTests(unittest.TestCase):
         self.assertEqual(jira_cfg.max_retries, 4)
 
 
+class HostConfigPointingBackTests(unittest.TestCase):
+    """A host's task block usually points back at its library's own block
+    (``base_url: ${core_lib.jira_core_lib.base_url}``). Wrapped unresolved
+    under that same key it pointed at itself and the provider was never
+    built ("Recursive interpolation detected") — every provider but one."""
+
+    CASES = (
+        (Platform.JIRA, 'jira_core_lib', 'jira_core_lib.jira_core_lib.jira_core_lib', 'JiraCoreLib'),
+        (Platform.GITHUB_ISSUES, 'github_core_lib', 'github_core_lib.github_core_lib.github_core_lib', 'GitHubCoreLib'),
+        (Platform.GITLAB_ISSUES, 'gitlab_core_lib', 'gitlab_core_lib.gitlab_core_lib.gitlab_core_lib', 'GitLabCoreLib'),
+        (Platform.YOUTRACK, 'youtrack_core_lib', 'youtrack_core_lib.youtrack_core_lib.youtrack_core_lib', 'YouTrackCoreLib'),
+    )
+
+    def test_every_provider_gets_the_real_values(self) -> None:
+        for platform, lib_key, module, class_name in self.CASES:
+            with self.subTest(platform=platform):
+                root = OmegaConf.create({
+                    'core_lib': {lib_key: {'base_url': 'https://real.example', 'token': 'real-token'}},
+                    'host': {'tracker': {
+                        'base_url': f'${{core_lib.{lib_key}.base_url}}',
+                        'token': f'${{core_lib.{lib_key}.token}}',
+                        'project': 'P',
+                    }},
+                })
+                ctx, leaf = _mock_platform_lib(module)
+                with ctx:
+                    TaskClientFactory(root.host.tracker, 3).get(platform)
+                built = getattr(leaf, class_name).call_args.args[0].core_lib[lib_key]
+                self.assertEqual(
+                    (built.base_url, built.token, built.project, built.max_retries),
+                    ('https://real.example', 'real-token', 'P', 3),
+                )
+
+    def test_a_plain_mapping_is_wrapped_as_it_is(self) -> None:
+        wrapped = TaskClientFactory({}, 2)._wrap_merged_config('jira_core_lib', {'base_url': 'https://x'})
+        self.assertEqual(OmegaConf.to_container(wrapped),
+                         {'core_lib': {'jira_core_lib': {'base_url': 'https://x', 'max_retries': 2}}})
+
+
 class DefaultPathBitbucketTests(unittest.TestCase):
     def setUp(self) -> None:
         self.cfg = OmegaConf.create({

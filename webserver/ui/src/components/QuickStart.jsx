@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  cancelClaudeSignIn,
-  fetchClaudeSignIn,
   fetchQuickStart,
   fetchQuickStartChecks,
   openGitInstaller,
   saveQuickStart,
-  sendClaudeSignInCode,
-  startClaudeSignIn,
 } from '../api.js';
 import { useAgentUpgrade } from '../hooks/useAgentUpgrade.js';
+import { useNativeFolderDialog } from '../hooks/useNativeFolderDialog.js';
 import { cx } from '../utils/cx.js';
 import {
   AGENT_STATE,
@@ -21,9 +18,11 @@ import {
   homeRelative,
   initialFolder,
   repositoriesText,
+  missingSettingText,
   startBlocker,
 } from '../utils/quickStart.js';
-import FolderBrowser from './FolderBrowser.jsx';
+import BrowseFolderButton from './BrowseFolderButton.jsx';
+import ClaudeSignIn from './ClaudeSignIn.jsx';
 import Icon, { BusyIcon } from './Icon.jsx';
 
 // The first run: the agent the operator uses, git, and the folder their code is
@@ -46,6 +45,7 @@ export default function QuickStart({ onStarted, onUseWizard }) {
   const [git, setGit] = useState(null);
   const [folder, setFolder] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [stillMissing, setStillMissing] = useState([]);
   const [startError, setStartError] = useState('');
   const agentRef = useRef('');
   agentRef.current = agent;
@@ -106,10 +106,20 @@ export default function QuickStart({ onStarted, onUseWizard }) {
   const start = async () => {
     setStarting(true);
     setStartError('');
+    setStillMissing([]);
     const saved = await saveQuickStart({ agent, folder: folder.path, create: folder.create });
     if (!saved.ok) {
       setStarting(false);
       setStartError(saved.body?.error || saved.error || 'kato could not save it');
+      return;
+    }
+    // Saved, yet something quick start never asks (a ticket system set up
+    // earlier, half filled in) still keeps kato in setup mode: say what,
+    // instead of "Starting kato…" spinning forever.
+    const missing = Array.isArray(saved.body?.missing) ? saved.body.missing : [];
+    if (missing.length) {
+      setStarting(false);
+      setStillMissing(missing);
       return;
     }
     onStarted?.();
@@ -129,6 +139,13 @@ export default function QuickStart({ onStarted, onUseWizard }) {
         <FolderStep screen={screen} folder={folder} onPick={setFolder} />
       </ol>
       {startError && <p className="setup-wizard-error" role="alert">{startError}</p>}
+      {stillMissing.length > 0 && (
+        <div className="setup-wizard-connection-error quick-start-still-missing" role="alert">
+          <p>Saved — but kato can’t start yet. It still needs:</p>
+          <pre>{stillMissing.map(missingSettingText).join('\n')}</pre>
+          <button type="button" className="setup-wizard-btn" onClick={onUseWizard}>Fix it in the setup wizard</button>
+        </div>
+      )}
       <div className="quick-start-go">
         <button
           type="button"
@@ -230,7 +247,7 @@ function AgentSetup({ agent, status, progress, install, onChanged }) {
     );
   }
   if (state === AGENT_STATE.SIGNED_OUT) {
-    return <SignIn onChanged={onChanged} />;
+    return <ClaudeSignIn onChanged={onChanged} note="Installed — sign in with your Claude account now, or later: kato asks again on its main screen." />;
   }
   if (progress?.state === 'running') {
     return (
@@ -269,91 +286,6 @@ function AgentSetup({ agent, status, progress, install, onChanged }) {
   );
 }
 
-// Claude Code's own sign-in, run by kato: the browser opens to sign in; if it
-// does not (inside WSL it usually cannot), the link is here, and a code the
-// sign-in page shows is pasted here and handed to the CLI.
-function SignIn({ onChanged }) {
-  const [signIn, setSignIn] = useState(null);
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
-  const waiting = signIn?.state === 'waiting';
-
-  useEffect(() => {
-    if (!waiting) { return undefined; }
-    const timer = setInterval(async () => {
-      try {
-        const next = await fetchClaudeSignIn();
-        setSignIn(next);
-        if (next.state !== 'waiting') { onChanged(); }
-      } catch {
-        // asked again next tick
-      }
-    }, CHECK_EVERY_MS);
-    return () => clearInterval(timer);
-  }, [waiting, onChanged]);
-
-  const begin = async () => {
-    setError('');
-    const result = await startClaudeSignIn();
-    if (!result.ok) { setError(result.body?.error || result.error || 'could not start the sign-in'); return; }
-    setSignIn(result.body);
-  };
-  const send = async () => {
-    setError('');
-    const result = await sendClaudeSignInCode(code.trim());
-    if (!result.ok) { setError(result.body?.error || result.error || 'the code was not taken'); return; }
-    setCode('');
-    setSignIn(result.body);
-  };
-
-  if (!waiting) {
-    return (
-      <>
-        <p className="quick-start-note">Installed — now sign in with your Claude account.</p>
-        {signIn?.state === 'failed' && <p className="setup-wizard-error" role="alert">{signIn.message}</p>}
-        {error && <p className="setup-wizard-error" role="alert">{error}</p>}
-        <div className="quick-start-actions">
-          <button type="button" className="setup-wizard-btn setup-wizard-btn--primary" onClick={begin}>
-            Sign in to Claude
-          </button>
-        </div>
-      </>
-    );
-  }
-  return (
-    <div className="quick-start-sign-in">
-      <p className="quick-start-note" role="status">
-        A browser window opened to sign in.
-        {signIn.link && (
-          <>
-            {' '}Didn’t open?{' '}
-            <a href={signIn.link} target="_blank" rel="noreferrer">Open the sign-in page</a>.
-          </>
-        )}
-      </p>
-      {signIn.asks_for_code && (
-        <div className="quick-start-code">
-          <input
-            type="text"
-            className="quick-start-input"
-            aria-label="Code from the sign-in page"
-            placeholder="If the page shows a code, paste it here"
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-          />
-          <button type="button" className="setup-wizard-btn" disabled={!code.trim()} onClick={send}>
-            Send code
-          </button>
-        </div>
-      )}
-      {error && <p className="setup-wizard-error" role="alert">{error}</p>}
-      <button type="button" className="quick-start-link" onClick={async () => setSignIn((await cancelClaudeSignIn()).body)}>
-        Cancel
-      </button>
-    </div>
-  );
-}
-
 function GitStep({ git, onChanged }) {
   const [opened, setOpened] = useState(false);
   if (git?.installed) {
@@ -384,11 +316,20 @@ function GitStep({ git, onChanged }) {
   );
 }
 
+// The folder: the suggestions found, none picked; Browse… opens the COMPUTER'S
+// OWN folder dialog (kato opens it — a page cannot). Kato has no folder browser
+// of its own: where no dialog can open, the folder's path is typed.
 function FolderStep({ screen, folder, onPick }) {
-  const [browsing, setBrowsing] = useState(false);
+  const dialog = useNativeFolderDialog();
   const found = screen.folders || [];
   const offered = found.length ? found : [{ path: screen.new_folder, repositories: 0, create: true }];
   const chosenIsListed = offered.some((entry) => entry.path === folder?.path);
+  // Never a folder that does not exist yet (the one kato offers to create).
+  const start = (folder && !folder.create && folder.path) || screen.home || '';
+  const pick = (path) => onPick({ path, create: false });
+  // Typed only once kato SAYS no dialog can open here (an older kato says nothing: Browse… it is).
+  const typing = screen.folder_dialog === false || dialog.unavailable;
+
   return (
     <Step state={folder?.path ? 'ready' : 'todo'} title="Your code">
       <p className="quick-start-note">
@@ -410,18 +351,46 @@ function FolderStep({ screen, folder, onPick }) {
           <FolderChoice path={homeRelative(folder.path, screen.home)} detail="your pick" picked onPick={() => {}} />
         )}
       </div>
-      <button type="button" className="quick-start-link quick-start-browse" onClick={() => setBrowsing((open) => !open)}>
-        <Icon name={browsing ? 'xmark' : 'folder-open'} />
-        <span>{browsing ? 'Close' : 'Another folder…'}</span>
-      </button>
-      {browsing && (
-        <FolderBrowser
-          initialPath={(folder && !folder.create && folder.path) || screen.home || '~'}
-          onPick={(path) => { onPick({ path, create: false }); setBrowsing(false); }}
-          onClose={() => setBrowsing(false)}
-        />
+      {typing ? (
+        <TypedFolder onPick={pick} />
+      ) : (
+        <div className="quick-start-actions">
+          <BrowseFolderButton
+            dialog={dialog}
+            start={start}
+            prompt="Choose the folder your code is in"
+            className="setup-wizard-btn"
+            onPick={pick}
+          />
+        </div>
       )}
+      {dialog.error && <p className="browse-folder-error" role="alert">{dialog.error}</p>}
     </Step>
+  );
+}
+
+// No folder dialog can open on this computer (one with no screen): its path is typed.
+function TypedFolder({ onPick }) {
+  const [path, setPath] = useState('');
+  const use = (event) => {
+    event.preventDefault();
+    if (path.trim()) { onPick(path.trim()); }
+  };
+  return (
+    <form className="quick-start-typed-folder" onSubmit={use}>
+      <input
+        type="text"
+        className="setup-wizard-input"
+        aria-label="Folder path"
+        placeholder="~/code"
+        value={path}
+        onChange={(event) => setPath(event.target.value)}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+      <button type="submit" className="setup-wizard-btn" disabled={!path.trim()}>Use this folder</button>
+    </form>
   );
 }
 

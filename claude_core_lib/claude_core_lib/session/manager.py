@@ -855,14 +855,22 @@ class ClaudeSessionManager(object):
         return session
 
     def save_record(self, record: AgentSessionRecord) -> None:
-        """Persist an already-held record back to disk.
+        """Persist a record to disk — and hold it, when it is one this
+        manager does not hold yet.
 
         For fields a CALLER owns and updates between turns — e.g. the last
         context-window reading, which is measured from a live subprocess but
         has to outlive it so the UI can still show it once the session sleeps.
+
+        And for a task's FIRST record, written by the host before any spawn
+        (the chat must start on another agent): every lookup reads memory, so
+        a record only written to disk was not there — the first message went
+        to the default agent. A record already held stays the one held.
         """
         if record is None:
             return
+        with self._lock:
+            self._records.setdefault(self._lookup_key(record.task_id), record)
         self._persist_record(record)
 
     def get_record(self, task_id: str) -> AgentSessionRecord | None:

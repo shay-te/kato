@@ -11,7 +11,6 @@ vi.mock('../api.js', () => ({
   updateSettings: vi.fn(),
   fetchAllSettings: vi.fn(),
   updateAllSettings: vi.fn(),
-  fetchDirectoryListing: vi.fn(),
   fetchQuickStart: vi.fn(),
   fetchQuickStartChecks: vi.fn(),
   fetchAgentUpgradeStatus: vi.fn(),
@@ -109,9 +108,9 @@ describe('SetupModeGate', () => {
     expect(screen.getByText(/retries automatically/)).toBeInTheDocument();
   });
 
-  test('a kato that is set up but cannot connect is not greeted as new', () => {
+  test('a kato that is set up but cannot connect is not gated: its screen, a banner, Settings', () => {
     const error = 'startup dependency validation failed:\n- unable to validate youtrack: 401 Unauthorized';
-    render(
+    const { container } = render(
       <SetupModeGate
         status={{
           setup_mode: true, needs_config: false, missing: [], setup_error: error,
@@ -120,11 +119,8 @@ describe('SetupModeGate', () => {
         onRefreshStatus={vi.fn()}
       />,
     );
-    expect(screen.getByText('Kato can’t reach a service it needs')).toBeInTheDocument();
-    expect(screen.queryByText('Welcome to Kato')).toBeNull();
-    expect(screen.getByText('Could not connect:')).toBeInTheDocument();
-    // The whole message, line breaks and all.
-    expect(document.querySelector('.setup-gate-error pre').textContent).toBe(error);
+    expect(container).toBeEmptyDOMElement();  // no wizard, no quick start
+    expect(fetchQuickStart).not.toHaveBeenCalled();
   });
 
   test('a first run opens quick start; the ticket-system wizard is one link away and back', async () => {
@@ -148,15 +144,4 @@ describe('SetupModeGate', () => {
     expect(await screen.findByRole('button', { name: /Start kato/ })).toBeInTheDocument();
   });
 
-  test('a kato that cannot connect shows the wizard, never quick start', () => {
-    render(
-      <SetupModeGate
-        status={{ setup_mode: true, needs_config: false, missing: [], setup_error: 'x', setup_kind: 'cannot_connect' }}
-        onRefreshStatus={vi.fn()}
-      />,
-    );
-    expect(screen.getByText('Where do your tickets live?')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '← Back to quick start' })).toBeNull();
-    expect(fetchQuickStart).not.toHaveBeenCalled();
-  });
 });

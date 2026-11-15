@@ -1,5 +1,15 @@
 <title>Kato — one screen for every coding agent you run</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Kato's own icon: without one, a directory listing kato (aitoolreview.ai)
+     and a shared link showed GitHub's. -->
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png" />
+<link rel="apple-touch-icon" href="img/kato-icon-256.png" />
+<link rel="canonical" href="https://shay-te.github.io/kato/" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://shay-te.github.io/kato/" />
+<meta property="og:title" content="Kato — one screen for every coding agent you run" />
+<meta property="og:image" content="https://shay-te.github.io/kato/img/kato-icon-256.png" />
+<meta name="twitter:card" content="summary" />
 <meta name="description" content="Too many terminals, too many approval prompts, too little control over what your agents touch. Kato puts all three on one screen — every task, every approval in one popup, git locked behind your click — so a fleet of coding agents keeps working while you stay in control." />
 <style>
   /* Committed dark world — a control surface for a developer tool. */
@@ -157,6 +167,8 @@
   .sp p { margin: 0; color: var(--muted); font-size: 14px; }
   .sp code { font-family: var(--mono); font-size: 12.5px; color: var(--allow); background: var(--allow-soft); padding: 1px 6px; border-radius: 5px; }
   .sandbox { margin-top: 28px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(180deg, var(--panel), var(--bg-2)); padding: 26px 24px 24px; }
+  .review-badge { margin: 14px 0 0; }
+  .review-badge img { display: block; height: 24px; }
   .eyebrow.sb-badge { display: inline-block; padding: 5px 11px; border-radius: 999px; font-weight: 700; color: var(--ask); background: rgba(242,177,60,0.12); border: 1px solid rgba(242,177,60,0.3); }
   .sandbox h3 { font-size: clamp(22px, 2.6vw, 28px); letter-spacing: -0.015em; margin: 10px 0 10px; line-height: 1.2; }
   :where(.sandbox) > p { color: var(--muted); margin: 0 0 12px; max-width: 76ch; font-size: 14.5px; }
@@ -228,6 +240,7 @@
         <a class="btn btn-ghost" href="https://github.com/shay-te/kato" rel="noopener">View on GitHub</a>
         <span class="run">$ pip install -e .&nbsp; · &nbsp;kato up</span>
       </div>
+      <p class="review-badge"><a href="https://aitoolreview.ai/tools/kato/#reviews" rel="noopener"><img src="https://aitoolreview.ai/badges/kato.svg" alt="Kato reviews on AI Tool Review" height="24"></a></p>
       <div class="proof">
         <div class="stat"><span class="num">80%</span><span class="unit">more tickets shipped</span></div>
         <p><b>Used daily by every developer at Una.</b> Una's lead developer ships 80% more tickets with Kato than with AI coding tools alone, measured from the team's git history.</p>

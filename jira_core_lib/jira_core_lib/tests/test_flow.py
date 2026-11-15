@@ -146,10 +146,12 @@ class F1_FullIssueLifecycle(unittest.TestCase):
         self.assertIsNone(client.headers)
         self.assertEqual(client.auth, ('developer@example.com', TOKEN))
 
-        # --- B. validate_connection issues one search GET (maxResults=1) ---
+        # --- B. validate_connection asks who it is, then one search GET (maxResults=1) ---
+        whoami_resp = mock_response(json_data={'accountId': 'acct-1'})
         validate_resp = mock_response(json_data={'issues': []})
-        with patch.object(client, '_get', return_value=validate_resp) as mock_get:
+        with patch.object(client, '_get', side_effect=[whoami_resp, validate_resp]) as mock_get:
             client.validate_connection(PROJECT, ASSIGNEE, STATES)
+        self.assertEqual(mock_get.call_args_list[0].args, ('/rest/api/3/myself',))
         validate_resp.raise_for_status.assert_called_once_with()
         validate_params = mock_get.call_args.kwargs['params']
         self.assertEqual(mock_get.call_args.args[0], '/rest/api/3/search/jql')

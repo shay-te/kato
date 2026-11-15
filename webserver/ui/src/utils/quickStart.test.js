@@ -12,6 +12,8 @@ import {
   initialFolder,
   repositoriesText,
   startBlocker,
+  claudeSignInNeeded,
+  missingSettingText,
 } from './quickStart.js';
 
 const READY = { agent: { installed: true, logged_in: true }, git: { installed: true } };
@@ -59,12 +61,28 @@ test('start says the first thing still missing, in the picked agent\'s name', ()
   assert.equal(startBlocker({ agent: 'codex', checks: null, folder: { path: '/a' } }), 'Checking this computer…');
   assert.equal(startBlocker({ agent: 'codex', checks: { agent: { installed: false }, git: { installed: true } }, folder: null }),
     'Install Codex first.');
-  assert.equal(startBlocker({ agent: 'claude', checks: { agent: { installed: true, logged_in: false }, git: { installed: true } }, folder: { path: '/a' } }),
-    'Sign in to Claude Code first.');
+  // Signed out is never a blocker: the sign-in can come later.
+  assert.equal(startBlocker({ agent: 'claude', checks: { agent: { installed: true, logged_in: false }, git: { installed: true } }, folder: { path: '/a' } }), '');
   assert.equal(startBlocker({ agent: 'grok', checks: { ...READY, git: { installed: false } }, folder: { path: '/a' } }), 'Install git first.');
   assert.equal(startBlocker({ agent: 'grok', checks: READY, folder: null }), 'Pick the folder your code is in.');
   assert.equal(startBlocker({ agent: 'grok', checks: READY, folder: { path: '/a' } }), '');
   assert.equal(allChecksPass(READY), true);
   assert.equal(allChecksPass({ ...READY, git: {} }), false);
   assert.equal(allChecksPass(null), false);
+});
+
+test('the main screen asks about Claude Code\'s sign-in only out of setup, with Claude Code in front', () => {
+  assert.equal(claudeSignInNeeded(null), false);
+  assert.equal(claudeSignInNeeded({ setup_mode: true }), false);
+  assert.equal(claudeSignInNeeded({ setup_mode: false, chat_agent: '' }), true);  // the default agent
+  assert.equal(claudeSignInNeeded({ setup_mode: false, chat_agent: 'codex' }), false);
+  assert.equal(claudeSignInNeeded({ setup_mode: false, chat_agent: 'codex' }, 'claude'), true);  // a Claude tab open
+  assert.equal(claudeSignInNeeded({ setup_mode: false, chat_agent: '' }, 'grok'), false);
+});
+
+test('a missing setting reads as the setting, not as an env-var sentence', () => {
+  assert.equal(missingSettingText('missing required agent env var: JIRA_API_TOKEN'), 'JIRA_API_TOKEN (not set)');
+  assert.equal(missingSettingText('missing required env var: REPOSITORY_ROOT_PATH'), 'REPOSITORY_ROOT_PATH (not set)');
+  assert.equal(missingSettingText('  something else  '), 'something else');
+  assert.equal(missingSettingText(null), '');
 });

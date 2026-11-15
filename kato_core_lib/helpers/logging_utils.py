@@ -11,6 +11,7 @@ from agent_core_lib.agent_core_lib.helpers.logging_utils import (
     set_workflow_root as _set_agent_workflow_root,
 )
 from kato_core_lib.helpers.kato_paths_utils import kato_home_path
+from kato_core_lib.helpers.shell_status_utils import StatusLineAwareHandler
 
 
 _LOGGING_CONFIGURED = False
@@ -122,7 +123,8 @@ def _ensure_root_logging() -> None:
     root_logger.setLevel(logging.NOTSET)
     handler = _named_handler(root_logger, _ROOT_HANDLER_NAME)
     if handler is None:
-        handler = logging.StreamHandler()
+        # Takes kato's terminal status line off before printing a line.
+        handler = StatusLineAwareHandler()
         handler.set_name(_ROOT_HANDLER_NAME)
         root_logger.addHandler(handler)
     handler.setLevel(_dependency_log_level())
@@ -135,7 +137,8 @@ def _ensure_workflow_logging() -> None:
     workflow_logger.propagate = False
     handler = _named_handler(workflow_logger, _WORKFLOW_HANDLER_NAME)
     if handler is None:
-        handler = logging.StreamHandler()
+        # Takes kato's terminal status line off before printing a line.
+        handler = StatusLineAwareHandler()
         handler.set_name(_WORKFLOW_HANDLER_NAME)
         workflow_logger.addHandler(handler)
     handler.setLevel(_workflow_log_level())

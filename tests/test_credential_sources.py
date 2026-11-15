@@ -290,5 +290,109 @@ class SettingsStoreIntegrationTests(unittest.TestCase):
             self.assertEqual(os.environ.get('GITHUB_API_TOKEN'), 'ghp_live')
 
 
+
+class BootResolvesCredentialSourcesTests(unittest.TestCase):
+    """KAN-1, 2026-11-15: GitHub set to "use my git login". Test connection
+    resolved the source and said Connected; the boot exported settings.json as
+    it was, so the clients had no token and every pull request failed with
+    "missing pull request API token"."""
+
+    def setUp(self) -> None:
+        credential_sources.clear_cache()
+        self.addCleanup(credential_sources.clear_cache)
+
+    def _boot(self, settings, environ=None, token='gho_from_keychain'):
+        import os
+        from kato_core_lib.helpers import kato_settings_store_utils as store
+
+        with patch.object(store, 'read_kato_settings', return_value=dict(settings)), \
+             patch(f'{MODULE}.read_git_credential', return_value=('shay', token)) as asked, \
+             patch.dict('os.environ', dict(environ or {}), clear=True):
+            keys = store.load_resolved_credentials_into_environ()
+            return keys, os.environ.get('GITHUB_API_TOKEN'), asked
+
+    def test_a_git_login_source_becomes_the_token_the_clients_read(self) -> None:
+        from omegaconf import OmegaConf
+        import os
+        from kato_core_lib.helpers import kato_settings_store_utils as store
+
+        # Config is built from interpolations BEFORE the boot fills the env,
+        # exactly like hydra's — it must still read the resolved token.
+        cfg = OmegaConf.create({'github': {'token': '${oc.env:GITHUB_API_TOKEN,""}'}})
+        with patch.object(store, 'read_kato_settings',
+                          return_value={'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL, 'GITHUB_API_TOKEN': ''}), \
+             patch(f'{MODULE}.read_git_credential', return_value=('shay', 'gho_from_keychain')), \
+             patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(store.load_resolved_credentials_into_environ(), ['GITHUB_API_TOKEN'])
+            self.assertEqual(cfg.github.token, 'gho_from_keychain')
+            self.assertEqual(os.environ['GITHUB_API_TOKEN'], 'gho_from_keychain')
+
+    def test_a_token_already_in_the_env_wins(self) -> None:
+        keys, token, asked = self._boot(
+            {'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL},
+            environ={'GITHUB_API_TOKEN': 'exported_in_shell'},
+        )
+        self.assertEqual((keys, token), ([], 'exported_in_shell'))
+        asked.assert_not_called()
+
+    def test_an_empty_token_in_the_env_is_unset(self) -> None:
+        keys, token, _asked = self._boot(
+            {'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL}, environ={'GITHUB_API_TOKEN': ''},
+        )
+        self.assertEqual((keys, token), (['GITHUB_API_TOKEN'], 'gho_from_keychain'))
+
+    def test_a_source_set_in_the_shell_counts_too(self) -> None:
+        keys, token, _asked = self._boot({}, environ={'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL})
+        self.assertEqual((keys, token), (['GITHUB_API_TOKEN'], 'gho_from_keychain'))
+
+    def test_a_source_with_nothing_stored_sets_nothing(self) -> None:
+        keys, token, _asked = self._boot({'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL}, token='')
+        self.assertEqual((keys, token), ([], None))
+
+    def test_a_broken_resolver_never_breaks_the_boot(self) -> None:
+        from kato_core_lib.helpers import kato_settings_store_utils as store
+
+        with patch.object(store, 'read_kato_settings', return_value={'GITHUB_API_TOKEN_SOURCE': SOURCE_CLI}), \
+             patch(f'{MODULE}.resolved_credential_env', side_effect=RuntimeError('boom')), \
+             patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(store.load_resolved_credentials_into_environ(), [])
+
+    def test_the_settings_loader_resolves_too_and_an_empty_env_value_is_unset(self) -> None:
+        import os
+        from kato_core_lib.helpers import kato_settings_store_utils as store
+
+        with patch.object(store, 'read_kato_settings',
+                          return_value={'GITHUB_API_TOKEN_SOURCE': SOURCE_GIT_CREDENTIAL, 'GITHUB_OWNER': 'shay-te'}), \
+             patch(f'{MODULE}.read_git_credential', return_value=('shay', 'gho_from_keychain')), \
+             patch.dict('os.environ', {'GITHUB_OWNER': ''}, clear=True):
+            self.assertEqual(store.load_kato_settings_into_environ(), 3)
+            self.assertEqual(os.environ['GITHUB_OWNER'], 'shay-te')
+            self.assertEqual(os.environ['GITHUB_API_TOKEN'], 'gho_from_keychain')
+
+    def test_main_resolves_before_it_checks_or_builds_anything(self) -> None:
+        import inspect
+        from kato_core_lib import main as main_module
+
+        source = inspect.getsource(main_module.main)
+        self.assertLess(source.index('load_resolved_credentials_into_environ()'),
+                        source.index('collect_config_errors('))
+        self.assertLess(source.index('load_resolved_credentials_into_environ()'),
+                        source.index('KatoInstance.init('))
+
+    def test_a_restart_in_place_resolves_again_instead_of_keeping_the_old_token(self) -> None:
+        import os
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        from kato_core_lib import main as main_module
+
+        app = SimpleNamespace(logger=MagicMock())
+        with patch.object(main_module, '_RESOLVED_CREDENTIAL_KEYS', ['GITHUB_API_TOKEN']), \
+             patch.dict('os.environ', {'GITHUB_API_TOKEN': 'old', 'KATO_SUPERVISED_RESTART': ''}, clear=True), \
+             patch.object(main_module.os, 'execv') as execv:
+            main_module._restart_in_place(app)
+            self.assertNotIn('GITHUB_API_TOKEN', os.environ)
+        execv.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()

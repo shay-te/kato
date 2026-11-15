@@ -22,6 +22,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
+from kato_webserver.folder_dialog_routes import folder_dialog_available
+
 from kato_core_lib.data_layers.service.quick_start.agent_check import CLAUDE, agent_status, all_agents_status
 from kato_core_lib.data_layers.service.quick_start.claude_sign_in import ClaudeSignIn, SignInError
 from kato_core_lib.data_layers.service.quick_start.code_folders import find_code_folders, new_folder
@@ -48,6 +50,8 @@ def register_quick_start_routes(app: Flask, *, sign_in: ClaudeSignIn | None = No
             'folders': [folder.to_dict() for folder in find_code_folders(home, exclude=[workspaces])],
             'new_folder': str(new_folder(home)),
             'home': str(home),
+            # The computer's own "choose a folder" dialog can open here.
+            'folder_dialog': folder_dialog_available(app),
             'folder': str(env.get('REPOSITORY_ROOT_PATH') or ''),
         })
 
@@ -68,7 +72,13 @@ def register_quick_start_routes(app: Flask, *, sign_in: ClaudeSignIn | None = No
             return jsonify({'error': str(exc)}), 400
         except OSError as exc:
             return jsonify({'error': f'failed to write settings file: {exc}'}), 500
-        return jsonify({'ok': True, 'saved': saved})
+        # What still keeps kato in setup mode once this is saved — kato's own
+        # check, the one its setup loop waits on. Quick start's "Starting kato…"
+        # used to spin forever on a setting it never asks for (a ticket system
+        # set up earlier, half filled in); now it says what and where.
+        from kato_core_lib.validate_env import collect_config_errors
+        missing = collect_config_errors(mode='all', env=effective_config_env())
+        return jsonify({'ok': True, 'saved': saved, 'missing': missing})
 
     @app.post('/api/setup/claude-sign-in')
     def start_sign_in():

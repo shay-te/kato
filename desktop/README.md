@@ -71,8 +71,7 @@ target OS** (Tauri can't cross-compile installers). Two steps per OS:
 **Recommended: let CI make them.** `.github/workflows/desktop-release.yaml` at
 the repo root is a GitHub Actions matrix (macOS + Windows + Ubuntu runners) that
 builds the sidecar + runs `tauri build` per OS on a `desktop-v*` tag, and also
-emits the **updater feed**. (`ci/release.yaml` here is an older copy; the
-workflow at the repo root is the one that runs.) Push a tag → CI produces all
+emits the **updater feed**. Push a tag → CI produces all
 three installers + the update feed. Locally you can `npm run build` for *your
 own* OS to smoke-test — local builds are never code-signed.
 
@@ -137,14 +136,14 @@ desktop/
 │   ├── kato_sidecar.py          entry: runs `kato up`
 │   ├── kato-sidecar.spec        PyInstaller spec (hidden-imports for lazy factories)
 │   └── build-sidecar.sh         freeze → src-tauri/binaries/
-├── src-tauri/
-│   ├── Cargo.toml  build.rs  tauri.conf.json
-│   ├── tauri.windows.conf.json  Windows-only: bundles the Linux backend for WSL
-│   ├── src/main.rs              spawn sidecar → wait for server → open window
-│   ├── src/wsl.rs               Windows: run the backend inside WSL2 (+ its tests)
-│   ├── capabilities/default.json
-│   ├── loading/index.html       splash shown until the server is up
-│   ├── icons/                   generated (gitignored)
-│   └── binaries/                sidecar output (gitignored)
-└── ci/release.yaml               GH Actions matrix (copy to .github/workflows/)
+├── signing/                     Windows code signing for release builds (README.md)
+└── src-tauri/
+    ├── Cargo.toml  build.rs  tauri.conf.json
+    ├── tauri.windows.conf.json  Windows-only: bundles the Linux backend for WSL
+    ├── src/main.rs              spawn sidecar → wait for server → open window
+    ├── src/wsl.rs               Windows: run the backend inside WSL2 (+ its tests)
+    ├── capabilities/default.json
+    ├── loading/index.html       splash shown until the server is up
+    ├── icons/                   generated (gitignored)
+    └── binaries/                sidecar output (gitignored)
 ```

@@ -95,7 +95,7 @@ The first scan tick fires as soon as kato has finished starting up. After that k
 
 Three signals:
 
-1. **Terminal**: scan-loop log lines like `Scanning for new tasks and reviews` / `Scan complete` / `Idle · next scan in 55s`.
+1. **Terminal**: one status line that rewrites itself in place — `Scanning for new tasks and reviews /` while a scan runs, `Idle · next scan in - 55` between scans. Only real events (a task picked up, a failure) print lines of their own.
 2. **Planning UI**: opens automatically at `http://127.0.0.1:5050`. The status bar at the top mirrors the terminal in real time. The history dropdown (▾) shows recent activity.
 3. **First task**: assign a ticket to the user named in `YOUTRACK_ASSIGNEE` / `JIRA_ASSIGNEE` / etc., then watch a tab appear in the planning UI when the next scan picks it up.
 

@@ -35,3 +35,32 @@ export function providerOptionLabel(name, labels, providers) {
   if (typeof setUp !== 'boolean') { return label; }
   return `${label} — ${setUp ? 'set up' : 'not set up'}`;
 }
+
+// A tracker's workflow-state fields (the field and state kato moves a ticket
+// to on start, review and done): optional, so the form folds them away.
+const WORKFLOW_FIELD = /_(PROGRESS|REVIEW|DONE)_STATE(_FIELD)?$/;
+
+export function isWorkflowField(key) {
+  return WORKFLOW_FIELD.test(String(key || ''));
+}
+
+// The server's ``order`` (most needed first) — JSON sorts an object's keys,
+// so the fields themselves arrive alphabetical. Keys the order does not name
+// follow in their own order; names the fields do not have are dropped.
+export function orderedFieldKeys(order, keys) {
+  const present = Array.isArray(keys) ? keys : [];
+  const named = (Array.isArray(order) ? order : []).filter((key) => present.includes(key));
+  return [...named, ...present.filter((key) => !named.includes(key))];
+}
+
+// A refused connection kato could say how to fix, as a field to fill in: a
+// Jira token WITH scopes works only through Atlassian's gateway, and kato's
+// check names the exact gateway address (jira_client.SCOPED_TOKEN_MESSAGE) —
+// no one should have to copy it out of an error by hand.
+const JIRA_GATEWAY_ADDRESS = /https:\/\/api\.atlassian\.com\/ex\/jira\/[0-9a-f-]{36}/i;
+
+export function connectionFixes(provider, errorText) {
+  if (provider !== 'jira') { return []; }
+  const match = JIRA_GATEWAY_ADDRESS.exec(String(errorText || ''));
+  return match ? [{ key: 'JIRA_API_BASE_URL', value: match[0], label: 'Use this address' }] : [];
+}

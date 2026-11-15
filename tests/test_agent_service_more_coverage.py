@@ -1586,6 +1586,32 @@ class CreatePullRequestForTaskTests(unittest.TestCase):
             result = service.publish.create_pull_request_for_task('T1')
         self.assertEqual(len(result['failed_repositories']), 1)
 
+    def test_a_pull_request_api_not_set_up_is_one_line_never_a_traceback(self) -> None:
+        # KAN-1: a missing GitHub token printed a whole traceback for what is a
+        # setting — the message already says where to set it.
+        from kato_core_lib.data_layers.service.repository_inventory_service import (
+            PullRequestApiNotSetUp,
+        )
+        repo_obj = SimpleNamespace(id='shop-be')
+        repo = MagicMock()
+        repo.build_branch_name.return_value = 'KAN-1'
+        repo.find_pull_requests.return_value = []
+        repo.create_pull_request.side_effect = PullRequestApiNotSetUp(
+            'missing pull request API token for repository shop-be; '
+            'add a GitHub token in Settings → Git provider → GitHub',
+        )
+        service = AgentService(**_kwargs(repository_service=repo))
+        service.logger = MagicMock()
+        with patch.object(service.publish, '_resolve_publish_context',
+                          return_value=([repo_obj], 'KAN-1',
+                                        SimpleNamespace(id='KAN-1', summary='x'))):
+            result = service.publish.create_pull_request_for_task('KAN-1')
+        [failure] = result['failed_repositories']
+        self.assertIn('Settings → Git provider → GitHub', failure['error'])
+        service.logger.exception.assert_not_called()
+        service.logger.warning.assert_called_once()
+        self.assertTrue(issubclass(PullRequestApiNotSetUp, ValueError))  # every `except ValueError` still holds
+
     def test_records_unexpected_runtime_error_with_stacktrace(self) -> None:
         # Line 2084-2091: RuntimeError that doesn't match the known
         # patterns → log.exception + record.
@@ -1748,32 +1774,86 @@ class FinishTaskPlanningSessionTests(unittest.TestCase):
             result = service.publish.finish_task_planning_session('T1')
         self.assertFalse(result['finished'])
         self.assertFalse(result['moved_to_review'])
-        self.assertIn('failed for every', result['move_error'])
+        self.assertEqual(
+            result['move_error'],
+            'client did not reach the remote; no pull request for client — fix that and press Done again',
+        )
         task_state.move_task_to_review.assert_not_called()
 
-    def test_moves_to_review_when_push_fails_but_pr_already_existed(self) -> None:
-        # A partial/idempotent state (push failed this time, but a PR
-        # from an earlier run already exists) is real progress, not a
-        # total failure — must still proceed to In Review.
+    def _finish_with(self, push_result, pr_result):
         task_state = MagicMock()
         service = AgentService(**_kwargs(task_state_service=task_state))
-        with patch.object(
-            service.publish, 'push_task',
-            return_value={
-                'pushed': False, 'pushed_repositories': [],
-                'failed_repositories': [{'repository_id': 'client', 'error': 'nothing to push'}],
+        service.logger = MagicMock()
+        with patch.object(service.publish, 'push_task', return_value=push_result), \
+             patch.object(service.publish, 'create_pull_request_for_task', return_value=pr_result), \
+             patch.object(service.publish, '_kick_lesson_extraction'):
+            return service.publish.finish_task_planning_session('T1'), task_state
+
+    def test_a_pushed_repository_whose_pull_request_failed_keeps_the_ticket(self) -> None:
+        # KAN-1: the one changed repository pushed, its pull request failed
+        # (no GitHub token), the two others had nothing for a pull request —
+        # and the ticket went to In Review with nothing to review.
+        result, task_state = self._finish_with(
+            {'pushed': True, 'pushed_repositories': ['shop-be'], 'failed_repositories': []},
+            {
+                'created': False, 'created_pull_requests': [],
+                'skipped_existing': [
+                    {'repository_id': 'core-lib', 'reason': 'a pull request would be empty'},
+                    {'repository_id': 'shop-fe', 'reason': 'a pull request would be empty'},
+                ],
+                'failed_repositories': [{'repository_id': 'shop-be', 'error': 'missing pull request API token'}],
             },
-        ), patch.object(
-            service.publish, 'create_pull_request_for_task',
-            return_value={
+        )
+        self.assertFalse(result['finished'])
+        self.assertFalse(result['moved_to_review'])
+        self.assertEqual(result['move_error'], 'no pull request for shop-be — fix that and press Done again')
+        task_state.move_task_to_review.assert_not_called()
+        self.assertIsNone(result['slack'])  # nothing is announced for a ticket that did not move
+
+    def test_one_pull_request_opened_does_not_cover_another_that_failed(self) -> None:
+        result, task_state = self._finish_with(
+            {'pushed': True, 'pushed_repositories': ['api', 'web'], 'failed_repositories': []},
+            {
+                'created': True, 'created_pull_requests': [{'repository_id': 'api', 'url': 'https://x/1'}],
+                'skipped_existing': [], 'failed_repositories': [{'repository_id': 'web', 'error': '403'}],
+            },
+        )
+        self.assertFalse(result['finished'])
+        self.assertEqual(result['move_error'], 'no pull request for web — fix that and press Done again')
+        task_state.move_task_to_review.assert_not_called()
+
+    def test_a_pull_request_from_an_earlier_run_does_not_cover_a_push_that_failed(self) -> None:
+        # The pull request exists, but without the commits this push failed to
+        # send: the team would review old code.
+        result, task_state = self._finish_with(
+            {
+                'pushed': False, 'pushed_repositories': [],
+                'failed_repositories': [{'repository_id': 'client', 'error': 'rejected'}],
+            },
+            {
                 'created': False, 'created_pull_requests': [],
                 'skipped_existing': [{'repository_id': 'client', 'url': 'https://x/1'}],
                 'failed_repositories': [],
             },
-        ), patch.object(service.publish, '_kick_lesson_extraction'):
-            result = service.publish.finish_task_planning_session('T1')
+        )
+        self.assertFalse(result['finished'])
+        self.assertEqual(result['move_error'], 'client did not reach the remote — fix that and press Done again')
+        task_state.move_task_to_review.assert_not_called()
+
+    def test_done_pressed_again_once_fixed_moves_the_ticket(self) -> None:
+        # Everything already pushed, the pull request already open: only the move runs.
+        result, task_state = self._finish_with(
+            {'pushed': False, 'pushed_repositories': [], 'failed_repositories': [],
+             'skipped_repositories': [{'repository_id': 'shop-be', 'reason': 'nothing to push'}]},
+            {
+                'created': False, 'created_pull_requests': [],
+                'skipped_existing': [{'repository_id': 'shop-be', 'url': 'https://x/1'}],
+                'failed_repositories': [],
+            },
+        )
         self.assertTrue(result['finished'])
-        task_state.move_task_to_review.assert_called_once()
+        self.assertEqual(result['move_error'], '')
+        task_state.move_task_to_review.assert_called_once_with('T1')
 
 
 class KickLessonExtractionTests(unittest.TestCase):

@@ -566,32 +566,34 @@ def _persist_settings(updates: dict) -> None:
 # Task providers — ``POST /api/task-providers`` writes these +
 # ``KATO_ISSUE_PLATFORM``. Adding a field / platform = edit here.
 _TASK_PROVIDER_FIELDS: dict[str, tuple[str, ...]] = {
+    # The order the form shows them: what connects, then which tasks, then
+    # the optional workflow states (the form folds those away).
     'youtrack': (
         'YOUTRACK_API_BASE_URL',
         'YOUTRACK_API_TOKEN',
-        'YOUTRACK_PROJECT',
         'YOUTRACK_ASSIGNEE',
+        'YOUTRACK_PROJECT',
+        'YOUTRACK_ISSUE_STATES',
         'YOUTRACK_PROGRESS_STATE_FIELD',
         'YOUTRACK_PROGRESS_STATE',
         'YOUTRACK_REVIEW_STATE_FIELD',
         'YOUTRACK_REVIEW_STATE',
         'YOUTRACK_DONE_STATE_FIELD',
         'YOUTRACK_DONE_STATE',
-        'YOUTRACK_ISSUE_STATES',
     ),
     'jira': (
         'JIRA_API_BASE_URL',
-        'JIRA_API_TOKEN',
         'JIRA_EMAIL',
-        'JIRA_PROJECT',
+        'JIRA_API_TOKEN',
         'JIRA_ASSIGNEE',
+        'JIRA_PROJECT',
+        'JIRA_ISSUE_STATES',
         'JIRA_PROGRESS_STATE_FIELD',
         'JIRA_PROGRESS_STATE',
         'JIRA_REVIEW_STATE_FIELD',
         'JIRA_REVIEW_STATE',
         'JIRA_DONE_STATE_FIELD',
         'JIRA_DONE_STATE',
-        'JIRA_ISSUE_STATES',
     ),
     'github': (
         'GITHUB_API_BASE_URL',
@@ -1634,6 +1636,10 @@ def create_app(
     register_handover_routes(app)
     from kato_webserver.claude_models_routes import register_claude_models_routes
     register_claude_models_routes(app)
+    from kato_webserver.folder_dialog_routes import register_folder_dialog_routes
+    register_folder_dialog_routes(app)
+    from kato_webserver.connection_routes import register_connection_routes
+    register_connection_routes(app)
     from kato_webserver.quick_start_routes import register_quick_start_routes
     register_quick_start_routes(app)
     return app
@@ -2847,54 +2853,39 @@ def _register_http_routes(app: Flask) -> None:
             # 'first_run', or 'cannot_connect': set up already, and a service
             # it needs could not be reached (the screen must not say "welcome").
             'setup_kind': str(app.config.get('SETUP_KIND') or 'first_run'),
+            # What kato could not reach on its last try (the ticket system, a
+            # git host), with the service's own words — a banner until it
+            # answers again (connection_health.py). [] when all is well.
+            'connection_problems': _connection_problems(app),
         })
 
     @app.post('/api/setup/test-tracker-connection')
     def test_tracker_connection():
-        """Reach the ticket system with the settings saved right now — the
-        setup wizard asks right after its ticket details are saved, so a wrong
-        token or address is said on that step, in full."""
-        from kato_core_lib.helpers.kato_settings_store_utils import effective_config_env
+        """Reach the ticket system — in full words when it cannot be reached.
+
+        No body: the settings saved right now (the setup wizard asks right
+        after its ticket details are saved). ``{platform, fields}``: what the
+        Settings form holds, BEFORE Save (its "Test connection" button) — only
+        that provider's own fields are taken, like the save route takes them.
+        """
+        from kato_core_lib.helpers.kato_settings_store_utils import (
+            config_env_with_form,
+            effective_config_env,
+        )
         from kato_core_lib.validation.tracker_connection_check import check_tracker_connection
 
-        return jsonify(check_tracker_connection(effective_config_env()))
-
-    @app.get('/api/fs/dirs')
-    def list_directories():
-        """Directory listing for the folder-picker UI ("Browse…").
-
-        The planning webserver runs on the operator's own machine, so
-        browsing their filesystem here is equivalent to the terminal
-        they'd otherwise use — and strictly less powerful: DIRECTORY
-        NAMES only, never file names or contents. Hidden directories
-        are skipped.
-        """
-        raw = (request.args.get('path') or '~').strip() or '~'
-        try:
-            base = Path(raw).expanduser().resolve()
-        except (OSError, ValueError):
-            return jsonify({'error': 'invalid path'}), 400
-        if not base.is_dir():
-            return jsonify({'error': f'not a directory: {base}'}), 404
-        try:
-            children = sorted(
-                (
-                    entry for entry in base.iterdir()
-                    if entry.is_dir() and not entry.name.startswith('.')
-                ),
-                key=lambda entry: entry.name.lower(),
-            )
-        except PermissionError:
-            return jsonify({'error': f'permission denied: {base}'}), 403
-        parent = str(base.parent) if base.parent != base else None
-        return jsonify({
-            'path': str(base),
-            'parent': parent,
-            'home': str(Path.home()),
-            'dirs': [
-                {'name': entry.name, 'path': str(entry)} for entry in children
-            ],
-        })
+        payload = request.get_json(silent=True) or {}
+        platform = text_from_mapping(payload, 'platform').lower()
+        if not platform:
+            return jsonify(check_tracker_connection(effective_config_env()))
+        if platform not in _TASK_PROVIDER_FIELDS:
+            return jsonify({'error': f'unknown task provider: {platform}'}), 400
+        fields = payload.get('fields') or {}
+        if not isinstance(fields, dict):
+            return jsonify({'error': 'fields must be an object'}), 400
+        form = {'KATO_ISSUE_PLATFORM': platform,
+                **_filtered_provider_updates(_TASK_PROVIDER_FIELDS, platform, fields)}
+        return jsonify(check_tracker_connection(config_env_with_form(form)))
 
     @app.get('/api/settings')
     def get_settings():
@@ -2954,12 +2945,19 @@ def _register_http_routes(app: Flask) -> None:
 
     def _provider_field_values(fields_map):
         """Shared GET shaping for the task / git provider routes: each
-        field resolves via ``_resolve_setting`` (live env > settings.json).
+        field resolves via ``_resolve_setting`` (live env > settings.json),
+        with the ``default`` an empty field means (read from kato's config
+        files), and ``order`` — the fields as listed here, most needed first.
+        JSON sorts an object's keys, so without it the form came out
+        alphabetical (Jira's Email below "Done state field").
         """
+        from kato_core_lib.helpers.config_defaults_utils import config_defaults
+
+        defaults = config_defaults()
         out = {}
         for name, fields in fields_map.items():
-            field_values = {key: _resolve_setting(key) for key in fields}
-            out[name] = {'fields': field_values}
+            field_values = {key: {**_resolve_setting(key), 'default': defaults.get(key, '')} for key in fields}
+            out[name] = {'fields': field_values, 'order': list(fields)}
         return out
 
     @app.get('/api/credential-sources')
@@ -3053,6 +3051,25 @@ def _register_http_routes(app: Flask) -> None:
         if not updates:
             return jsonify({'error': 'no recognised updates'}), 400
         return _validate_persist_and_respond(updates)
+
+    @app.post('/api/git-providers/test')
+    def test_git_provider():
+        """The Git provider tab's "Test connection": ``{provider, fields}`` —
+        what the form holds, BEFORE Save — asked of that host's pull request
+        API for a few of your repositories there (git_host_connection_check.py).
+        Only that host's own fields are taken, like the save route takes them."""
+        from kato_core_lib.helpers.kato_settings_store_utils import config_env_with_form
+        from kato_core_lib.validation.git_host_connection_check import check_git_host_connection
+
+        payload = request.get_json(silent=True) or {}
+        provider = text_from_mapping(payload, 'provider').lower()
+        if provider not in _GIT_HOST_FIELDS:
+            return jsonify({'error': f'unknown git host: {provider or "(none)"}'}), 400
+        fields = payload.get('fields') or {}
+        if not isinstance(fields, dict):
+            return jsonify({'error': 'fields must be an object'}), 400
+        form = _filtered_provider_updates(_GIT_HOST_FIELDS, provider, fields)
+        return jsonify(check_git_host_connection(config_env_with_form(form), provider))
 
     @app.get('/api/git-providers')
     def list_git_providers():
@@ -5410,6 +5427,18 @@ def _persist_context_usage(app: Flask, record, usage: dict) -> None:
         # Best-effort: a stale persisted reading is far better than losing
         # the live one, and this must never break the session payload.
         app.logger.exception('failed to persist context usage')
+
+
+def _connection_problems(app: Flask) -> list[dict]:
+    service = app.config.get('AGENT_SERVICE')
+    health = getattr(service, 'connection_health', None)
+    if health is None or not callable(getattr(health, 'problems', None)):
+        return []
+    try:
+        return list(health.problems())
+    except Exception:  # noqa: BLE001 - the status payload must always answer
+        app.logger.exception('could not read the connection problems')
+        return []
 
 
 def _register_agent_version_route(app: Flask) -> None:

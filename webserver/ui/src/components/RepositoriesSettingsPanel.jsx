@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { fetchSettings, updateSettings } from '../api.js';
 import { toast } from '../stores/toastStore.js';
+import { useNativeFolderDialog } from '../hooks/useNativeFolderDialog.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { sourceLabelVerbose } from '../utils/settingsSource.js';
 import { fieldInfo, fieldPlaceholder } from '../utils/fieldHelp.js';
 import FieldInfoTip from './settings/FieldInfoTip.jsx';
-import FolderBrowser from './FolderBrowser.jsx';
+import BrowseFolderButton from './BrowseFolderButton.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
@@ -26,7 +27,7 @@ import SchemaFieldGroup from './settings/SchemaFieldGroup.jsx';
 export default function RepositoriesSettingsPanel({ highlightKey = '' }) {
   const [meta, setMeta] = useState({ value: '', source: 'unset', settingsFilePath: '' });
   const [draft, setDraft] = useState('');
-  const [browsing, setBrowsing] = useState(false);
+  const dialog = useNativeFolderDialog();
 
   const { loading, error, refresh } = useSettingsResource(fetchSettings, (body) => {
     const repo = body?.repository_root_path || {};
@@ -91,25 +92,16 @@ export default function RepositoriesSettingsPanel({ highlightKey = '' }) {
                 autoCapitalize="off"
                 autoCorrect="off"
               />
-              <button
-                type="button"
+              <BrowseFolderButton
+                dialog={dialog}
+                start={draft.trim()}
+                prompt="Choose the folder your repositories are in"
                 className="settings-drawer-action-secondary"
-                onClick={() => setBrowsing((current) => !current)}
-              >
-                Browse…
-              </button>
+                onPick={setDraft}
+              />
             </span>
           </label>
-          {browsing && (
-            <FolderBrowser
-              initialPath={draft.trim() || '~'}
-              onPick={(path) => {
-                setDraft(path);
-                setBrowsing(false);
-              }}
-              onClose={() => setBrowsing(false)}
-            />
-          )}
+          {dialog.error && <p className="browse-folder-error" role="alert">{dialog.error}</p>}
 
           <div className="settings-drawer-status-row">
             <span className="settings-drawer-kv">

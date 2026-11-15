@@ -8904,6 +8904,22 @@ $FILES-PANE-INSET: $SPACE-6;
   border-left: 3px solid $C-ORANGE-50-A65;
 }
 
+// What kato could not reach (ConnectionProblemsBanner): the service's own words, whole.
+.connection-problem-banner { align-items: flex-start; }
+
+.connection-problem-banner__body { display: flex; flex-direction: column; gap: $SPACE-4; flex: 1; min-width: 0; }
+
+.connection-problem-banner__error { margin: 0; max-height: 8em; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: $TEXT-12; }
+
+// Claude Code not signed in (ClaudeSignInBanner): the sign-in's own note,
+// button, link and code box stack beside the banner's icon.
+.claude-sign-in-banner { align-items: flex-start; }
+
+.claude-sign-in-banner__body { display: flex; flex-direction: column; gap: $SPACE-6; min-width: 0; }
+
+.claude-sign-in-banner__body .quick-start-note,
+.claude-sign-in-banner__body .setup-wizard-error { margin: 0; }
+
 /* "CLI not found" genuinely blocks the backend — a slightly firmer accent,
  * still amber (never red). */
 .kato-version-banner--warn {
@@ -10388,9 +10404,11 @@ $FILES-PANE-INSET: $SPACE-6;
   top: 0;
   right: 0;
   bottom: 0;
-  width: min(720px, 100vw);
+  width: min(940px, 100vw);
   background: $C-NEUTRAL-04;
   border-left: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-16 0 0 $RADIUS-16;
+  overflow: hidden;
   box-shadow: $SHADOW-30;
   z-index: 1000;
   display: flex;
@@ -10455,7 +10473,7 @@ $FILES-PANE-INSET: $SPACE-6;
   width: 100%;
   padding: $SPACE-7 $SPACE-11;
   border: 1px solid $C-NEUTRAL-16;
-  border-radius: $RADIUS-8;
+  border-radius: $RADIUS-PILL;
   background: $C-NEUTRAL-04;
   color: $C-NEUTRAL-96;
   font-size: $TEXT-13;
@@ -10476,7 +10494,7 @@ $FILES-PANE-INSET: $SPACE-6;
   overflow-y: auto;
   background: $C-NEUTRAL-04;
   border: 1px solid $C-NEUTRAL-16;
-  border-radius: $RADIUS-8;
+  border-radius: $RADIUS-12;
   box-shadow: $SHADOW-21;
 }
 
@@ -10533,24 +10551,61 @@ $FILES-PANE-INSET: $SPACE-6;
   100% { background: transparent; }
 }
 
-.settings-drawer-tabs {
+// The tabs, grouped down the left of the panel (utils/settingsNavGroups.js).
+.settings-drawer-main {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  gap: $SPACE-4;
-  padding: $SPACE-8 $SPACE-12;
-  border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.settings-drawer-tabs {
+  flex: 0 0 196px;
+  display: flex;
+  flex-direction: column;
+  gap: $SPACE-14;
+  padding: $SPACE-14 $SPACE-10;
+  overflow-y: auto;
+  border-right: 1px solid $C-NEUTRAL-16;
   background: $C-NEUTRAL-04;
+}
+
+.settings-drawer-nav-group { display: flex; flex-direction: column; gap: $SPACE-2; }
+
+.settings-drawer-nav-heading {
+  padding: 0 $SPACE-10 $SPACE-4;
+  font-size: $TEXT-11;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: $C-NEUTRAL-45;
 }
 
 .settings-drawer-tab {
   background: transparent;
   border: 1px solid transparent;
   color: $C-NEUTRAL-64;
-  padding: $SPACE-6 $SPACE-14;
-  border-radius: $RADIUS-PILL;
+  padding: $SPACE-6 $SPACE-10;
+  border-radius: $RADIUS-10;
   font-size: $TEXT-13;
+  text-align: left;
   cursor: pointer;
   transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+// A narrow screen has no room for a side column: the groups wrap above.
+@media (max-width: 760px) {
+  .settings-drawer-main { flex-direction: column; }
+
+  .settings-drawer-tabs {
+    flex: 0 0 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid $C-NEUTRAL-16;
+  }
+
+  .settings-drawer-nav-group { flex-direction: row; flex-wrap: wrap; align-items: center; }
 }
 
 .settings-drawer-tab:hover {
@@ -10689,7 +10744,7 @@ $FILES-PANE-INSET: $SPACE-6;
 .settings-drawer-input {
   background: $C-NEUTRAL-04;
   border: 1px solid $C-NEUTRAL-16;
-  border-radius: $RADIUS-4;
+  border-radius: $RADIUS-10;
   color: $C-NEUTRAL-96;
   padding: $SPACE-8 $SPACE-10;
   font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -10757,7 +10812,7 @@ $FILES-PANE-INSET: $SPACE-6;
 .settings-drawer-action-primary,
 .settings-drawer-action-secondary {
   padding: $SPACE-7 $SPACE-16;
-  border-radius: $RADIUS-4;
+  border-radius: $RADIUS-PILL;
   font-size: $TEXT-12;
   cursor: pointer;
   border: 1px solid;
@@ -11828,15 +11883,45 @@ button.settings-prompt-editor-head {
 
 .quick-start-link:hover { text-decoration: underline; }
 
-.quick-start-browse { display: inline-flex; align-items: center; gap: $SPACE-6; }
+// Browse… (BrowseFolderButton): the computer's own folder dialog.
+.browse-folder-button { display: inline-flex; align-items: center; gap: $SPACE-6; }
 
-.folder-browser-entry-icon { flex: 0 0 auto; color: $C-NEUTRAL-64; }
+.browse-folder-error { margin: $SPACE-8 0 0; font-size: $TEXT-13; color: $C-RED-82; }
+
+// No folder dialog can open here: the folder's path is typed.
+.quick-start-typed-folder { display: flex; align-items: center; gap: $SPACE-8; }
+
+.quick-start-typed-folder .setup-wizard-input { flex: 1; min-width: 0; }
 
 .quick-start-foot { margin: 0; font-size: $TEXT-12; line-height: 1.5; color: $C-NEUTRAL-64; }
 
 .setup-gate-back { margin: $SPACE-16 $SPACE-24 0; }
 
 /* The ticket system could not be reached: the tracker's own words, whole. */
+/* "Test connection" in a provider settings tab (settings/ConnectionTest.jsx). */
+.connection-test { display: flex; flex-direction: column; align-items: flex-start; gap: $SPACE-8; margin: $SPACE-4 0 $SPACE-14; }
+
+.connection-test-button { display: inline-flex; align-items: center; gap: $SPACE-6; }
+
+.connection-test-ok { margin: 0; font-size: $TEXT-13; color: $C-GREEN-71; }
+
+.connection-test-failed { width: 100%; font-size: $TEXT-13; color: $C-RED-82; }
+
+.connection-test-failed p { margin: 0; }
+
+.connection-test-failed pre { margin: $SPACE-6 0 0; white-space: pre-wrap; word-break: break-word; }
+
+.connection-test-fix { margin-top: $SPACE-10; }
+
+// What kato's apply-and-recheck answered after a good test or a save.
+.connection-apply { margin: 0 0 $SPACE-14; font-size: $TEXT-13; }
+
+.connection-apply--ok { color: $C-GREEN-71; }
+
+.connection-apply--note { color: $C-NEUTRAL-79; }
+
+.connection-apply--error { color: $C-RED-82; }
+
 .setup-wizard-connection-error {
   margin: 0 0 $SPACE-12;
   padding: $SPACE-10 $SPACE-12;
@@ -12103,9 +12188,9 @@ button.settings-prompt-editor-head {
 // ---------------------------------------------------------------------------
 .credential-guide {
   margin: 0 0 $SPACE-16;
-  padding: $SPACE-12 $SPACE-14;
+  padding: $SPACE-14 $SPACE-16;
   border: 1px solid $C-NEUTRAL-16;
-  border-radius: $RADIUS-8;
+  border-radius: $RADIUS-16;
   // The wizard panel AND the settings drawer are both $C-NEUTRAL-04, so a
   // card in that same color would read as a plain outline. The existing
   // subtle-lift alpha separates it without adding a palette entry.
@@ -12134,11 +12219,49 @@ button.settings-prompt-editor-head {
   margin-top: $SPACE-10;
 }
 
-.credential-guide__summary {
+// A disclosure inside a card: its own chevron, inside the padding (the
+// browser's marker sat outside the card's edge).
+.credential-guide__summary,
+.settings-drawer-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-8;
   cursor: pointer;
   color: $C-NEUTRAL-96;
-  list-style-position: outside;
+  list-style: none;
 }
+
+.credential-guide__summary::-webkit-details-marker,
+.settings-drawer-advanced > summary::-webkit-details-marker { display: none; }
+
+.credential-guide__summary::before,
+.settings-drawer-advanced > summary::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.credential-guide__how[open] > .credential-guide__summary::before,
+.settings-drawer-advanced[open] > summary::before { transform: rotate(45deg); }
+
+// "Workflow states" in a provider tab: optional fields, folded away.
+.settings-drawer-advanced {
+  margin: $SPACE-6 0 $SPACE-14;
+  padding: $SPACE-12 $SPACE-16;
+  border: 1px solid $C-NEUTRAL-16;
+  border-radius: $RADIUS-16;
+}
+
+.settings-drawer-advanced > summary { font-size: $TEXT-13; }
+
+.settings-drawer-advanced-hint { margin-left: auto; font-size: $TEXT-12; color: $C-NEUTRAL-45; }
+
+.settings-drawer-advanced[open] > .settings-drawer-fields { margin-top: $SPACE-12; }
 
 .credential-guide__location {
   margin: $SPACE-8 0 0;
@@ -12172,107 +12295,6 @@ button.settings-prompt-editor-head {
 
 .credential-guide__link:hover {
   text-decoration: underline;
-}
-
-// ---------------------------------------------------------------------------
-// FolderBrowser — the inline directory picker behind "Browse…" (wizard +
-// Settings → Repositories). Inline, not a modal, so it works inside the
-// setup gate without stacking-context games.
-// ---------------------------------------------------------------------------
-.folder-browser {
-  margin-top: $SPACE-10;
-  border: 1px solid $C-NEUTRAL-16;
-  border-radius: $RADIUS-8;
-  background: $C-NEUTRAL-04;
-  overflow: hidden;
-}
-
-.folder-browser-head {
-  display: flex;
-  align-items: center;
-  gap: $SPACE-8;
-  padding: $SPACE-8 $SPACE-10;
-  border-bottom: 1px solid $C-NEUTRAL-16;
-}
-
-.folder-browser-nav {
-  padding: $SPACE-2 $SPACE-10;
-  border-radius: $RADIUS-4;
-  border: 1px solid $C-NEUTRAL-16;
-  background: transparent;
-  color: $C-NEUTRAL-96;
-  font-size: $TEXT-12;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.folder-browser-nav:hover:not(:disabled) {
-  border-color: $C-NEUTRAL-32;
-}
-
-.folder-browser-nav:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.folder-browser-path {
-  font-size: $TEXT-11;
-  color: $C-NEUTRAL-64;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;   // keep the informative tail (deep folder) visible
-  text-align: left;
-}
-
-.folder-browser-error {
-  margin: 0;
-  padding: $SPACE-6 $SPACE-10;
-  font-size: $TEXT-12;
-  color: $C-RED-82;
-}
-
-.folder-browser-note { margin: 0; padding: $SPACE-6 $SPACE-12; font-size: $TEXT-12; color: $C-NEUTRAL-64; }
-
-.folder-browser-list {
-  margin: 0;
-  padding: $SPACE-4;
-  list-style: none;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.folder-browser-entry {
-  display: flex;
-  align-items: center;
-  gap: $SPACE-8;
-  width: 100%;
-  padding: $SPACE-6 $SPACE-8;
-  border: 0;
-  border-radius: $RADIUS-4;
-  background: transparent;
-  color: $C-NEUTRAL-96;
-  font-size: $TEXT-13;
-  text-align: left;
-  cursor: pointer;
-}
-
-.folder-browser-entry:hover {
-  background: $C-NEUTRAL-16;
-}
-
-.folder-browser-empty {
-  padding: $SPACE-6 $SPACE-8;
-  font-size: $TEXT-12;
-  color: $C-NEUTRAL-64;
-}
-
-.folder-browser-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: $SPACE-8;
-  padding: $SPACE-8 $SPACE-10;
-  border-top: 1px solid $C-NEUTRAL-16;
 }
 
 /* ───── Composer: modes menu, commands menu, context meter ─────

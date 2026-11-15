@@ -32,12 +32,10 @@ vi.mock('./api.js', () => ({
   updateSettings: vi.fn().mockResolvedValue({ ok: true, body: {} }),
   // The first-run setup gate polls this on mount (useConfigStatus).
   // "configured" keeps the gate hidden in every existing App test.
+  // Claude Code's sign-in, asked by the main screen's banner.
+  fetchQuickStartChecks: vi.fn().mockResolvedValue({ agent: { installed: true, logged_in: true }, git: {} }),
   fetchConfigStatus: vi.fn().mockResolvedValue(
     { setup_mode: false, needs_config: false, missing: [] },
-  ),
-  // Folder picker (Browse…) inside the wizard / Repositories tab.
-  fetchDirectoryListing: vi.fn().mockResolvedValue(
-    { path: '/', parent: null, home: '/', dirs: [] },
   ),
   fetchAllSettings: vi.fn().mockResolvedValue(
     { ok: true, body: { sections: [] } },

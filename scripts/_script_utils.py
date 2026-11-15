@@ -138,9 +138,19 @@ def layered_env(base_env, *sources) -> dict[str, str]:
     → **shell > ~/.kato/settings.json**. settings.json is kato's ONLY
     config file — ``.env`` support was removed entirely (the first-run
     wizard + Settings drawer replaced it).
+
+    An EMPTY value in a source is unset, never exported: the Settings form
+    saves cleared fields as ``""``, and omegaconf reads a set-but-empty var as
+    ``""`` — never reaching its ``${oc.env:KEY,"default"}`` default. Exported,
+    a cleared ``JIRA_ISSUE_STATES`` wiped "To Do,Open" and kato could not boot
+    ("unable to validate jira: states must not be empty"). Same rule as
+    ``load_kato_settings_into_environ`` in kato itself. The real shell is
+    taken as it is: an empty var set there is the operator's own.
     """
     env = dict(base_env)
     for source in sources:
         for key, value in (source or {}).items():
+            if value is None or str(value) == '':
+                continue
             env.setdefault(str(key), str(value))
     return env

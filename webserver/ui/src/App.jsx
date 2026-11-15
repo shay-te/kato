@@ -34,6 +34,9 @@ import FileTabStrip from './components/FileTabStrip.jsx';
 import SafetyBanner from './components/SafetyBanner.jsx';
 import SetupModeGate from './components/SetupModeGate.jsx';
 import AgentVersionBanner from './components/AgentVersionBanner.jsx';
+import ClaudeSignInBanner from './components/ClaudeSignInBanner.jsx';
+import ConnectionProblemsBanner from './components/ConnectionProblemsBanner.jsx';
+import { claudeSignInNeeded } from './utils/quickStart.js';
 import UiBuildBanner from './components/UiBuildBanner.jsx';
 import SessionDetail from './components/SessionDetail.jsx';
 import SettingsDrawer from './components/SettingsDrawer.jsx';
@@ -1279,6 +1282,10 @@ export default function App() {
           button labelled "update Codex" that ran `claude update` is exactly
           the bug this reads around. */}
       <AgentVersionBanner backend={activeBannerBackend} />
+      {/* Started before signing in (quick start's "sign in later"): asked
+          only while Claude Code is the agent in front, or new tasks start on it. */}
+      <ClaudeSignInBanner needed={claudeSignInNeeded(configStatus, activeBannerBackend)} />
+      <ConnectionProblemsBanner problems={configStatus?.connection_problems} onOpenSettings={openSettings} />
       <UiBuildBanner />
       {usageOpen ? <UsageDialog onClose={closeUsage} /> : null}
       {releaseNotesOpen ? <ReleaseNotesDialog onClose={closeReleaseNotes} /> : null}

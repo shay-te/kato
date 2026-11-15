@@ -68,6 +68,28 @@ class StartOnChosenAgentTests(unittest.TestCase):
         no_default.save_record.assert_called_once()
 
 
+class RealRouterTests(unittest.TestCase):
+    """The real router over the real record owner — the pair a fake stood in
+    for while the record owner kept a new record on disk only, and the first
+    message went to Claude after all (found on a real kato)."""
+
+    def test_the_router_routes_a_new_task_to_the_chosen_agent(self) -> None:
+        import tempfile
+        from claude_core_lib.claude_core_lib.session.manager import ClaudeSessionManager
+        from kato_core_lib.data_layers.service.agent_session_router import AgentSessionRouter
+        with tempfile.TemporaryDirectory() as state_dir:
+            owner = ClaudeSessionManager(state_dir=state_dir)
+            codex = mock.Mock()
+            router = AgentSessionRouter(managers={'claude': owner, 'codex': codex}, record_manager=owner,
+                                        default_backend='claude')
+            self.assertEqual(router.backend_for('LOCAL-1'), 'claude')
+            self.assertTrue(start_on_chosen_agent(router, 'LOCAL-1', 'codex'))
+            self.assertEqual(router.backend_for('LOCAL-1'), 'codex')
+            self.assertIs(router.manager_for('LOCAL-1'), codex)
+            # A kato restarted later reads the same answer from disk.
+            self.assertEqual(ClaudeSessionManager(state_dir=state_dir).get_record('LOCAL-1').agent_backend, 'codex')
+
+
 class LocalTaskStarterTests(unittest.TestCase):
     def starter(self, router):
         app = SimpleNamespace(config={'SESSION_MANAGER': router}, logger=mock.Mock())

@@ -30,6 +30,16 @@ When you build or touch a capability, all four of these, or it is not done:
    layer beneath it, naming file:line — and prove the gate by planting a violation once and watching it fail.
    A rule nobody enforces is a rule the next feature breaks.
 
+**A check that shows in more than one place is ONE capability.** A "Test connection" button, a status banner
+and a background check of the same thing (can kato reach Jira?) must read and write the SAME service — never a
+banner fed by one path while the button runs another. On 2026-11-15 the button said "Connected" while the banner
+kept saying kato could not reach Jira: the banner read the startup error, the scans kept their own status, the
+button checked the form, and a fix saved in Settings reached none of them. Now: `connection_health.py` is the one
+status (the startup check, the scans and the review scan report into it; the banner reads only it) and
+`connection_recheck.py` is the one "put the saved settings to work, or check again" (a good test, a save and the
+startup retry loop all call it), gated by `tests/test_connection_recheck.py` `OneSourceGateTests`. Before you add
+a button, a banner or a poll for something kato already checks, find that check and call it.
+
 Reference: `kato_core_lib/data_layers/service/task_moves.py` (`TaskMoves`, every ticket move: In Progress /
 In Review / Open / Done, every tracker and local tasks) + `tests/test_task_moves.py` (real
 `LocalAwareTaskStateService` + `LocalTaskStore`, every caller, and `SingleMoverGateTests`). The agent-status

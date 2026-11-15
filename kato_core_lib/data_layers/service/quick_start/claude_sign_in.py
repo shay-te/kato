@@ -8,7 +8,14 @@ with a PIPE for input (never the operator's terminal), its output is kept for
 the link, and a code the operator pastes into kato's screen is written to it.
 
 One sign-in at a time. It ends when the CLI exits (0 = signed in), when it is
-cancelled, or after ``TIMEOUT_SECONDS``. Whether the account is really signed
+cancelled, or after ``TIMEOUT_SECONDS``.
+
+On a Mac the CLI saves the sign-in in the account's Keychain. With NO keychain
+(kato run with a home folder that has none) the sign-in reaches the account,
+then macOS pops "Keychain Not Found" with a "Reset To Defaults" button that can
+empty the operator's real keychain — so kato asks first and does not start a
+sign-in that can only end there. Only a clear "no keychain" stops it: an answer
+kato cannot read never blocks a sign-in. Whether the account is really signed
 in is read from ``claude auth status`` (``agent_check``), not inferred here.
 """
 
@@ -16,15 +23,25 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
 
 TIMEOUT_SECONDS = 600
 MAX_OUTPUT_CHARS = 8000
+MAX_TAIL_CHARS = 2000
+MAX_FAILURE_CHARS = 400
 MAX_CODE_CHARS = 512
 _LINK = re.compile(r'https://\S+')
 _CODE = re.compile(r'^\S+$')
+_ANSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
+_PROMPT = re.compile(r'paste code here if prompted\s*>', re.IGNORECASE)
+NO_KEYCHAIN_MESSAGE = (
+    'this Mac account has no keychain for Claude Code to save a sign-in in (kato is running with a home '
+    'folder that has none), so kato did not start one — macOS would only offer to reset the keychain. '
+    'Start kato now and sign in later, from a kato started in your own home folder.'
+)
 
 
 class SignInError(Exception):
@@ -38,13 +55,16 @@ class ClaudeSignIn(object):
         spawn: Callable[..., subprocess.Popen] = subprocess.Popen,
         clock: Callable[[], float] = time.monotonic,
         timeout_seconds: float = TIMEOUT_SECONDS,
+        keychain_ready: Callable[[], bool] | None = None,
     ) -> None:
         self._spawn = spawn
+        self._keychain_ready = keychain_ready or mac_keychain_ready
         self._clock = clock
         self._timeout = timeout_seconds
         self._lock = threading.Lock()
         self._process = None
         self._output = ''
+        self._tail = ''  # the last of it: why a failed sign-in failed is said at the end
         self._state = 'idle'  # idle | waiting | done | failed | cancelled
         self._message = ''
         self._started_at = 0.0
@@ -53,6 +73,9 @@ class ClaudeSignIn(object):
         """Run ``<binary> auth login``; a sign-in already under way is kept."""
         with self._lock:
             if self._state == 'waiting':
+                return self._snapshot()
+            if not self._keychain_ready():
+                self._state, self._message, self._output, self._tail = 'failed', NO_KEYCHAIN_MESSAGE, '', ''
                 return self._snapshot()
             try:
                 process = self._spawn(
@@ -64,7 +87,7 @@ class ClaudeSignIn(object):
                 self._state, self._message, self._output = 'failed', f'could not start {binary}: {exc}', ''
                 return self._snapshot()
             self._process = process
-            self._output, self._message = '', ''
+            self._output, self._tail, self._message = '', '', ''
             self._state = 'waiting'
             self._started_at = self._clock()
         threading.Thread(target=self._read, args=(process,), name='claude-sign-in', daemon=True).start()
@@ -108,6 +131,7 @@ class ClaudeSignIn(object):
             with self._lock:
                 if len(self._output) < MAX_OUTPUT_CHARS:
                     self._output += char
+                self._tail = (self._tail + char)[-MAX_TAIL_CHARS:]
         code = process.wait()
         _close_pipes(process)
         with self._lock:
@@ -117,7 +141,7 @@ class ClaudeSignIn(object):
                 self._state, self._message = 'done', 'signed in'
             else:
                 self._state = 'failed'
-                self._message = f'sign-in ended with exit code {code}'
+                self._message = _failure_message(code, self._tail)
 
     def _watch(self, process) -> None:
         while True:
@@ -140,6 +164,36 @@ class ClaudeSignIn(object):
             'asks_for_code': 'code' in self._output.lower() and self._state == 'waiting',
             'message': self._message,
         }
+
+
+def mac_keychain_ready(
+    *,
+    platform: str = sys.platform,
+    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> bool:
+    """False only when this is a Mac and ``security`` says the account has no
+    default keychain; anywhere else, or an answer kato cannot get, is True."""
+    if platform != 'darwin':
+        return True
+    try:
+        result = run(['/usr/bin/security', 'default-keychain'], capture_output=True, text=True,
+                     timeout=5, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    said = f'{result.stdout or ""}{result.stderr or ""}'.lower()
+    return not (result.returncode != 0 and 'could not be found' in said)
+
+
+def _failure_message(code: int, tail: str) -> str:
+    """The exit code and what the CLI said once it was waiting (after its
+    sign-in link, minus the code prompt) — "exit code 1" alone says nothing."""
+    text = _ANSI.sub('', tail)
+    link = _LINK.search(text)
+    if link:
+        text = text[link.end():]
+    said = ' '.join(line.strip() for line in _PROMPT.sub('\n', text).splitlines() if line.strip())
+    said = said[-MAX_FAILURE_CHARS:]
+    return f'sign-in ended with exit code {code}' + (f' — {said}' if said else '')
 
 
 def _kill(process) -> None:

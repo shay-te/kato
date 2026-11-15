@@ -48,9 +48,12 @@ export const CREDENTIAL_GUIDES = {
     steps: [
       'Sign in at id.atlassian.com with the Atlassian account kato should act as.',
       'Open Security → Create and manage API tokens.',
-      'Click Create API token and name it (for example "kato").',
+      'Simplest: click Create API token (no scopes) and name it (for example "kato"). It can do what the account can do, and the API base URL stays your site: https://<your-site>.atlassian.net.',
+      'Or click Create API token with scopes → app Jira, and tick these three: read:jira-work (read and search issues, attachments), write:jira-work (move issues, comment, labels, assign, create sub-tasks), read:jira-user (find people — the assignee, hand-over).',
+      'A token WITH scopes only works through Atlassian\'s gateway, not your site address. You do not need to find it: press Test connection with your site address, and kato finds your gateway address and fills it in with one click ("Use this address"). By hand, it is https://api.atlassian.com/ex/jira/<cloud id>, the cloud id being the "cloudId" at https://<your-site>.atlassian.net/_edge/tenant_info.',
       'Copy the token — Atlassian shows it only once — and paste it above.',
       'Put that same account\'s email address in the Email field; Jira authenticates with email + token together.',
+      'Press Test connection to check it before you save.',
     ],
     createUrl: 'https://id.atlassian.com/manage-profile/security/api-tokens',
     createLabel: 'Create an Atlassian API token',

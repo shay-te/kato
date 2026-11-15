@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSettingsResource } from '../hooks/useSettingsResource.js';
 import { useRestartingSave } from '../hooks/useRestartingSave.js';
 import {
-  isSecretKey, buildDraftFor, orderedProviders, providerOptionLabel,
+  connectionFixes, isSecretKey, isWorkflowField, buildDraftFor, orderedFieldKeys, orderedProviders, providerOptionLabel,
 } from '../utils/providerFields.js';
 import { sourceLabel } from '../utils/settingsSource.js';
 import { humanizeFieldKey, fieldPlaceholder, fieldInfo } from '../utils/fieldHelp.js';
@@ -18,7 +18,9 @@ import CredentialSourcePicker from './settings/CredentialSourcePicker.jsx';
 import SettingsPanelBody from './settings/SettingsPanelBody.jsx';
 import SettingsPanelHead from './settings/SettingsPanelHead.jsx';
 import SettingsActions from './settings/SettingsActions.jsx';
-import RestartBanner from './settings/RestartBanner.jsx';
+import ConnectionTest from './settings/ConnectionTest.jsx';
+import { recheckConnections } from '../api.js';
+import { SAVE_TO_APPLY, recheckOutcome } from '../utils/connectionRecheck.js';
 
 // Shared credentials panel for the "Task provider" and "Git provider"
 // settings tabs — they were ~90% identical (same state shape, fetch +
@@ -30,7 +32,8 @@ import RestartBanner from './settings/RestartBanner.jsx';
 // it only edits creds. ``includeActive`` toggles that one branch.
 //
 // ``description`` is the lead sentence(s) of the header copy (a node);
-// the shared "saved to <path>" tail is appended here.
+// the shared "saved to <path>" tail is appended here. ``testFn`` (optional)
+// adds "Test connection", which tests what the form holds BEFORE Save.
 export default function ProviderCredentialsPanel({
   fetchFn,
   updateFn,
@@ -42,6 +45,7 @@ export default function ProviderCredentialsPanel({
   selectHint,
   loadingMessage,
   includeActive = false,
+  testFn = null,
 }) {
   const [meta, setMeta] = useState({
     active: '', supported: [], providers: {}, settingsFilePath: '',
@@ -78,11 +82,20 @@ export default function ProviderCredentialsPanel({
     return value !== serverValue;
   }) || (includeActive && selected && selected !== meta.active);
 
-  const { saving, savedAt, save } = useRestartingSave(
+  // A good test and a save both go through kato's ONE apply-and-recheck
+  // (connection_recheck.py): kato restarts with saved settings, or checks
+  // again — and the banner follows that same outcome.
+  const [applied, setApplied] = useState(null);
+  const applyNow = async () => setApplied(recheckOutcome(await recheckConnections()));
+  const { saving, save } = useRestartingSave(
     () => updateFn(includeActive
       ? { active: selected, provider: selected, fields: draft }
       : { provider: selected, fields: draft }),
-    { onSaved: refresh },
+    {
+      onSaved: () => { refresh(); applyNow(); },
+      successMessage: 'Saved — kato is putting it to work.',
+      useServerMessage: false,
+    },
   );
 
   const fields = meta.providers?.[selected]?.fields || {};
@@ -90,9 +103,23 @@ export default function ProviderCredentialsPanel({
   // token input only appears when the operator chose to paste one.
   const credentialKeys = credentialKeysFor(selected);
   const isPasting = !usesDiscoveredCredential(draft[credentialKeys.source]);
-  const visibleFieldKeys = Object.keys(fields).filter((key) => (
+  // In the server's order (most needed first); the optional workflow states
+  // folded away below the connection test.
+  const visibleFieldKeys = orderedFieldKeys(meta.providers?.[selected]?.order, Object.keys(fields)).filter((key) => (
     !isCredentialSourceKey(key) && !(!isPasting && key === credentialKeys.token)
   ));
+  const mainFieldKeys = visibleFieldKeys.filter((key) => !isWorkflowField(key));
+  const workflowFieldKeys = visibleFieldKeys.filter(isWorkflowField);
+  const renderField = (key) => (
+    <ProviderField
+      key={key}
+      fieldKey={key}
+      field={fields[key] || {}}
+      provider={selected}
+      value={draft[key] || ''}
+      onChange={(value) => setDraft((current) => ({ ...current, [key]: value }))}
+    />
+  );
 
   return (
     <div className="settings-drawer-panel">
@@ -122,6 +149,22 @@ export default function ProviderCredentialsPanel({
             <span className="settings-drawer-field-hint">{selectHint}</span>
           </label>
 
+          {/* At the top (operator's ask): test what the form holds, before Save,
+              without scrolling past every field first. */}
+          {testFn && (
+            <ConnectionTest
+              key={selected}
+              label={labels[selected] || selected}
+              test={() => testFn({ provider: selected, fields: draft })}
+              fixesFor={(text) => connectionFixes(selected, text)}
+              onApply={(fix) => setDraft((current) => ({ ...current, [fix.key]: fix.value }))}
+              onConnected={() => (isDirty ? setApplied(SAVE_TO_APPLY) : applyNow())}
+            />
+          )}
+          {applied && (
+            <p className={`connection-apply connection-apply--${applied.kind}`} role="status">{applied.text}</p>
+          )}
+
           <div className="settings-drawer-divider" />
 
           {/* Reuse an existing login instead of a pasted token — same
@@ -147,40 +190,20 @@ export default function ProviderCredentialsPanel({
           )}
 
           <div className="settings-drawer-fields">
-            {visibleFieldKeys.map((key) => {
-              const f = fields[key] || {};
-              const isSecret = isSecretKey(key);
-              const placeholder = isSecret && f.value
-                ? '(set — paste again to replace)'
-                : fieldPlaceholder(key);
-              return (
-                <label key={key} className="settings-drawer-field">
-                  <span className="settings-drawer-field-label">
-                    <span className="settings-drawer-field-name">
-                      {humanizeFieldKey(key, selected)}
-                    </span>
-                    <span className={`settings-drawer-source source-${f.source || 'unset'}`}>
-                      {sourceLabel(f.source)}
-                    </span>
-                    <FieldInfoTip text={fieldInfo(key)} />
-                  </span>
-                  <input
-                    type={isSecret ? 'password' : 'text'}
-                    className="settings-drawer-input"
-                    value={draft[key] || ''}
-                    onChange={(ev) =>
-                      setDraft((current) => ({ ...current, [key]: ev.target.value }))
-                    }
-                    placeholder={placeholder}
-                    spellCheck={false}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                  />
-                </label>
-              );
-            })}
+            {mainFieldKeys.map(renderField)}
           </div>
+
+          {workflowFieldKeys.length > 0 && (
+            <details className="settings-drawer-advanced">
+              <summary>
+                Workflow states
+                <span className="settings-drawer-advanced-hint">optional — empty uses the default shown</span>
+              </summary>
+              <div className="settings-drawer-fields">
+                {workflowFieldKeys.map(renderField)}
+              </div>
+            </details>
+          )}
 
           <SettingsActions
             onSecondary={refresh}
@@ -191,9 +214,41 @@ export default function ProviderCredentialsPanel({
             primaryLabel="Save"
           />
 
-          <RestartBanner show={savedAt} />
         </>
       </SettingsPanelBody>
     </div>
+  );
+}
+
+// One provider field: its name, where its value comes from, the hint, and the
+// input — a secret as a password, an empty one showing the default it means.
+function ProviderField({ fieldKey, field, provider, value, onChange }) {
+  const isSecret = isSecretKey(fieldKey);
+  const placeholder = isSecret && field.value
+    ? '(set — paste again to replace)'
+    : (field.default || fieldPlaceholder(fieldKey));
+  return (
+    <label className="settings-drawer-field">
+      <span className="settings-drawer-field-label">
+        <span className="settings-drawer-field-name">
+          {humanizeFieldKey(fieldKey, provider)}
+        </span>
+        <span className={`settings-drawer-source source-${field.source || 'unset'}`}>
+          {sourceLabel(field.source)}
+        </span>
+        <FieldInfoTip text={fieldInfo(fieldKey)} />
+      </span>
+      <input
+        type={isSecret ? 'password' : 'text'}
+        className="settings-drawer-input"
+        value={value}
+        onChange={(ev) => onChange(ev.target.value)}
+        placeholder={placeholder}
+        spellCheck={false}
+        autoComplete="off"
+        autoCapitalize="off"
+        autoCorrect="off"
+      />
+    </label>
   );
 }

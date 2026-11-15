@@ -211,6 +211,16 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService): ...
 
 ## Flows
 
+### The terminal: ONE status line, rewritten in place
+`helpers/shell_status_utils.py`. A scan spins (`spinning_status`, a thread) and the wait between scans counts down
+(`sleep_with_countdown_spinner`) on the SAME line (`show_inline_status`, one lock); the scan's "Scanning…" /
+"Scan complete" go to the UI feed only (`_publish_scan_status` → the broadcaster, not the logger). They used to be
+two new lines every 50s ("no need to print it millions of times, use a rotating progress"). The console handlers are
+`StatusLineAwareHandler`: a real log line clears the status line first, so it never lands glued onto the spinner
+(`Idle · next scan in \ 50on-demand push…`). A redirected stream gets no status line at all. Never log a periodic
+"still alive" line: spin it here. A setting that is missing (`PullRequestApiNotSetUp`, a `ValueError`) is one
+warning line, never a traceback.
+
 ### Startup (UI-first)
 ```
 main() → KatoInstance.init(cfg, defer_validation=True)  ← builds the service, does NOT validate yet
@@ -543,6 +553,54 @@ conventions used to answer "restart required" though they never needed one.
 - **Not offered, on purpose:** a switch for kato's own ticket comments — the shared plan's record IS a ticket comment
   other katos read (`plan_record_on_tracker`), and several flows depend on theirs; one gate at `add_comment` would
   break them. Moving ticket states automatically — a task left Open is picked up again on the next scan.
+
+### Connections: Test before Save, and a failure on screen until it answers again
+- **"Test connection"** on Settings → Task provider and → Git provider (`settings/ConnectionTest.jsx`, the shared
+  `ProviderCredentialsPanel`'s `testFn`) tests what the FORM holds, before Save: `config_env_with_form`
+  (`kato_settings_store_utils`) lays the form over the saved settings as if saved (a cleared field is dropped so its
+  default applies; a credential source is resolved), only that provider's whitelisted keys (never `PATH` & co. — the
+  check is a child process). Ticket system: `POST /api/setup/test-tracker-connection {platform, fields}` (no body =
+  the saved settings, the wizard). Git host: `POST /api/git-providers/test {provider, fields}` →
+  `validation/git_host_connection_check.py`: a host has no "who am I", so its pull request API is asked for up to
+  `MAX_REPOSITORIES` of your repositories there with kato's own pre-PR calls; per-repository words come back.
+- **ONE connection status, ONE apply-and-recheck** (AGENTS.md → "A check that shows in more than one place is ONE
+  capability"; gate `tests/test_connection_recheck.py` `OneSourceGateTests`). The startup check reports each step
+  into `ConnectionHealth` (`validate(on_step=)` → `report_startup_step`; the tracker step IS the scan's `tracker`
+  entry), and the banner reads ONLY `connection_problems` — never `setup_error`. `connection_recheck.py`
+  `ConnectionRecheck` (built in `main._ensure_connection_recheck`, `POST /api/connections/recheck`): saved
+  connection settings differ from what kato started with → restart (`_restart_soon`, answer first), unless an agent
+  is mid-turn (`restart_needed`); else kato's own check runs again. Callers: a good Test of the SAVED values (unsaved
+  → "press Save"), every provider Save, and the startup retry loop (`_wait_or_apply_saved_settings`, every 2s, so a
+  fix saved while kato cannot connect is used within seconds — it used to retry the boot values forever).
+- **A credential SOURCE is resolved at EVERY boot** (`load_resolved_credentials_into_environ`, first thing in `main`,
+  same resolver as Test connection and the configured check): a git host set to "use my git login" / "use my gh
+  login" keeps only `<PROVIDER>_API_TOKEN_SOURCE` in settings.json, and the boot exported the file as it was — so Test
+  said Connected while every PR failed "missing pull request API token" (KAN-1). A token already in the env wins; a
+  restart in place drops the resolved ones (`_RESOLVED_CREDENTIAL_KEYS`) so it resolves again. ONE settings loader:
+  `load_kato_settings_into_environ` (an empty env value is unset; main's own raw copy was deleted).
+- **What kato could not reach is ON SCREEN** (operator: "if there is a fail to fetch from Jira the UI says nothing"):
+  ONE service, `connection_health.py` `ConnectionHealth` — the scan's task fetch (`_fetch_assigned_tasks`, key
+  `tracker`) and the review scan's pull request lookup + comment listing (`git:<host>`) report each try; a 429 pause
+  is neither. `/api/config-status` `connection_problems` (already polled every 5s) → `ConnectionProblemsBanner`, the
+  service's own words, "Check the settings" opens its tab; gone once it answers. In memory (a restart starts clean).
+- **Jira, GitHub Issues and GitLab Issues could never boot** ("Recursive interpolation detected:
+  core_lib.jira_core_lib.base_url"): kato's task block points back at `core_lib.<lib>.<key>`, and
+  `task_core_lib`'s `_wrap_merged_config` re-wrapped it UNRESOLVED under that same key, so it pointed at itself. Only
+  YouTrack resolved first. Now every provider is resolved in `_wrap_merged_config` (`HostConfigPointingBackTests`).
+  Hidden for long because a Jira setup missing `JIRA_PROJECT` stopped in setup mode before the client was built.
+- **Jira's check asks "who am I" first** (`jira_client.validate_connection` → `/rest/api/3/myself`, 401 →
+  `UNAUTHENTICATED_MESSAGE`): with credentials Jira does not accept, its SEARCH answers 200 with no issues (as to an
+  anonymous visitor), so the check passed, every scan "worked", and an assigned ticket was never found — silently.
+- **The provider tabs** (`ProviderCredentialsPanel`): fields in the server's `order` (JSON sorts object keys — the
+  form came out alphabetical, Jira's Email under "Done state field"; `_TASK_PROVIDER_FIELDS` lists them most needed
+  first), each placeholder the field's real `default` read from the config yamls (`config_defaults_utils`; Jira's
+  hint said YouTrack's "State"/"To Verify"), the workflow-state fields folded in "Workflow states" (optional),
+  **Test connection at the TOP** (operator's ask), rounder corners. Settings' tabs are grouped DOWN THE LEFT
+  (`utils/settingsNavGroups.js`; an ungrouped tab lands in "More"), wrapping above on a narrow screen.
+- **A task list held open (no task yet) is docked** like a pinned one (`useDockedRailWidth(menuPinned || heldOpen)`):
+  lying over the page it hid the left of every banner on a first run.
+- The Jira help names the token's scopes (read:jira-work, write:jira-work, read:jira-user) and the trap: a SCOPED
+  Atlassian token works only through `https://api.atlassian.com/ex/jira/<cloud id>`, never the site URL (401).
 
 ### The tasks rail (left edge, Chrome-style vertical tabs) and the task switcher
 There is no task strip at the top and **no app bar** any more. Every task is a ROW in a rail on the left
@@ -1132,13 +1190,19 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   - **Your agent** — chips: Claude Code | Codex | Grok | OpenCode (each marked "installed" when it is). The picked one
     is checked fresh (`agent_check.agent_status`); missing → **Install** when the upgrade plan allows it (npm, or the
     native installer for Claude Code), else its transport's OWN install words (`readiness_error`, uncached) + its
-    download page. Only Claude Code can say it is signed out, so only it blocks on sign-in (kato runs it); the others
+    download page. Only Claude Code can say it is signed out, and kato runs its sign-in — but signing in NEVER blocks Start
+    (operator: "let me continue and sign in to Claude later"; `startBlocker` ignores it). Later is `ClaudeSignInBanner`
+    on the main screen: the same `ClaudeSignIn` component, shown while Claude Code is the agent in front
+    (`claudeSignInNeeded`) and says it is signed out, asked again when the window comes back, never polled; the others
     show their own sign-in (`codex login`, `grok login`, `opencode auth login`) and count as ready once installed.
     The pick is saved as `KATO_CHAT_AGENT` (`chat_agent_utils`, read fresh, Settings → General "Agent for new
     tasks"); `KATO_AGENT_BACKEND` is still written `claude` (only Claude/OpenHands can run a ticket unattended).
     A NEW task starts on that agent: `LocalTaskStarter.start` → `chat_agent_choice.start_on_chosen_agent` writes the
     task's first chat record with that agent BEFORE the first spawn (the router routes by the record; the switch-agent
-    route does the same) — never for a task that already has a chat, an agent not wired, or the default. Then the
+    route does the same) — never for a task that already has a chat, an agent not wired, or the default. The record
+    owner's `save_record` HOLDS a record it did not hold yet: it used to write disk only, every lookup reads memory,
+    and the first message went to Claude anyway (caught on a real kato, hidden by a fake router; now a real
+    router + real record owner test). Then the
     default agent's model/effort (Claude names) are dropped, and New task (`chatAgent` from config-status
     `chat_agent`) shows "Runs on Codex" instead of Claude's pickers.
   - **Claude Code** (`agent_check`, read fresh, never cached): not installed → **Install** runs the in-app upgrade job
@@ -1149,7 +1213,13 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
     (`main`). Signed out → **Sign in** runs `claude auth login` (`claude_sign_in.ClaudeSignIn`, stdin a PIPE, never
     the terminal): it opens the browser, prints a link (shown — inside WSL no browser opens), then waits for a code on
     its input ("Paste code here if prompted >", NO newline: read char by char); a code pasted on the screen is written
-    to it. `logged_in: None` (cannot tell) is usable, never "signed out".
+    to it. `logged_in: None` (cannot tell) is usable, never "signed out". A failed sign-in shows the CLI's OWN words (what it said after its
+    link, minus the prompt and colours), never a bare "exit code 1". **Never test the sign-in under a fake `HOME` on a
+    Mac** (`env -i HOME=/tmp/…`): that home has no Keychain (`security default-keychain` → none), so the CLI reaches
+    the account, writes `oauthAccount`, fails to save the token and exits 1 — a test artefact, not a fresh-machine
+    bug. Test it as a new macOS user account. Since macOS then offers "Reset To Defaults" (which can empty the real
+    keychain), kato asks first (`mac_keychain_ready`: `security default-keychain`) and starts NO sign-in on a Mac with no
+    keychain (`NO_KEYCHAIN_MESSAGE`); only a clear "could not be found" stops it — an unreadable answer never does.
   - **git** (`git_check`): on a Mac `/usr/bin/git` is a stand-in without Apple's tools, so `xcode-select -p` is asked
     first and the stand-in never runs (it pops a dialog); **Install git** opens `xcode-select --install`. Elsewhere the
     command is shown.
@@ -1159,15 +1229,29 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
     `~/code` offered (created on Start only if picked); "Another folder…" browses.
   Start = ONE write (`settings.save_quick_start`): `KATO_CHAT_AGENT`, `KATO_AGENT_BACKEND=claude`, `REPOSITORY_ROOT_PATH`,
   and `KATO_ISSUE_PLATFORM=local` unless a tracker is set — unset they mean OpenHands and YouTrack, both needing keys.
+  The save answers `missing` (kato's own `collect_config_errors(mode='all')`, the check the setup loop waits on): a
+  ticket system set up earlier and half filled in kept kato in setup mode while "Starting kato…" spun forever, saying
+  nothing — now the screen lists what is missing and offers the wizard. **`JIRA_PROJECT` is optional** (empty =
+  every project the account sees; `jira_client._build_assigned_tasks_query`): it was the missing one.
   An agent installed where kato's PATH does not look is still found (`add_agent_install_dirs_to_path`, at boot and on
   every check): Claude Code's own folders FIRST (`~/.local/bin`, the older alias-only `~/.claude/local`), then LAST,
   only when an agent CLI is really in them, every nvm/fnm Node version's `bin` newest first (codex installed under
   Node 20 while Node 22 is active read "not on this computer"), Volta, `~/.npm-global`, `~/.opencode/bin`, Homebrew.
-  The folder browser (`FolderBrowser`) opens on the home folder when its start folder cannot be listed (quick start's
-  `~/code` before it exists) and its Home button never needs a listing first — it used to dead-end. The native installer has its
+  **"Browse…" opens the COMPUTER'S OWN folder dialog — kato has NO folder browser of its own** (operator: "I want
+  the native popup", then "I don't want that you create a file browser"; the in-page `FolderBrowser` and its
+  `/api/fs/dirs` listing were deleted — do not bring one back). ONE button, `BrowseFolderButton` +
+  `hooks/useNativeFolderDialog.js`, in Quick start, the setup wizard and Settings → Repositories. A page cannot
+  (browsers hide absolute paths), but kato runs on that computer, so `helpers/native_folder_dialog.py` opens it there
+  and `POST /api/fs/choose-folder` answers `{path}` / `{cancelled}` (409 one open, 501 none here;
+  `folder_dialog_routes.py`). macOS `osascript` choose folder (brings itself to the front, no permission prompt);
+  Windows PowerShell's FolderBrowserDialog on a top-most owner; WSL the same through interop + `wslpath` both ways;
+  Linux `zenity` / `kdialog`, never without a display. Values go in as argv / env, never pasted into a script; only
+  an absolute, existing start folder (else its nearest parent). One at a time. Where none can open (a computer with no
+  screen: quick start's `folder_dialog: false`, or a 501), the folder's path is TYPED — quick start shows a path box,
+  the wizard and Settings already have one, and the button says so. The native installer has its
   own progress steps (`_INSTALLER_MILESTONES`): its silent download reads "Downloading Claude Code", not "Starting…".
   The backend change re-execs kato in place (as before). The 6-step wizard is the "Connect a ticket system instead"
-  link (and what `cannot_connect` shows). Proven on a real kato with an empty HOME and a bare PATH
+  link. Proven on a real kato with an empty HOME and a bare PATH
   (`/usr/bin:/bin:/usr/sbin:/sbin`): the Install button ran the real installer and the step moved to sign-in; with a
   signed-in stand-in `claude`, Start left setup mode in 10s, `missing: []`. The agent CLI upgrade job also reads the
   version back for the CLI it ran for (`backend`), not the configured one (a Codex upgrade was checked against Claude).
@@ -1185,8 +1269,15 @@ CHOOSES it ("Create N sub-tasks" vs "Keep them in kato only") — never a defaul
   tell, never "signed out"). The folder step is the last before Finish. Finish says
   "Starting kato…" — never "all set" before the connection check passes; once running, a one-time
   "Kato is running — next steps" toast (`useSetupFinishedNote`).
-- **A configured kato that cannot connect** sets `SETUP_KIND=cannot_connect` → the gate says so ("Kato
-  can't reach a service it needs"), not "Welcome". Setup errors are passed WHOLE (no `[:500]`), shown in `<pre>`.
+- **A configured kato that cannot connect** (`SETUP_KIND=cannot_connect`) is NOT gated — no full-screen wizard
+  (operator: "the previous quick start was better than this wizard; I want the verification inside the settings").
+  Kato's own screen stays usable; `startupConnectionProblem` puts kato's WHOLE error in `ConnectionProblemsBanner`
+  ("Kato can't reach Jira", "keeps trying by itself"), whose "Check the settings" opens the Task provider tab (a
+  failure naming the tracker: `validate <platform>`) — where "Test connection" is — else Settings' first tab.
+- **An empty setting is UNSET at every layer.** The Settings form saves cleared fields as `""`, and omegaconf reads a
+  set-but-empty var as `""`, never its default. `load_kato_settings_into_environ` already skipped empties, but the
+  launcher (`scripts/_script_utils.py` `layered_env`, used by `kato up` / `run_local.py`) exported them: a cleared
+  `JIRA_ISSUE_STATES` wiped "To Do,Open" → "unable to validate jira: states must not be empty". It skips them now.
 - **No task yet:** the tasks menu is held OPEN with a "Create your first task" button (it must not hide behind a
   hover); a tracker is named only when one is connected
   (`/api/config-status` `issue_platform`, labels from `constants/ticketSystems.js`).
@@ -1532,7 +1623,12 @@ token) and the footnote says so. Do not add a second price table or compute cost
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
 - **Green means the work landed.** `_push_problems(push_result)` is the ONE answer to "what did not reach the remote":
   a failed push, or a skip with `problem: true` (any reason but `NOTHING_TO_PUSH`). Update source refuses such a repo
-  (`failed`, source untouched) and Done counts it as a failure; a PR skipped as empty is not a success. Git refusing
+  (`failed`, source untouched) and Done counts it as a failure; a PR skipped as empty is not a success. **Done moves
+  the ticket only when NOTHING failed** (`_not_published`: every repository's work on the remote with its pull
+  request; one left out as empty had nothing to review). It used to move once anything went up: KAN-1 pushed, its PR
+  failed (no GitHub token), and the ticket went to In Review with nothing to review. Done is idempotent, so pressing it
+  again after the fix only opens the missing PR and moves. A missing PR token says where to set it (Settings → Git
+  provider → <host>, the lib's `how_to_fix`), never an env var name. Git refusing
   the source switch is `blocked`, never `updated`. A source kato cannot find is `failed`, never `skipped`.
 - A toast's colour is decided beside its title, in `sessionHeaderFormatters.js` (`kind`), never in the component: a
   "Source not updated" box came out green. **A failed pull is a failure, never a skip** (`pull_task`): filed as a

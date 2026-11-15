@@ -223,3 +223,50 @@ class TestTrackerConnectionRouteTests(_Base):
         self.assertEqual(response.get_json(), answer)
         self.assertEqual(run.call_args.args[0]['KATO_ISSUE_PLATFORM'], 'jira')
 
+    def _post(self, body, saved=None):
+        if saved is not None:
+            self.settings_path.write_text(json.dumps(saved))
+        answer = {'ok': True, 'platform': 'jira', 'error': ''}
+        with patch.dict(os.environ, self._env(), clear=True), patch(
+            'kato_core_lib.validation.tracker_connection_check.check_tracker_connection',
+            return_value=answer,
+        ) as run:
+            app = create_app(session_manager=_FakeManager(), needs_config=True)
+            response = app.test_client().post('/api/setup/test-tracker-connection', json=body)
+        return response, (run.call_args.args[0] if run.called else None)
+
+    def test_the_settings_form_is_tested_before_save_as_if_saved(self) -> None:
+        saved = {'KATO_ISSUE_PLATFORM': 'local', 'JIRA_API_BASE_URL': 'https://old.atlassian.net',
+                 'JIRA_PROJECT': 'OLD', 'JIRA_DONE_STATE': 'Closed', 'REPOSITORY_ROOT_PATH': '/code'}
+        response, env = self._post({'platform': 'jira', 'fields': {
+            'JIRA_API_BASE_URL': 'https://new.atlassian.net', 'JIRA_PROJECT': 'KAN',
+            'JIRA_DONE_STATE': '',             # cleared on the form: its default applies
+            'PATH': '/evil', 'PYTHONPATH': '/evil',  # never another provider's key, never the process's
+        }}, saved=saved)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((env['KATO_ISSUE_PLATFORM'], env['JIRA_API_BASE_URL'], env['JIRA_PROJECT']),
+                         ('jira', 'https://new.atlassian.net', 'KAN'))
+        self.assertNotIn('JIRA_DONE_STATE', env)
+        self.assertEqual(env['REPOSITORY_ROOT_PATH'], '/code')  # the rest is what is saved
+        self.assertNotIn('PYTHONPATH', env)
+        self.assertNotEqual(env.get('PATH'), '/evil')
+        self.assertEqual(json.loads(self.settings_path.read_text()), saved)  # a test saves nothing
+
+    def test_a_form_for_an_unknown_provider_or_with_bad_fields_is_refused(self) -> None:
+        response, env = self._post({'platform': 'trello', 'fields': {}})
+        self.assertEqual((response.status_code, env), (400, None))
+        self.assertIn('unknown task provider', response.get_json()['error'])
+        response, env = self._post({'platform': 'jira', 'fields': ['not', 'a', 'map']})
+        self.assertEqual((response.status_code, env), (400, None))
+        response, env = self._post({'platform': 'local'})  # no tracker: nothing to reach
+        self.assertEqual((response.status_code, env['KATO_ISSUE_PLATFORM']), (200, 'local'))
+
+    def test_a_credential_source_picked_on_the_form_is_resolved(self) -> None:
+        with patch('kato_core_lib.helpers.credential_sources.resolved_credential_env',
+                   side_effect=lambda env: {'GITHUB_API_TOKEN': 'from-gh'} if env.get('GITHUB_API_TOKEN_SOURCE') == 'gh' else {}):
+            _, env = self._post({'platform': 'github', 'fields': {'GITHUB_API_TOKEN_SOURCE': 'gh', 'GITHUB_OWNER': 'me'}})
+        self.assertEqual(env['GITHUB_API_TOKEN'], 'from-gh')
+        with patch('kato_core_lib.helpers.credential_sources.resolved_credential_env', side_effect=RuntimeError('no gh')):
+            response, env = self._post({'platform': 'github', 'fields': {'GITHUB_OWNER': 'me'}})
+        self.assertEqual((response.status_code, env['GITHUB_OWNER']), (200, 'me'))  # discovery never breaks it
+

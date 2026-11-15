@@ -1003,6 +1003,16 @@ describe('TabList — a main task\'s sub-tasks fold away', () => {
 
 // "when clicking on the kato/hamburger icon (not hover, but click) it will
 // snap open. and I can change the width of it"
+describe('TabList — held open with no task, it takes its own column', () => {
+  test('the page moves aside while it is held open, and back once there is a task', () => {
+    const { rerender } = render(<TabList sessions={[]} onSelect={() => {}} emptyStateMessage="No tasks yet." />);
+    expect(document.getElementById('tabs-pane')).toHaveClass('is-open');
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('360px');
+    rerender(<TabList sessions={[_session('UNA-1')]} onSelect={() => {}} emptyStateMessage="No tasks yet." />);
+    expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('');
+  });
+});
+
 describe('TabList — pinned open, docked and resizable', () => {
   test('pinned: the menu is open, docked, has a draggable edge, and the page moves aside', async () => {
     const { toggleTaskMenuPinned, setTaskMenuWidth } = await import('../stores/taskMenuStore.js');

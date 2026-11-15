@@ -893,7 +893,9 @@ class RepositoryServiceTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     ValueError,
-                    'missing pull request API token for repository ob-love-admin-client',
+                    # Where the operator sets it — Settings, never an env var name.
+                    'missing pull request API token for repository ob-love-admin-client; '
+                    'add a Bitbucket token in Settings → Git provider → Bitbucket$',
                 ):
                     service.prepare_task_repositories([service.repositories[0]])
 

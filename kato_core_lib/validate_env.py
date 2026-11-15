@@ -43,10 +43,11 @@ REQUIRED_AGENT_KEYS_BY_PLATFORM = {
         'YOUTRACK_PROJECT',
         'YOUTRACK_ASSIGNEE',
     ),
+    # No JIRA_PROJECT: empty searches every project the account sees
+    # (jira_client._build_assigned_tasks_query) — one question fewer.
     'jira': (
         'JIRA_API_BASE_URL',
         'JIRA_API_TOKEN',
-        'JIRA_PROJECT',
         'JIRA_ASSIGNEE',
     ),
     'github': (

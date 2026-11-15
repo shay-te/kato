@@ -270,6 +270,20 @@ class SessionManagerLifecycleFlowTest(unittest.TestCase):
             session_factory=factory,
         )
 
+    def test_a_first_record_saved_before_any_spawn_is_held_and_read_back(self) -> None:
+        # The host writes a task's FIRST record before the first spawn (its
+        # chat must start on another agent). Lookups read memory: a record
+        # only written to disk read as "no record" and the default agent ran.
+        self.assertIsNone(self.manager.get_record('Flow-9'))
+        self.manager.save_record(AgentSessionRecord(task_id='Flow-9', agent_backend='codex'))
+        self.assertEqual(self.manager.get_record('FLOW-9').agent_backend, 'codex')  # any casing
+        on_disk = [json.loads(path.read_text()) for path in self.state_dir.glob('*.json')]
+        self.assertEqual([record['agent_backend'] for record in on_disk], ['codex'])
+        # A record already held stays the one held.
+        self.manager.save_record(AgentSessionRecord(task_id='flow-9', agent_backend='claude'))
+        self.assertEqual(self.manager.get_record('flow-9').agent_backend, 'codex')
+        self.manager.save_record(None)  # nothing to save
+
     def test_full_lifecycle(self) -> None:
         task_id = 'FLOW-1'
 

@@ -33,9 +33,7 @@ class TaskClientFactory:
             from youtrack_core_lib.youtrack_core_lib.youtrack_core_lib import (  # noqa: PLC0415
                 YouTrackCoreLib,
             )
-            # Resolve interpolations before wrapping to avoid circular references.
-            config_dict = OmegaConf.to_container(self._config, resolve=True)
-            youtrack_config = self._wrap_merged_config('youtrack_core_lib', config_dict)
+            youtrack_config = self._wrap_merged_config('youtrack_core_lib', self._config)
             return YouTrackCoreLib(youtrack_config).issue
 
         if platform == Platform.JIRA:
@@ -89,7 +87,16 @@ class TaskClientFactory:
     def _wrap_merged_config(self, lib_key: str, base_config):
         """Wrap ``base_config`` merged with ``max_retries`` under
         ``core_lib.<lib_key>`` — the shared shape for the providers
-        whose config is a plain merge of the task config block."""
+        whose config is a plain merge of the task config block.
+
+        ``base_config`` is RESOLVED first, for every provider: a host's task
+        block usually points back at ``core_lib.<lib_key>``
+        (``base_url: ${core_lib.jira_core_lib.base_url}``), and re-wrapped
+        under that very key unresolved it points at itself — "Recursive
+        interpolation detected", so the provider could never be built. Only
+        YouTrack used to resolve; Jira, GitHub and GitLab crashed at boot."""
+        if OmegaConf.is_config(base_config):
+            base_config = OmegaConf.to_container(base_config, resolve=True)
         return OmegaConf.create(
             {
                 'core_lib': {
