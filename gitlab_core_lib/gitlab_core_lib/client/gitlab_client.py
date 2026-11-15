@@ -32,7 +32,12 @@ class GitLabClient(PullRequestClientBase):
         super().__init__(base_url, token, timeout=30, max_retries=max_retries)
 
     def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
-        response = self._get_with_retry(f'/projects/{self._project_path(repo_owner, repo_slug)}')
+        """The project, then its merge requests: reading the project alone
+        passed a token that cannot read merge requests."""
+        project = self._project_path(repo_owner, repo_slug)
+        response = self._get_with_retry(f'/projects/{project}')
+        self.raise_for_status_with_detail(response)
+        response = self._get_with_retry(f'/projects/{project}/merge_requests', params={'per_page': 1})
         self.raise_for_status_with_detail(response)
 
     def create_pull_request(

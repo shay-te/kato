@@ -83,7 +83,9 @@ def _check_one(repository_service, repository) -> dict:
         repository_service._prepare_pull_request_api(repository)
         repository_service._pull_request_data_access(repository).validate_connection()
     except Exception as exc:  # noqa: BLE001 - every failure is the answer
-        return {'repository': name, 'ok': False, 'error': _words(exc)}
+        from kato_core_lib.helpers.git_host_refusal_utils import refusal_hint
+
+        return {'repository': name, 'ok': False, 'error': _words(exc) + refusal_hint(exc)}
     return {'repository': name, 'ok': True, 'error': ''}
 
 

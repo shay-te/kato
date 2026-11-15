@@ -52,7 +52,14 @@ class BitbucketClient(PullRequestClientBase):
             self.set_headers({'Authorization': bitbucket_basic_auth_header(auth_username, token)})
 
     def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
+        """The repository, then its pull requests: reading the repository
+        alone passed a token with no pull request scope, which the first
+        lookup of a pull request then got 403 for."""
         response = self._get_with_retry(f'/repositories/{repo_owner}/{repo_slug}')
+        self.raise_for_status_with_detail(response)
+        response = self._get_with_retry(
+            f'/repositories/{repo_owner}/{repo_slug}/pullrequests', params={'pagelen': 1},
+        )
         self.raise_for_status_with_detail(response)
 
     def create_pull_request(

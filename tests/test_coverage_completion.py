@@ -269,19 +269,22 @@ class SettingsStoreUtilsTests(unittest.TestCase):
                 encoding='utf-8',
             )
             os.environ.pop('KATO_COVERAGE_TEST_NEW', None)
-            os.environ['KATO_COVERAGE_TEST_EXISTS'] = 'shell-wins'
+            os.environ['KATO_COVERAGE_TEST_EXISTS'] = 'from-the-shell'
             try:
-                added = store_utils.load_kato_settings_into_environ()
+                changed = store_utils.load_kato_settings_into_environ()
+                exists = os.environ.get('KATO_COVERAGE_TEST_EXISTS')
             finally:
                 os.environ.pop('KATO_COVERAGE_TEST_NEW', None)
                 os.environ.pop('KATO_COVERAGE_TEST_EXISTS', None)
-        self.assertEqual(added, 1, 'only the new key was inserted')
+        # Settings win over the shell (2026-11-15): both keys take the saved value.
+        self.assertEqual(sorted(changed), ['KATO_COVERAGE_TEST_EXISTS', 'KATO_COVERAGE_TEST_NEW'])
+        self.assertEqual(exists, 'should-not-overwrite')
 
     def test_load_kato_settings_into_environ_returns_zero_when_no_file(self) -> None:
         # File doesn't exist → read returns {} → loop body never runs.
         with _env_override('KATO_SETTINGS_FILE', str(self.path)):
             self.assertFalse(self.path.exists())
-            self.assertEqual(store_utils.load_kato_settings_into_environ(), 0)
+            self.assertEqual(store_utils.load_kato_settings_into_environ(), [])
 
 
 # ---------------------------------------------------------------------------

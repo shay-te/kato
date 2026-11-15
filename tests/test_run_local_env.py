@@ -21,14 +21,18 @@ from _script_utils import layered_env, read_kato_settings_file  # noqa: E402
 
 
 class LayeredEnvTests(unittest.TestCase):
-    def test_precedence_shell_over_settings_over_dotenv(self) -> None:
-        base = {'A': 'shell'}                       # real shell env
+    def test_precedence_settings_over_later_sources_over_the_shell(self) -> None:
+        # Settings win (2026-11-15: a stale .env loaded into the terminal kept
+        # an old token over the one saved in Settings — "no .env, only kato
+        # settings"). The shell only fills what no source sets.
+        base = {'A': 'shell', 'D': 'shell'}         # the terminal kato starts from
         settings = {'A': 'settings', 'B': 'settings'}
-        dotenv = {'A': 'dotenv', 'B': 'dotenv', 'C': 'dotenv'}
-        env = layered_env(base, settings, dotenv)
-        self.assertEqual(env['A'], 'shell')     # shell wins over both
-        self.assertEqual(env['B'], 'settings')  # settings.json beats .env
-        self.assertEqual(env['C'], 'dotenv')    # .env fills what's left
+        later = {'A': 'later', 'B': 'later', 'C': 'later'}
+        env = layered_env(base, settings, later)
+        self.assertEqual(env['A'], 'settings')  # settings.json beats the shell
+        self.assertEqual(env['B'], 'settings')  # and a later source
+        self.assertEqual(env['C'], 'later')     # a later source beats the shell
+        self.assertEqual(env['D'], 'shell')     # the shell fills what's left
 
     def test_does_not_mutate_base_and_coerces_str(self) -> None:
         base = {'X': 'x'}
@@ -47,8 +51,11 @@ class EmptySettingIsUnsetTests(unittest.TestCase):
         # An empty value does not even block a later source: it is unset.
         self.assertEqual(env['JIRA_ISSUE_STATES'], 'from a later source')
 
-    def test_an_empty_var_in_the_real_shell_is_the_operators_own(self) -> None:
-        self.assertEqual(layered_env({'JIRA_PROJECT': ''}, {'JIRA_PROJECT': 'KAN'})['JIRA_PROJECT'], '')
+    def test_a_saved_value_wins_over_the_shells_own_blank(self) -> None:
+        self.assertEqual(layered_env({'JIRA_PROJECT': ''}, {'JIRA_PROJECT': 'KAN'})['JIRA_PROJECT'], 'KAN')
+
+    def test_the_shells_own_blank_stays_when_settings_have_nothing(self) -> None:
+        self.assertEqual(layered_env({'JIRA_PROJECT': ''}, {'JIRA_PROJECT': ''})['JIRA_PROJECT'], '')
 
 
 class ReadKatoSettingsFileTests(unittest.TestCase):

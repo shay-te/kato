@@ -100,6 +100,22 @@ SCENARIOS = {
         'shell': {'GH_TOKEN': 'gh-env', 'GITLAB_TOKEN': 'gl-env', 'BITBUCKET_TOKEN': 'bb-env'},
         'tokens': {'github': 'gh-env', 'gitlab': 'gl-env', 'bitbucket': 'bb-env', 'azure': 'az-pasted'},
     },
+    # The 2026-11-15 Bitbucket case, for every host: the terminal kato starts
+    # from carries OLD tokens (a stale .env the editor loads), Settings hold
+    # the new ones. Settings must win — "no .env, only kato settings".
+    'stale terminal': {
+        'settings': {
+            'GITHUB_API_TOKEN_SOURCE': 'git-credential', 'GITLAB_API_TOKEN': 'gl-new',
+            'BITBUCKET_API_TOKEN': 'bb-new', 'BITBUCKET_API_EMAIL': 'me@example.com',
+            'AZURE_API_TOKEN': 'az-new',
+        },
+        'git_logins': {'github.com': ('me', 'gh-from-git')},
+        'shell': {
+            'GITHUB_API_TOKEN': 'gh-old', 'GITLAB_API_TOKEN': 'gl-old', 'BITBUCKET_API_TOKEN': 'bb-old',
+            'BITBUCKET_API_EMAIL': 'old@example.com', 'AZURE_API_TOKEN': 'az-old',
+        },
+        'tokens': {'github': 'gh-from-git', 'gitlab': 'gl-new', 'bitbucket': 'bb-new', 'azure': 'az-new'},
+    },
     'nothing set': {
         # Bitbucket has a token but no email: the second thing it needs.
         'settings': {'BITBUCKET_API_TOKEN': 'bb-pasted'},
@@ -117,10 +133,10 @@ SCENARIOS = {
 _CHILD = r'''
 import json, os, sys
 from kato_core_lib.helpers.kato_settings_store_utils import (
-    config_env_with_form, load_resolved_credentials_into_environ,
+    config_env_with_form, load_kato_settings_into_environ,
 )
 mode, config_dir = sys.argv[1], sys.argv[2]
-load_resolved_credentials_into_environ()          # main(): first thing
+load_kato_settings_into_environ()                 # main(): first thing
 if mode == 'test':                                # Test connection's child env
     env = config_env_with_form({})
     os.environ.clear()
@@ -262,6 +278,9 @@ class GitHostsEndToEndTests(unittest.TestCase):
     def test_a_token_from_the_environment_reaches_every_host(self) -> None:
         self._signs_in('environment')
 
+    def test_settings_win_over_old_tokens_in_the_terminal_for_every_host(self) -> None:
+        self._signs_in('stale terminal')
+
     def test_nothing_set_says_where_in_settings_for_every_host(self) -> None:
         errors = SCENARIOS['nothing set']['errors']
         for mode, repo, host, got in self._each('nothing set'):
@@ -278,17 +297,30 @@ class GitHostsEndToEndTests(unittest.TestCase):
 
 
 class LaunchersAgreeTests(unittest.TestCase):
-    """``kato up`` and the desktop app hand kato the same env for the same file."""
+    """``kato up``, the desktop app and kato's own boot step apply ONE rule
+    (``settings_first_env``) — the launchers keep stdlib copies of it, so
+    each copy is held to the original here."""
 
-    def test_both_launchers_build_the_same_env_and_neither_exports_an_empty_value(self) -> None:
+    def test_every_launcher_applies_the_settings_first_rule(self) -> None:
+        from kato_core_lib.helpers.kato_settings_store_utils import settings_first_env
+
         with tempfile.TemporaryDirectory() as tmp:
-            scenario = _Scenario(Path(tmp), 'pasted', SCENARIOS['pasted'])
+            scenario = _Scenario(Path(tmp), 'stale terminal', SCENARIOS['stale terminal'])
             launcher, desktop = scenario.launcher_env(), scenario.desktop_env()
+            settings = json.loads((scenario.home / '.kato' / 'settings.json').read_text(encoding='utf-8'))
+        rule = {key: value for key, value in settings_first_env(settings, scenario.shell).items()
+                if not key.endswith('_API_TOKEN') or key in settings and settings[key]}
         self.assertEqual(launcher, desktop)
+        for key, value in rule.items():
+            if key == 'GITHUB_API_TOKEN':
+                continue  # resolved from the git login by kato's boot step, not the launchers
+            self.assertEqual(launcher.get(key), value, key)
+        # The terminal's old values lose to Settings…
+        self.assertEqual((launcher['BITBUCKET_API_TOKEN'], launcher['BITBUCKET_API_EMAIL']), ('bb-new', 'me@example.com'))
+        # …and a cleared field is never exported as "" (it would kill its default).
         for key in FORM_FIELDS:
-            if not SCENARIOS['pasted']['settings'].get(key):
+            if not settings.get(key) and not scenario.shell.get(key):
                 self.assertNotIn(key, launcher, f'{key}="" would kill its default')
-
 
 if __name__ == '__main__':
     unittest.main()

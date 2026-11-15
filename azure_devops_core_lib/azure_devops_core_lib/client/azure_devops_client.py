@@ -78,7 +78,12 @@ class AzureDevOpsClient(PullRequestClientBase):
     # ----- the provider interface -----
 
     def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
-        response = self._get_with_retry(self._repository_path(repo_owner, repo_slug), params=_API)
+        """The repository, then its pull requests: reading the repository
+        alone passed a token with no pull request access."""
+        repository = self._repository_path(repo_owner, repo_slug)
+        response = self._get_with_retry(repository, params=_API)
+        self.raise_for_status_with_detail(response)
+        response = self._get_with_retry(f'{repository}/pullrequests', params={**_API, '$top': 1})
         self.raise_for_status_with_detail(response)
 
     def create_pull_request(

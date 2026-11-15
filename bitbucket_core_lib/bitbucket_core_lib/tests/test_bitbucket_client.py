@@ -1,5 +1,7 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
+
+from requests import HTTPError
 
 import requests
 
@@ -48,8 +50,21 @@ class BitbucketClientTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=response) as mock_get:
             client.validate_connection('workspace', 'repo')
 
-        response.raise_for_status.assert_called_once_with()
-        mock_get.assert_called_once_with('/repositories/workspace/repo')
+        # The repository, then its pull requests — what the review scan lists.
+        self.assertEqual(response.raise_for_status.call_count, 2)
+        self.assertEqual(mock_get.call_args_list, [
+            call('/repositories/workspace/repo'),
+            call('/repositories/workspace/repo/pullrequests', params={'pagelen': 1}),
+        ])
+
+    def test_a_token_that_cannot_read_pull_requests_fails_the_check(self) -> None:
+        # Reading the repository alone passed it; the review scan then got 403.
+        client = BitbucketClient('https://bitbucket.example', 'bb-token')
+        refused = mock_response(status_code=403, text='Your credentials lack one or more required privilege scopes.')
+        refused.raise_for_status.side_effect = HTTPError('403 Client Error: Forbidden')
+        with patch.object(client, '_get', side_effect=[mock_response(), refused]):
+            with self.assertRaises(HTTPError):
+                client.validate_connection('workspace', 'repo')
 
     def test_create_pull_request_normalizes_response(self) -> None:
         client = BitbucketClient('https://bitbucket.example', 'bb-token')

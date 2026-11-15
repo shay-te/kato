@@ -11,6 +11,7 @@ from omegaconf import OmegaConf
 from kato_core_lib.data_layers.data.fields import RepositoryFields
 from kato_core_lib.data_layers.data_access.pull_request_data_access import PullRequestDataAccess
 from kato_core_lib.data_layers.service.connection_health import provider_label
+from kato_core_lib.helpers.git_host_refusal_utils import git_host_settings_place
 from kato_core_lib.helpers.kato_tag_utils import repository_id_from_tag
 from kato_core_lib.helpers.logging_utils import configure_logger
 from kato_core_lib.helpers.release_notes_settings_utils import workspaces_root
@@ -47,11 +48,6 @@ class RepositoryIgnoredByConfigError(ValueError):
     task-failure handler can post an actionable comment instead of the
     catch-all "kato could not safely process this task" message.
     """
-
-
-def git_host_settings_place(provider: str) -> str:
-    """Where an operator sets a git host's connection — never an env var name."""
-    return f'Settings → Git provider → {provider_label(provider)}'
 
 
 

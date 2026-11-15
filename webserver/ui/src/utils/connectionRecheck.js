@@ -12,8 +12,14 @@ export function recheckOutcome(result) {
     return { kind: APPLY_KIND.OK, text: 'Kato is restarting to use it — this page reconnects by itself in a few seconds.' };
   }
   if (body.status === 'restart_needed') {
-    const working = (body.working || []).join(', ');
-    return { kind: APPLY_KIND.NOTE, text: `Saved. Restart kato to use it — agents are working now${working ? ` (${working})` : ''}.` };
+    const names = body.working || [];
+    const working = names.join(', ');
+    // Kato restarts by itself once no agent is mid-turn (connection_recheck.py)
+    // — left to the operator, the banner kept refusing after a passing test.
+    const finish = names.length === 1 ? `${working} finishes its turn` : `${working || 'the working agents'} finish their turns`;
+    return body.restarts_when_free
+      ? { kind: APPLY_KIND.NOTE, text: `Saved — kato restarts by itself to use it as soon as ${finish}.` }
+      : { kind: APPLY_KIND.NOTE, text: `Saved. Restart kato to use it — agents are working now${working ? ` (${working})` : ''}.` };
   }
   return body.ok
     ? { kind: APPLY_KIND.OK, text: 'Kato checked it too — it gets through.' }

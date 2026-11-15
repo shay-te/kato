@@ -2233,7 +2233,8 @@ class TaskPublishStateTests(unittest.TestCase):
         self.assertIn('client', detail)
         self.assertIn('rejected', detail)
         # Names the setting that actually fixes it.
-        self.assertIn('BITBUCKET_API_EMAIL', detail)
+        self.assertIn('API email', detail)
+        self.assertIn('Settings → Git provider → Bitbucket', detail)
         # ...while STILL answering, so the git buttons never gate on it.
         self.assertFalse(result['has_pull_request'])
 
@@ -2319,7 +2320,7 @@ class TaskPublishStateTests(unittest.TestCase):
                                         SimpleNamespace(id='T1'))):
             result = service.publish.task_pull_request_state('T1')
 
-        self.assertIn('GITHUB_API_TOKEN', result['lookup_error'])
+        self.assertIn('Settings → Git provider → GitHub', result['lookup_error'])
         self.assertNotIn('BITBUCKET_API_EMAIL', result['lookup_error'])
 
     def test_pull_request_state_default_for_blank_task_id(self) -> None:

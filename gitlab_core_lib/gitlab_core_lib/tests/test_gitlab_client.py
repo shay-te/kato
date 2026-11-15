@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from requests import HTTPError
 
@@ -23,8 +23,20 @@ class GitLabClientValidateConnectionTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=response) as mock_get:
             client.validate_connection('group/subgroup', 'repo')
 
-        response.raise_for_status.assert_called_once_with()
-        mock_get.assert_called_once_with('/projects/group%2Fsubgroup%2Frepo')
+        # The project, then its merge requests — what the review scan lists.
+        self.assertEqual(response.raise_for_status.call_count, 2)
+        self.assertEqual(mock_get.call_args_list, [
+            call('/projects/group%2Fsubgroup%2Frepo'),
+            call('/projects/group%2Fsubgroup%2Frepo/merge_requests', params={'per_page': 1}),
+        ])
+
+    def test_a_token_that_cannot_read_merge_requests_fails_the_check(self) -> None:
+        client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
+        refused = mock_response(status_code=403, text='403 Forbidden')
+        refused.raise_for_status.side_effect = HTTPError('403 Client Error: Forbidden')
+        with patch.object(client, '_get', side_effect=[mock_response(), refused]):
+            with self.assertRaises(HTTPError):
+                client.validate_connection('group', 'repo')
 
     def test_url_encodes_nested_group_paths(self) -> None:
         client = GitLabClient('https://gitlab.example/api/v4', 'gl-token')
@@ -33,7 +45,7 @@ class GitLabClientValidateConnectionTests(unittest.TestCase):
         with patch.object(client, '_get', return_value=response) as mock_get:
             client.validate_connection('a/b/c', 'repo')
 
-        mock_get.assert_called_once_with('/projects/a%2Fb%2Fc%2Frepo')
+        self.assertEqual(mock_get.call_args_list[0], call('/projects/a%2Fb%2Fc%2Frepo'))
 
 
 class GitLabClientCreatePullRequestTests(unittest.TestCase):

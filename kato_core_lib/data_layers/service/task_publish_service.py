@@ -26,6 +26,7 @@ from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
 )
 from kato_core_lib.data_layers.data.fields import PullRequestFields
 from kato_core_lib.data_layers.service.pull_request_lookup import LookupPaused
+from kato_core_lib.helpers.git_host_refusal_utils import refusal_hint
 from kato_core_lib.data_layers.service.repository_inventory_service import PullRequestApiNotSetUp
 from kato_core_lib.data_layers.service.task_moves import (
     DONE,
@@ -66,84 +67,6 @@ _PUSH_SCAN_BUDGET_SECONDS = 3.0
 # the 20s the page waits for it (api.js); a clone that outruns it is reported
 # "could not check", never "nothing to lose".
 UNPUSHED_WORK_CHECK_SECONDS = 15.0
-
-
-def _auth_hint_for(exc: Exception) -> str:
-    """An actionable suffix for an auth failure, or ''.
-
-    A bare ``401 Client Error: Unauthorized`` repeated once per repo per scan
-    tells the operator nothing they can act on. Bitbucket's own body does:
-
-        "API token must be used with an atlassian registered email"
-
-    Atlassian API tokens authenticate as EMAIL + token; the older app
-    passwords used USERNAME + password. kato prefers ``api_email`` and falls
-    back to ``username``, so an operator who pasted a new API token without
-    setting the email gets a guaranteed 401 on every call, with nothing
-    naming the setting that fixes it.
-
-    Read from the EXCEPTION TEXT rather than from config: the provider is the
-    authority on why it refused, and inferring "you must be using an API
-    token" from settings alone would misfire on a genuinely revoked app
-    password.
-    """
-    text = str(exc or '')
-    lowered = text.lower()
-    if 'atlassian registered email' in lowered:
-        return (
-            ' — set BITBUCKET_API_EMAIL to the Atlassian account email that '
-            'owns this token (an API token authenticates as EMAIL + token, '
-            'not username + token)'
-        )
-    if 'api.github.com' in lowered or 'github.com' in lowered:
-        return _github_permission_hint(lowered)
-    if (
-        'dev.azure.com' in lowered or '.visualstudio.com' in lowered
-        or 'tf400813' in lowered  # Azure DevOps (incl. on-prem): "not authorized"
-    ):
-        return (
-            ' — check AZURE_API_TOKEN: a personal access token for this '
-            'organization with the Code (Read & Write) scope, not expired'
-        )
-    if '401' in text and 'unauthorized' in text.lower():
-        return (
-            ' — check the provider token, and that BITBUCKET_API_EMAIL is set '
-            'when the token is an Atlassian API token'
-        )
-    return ''
-
-
-def _github_permission_hint(lowered: str) -> str:
-    """GitHub refuses on SCOPE far more often than on a bad token.
-
-    And it hides the difference: a token that cannot write to a repository
-    gets **404 Not Found** on ``POST /repos/…/pulls``, not 403 — GitHub
-    will not confirm a repository exists to a caller that cannot see it. So
-    the one error an operator is most likely to hit is also the one that
-    reads as "kato is asking for the wrong URL".
-
-    Reported as "for github it is not creating PRs at all by my token… it
-    works on bitbucket" — a Bitbucket token needs no equivalent grant, so
-    the same setup works there and silently does nothing here.
-    """
-    grants = (
-        'a classic token needs the `repo` scope; a fine-grained token needs '
-        'this repository selected plus Contents: Read and write, Pull '
-        'requests: Read and write, and Metadata: Read'
-    )
-    if '404' in lowered:
-        return (
-            ' — GitHub answers 404 (not 403) when a token cannot WRITE to a '
-            f'repository, so this is almost always a permissions gap: {grants}'
-        )
-    if '403' in lowered:
-        return f' — the GitHub token is missing a permission: {grants}'
-    if '401' in lowered:
-        return (
-            ' — the GitHub token was rejected outright: check GITHUB_API_TOKEN '
-            'is set and has not expired'
-        )
-    return ''
 
 
 def _is_permanent_auth_failure(exc) -> bool:
@@ -1615,7 +1538,7 @@ class TaskPublishService(object):
                 repository, source_branch=branch_name,
             ) or [], ''
         except Exception as exc:
-            hint = _auth_hint_for(exc)
+            hint = refusal_hint(exc)
             self.logger.warning(
                 'PR lookup failed for repository %s (branch %s): %s — '
                 'treating as no PR%s',

@@ -115,7 +115,10 @@ export const CREDENTIAL_GUIDES = {
     steps: [
       'Sign in at id.atlassian.com with the Atlassian account behind your Bitbucket user.',
       'Open Security → Create and manage API tokens.',
-      'Click Create API token with scopes, pick Bitbucket, and grant read + write on repositories, pull requests and issues.',
+      'Click Create API token with scopes, pick Bitbucket, and tick read:repository:bitbucket, write:repository:bitbucket, '
+        + 'read:pullrequest:bitbucket and write:pullrequest:bitbucket (plus read:issue:bitbucket and write:issue:bitbucket only '
+        + 'when Bitbucket is also your task provider). Repository scopes alone cannot read pull requests, and a token\'s '
+        + 'scopes cannot be changed later — a missing one means a new token.',
       'Copy the token — Atlassian shows it only once — and paste it above.',
       'Fill Username with your Bitbucket username and API email with that Atlassian account\'s email — Bitbucket needs both alongside the token.',
     ],

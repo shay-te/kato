@@ -13,6 +13,9 @@ save, and the startup loop that keeps retrying a start that could not connect.
 * The saved connection settings differ from the ones kato started with →
   kato restarts itself to use them (``restarting``) — unless an agent is
   working, which a restart would cut off (``restart_needed``, naming them).
+  Then kato restarts BY ITSELF the moment none is mid-turn
+  (``restart_when_free_every``): left to the operator, the banner kept saying
+  Bitbucket refused kato after Test connection had passed (2026-11-15).
 * Otherwise kato runs its own connection check again now (``checked``). That
   check reports into the one connection status (``connection_health``) the
   banner reads — so the banner follows what kato itself can reach.
@@ -21,6 +24,8 @@ save, and the startup loop that keeps retrying a start that could not connect.
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from collections.abc import Callable, Mapping
 
 # Settings the clients are built from at start: changing one needs a restart.
@@ -52,11 +57,19 @@ class ConnectionRecheck(object):
         saved_settings: Callable[[], Mapping[str, str]],
         working_tasks: Callable[[], list[str]],
         restart: Callable[[], None],
+        restart_when_free_every: float | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._check = check
         self._saved_settings = saved_settings
         self._working_tasks = working_tasks
         self._restart = restart
+        # How often to look whether the agents are free, for a restart that had
+        # to wait for them; None = never restart by itself (the caller decides).
+        self._free_every = restart_when_free_every
+        self._sleep = sleep
+        self._waiting_lock = threading.Lock()
+        self._waiting = False
         # What kato started with: the clients in this process were built from it.
         self._started_with = self._fingerprint()
 
@@ -69,8 +82,11 @@ class ConnectionRecheck(object):
         if self.settings_changed():
             working = list(self._working_tasks())
             if working:
+                by_itself = self._restart_once_free()
+                lead = ('kato restarts by itself to use the new settings once these finish their turn: '
+                        if by_itself else 'restart kato to use the new settings once these finish: ')
                 return {'status': RESTART_NEEDED, 'ok': False, 'working': working,
-                        'error': 'restart kato to use the new settings once these finish: ' + ', '.join(working)}
+                        'restarts_when_free': by_itself, 'error': lead + ', '.join(working)}
             self._restart()
             return {'status': RESTARTING, 'ok': True, 'working': [], 'error': ''}
         try:
@@ -78,6 +94,33 @@ class ConnectionRecheck(object):
         except Exception as exc:  # noqa: BLE001 - the check's failure is the answer
             return {'status': CHECKED, 'ok': False, 'working': [], 'error': str(exc) or exc.__class__.__name__}
         return {'status': CHECKED, 'ok': True, 'working': [], 'error': ''}
+
+    def _restart_once_free(self) -> bool:
+        """Start (once) the wait that restarts kato when no agent is mid-turn."""
+        if not self._free_every:
+            return False
+        with self._waiting_lock:
+            if self._waiting:
+                return True
+            self._waiting = True
+        threading.Thread(target=self._wait_then_restart, name='connection-restart-when-free', daemon=True).start()
+        return True
+
+    def _wait_then_restart(self) -> None:
+        try:
+            # Saved back to what kato runs with: nothing left to apply.
+            while self.settings_changed():
+                try:
+                    free = not list(self._working_tasks())
+                except Exception:  # noqa: BLE001 - "cannot tell" is never "free"
+                    free = False
+                if free:
+                    self._restart()
+                    return
+                self._sleep(self._free_every)
+        finally:
+            with self._waiting_lock:
+                self._waiting = False
 
     def _fingerprint(self) -> str:
         try:

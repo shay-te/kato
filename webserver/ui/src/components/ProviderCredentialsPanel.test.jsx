@@ -187,6 +187,10 @@ describe('ProviderCredentialsPanel — Test connection (Task provider)', () => {
       [{ ok: true, body: { status: 'checked', ok: true } }, 'Kato checked it too — it gets through.'],
       [{ ok: true, body: { status: 'checked', ok: false, error: '401' } }, "Kato still can't get through: 401"],
       [{ ok: true, body: { status: 'restart_needed', ok: false, working: ['UNA-1'] } }, 'agents are working now (UNA-1)'],
+      [{ ok: true, body: { status: 'restart_needed', ok: false, working: ['UNA-3462'], restarts_when_free: true } },
+        'kato restarts by itself to use it as soon as UNA-3462 finishes its turn'],
+      [{ ok: true, body: { status: 'restart_needed', ok: false, working: ['UNA-1', 'UNA-2'], restarts_when_free: true } },
+        'as soon as UNA-1, UNA-2 finish their turns'],
       [{ ok: false, error: 'offline' }, 'Kato could not be asked: offline'],
     ];
     render(<TaskProviderSettingsPanel />);

@@ -94,6 +94,85 @@ class ConnectionRecheckTests(unittest.TestCase):
         self.assertIn('UNA-1', answer['error'])
         self.assertEqual(kato.restarts, 0)
 
+    def _waiting_recheck(self, kato, on_sleep):
+        return ConnectionRecheck(
+            check=kato._check, saved_settings=lambda: dict(kato.settings),
+            working_tasks=lambda: list(kato.working), restart=kato._restart,
+            restart_when_free_every=5.0, sleep=on_sleep,
+        )
+
+    def _wait_for(self, condition) -> None:
+        import time
+        for _ in range(200):
+            if condition():
+                return
+            time.sleep(0.01)
+        self.fail('the restart-when-free wait never got there')
+
+    def test_kato_restarts_by_itself_once_the_working_agent_is_free(self) -> None:
+        # 2026-11-15: Test connection passed, the save waited for UNA-3462, and
+        # the banner went on refusing until the operator restarted by hand.
+        kato = Recorder()
+        looks = []
+
+        def sleep(seconds):
+            looks.append(seconds)
+            if len(looks) == 2:
+                kato.working = []  # UNA-3462's turn ends
+        recheck = self._waiting_recheck(kato, sleep)
+        kato.settings['BITBUCKET_API_TOKEN'] = 'new'
+        kato.working = ['UNA-3462']
+        answer = recheck.recheck()
+        self.assertEqual((answer['status'], answer['restarts_when_free']), (RESTART_NEEDED, True))
+        self.assertIn('restarts by itself', answer['error'])
+        self.assertIn('UNA-3462', answer['error'])
+        self._wait_for(lambda: kato.restarts == 1)
+        self.assertEqual(looks, [5.0, 5.0])
+        # Asked again while it waits: still one wait, never two restarts.
+        self._wait_for(lambda: not recheck._waiting)
+        self.assertEqual(kato.restarts, 1)
+
+    def test_one_wait_however_often_it_is_asked(self) -> None:
+        import threading
+        kato = Recorder()
+        release = threading.Event()
+        recheck = self._waiting_recheck(kato, lambda _s: release.wait(2))
+        kato.settings['JIRA_API_TOKEN'] = 'new'
+        kato.working = ['UNA-1']
+        for _ in range(5):
+            self.assertTrue(recheck.recheck()['restarts_when_free'])
+        self.assertEqual(sum(t.name == 'connection-restart-when-free' for t in threading.enumerate()), 1)
+        kato.working = []
+        release.set()
+        self._wait_for(lambda: kato.restarts == 1)
+
+    def test_settings_saved_back_or_an_unreadable_agent_list_never_restart(self) -> None:
+        kato = Recorder()
+        looks = []
+
+        def sleep(_seconds):
+            looks.append(1)
+            if len(looks) == 2:
+                kato.settings['JIRA_API_TOKEN'] = ''  # saved back to what kato runs with
+        recheck = ConnectionRecheck(
+            check=kato._check, saved_settings=lambda: dict(kato.settings),
+            working_tasks=Mock(side_effect=[['UNA-1'], RuntimeError('cannot tell'), RuntimeError('cannot tell')]),
+            restart=kato._restart, restart_when_free_every=5.0, sleep=sleep,
+        )
+        kato.settings['JIRA_API_TOKEN'] = 'new'
+        recheck.recheck()
+        self._wait_for(lambda: not recheck._waiting)
+        self.assertEqual(kato.restarts, 0)
+
+    def test_without_the_wait_switched_on_the_operator_restarts(self) -> None:
+        kato = Recorder()
+        recheck = kato.recheck()
+        kato.settings['JIRA_API_TOKEN'] = 'new'
+        kato.working = ['UNA-1']
+        answer = recheck.recheck()
+        self.assertFalse(answer['restarts_when_free'])
+        self.assertIn('restart kato to use the new settings', answer['error'])
+
     def test_an_unreadable_settings_file_is_never_a_change(self) -> None:
         kato = Recorder()
         recheck = kato.recheck()

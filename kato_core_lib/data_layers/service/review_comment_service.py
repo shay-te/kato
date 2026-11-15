@@ -10,6 +10,7 @@ from git_core_lib.git_core_lib.helpers.repository_discovery_utils import azure_d
 from agent_core_lib.agent_core_lib.helpers.project_conventions_utils import (
     repository_conventions_text,
 )
+from kato_core_lib.helpers.git_host_refusal_utils import refusal_hint
 from kato_core_lib.data_layers.data.fields import (
     ImplementationFields,
     PullRequestFields,
@@ -530,8 +531,8 @@ class ReviewCommentService(Service):
         except Exception as exc:
             self.logger.warning(
                 'review scan: could not look up the pull requests of task %s in %s '
-                '(branch %s): %s',
-                task.id, getattr(repository, 'id', ''), branch_name, exc,
+                '(branch %s): %s%s',
+                task.id, getattr(repository, 'id', ''), branch_name, exc, refusal_hint(exc),
             )
             self._report_git_host(repository, exc)
             return []
@@ -541,8 +542,10 @@ class ReviewCommentService(Service):
     def _report_git_host(self, repository, error: Exception | None = None) -> None:
         """Tell connection_health how ``repository``'s git host answered."""
         provider = text_from_attr(repository, 'provider')
+        # The banner says what to change, not only the host's status line.
+        said = f'{error}{refusal_hint(error)}' if error is not None else None
         report(
-            self._connection_health, git_host_key(provider), error=error,
+            self._connection_health, git_host_key(provider), error=said,
             label=provider_label(provider) if provider else 'the git host', kind='git_host',
         )
 

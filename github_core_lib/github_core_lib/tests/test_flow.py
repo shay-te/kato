@@ -240,7 +240,8 @@ class F2_PullRequestReviewFlow(unittest.TestCase):
         # A — validate.
         with patch.object(client, '_get', return_value=mock_response()) as mock_get:
             client.validate_connection(OWNER, REPO)
-        mock_get.assert_called_once_with(f'/repos/{OWNER}/{REPO}')
+        self.assertEqual([c.args[0] for c in mock_get.call_args_list],
+                         [f'/repos/{OWNER}/{REPO}', f'/repos/{OWNER}/{REPO}/pulls'])
 
         # B — open a pull request.
         create_resp = mock_response(

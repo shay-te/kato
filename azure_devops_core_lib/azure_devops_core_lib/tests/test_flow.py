@@ -89,6 +89,7 @@ class PullRequestLifecycleFlow(unittest.TestCase):
             [(call['verb'], call['path']) for call in azure.session.calls],
             [
                 ('GET', REPO_PATH),
+                ('GET', f'{REPO_PATH}/pullrequests'),
                 ('GET', REPO_PATH),
                 ('POST', f'{REPO_PATH}/pullrequests'),
                 ('GET', f'{REPO_PATH}/pullrequests'),

@@ -38,7 +38,7 @@ class AuthTests(unittest.TestCase):
 
     def test_a_pat_is_sent_as_basic_with_an_empty_user_name(self) -> None:
         # Bearer is for Entra ID tokens only; a PAT sent that way is a 401.
-        azure = client({('GET', REPO_PATH): FakeResponse({})})
+        azure = client({('GET', REPO_PATH): FakeResponse({}), ('GET', f'{REPO_PATH}/pullrequests'): FakeResponse({'value': []})})
         azure.validate_connection(OWNER, SLUG)
         self.assertEqual(
             azure.session.calls[0]['kwargs']['headers'],
@@ -53,16 +53,18 @@ class AuthTests(unittest.TestCase):
 class PathTests(unittest.TestCase):
 
     def test_each_segment_is_quoted_and_the_slashes_kept(self) -> None:
-        azure = client({('GET', REPO_PATH): FakeResponse({})})
+        azure = client({('GET', REPO_PATH): FakeResponse({}), ('GET', f'{REPO_PATH}/pullrequests'): FakeResponse({'value': []})})
         azure.validate_connection(OWNER, SLUG)
-        self.assertEqual(azure.session.paths(), [REPO_PATH])
+        # The repository, then its pull requests — what the review scan lists.
+        self.assertEqual(azure.session.paths(), [REPO_PATH, f'{REPO_PATH}/pullrequests'])
         self.assertEqual(azure.session.calls[0]['kwargs']['params'], {'api-version': '7.1'})
+        self.assertEqual(azure.session.calls[1]['kwargs']['params'], {'api-version': '7.1', '$top': 1})
 
     def test_an_on_prem_owner_keeps_its_collection_and_virtual_directory(self) -> None:
         path = '/tfs/Coll/proj/_apis/git/repositories/api'
-        azure = client({('GET', path): FakeResponse({})})
+        azure = client({('GET', path): FakeResponse({}), ('GET', f'{path}/pullrequests'): FakeResponse({'value': []})})
         azure.validate_connection('tfs/Coll/proj', 'api')
-        self.assertEqual(azure.session.paths(), [path])
+        self.assertEqual(azure.session.paths(), [path, f'{path}/pullrequests'])
 
 
 class ValidateConnectionTests(unittest.TestCase):
@@ -73,6 +75,16 @@ class ValidateConnectionTests(unittest.TestCase):
             status_code=404,
         )})
         with self.assertRaisesRegex(HTTPError, 'TF200016'):
+            azure.validate_connection(OWNER, SLUG)
+
+    def test_a_token_that_cannot_read_pull_requests_fails_the_check(self) -> None:
+        azure = client({
+            ('GET', REPO_PATH): FakeResponse({}),
+            ('GET', f'{REPO_PATH}/pullrequests'): FakeResponse(
+                {'message': 'TF401027: You need the Git \'PullRequestContribute\' permission.'}, status_code=403,
+            ),
+        })
+        with self.assertRaisesRegex(HTTPError, 'TF401027'):
             azure.validate_connection(OWNER, SLUG)
 
 

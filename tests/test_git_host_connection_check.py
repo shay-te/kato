@@ -66,7 +66,8 @@ class HostAnswerTests(unittest.TestCase):
         )
         answer = check.host_answer(service, 'bitbucket')
         self.assertFalse(answer['ok'])
-        self.assertEqual(answer['error'], 'api: ValueError\nweb: 401 Unauthorized: the app password was refused')
+        self.assertEqual(answer['error'], 'api: ValueError\nweb: 401 Unauthorized: the app password was refused'
+                                          ' — the git host rejected the token: check it in Settings → Git provider')
         self.assertEqual(answer['message'], '')
 
     def test_at_most_a_few_repositories_are_asked(self) -> None:

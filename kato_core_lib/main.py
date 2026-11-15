@@ -476,6 +476,8 @@ def _finalize_configured_boot(
 # How often a start that could not connect looks for an operator's fix saved in
 # Settings while it waits to retry (a local file read, no network).
 _SAVED_SETTINGS_POLL_SECONDS = 2.0
+# A restart for new connection settings that waits for the agents: how often it looks.
+_RESTART_WHEN_FREE_POLL_SECONDS = 5.0
 
 
 def _wait_or_apply_saved_settings(app, sleep_fn=time.sleep) -> bool:
@@ -515,6 +517,7 @@ def _ensure_connection_recheck(app):
             saved_settings=read_kato_settings,
             working_tasks=lambda: running_task_ids(getattr(app, 'session_manager', None)),
             restart=lambda: _restart_soon(app),
+            restart_when_free_every=_RESTART_WHEN_FREE_POLL_SECONDS,
         )
         app.connection_recheck = recheck
     flask_app = getattr(app, 'planning_flask_app', None)

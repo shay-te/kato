@@ -118,20 +118,27 @@ class KatoSettingsStoreTests(unittest.TestCase):
             os.environ.pop('KATO_FRESH_KEY', None)
             added = load_kato_settings_into_environ()
             self.assertEqual(os.environ.get('KATO_FRESH_KEY'), 'from-settings')
-        self.assertEqual(added, 1)
+        self.assertEqual(added, ['KATO_FRESH_KEY'])
 
-    def test_load_into_environ_does_not_override_shell(self) -> None:
-        # The load-order contract: a real env var (shell, or already
-        # set by an earlier loader) wins. settings.json must NOT
-        # clobber it.
+    def test_load_into_environ_overrides_the_shell(self) -> None:
+        # The load-order contract (flipped 2026-11-15): a value saved in
+        # Settings wins over the environment kato was started from — a stale
+        # .env the editor loads into the terminal kept an old token over the
+        # one in Settings ("no .env, only kato settings").
         self.path.write_text(
             json.dumps({'KATO_PINNED': 'from-settings'}),
             encoding='utf-8',
         )
         with patch.dict(os.environ, self._env({'KATO_PINNED': 'from-shell'})):
             added = load_kato_settings_into_environ()
+            self.assertEqual(os.environ.get('KATO_PINNED'), 'from-settings')
+        self.assertEqual(added, ['KATO_PINNED'])
+
+    def test_load_into_environ_leaves_what_settings_do_not_set(self) -> None:
+        self.path.write_text(json.dumps({'KATO_OTHER': 'x'}), encoding='utf-8')
+        with patch.dict(os.environ, self._env({'KATO_PINNED': 'from-shell'})):
+            load_kato_settings_into_environ()
             self.assertEqual(os.environ.get('KATO_PINNED'), 'from-shell')
-        self.assertEqual(added, 0)
 
     def test_load_into_environ_never_exports_a_cleared_key(self) -> None:
         """A cleared field must reach the config layer as UNSET, not as ''.
@@ -161,7 +168,7 @@ class KatoSettingsStoreTests(unittest.TestCase):
             added = load_kato_settings_into_environ()
             self.assertNotIn('YOUTRACK_PROGRESS_STATE_FIELD', os.environ)
             self.assertEqual(os.environ.get('KATO_REAL_VALUE'), 'kept')
-        self.assertEqual(added, 1)
+        self.assertEqual(added, ['KATO_REAL_VALUE'])
 
     def test_a_cleared_key_does_not_unset_a_real_shell_value(self) -> None:
         # Skipping the export must not become "delete what the shell set".

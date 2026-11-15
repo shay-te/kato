@@ -114,7 +114,11 @@ mutation($threadId: ID!) {
         super().__init__(base_url, token, timeout=30, max_retries=max_retries)
 
     def validate_connection(self, repo_owner: str, repo_slug: str) -> None:
+        """The repository, then its pull requests: reading the repository
+        alone passed a token with no pull request permission."""
         response = self._get_with_retry(f'/repos/{repo_owner}/{repo_slug}')
+        self.raise_for_status_with_detail(response)
+        response = self._get_with_retry(f'/repos/{repo_owner}/{repo_slug}/pulls', params={'per_page': 1})
         self.raise_for_status_with_detail(response)
 
     def create_pull_request(

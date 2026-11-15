@@ -569,7 +569,8 @@ conventions used to answer "restart required" though they never needed one.
   entry), and the banner reads ONLY `connection_problems` — never `setup_error`. `connection_recheck.py`
   `ConnectionRecheck` (built in `main._ensure_connection_recheck`, `POST /api/connections/recheck`): saved
   connection settings differ from what kato started with → restart (`_restart_soon`, answer first), unless an agent
-  is mid-turn (`restart_needed`); else kato's own check runs again. Callers: a good Test of the SAVED values (unsaved
+  is mid-turn (`restart_needed`) — then it restarts BY ITSELF the moment none is (`restart_when_free_every`, one wait
+  however often asked; settings saved back or an unreadable agent list never restart); else kato's own check runs again. Callers: a good Test of the SAVED values (unsaved
   → "press Save"), every provider Save, and the startup retry loop (`_wait_or_apply_saved_settings`, every 2s, so a
   fix saved while kato cannot connect is used within seconds — it used to retry the boot values forever).
 - **A credential SOURCE is resolved at EVERY boot** (`load_resolved_credentials_into_environ`, first thing in `main`,
@@ -578,6 +579,14 @@ conventions used to answer "restart required" though they never needed one.
   said Connected while every PR failed "missing pull request API token" (KAN-1). A token already in the env wins; a
   restart in place drops the resolved ones (`_RESOLVED_CREDENTIAL_KEYS`) so it resolves again. ONE settings loader:
   `load_kato_settings_into_environ` (an empty env value is unset; main's own raw copy was deleted).
+- **A git host's connection check reads the PULL REQUESTS too, and every refusal says what to change.** Each PR
+  client's `validate_connection` (bitbucket/github/gitlab/azure_devops_core_lib) GETs the repository AND its pull
+  request list (page size 1) — the call the review scan makes. It read the repository only, so a Bitbucket API token
+  with repository scopes passed Test connection and got 403 on every lookup ("what token permissions is missing?").
+  ONE wording for a refusal: `helpers/git_host_refusal_utils.py` `refusal_hint` (Bitbucket 403 → the four scopes
+  `BITBUCKET_TOKEN_SCOPES` + "scopes cannot be added — make a new token"; GitHub 404/403/401; GitLab api scope; Azure
+  Code R&W; Atlassian email), used by the review scan's log + banner, Test connection and the PR step; Settings'
+  Bitbucket help lists the same scopes (a test pins them). Never an env var name in it; never a second copy.
 - **What kato could not reach is ON SCREEN** (operator: "if there is a fail to fetch from Jira the UI says nothing"):
   ONE service, `connection_health.py` `ConnectionHealth` — the scan's task fetch (`_fetch_assigned_tasks`, key
   `tracker`) and the review scan's pull request lookup + comment listing (`git:<host>`) report each try; a 429 pause
@@ -1660,6 +1669,18 @@ token) and the footnote says so. Do not add a second price table or compute cost
 ---
 
 ## Config
+
+**Settings WIN over the environment — ONE rule** (`settings_first_env`, `kato_settings_store_utils.py`): a non-empty
+value in `~/.kato/settings.json` always applies; the environment kato was started from only fills a key Settings leave
+empty (a Docker deployment, a test); empty everywhere is unset (never exported as `""`). A credential SOURCE chosen in
+Settings decides the token — one the environment merely carries is dropped. Every reader goes through it: the boot
+(`load_kato_settings_into_environ`, first thing in `main`), "is kato configured" and Test connection
+(`effective_config_env` / `config_env_with_form`), the value Settings shows (`_resolve_setting`). The `kato up`
+launcher (`scripts/_script_utils.layered_env`) and the desktop sidecar keep stdlib copies, pinned to it by
+`LaunchersAgreeTests`. It was shell-first until 2026-11-15: the editor loads the repo's leftover `.env` into every
+terminal, so an old Bitbucket token outranked the one saved in Settings — Test connection passed, the running kato
+answered 401, and a restart kept the old token (operator: "no .env, only kato settings"). Never bring back a reader
+where the environment beats a saved value.
 
 ```yaml
 kato:
