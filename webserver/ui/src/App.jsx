@@ -16,7 +16,7 @@ import OrchestratorActivityFeed from './components/OrchestratorActivityFeed.jsx'
 import PanelCard from './components/PanelCard.jsx';
 import PlanPane from './components/PlanPane.jsx';
 import ReviewLoopPane from './components/reviewLoop/ReviewLoopPane.jsx';
-import { reviewLoopTabEntries } from './components/reviewLoop/reviewLoopHelpers.js';
+import { closeReviewLoopTabs, reviewLoopTabEntries } from './components/reviewLoop/reviewLoopHelpers.js';
 import NewTaskPane from './components/newTask/NewTaskPane.jsx';
 import { buildNewTaskTabModel } from './components/newTask/newTaskHelpers.js';
 import {
@@ -57,6 +57,8 @@ import { toast, toastResult } from './stores/toastStore.js';
 import { forgottenSubTasksToast } from './components/planQueue/planStepDeleteText.js';
 import { forgottenContainersToast } from './components/taskContainersText.js';
 import { deleteQueue } from './stores/deleteQueueStore.js';
+import { forgottenByDelete, forgottenTasks } from './stores/forgottenTaskStore.js';
+import { vanishedTaskIds } from './utils/vanishedTasks.js';
 import { apiErrorMessage } from './utils/apiError.js';
 import { ChatComposerContext } from './contexts/ChatComposerContext.jsx';
 import { useNotifications } from './hooks/useNotifications.js';
@@ -93,6 +95,7 @@ import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
 import { agentStatusStore } from './stores/agentStatusStore.js';
+import { taskTooltipModelFor } from './utils/taskTooltipModel.js';
 import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
@@ -397,9 +400,33 @@ export default function App() {
   const [tabRevealRequest, setTabRevealRequest] = useState(0);
   const fileTreeFocusRequestRef = useRef(0);
 
+  // Close review-loop tabs. The loop tabs are App-level (not per task), so a
+  // task's own ✕ and a deleted task both come through here; the one on show
+  // moves to its neighbour (``closeReviewLoopTabs``).
+  const dropReviewLoopTabs = useCallback((taskIds) => {
+    const ids = new Set((taskIds || []).map(String));
+    setReviewLoopTabs((prev) => {
+      if (!prev.some((id) => ids.has(id))) { return prev; }
+      setActiveReviewLoopTab((active) => closeReviewLoopTabs(prev, active, ids).active);
+      return closeReviewLoopTabs(prev, '', ids).tabs;
+    });
+  }, []);
+  // Every tab a task that is gone keeps open: its review loop tab, and its
+  // file / plan / task tabs — the set remembered for it, and the strip when
+  // they are the ones on screen. A deleted task's tabs used to stay open
+  // (its review loop tab, always: it is not one of the task's own tabs).
+  const closeTaskTabs = useCallback((taskIds) => {
+    const ids = new Set((taskIds || []).map(String).filter(Boolean));
+    if (!ids.size) { return; }
+    dropReviewLoopTabs([...ids]);
+    for (const id of ids) { delete fileViewByTaskRef.current[id]; }
+    if (openTabsRef.current.some((tab) => ids.has(tab.taskId))) { showFileTabs([], null); }
+  }, [dropReviewLoopTabs]);
+
   // Everything that must happen LOCALLY once the server has forgotten a task.
-  // Extracted so the bulk delete reuses this exact sequence instead of
-  // growing a second, drifting copy of it.
+  // Every delete reaches it through ``forgottenTasks`` (a task's ✕, the bulk
+  // delete, Hand over's "also delete", a plan's sub-tasks, the plan board's
+  // card delete), so none grows a second, drifting copy of it.
   const purgeForgottenTask = useCallback((taskId) => {
     // Forget the task in the shared view-data cache: purges its store slices
     // (tree / diff / comments / publish / PR) AND fans out to the registered
@@ -419,14 +446,21 @@ export default function App() {
       // no longer exists.
       clearLastActiveTask();
     }
-    delete fileViewByTaskRef.current[taskId];
-    if (openTabsRef.current.some((tab) => tab.taskId === taskId)) {
-      openTabsRef.current = [];
-      activeTabKeyRef.current = null;
-      setOpenTabs([]);
-      setActiveTabKey(null);
-    }
-  }, [activeTaskId]);
+    closeTaskTabs([taskId]);
+  }, [activeTaskId, closeTaskTabs]);
+  useEffect(() => forgottenTasks.subscribe((taskIds) => {
+    for (const taskId of taskIds) { purgeForgottenTask(taskId); }
+  }), [purgeForgottenTask]);
+  // A task that is gone keeps no tab open, however it went: a delete here
+  // closes them at once (above); this catches the rest — deleted in another
+  // window, or before deleting closed them (a loop tab restored from the
+  // browser's storage). Kato's tab list is the record of what exists.
+  useEffect(() => {
+    if (!sessionsLoaded) { return; }
+    const tracked = [...reviewLoopTabs, ...Object.keys(fileViewByTaskRef.current)];
+    const gone = vanishedTaskIds(tracked, sessions);
+    if (gone.length) { closeTaskTabs(gone); }
+  }, [sessions, sessionsLoaded, reviewLoopTabs, closeTaskTabs]);
 
   const doForgetTask = useCallback(async (taskId, markDone = false) => {
     if (!taskId) { return; }
@@ -437,6 +471,9 @@ export default function App() {
     // for but the ticket couldn't be moved to done — in THAT case the
     // server deleted nothing, so the tab is still there to retry from.
     const result = await forgetTaskWorkspace(taskId, { markDone });
+    // What went (the task, and the sub-tasks its plan took with it — even a
+    // failed delete may have taken those first) is cleared from the UI.
+    forgottenTasks.announce(forgottenByDelete(taskId, result));
     if (!result.ok) {
       // Route the error text through the canonical apiErrorMessage
       // precedence (body.error → result.error → fallback) instead of
@@ -453,7 +490,6 @@ export default function App() {
       refresh();
       return;
     }
-    purgeForgottenTask(taskId);
     refresh();
     toast.show({
       kind: 'success',
@@ -471,7 +507,7 @@ export default function App() {
     // fully clean up.
     const subTasks = forgottenSubTasksToast(result.body?.sub_tasks);
     if (subTasks) { toastResult(subTasks); }
-  }, [purgeForgottenTask, refresh]);
+  }, [refresh]);
 
   // ----- bulk delete -----
   //
@@ -498,8 +534,8 @@ export default function App() {
           // network round trip with retry/backoff that can take minutes per
           // task, and the operator said they update the board themselves.
           const result = await forgetTaskWorkspace(taskId, { markDone: false });
+          forgottenTasks.announce(forgottenByDelete(taskId, result));
           if (result.ok) {
-            purgeForgottenTask(taskId);
             deleteQueue.succeeded(taskId);
           } else {
             deleteQueue.failed(taskId, apiErrorMessage(result, 'delete failed'));
@@ -523,7 +559,7 @@ export default function App() {
         ? `${done} deleted, ${failed} failed — the failed rows stay listed with their reason.`
         : `${done} task${done === 1 ? '' : 's'} deleted.`,
     });
-  }, [purgeForgottenTask, refresh]);
+  }, [refresh]);
 
   const confirmForgetTask = useCallback((markDone = false) => {
     const taskId = forgetCandidate?.task_id;
@@ -713,6 +749,12 @@ export default function App() {
     );
   }, [attention.taskIds, sessions, pendingPermissionTaskIds]);
   const activeNeedsAttention = !!activeTaskId && attentionTaskIds.has(activeTaskId);
+  // A review loop's tab names its task with the tasks menu row's own card.
+  const reviewLoopTaskCard = useCallback((taskId) => {
+    const session = sessions.find((entry) => entry.task_id === taskId);
+    if (!session) { return null; }
+    return taskTooltipModelFor(session, agentStatuses[taskId] || null, attentionTaskIds.has(taskId), 'Review loop of');
+  }, [sessions, agentStatuses, attentionTaskIds]);
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
   useEffect(() => {
@@ -722,11 +764,7 @@ export default function App() {
     const tabs = remembered
       ? remembered.tabs.map((tab) => ({ ...tab, restoreViewState: true }))
       : [];
-    const restoredActiveKey = remembered ? remembered.activeKey : null;
-    openTabsRef.current = tabs;
-    activeTabKeyRef.current = restoredActiveKey;
-    setOpenTabs(tabs);
-    setActiveTabKey(restoredActiveKey);
+    showFileTabs(tabs, remembered ? remembered.activeKey : null);
     // The plan overlay is per task, so it closes on a switch. A loop tab is
     // NOT per task (``activeReviewLoopTab`` is left alone), so the loop the
     // operator was watching keeps showing across the switch.
@@ -737,6 +775,21 @@ export default function App() {
     if (!taskId) { return; }
     fileViewByTaskRef.current[taskId] = { tabs, activeKey };
   }
+  // Put ``tabs`` on the strip with ``activeKey`` on show — the ref and the
+  // state together, so the handlers (which read the ref) and the render agree.
+  function showFileTabs(tabs, activeKey) {
+    openTabsRef.current = tabs;
+    activeTabKeyRef.current = activeKey;
+    setOpenTabs(tabs);
+    setActiveTabKey(activeKey);
+  }
+  // Every tab change of the task on screen: shown, and remembered for when the
+  // operator comes back to it. Flushing the ref into state also keeps a
+  // view-state patch sitting in the ref from being lost on the re-render.
+  const applyTabs = useCallback((tabs, activeKey) => {
+    rememberTabsView(activeTaskId, tabs, activeKey);
+    showFileTabs(tabs, activeKey);
+  }, [activeTaskId]);
   const handleOpenFile = useCallback((info) => {
     // ``info`` shape from FilesTab: { absolutePath, relativePath, repoId }.
     // ``repoId`` is required for the comments POST (the backend keys
@@ -747,10 +800,7 @@ export default function App() {
       if (activeTaskId) {
         delete fileViewByTaskRef.current[activeTaskId];
       }
-      openTabsRef.current = [];
-      activeTabKeyRef.current = null;
-      setOpenTabs([]);
-      setActiveTabKey(null);
+      showFileTabs([], null);
       return;
     }
     // Opening a file must take over the centre column. If the operator had the
@@ -788,23 +838,8 @@ export default function App() {
     // the middle of the pinned block whenever a pinned tab is active. Pins
     // are only useful as a stable block at the front, so re-apply the split
     // here; it is a stable partition, so nothing else moves.
-    const tabs = sortPinnedFirst(placed);
-    openTabsRef.current = tabs;
-    activeTabKeyRef.current = activeKey;
-    rememberTabsView(activeTaskId, tabs, activeKey);
-    setOpenTabs(tabs);
-    setActiveTabKey(activeKey);
-  }, [activeTaskId]);
-  // Tab context-menu actions. All three go through the same
-  // ref-then-state flush the other tab mutations use, so a view-state
-  // patch sitting in the ref is not lost when we re-render.
-  const applyTabs = useCallback((tabs, activeKey) => {
-    openTabsRef.current = tabs;
-    activeTabKeyRef.current = activeKey;
-    rememberTabsView(activeTaskId, tabs, activeKey);
-    setOpenTabs(tabs);
-    setActiveTabKey(activeKey);
-  }, [activeTaskId]);
+    applyTabs(sortPinnedFirst(placed), activeKey);
+  }, [activeTaskId, applyTabs]);
 
   // The file tab on show, or '' while a loop / draft tab is.
   const shownFileKey = useCallback(
@@ -869,11 +904,8 @@ export default function App() {
     setCenterOverlay(null);
     setActiveReviewLoopTab('');
     setNewTaskActive(false);
-    activeTabKeyRef.current = key;
-    rememberTabsView(activeTaskId, openTabsRef.current, key);
-    setOpenTabs(openTabsRef.current);
-    setActiveTabKey(key);
-  }, [activeTaskId]);
+    applyTabs(openTabsRef.current, key);
+  }, [applyTabs]);
   const handleCloseFileTab = useCallback((key) => {
     const neighbour = key === shownFileKey() ? showNeighbourOf(key, [key]) : '';
     // Not on show: ``closeTab`` keeps (or picks) the file behind the loop.
@@ -944,17 +976,8 @@ export default function App() {
   // that slid into its slot, else the one before it); the empty string means
   // the centre falls back to the file view.
   const closeReviewLoopTab = useCallback((taskId) => {
-    const id = String(taskId || '');
-    setReviewLoopTabs((prev) => {
-      const index = prev.indexOf(id);
-      if (index === -1) { return prev; }
-      const next = prev.filter((item) => item !== id);
-      setActiveReviewLoopTab((active) => (
-        active !== id ? active : (next[index] || next[index - 1] || '')
-      ));
-      return next;
-    });
-  }, []);
+    dropReviewLoopTabs([String(taskId || '')]);
+  }, [dropReviewLoopTabs]);
   // One place persists the set (task switches and reload survive from here),
   // so the handlers above only touch state.
   useEffect(() => {
@@ -1020,11 +1043,13 @@ export default function App() {
   const handleToggleMarkdownView = useCallback((key) => {
     const tab = findTab(openTabsRef.current, key);
     if (!tab) { return; }
-    setOpenTabs(patchTab(
+    // Through the ref like every other change: set on the state alone, the
+    // next tab switch (which reads the ref) undid the operator's pick.
+    applyTabs(patchTab(
       openTabsRef.current, key,
       { mdView: markdownViewFor(tab) === 'preview' ? 'source' : 'preview' },
-    ));
-  }, []);
+    ), activeTabKeyRef.current);
+  }, [applyTabs]);
   const handleFocusFileInTree = useCallback((target) => {
     const relativePath = String(target?.relativePath || target?.absolutePath || '').trim();
     if (!relativePath) { return; }
@@ -1158,6 +1183,7 @@ export default function App() {
           activeReviewLoopTab={activeReviewLoopTab}
           onSelectReviewLoop={selectReviewLoopTab}
           onCloseReviewLoop={closeReviewLoopTab}
+          taskCardFor={reviewLoopTaskCard}
           newTaskTab={newTaskTab}
           onSelectNewTask={openNewTask}
           onCloseNewTask={closeNewTask}

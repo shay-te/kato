@@ -23,6 +23,7 @@ import {
   reviewLoopRoundsText,
   reviewLoopTabEntries,
   buildReviewLoopTabModels,
+  closeReviewLoopTabs,
   reviewLoopSentence,
   reviewLoopSignature,
   reviewLoopSteps,
@@ -651,4 +652,19 @@ test('a loop just resumed keeps its rounds and id, and picks up — never its la
   assert.equal(loop.resume, '');
   assert.equal(reviewLoopSignature(loop) === reviewLoopSignature(stuck), false);
   assert.deepEqual(reviewLoopSteps(loop, NOW).map(({ label }) => label), ['Picking up where it stopped']);
+});
+
+test('closing loop tabs: the shown one moves to the tab that slid into its slot, else the one before', () => {
+  // Not the shown one: the shown one stays.
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B', 'C'], 'A', ['B']), { tabs: ['A', 'C'], active: 'A' });
+  // The shown one: the next tab, else the one before, else none.
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B', 'C'], 'B', ['B']), { tabs: ['A', 'C'], active: 'C' });
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B', 'C'], 'C', ['C']), { tabs: ['A', 'B'], active: 'B' });
+  assert.deepEqual(closeReviewLoopTabs(['A'], 'A', ['A']), { tabs: [], active: '' });
+  // Several at once (a deleted task and the sub-tasks its plan took): never
+  // lands on another tab that is closing too.
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B', 'C', 'D'], 'B', ['B', 'C']), { tabs: ['A', 'D'], active: 'D' });
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B', 'C'], 'B', ['B', 'C']), { tabs: ['A'], active: 'A' });
+  // Nothing on show stays nothing; a set works as well as a list.
+  assert.deepEqual(closeReviewLoopTabs(['A', 'B'], '', new Set(['A'])), { tabs: ['B'], active: '' });
 });

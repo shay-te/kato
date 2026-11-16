@@ -1637,6 +1637,13 @@ token) and the footnote says so. Do not add a second price table or compute cost
   Open task / Delete anyway…, and the delete dialog's red callout names the same repos. A clone git cannot
   read in 15s, a failed request, or no service = "could not check" → warns, NEVER "clean". Not
   `has_changes_to_push`: that is a button hint with a 3s budget where False means "none found yet".
+- **A task that is gone keeps no tab open** (files, plan board, task definition, review loop). Every delete announces
+  what went on `stores/forgottenTaskStore.js` (`forgottenTasks.announce(forgottenByDelete(id, result))`: the task +
+  the sub-tasks its plan took with it that really went) — the tab's ✕, Hand over's "also delete", the bulk delete,
+  the plan board's card delete — and App's ONE `purgeForgottenTask` clears its tabs (`closeTaskTabs`), caches and
+  drafts. The review loop tabs are App-level, not the task's own, so a deleted task's loop tab used to stay open.
+  Catch-all: a task kato's tab list stops naming (deleted elsewhere, or before this) loses its tabs once the list
+  is loaded (`vanishedTaskIds`; an empty list proves nothing). A new delete path announces; never a second purge.
 - Task: all repos unchanged → `NO_CHANGES` status, task NOT moved to "In Review"
 - Review answer: thread never auto-resolved, reply always prefixed with visible "no code changed" disclaimer
 - **Green means the work landed.** `_push_problems(push_result)` is the ONE answer to "what did not reach the remote":
@@ -1664,6 +1671,11 @@ token) and the footnote says so. Do not add a second price table or compute cost
   edit". Every turn now lists them (`refusedToolsText`, a SYSTEM bubble). A turn limit is only ever there because
   one was set — `KATO_CLAUDE_MAX_TURNS` (per REPLY, chats included; empty = none) or an inherited
   `CLAUDE_CODE_MAX_TURNS` — and the max-turns bubble says where.
+- **A git host's error PAGE is read as what it says.** A hosted server whose own server-side check fails can send
+  its HTML error page down a push; git prints it all after `remote:`, and a failure keeps the last lines — so the
+  operator got "106 earlier line(s) omitted" and `</body></html>` above "(pre-receive hook declined)", which reads
+  like a rule refusing the push. `git_core_lib/helpers/remote_web_page_utils.py` collapses such a page to one line of
+  its visible text with its links (`_condense_git_output`): "the server sent an error page: Something went wrong…".
 - **A failed turn says why.** `failure_reason` (`result`, else `errors`, which a turn that fails during execution
   sends with no `result`), then `failure_detail` (the last stderr lines, attached before the event is published),
   then `resultFailureText`'s words per subtype. Never the bare word "failed".

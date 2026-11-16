@@ -50,12 +50,12 @@ class RepositoryIgnoredByConfigError(ValueError):
     """
 
 
-
 def _with_article(name: str) -> str:
     """"a GitHub", "an Azure DevOps"."""
     return f'{"an" if name[:1].upper() in "AEIOU" else "a"} {name}'
 
-def missing_bitbucket_email_message(repository_id: str) -> str:
+
+def _missing_bitbucket_email_message(repository_id: str) -> str:
     return (
         f'missing Bitbucket API email for repository {repository_id}; add your Atlassian '
         f'account email in {git_host_settings_place("bitbucket")}'
@@ -889,7 +889,7 @@ class RepositoryInventoryService(Service):
         if token:
             if provider != 'bitbucket' or api_email:
                 return
-            raise PullRequestApiNotSetUp(missing_bitbucket_email_message(repository_id))
+            raise PullRequestApiNotSetUp(_missing_bitbucket_email_message(repository_id))
         raise PullRequestApiNotSetUp(
             missing_pull_request_token_message(
                 repository_id,
@@ -928,7 +928,7 @@ class RepositoryInventoryService(Service):
         if missing:
             raise PullRequestApiNotSetUp(self._incomplete_configuration_message(repository, missing, provider))
         if provider_base_url and 'bitbucket' in provider_base_url.lower() and not api_email:
-            raise PullRequestApiNotSetUp(missing_bitbucket_email_message(repository.id))
+            raise PullRequestApiNotSetUp(_missing_bitbucket_email_message(repository.id))
         config = OmegaConf.create(
             {
                 'provider': provider,

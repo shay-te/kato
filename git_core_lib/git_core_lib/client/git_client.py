@@ -18,6 +18,7 @@ from git_core_lib.git_core_lib.helpers.git_command_utils import (
     build_safe_git_command,
     safe_directory_args,
 )
+from git_core_lib.git_core_lib.helpers.remote_web_page_utils import collapse_remote_web_pages
 from utils_core_lib.utils_core_lib.text_utils import normalized_lower_text
 
 
@@ -127,11 +128,12 @@ class GitClientMixin:
 
     @classmethod
     def _condense_git_output(cls, text: str) -> str:
-        """Strip progress spam and cap the length of a git failure message."""
-        kept = [
+        """Strip progress spam, read a remote's web page as its text, and cap
+        the length of a git failure message."""
+        kept = collapse_remote_web_pages([
             line for line in str(text or '').splitlines()
             if not any(p.match(line) for p in cls._PROGRESS_LINE_PATTERNS)
-        ]
+        ])
         if not kept:
             return str(text or '').strip()[:400] or 'git command failed'
         if len(kept) > cls._MAX_DETAIL_LINES:

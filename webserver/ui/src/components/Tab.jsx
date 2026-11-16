@@ -1,21 +1,18 @@
 import { memo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { AUTOMATION_LEVEL } from '../constants/automationLevel.js';
-import { planRowLine } from './planQueue/planQueueHelpers.js';
 import PlanQueueTabBadge from './planQueue/PlanQueueTabBadge.jsx';
 import { withoutSubtaskPrefix } from './planQueue/subtaskLabel.js';
 import { parentOfTab, subtaskListId } from '../utils/subtaskTabs.js';
-import { isReviewLoopRunning, reviewLoopSentence } from './reviewLoop/reviewLoopHelpers.js';
+import { isReviewLoopRunning } from './reviewLoop/reviewLoopHelpers.js';
 import ReviewLoopTabBadge from './reviewLoop/ReviewLoopTabBadge.jsx';
-import { deriveTabStatus, tabStatusTitle } from '../utils/tabStatus.js';
-import { deriveAgentStatus, badgeKindFor } from '../utils/agentStatus.js';
+import { deriveTabStatus } from '../utils/tabStatus.js';
+import { deriveAgentStatus } from '../utils/agentStatus.js';
 import Icon from './Icon.jsx';
 import { MAX_TAB_NAME_LENGTH } from '../utils/taskTabNames.js';
 import TabTooltip from './TabTooltip.jsx';
-
-// Delay before the hover card appears — long enough that running down the
-// menu to reach a far task doesn't flash a card on every row it passes.
-const HOVER_DELAY_MS = 350;
+import { useHoverCard } from '../hooks/useHoverCard.js';
+import { buildTaskTooltipModel } from '../utils/taskTooltipModel.js';
 
 // Sub-pixel element width.
 //
@@ -105,25 +102,8 @@ function Tab({
     onRename(session.task_id, String(value == null ? '' : value).trim());
   }
 
-  // Hover-card state. ``anchorRect`` is a frozen snapshot of the
-  // <li>'s viewport rect taken when the card opens — TabTooltip
-  // positions itself off it (and re-measures its own height).
-  const liRef = useRef(null);
-  const timerRef = useRef(null);
-  const [anchorRect, setAnchorRect] = useState(null);
-
-  function openTooltipSoon() {
-    clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => {
-      if (liRef.current) {
-        setAnchorRect(liRef.current.getBoundingClientRect());
-      }
-    }, HOVER_DELAY_MS);
-  }
-  function closeTooltip() {
-    clearTimeout(timerRef.current);
-    setAnchorRect(null);
-  }
+  // The hover card (useHoverCard: shared with a review loop's tab).
+  const { ref: liRef, anchorRect, open: openTooltipSoon, close: closeTooltip } = useHoverCard();
 
   // Selecting is the <li>'s job, but the row also carries controls (pencil,
   // pin, ×, the rename box) that must NOT select. Each of those
@@ -219,7 +199,7 @@ function Tab({
     session.automation === AUTOMATION_LEVEL.AUTO_WAIT && 'is-auto-wait',
   );
 
-  const model = buildTooltipModel(session, baseStatus, needsAttention, agent);
+  const model = buildTaskTooltipModel(session, baseStatus, needsAttention, agent);
 
   // Where the press that could become a drag started.
   //
@@ -430,89 +410,6 @@ function Tab({
   );
 }
 
-
-// Structured tooltip model — every fact the old ` · `-joined string
-// carried, now as discrete fields the card renders as a header +
-// labelled rows.
-function buildTooltipModel(session, baseStatus, needsAttention, agent) {
-  const taskId = String(session?.task_id || '').trim() || 'Task';
-  const summary = String(session?.task_summary || '').trim();
-  const rows = [];
-
-  // The AGENT's own sentence, not a second guess at it. This row used to be
-  // ``tabStatusTitle(baseStatus)``, which read the 5s-polled ``working`` flag
-  // and hardcoded "Claude is working" — so it could say the agent was working
-  // while the badge beside it (derived from the live store) said otherwise,
-  // and it named Claude on a Codex tab. ``agent.title`` is the same value the
-  // badge and the dot come from.
-  const statusLine = agent?.title || tabStatusTitle(baseStatus, needsAttention);
-  if (statusLine) {
-    rows.push({ label: 'Status', value: statusLine });
-  }
-
-  const branch = String(session?.branch_name || '').trim();
-  if (branch) { rows.push({ label: 'Branch', value: branch }); }
-
-  const repoIds = Array.isArray(session?.repository_ids)
-    ? session.repository_ids.filter(Boolean)
-    : [];
-  if (repoIds.length === 1) {
-    rows.push({ label: 'Repo', value: repoIds[0] });
-  } else if (repoIds.length > 1) {
-    rows.push({
-      label: `Repos (${repoIds.length})`,
-      value: repoIds.join(', '),
-    });
-  }
-
-  if (session?.has_pending_permission) {
-    const tool = String(session?.pending_permission_tool_name || '').trim();
-    rows.push({
-      label: 'Permission',
-      value: tool ? `Awaiting decision for ${tool}` : 'Awaiting your decision',
-      tone: 'warn',
-    });
-  }
-  if (session?.has_changes_pending) {
-    rows.push({
-      label: 'Changes',
-      value: 'Ready to push — waiting for your approval',
-      tone: 'warn',
-    });
-  }
-  // Where the task's review loop is (or how its last one ended). The loop's
-  // own sentence, separate from the agent's status row above.
-  const loopLine = reviewLoopSentence(session?.review_loop || null, Date.now() / 1000);
-  if (loopLine) { rows.push({ label: 'Review loop', value: loopLine }); }
-  // The plan split from this task: while it runs, or that it finished (its
-  // own axis, like the loop).
-  const planLine = planRowLine(session?.plan_queue || null, !!session?.plan_queue_finished);
-  if (planLine) { rows.push({ label: 'Split plan', value: planLine }); }
-  const pushedPr = String(
-    session?.pr_url || session?.pull_request_url || '',
-  ).trim();
-  if (pushedPr) { rows.push({ label: 'PR', value: pushedPr }); }
-
-  return {
-    taskId,
-    summary,
-    statusKey: agent.status,
-    claudeBadge: agentTooltipBadge(agent),
-    rows,
-  };
-}
-
-
-// Compact Claude liveness badge for the hover card — now derived from the
-// shared agent status (utils/agentStatus.js) so the card, the tab dot, and the
-// chat header all speak the same language (UNA-2492). Returns null for kinds
-// with no badge styling (provisioning/missing/unknown), matching the old
-// claudeBadge's null.
-function agentTooltipBadge(agent) {
-  const kind = badgeKindFor(agent.kind);
-  if (!kind) { return null; }
-  return { kind, label: `Claude: ${agent.label}` };
-}
 
 // Each tab redraws only when its own props change. Without this, anything that
 // touched ``App`` redrew every tab; ``reuseUnchanged`` and the stable handlers

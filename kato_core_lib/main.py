@@ -137,7 +137,7 @@ def main(cfg: DictConfig) -> int:
     # kato was started from (a stale .env loaded into the terminal), and a git
     # host set to "use my git login" / "use my gh login" gets its token now.
     for key in load_kato_settings_into_environ():
-        if key.endswith('_API_TOKEN'):
+        if key.endswith('_API_TOKEN') and os.environ.get(key):
             logger.info('%s: from Settings', key)
     # Missing config no longer hard-exits at the terminal: kato boots into
     # SETUP MODE (the planning UI runs so the operator configures via the
@@ -1583,7 +1583,7 @@ def _register_shutdown_hook(app) -> None:
         # the inline status line first or it lands on top of the spinner.
         try:
             if supports_inline_status(sys.stderr):
-                clear_inline_status(sys.stderr, status_text='Idle · next scan in 000s')
+                clear_inline_status(sys.stderr)
         except Exception:
             # A closed / redirected stderr must never turn Ctrl+C into a
             # crash. The shutdown below proceeds regardless.

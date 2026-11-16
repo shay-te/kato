@@ -12,7 +12,11 @@
 // boolean, etc.). Every subscriber invocation is wrapped in try/catch
 // so one throwing subscriber can never take down ``emit`` or the
 // caller of ``subscribe``.
-export function createPubSub(getSnapshot) {
+//
+// ``replay: false`` is for an EVENT, not a state (``forgottenTaskStore``: "these
+// tasks were deleted"): a late subscriber must not act on one that already
+// happened, so subscribing fires nothing.
+export function createPubSub(getSnapshot, { replay = true } = {}) {
   const listeners = new Set();
 
   function emit() {
@@ -27,7 +31,9 @@ export function createPubSub(getSnapshot) {
     // Fire once immediately so late mounters render the current state.
     // Wrapped in try/catch so a throwing subscriber can't take down
     // the caller of subscribe() — same defense as emit().
-    try { fn(getSnapshot()); } catch (_) { /* see emit */ }
+    if (replay) {
+      try { fn(getSnapshot()); } catch (_) { /* see emit */ }
+    }
     return () => { listeners.delete(fn); };
   }
 

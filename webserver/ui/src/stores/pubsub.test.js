@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createOpenRequests } from './pubsub.js';
+import { createOpenRequests, createPubSub } from './pubsub.js';
 
 test('each open is a new request; a subscriber first gets the current one', () => {
   const requests = createOpenRequests();
@@ -21,4 +21,17 @@ test('each open is a new request; a subscriber first gets the current one', () =
   const late = [];
   requests.subscribe((request) => late.push(request));
   assert.deepEqual(late, [{ taskId: 'UNA-2', seq: 3 }]);
+});
+
+test('replay: false — an event: subscribing fires nothing, every emit after it does', () => {
+  let value = 'before';
+  const events = createPubSub(() => value, { replay: false });
+  const seen = [];
+  const unsubscribe = events.subscribe((payload) => seen.push(payload));
+  assert.deepEqual(seen, []);
+  value = 'deleted';
+  events.emit();
+  unsubscribe();
+  events.emit();
+  assert.deepEqual(seen, ['deleted']);
 });

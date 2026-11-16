@@ -997,6 +997,26 @@ describe('PlanQueueView — deleting a sub-task', () => {
     confirm.mockRestore();
   });
 
+  test('the deleted task is announced, so App closes its tabs and clears what it kept', async () => {
+    // A sub-task deleted from the board kept every tab open (its review loop
+    // tab, its files) — only a task's own ✕ reached App's purge.
+    const { forgottenTasks } = await import('../../stores/forgottenTaskStore.js');
+    const heard = [];
+    const stop = forgottenTasks.subscribe((ids) => heard.push(...ids));
+    serve(RUNNING);
+    planQueueStepAction.mockReturnValue(ok({
+      ...RUNNING, steps: [RUNNING.steps[1]],
+      deleted: { task_id: 'UNA-3376', declined: [], problems: [] },
+    }));
+    forgetTaskWorkspace.mockResolvedValue({ ok: true, body: { forgotten: true } });
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<PlanQueueView taskId="UNA-1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete UNA-3376' }));
+    await waitFor(() => expect(heard).toEqual(['UNA-3376']));
+    stop();
+    confirm.mockRestore();
+  });
+
   test('cancelled, nothing happens; a refusal deletes no folder', async () => {
     serve(RUNNING);
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);

@@ -34,15 +34,22 @@ _LINE_LOCK = threading.RLock()
 _line = {'stream': None, 'width': 0}
 
 
+def _or_stderr(stream):
+    return sys.stderr if stream is None else stream
+
+
+def _frame(index: int) -> str:
+    return _FRAMES[index % len(_FRAMES)]
+
+
 def supports_inline_status(stream=None) -> bool:
-    output_stream = sys.stderr if stream is None else stream
-    isatty = getattr(output_stream, 'isatty', None)
+    isatty = getattr(_or_stderr(stream), 'isatty', None)
     return bool(callable(isatty) and isatty())
 
 
 def show_inline_status(text: str, stream=None) -> None:
     """Paint ``text`` on the status line, over whatever it held."""
-    output_stream = sys.stderr if stream is None else stream
+    output_stream = _or_stderr(stream)
     with _LINE_LOCK:
         previous = _line['width'] if _line['stream'] is output_stream else 0
         output_stream.write('\r' + text + ' ' * max(0, previous - len(text)))
@@ -51,11 +58,12 @@ def show_inline_status(text: str, stream=None) -> None:
         _line['width'] = len(text)
 
 
-def clear_inline_status(stream, *, status_text: str = '') -> None:
+def clear_inline_status(stream) -> None:
+    """Take the status line off ``stream`` (as wide as it was painted; at
+    least a line's worth when kato did not paint it)."""
     with _LINE_LOCK:
         shown = _line['width'] if _line['stream'] is stream else 0
-        clear_width = max(40, len(status_text) + 2, shown)
-        stream.write('\r' + (' ' * clear_width) + '\r')
+        stream.write('\r' + (' ' * max(40, shown)) + '\r')
         stream.flush()
         if _line['stream'] is stream:
             _line['width'] = 0
@@ -78,7 +86,7 @@ def spinning_status(text: str, *, stream=None, frame_seconds: float = _FRAME_INT
     A thread draws the frames, so the block itself runs untouched. Nothing at
     all happens when the stream is not a terminal.
     """
-    output_stream = sys.stderr if stream is None else stream
+    output_stream = _or_stderr(stream)
     if not supports_inline_status(output_stream):
         yield
         return
@@ -87,7 +95,7 @@ def spinning_status(text: str, *, stream=None, frame_seconds: float = _FRAME_INT
     def spin() -> None:
         frame_index = 0
         while not stop.is_set():
-            show_inline_status(f'{text} {_FRAMES[frame_index % len(_FRAMES)]}', output_stream)
+            show_inline_status(f'{text} {_frame(frame_index)}', output_stream)
             frame_index += 1
             stop.wait(frame_seconds)
 
@@ -98,42 +106,7 @@ def spinning_status(text: str, *, stream=None, frame_seconds: float = _FRAME_INT
     finally:
         stop.set()
         spinner.join(timeout=1.0)
-        clear_inline_status(output_stream, status_text=text)
-
-
-def _sleep_with_inline_spinner(
-    total_seconds: float,
-    *,
-    render_frame,
-    clear_text: str,
-    sleep_fn=time.sleep,
-    stream=None,
-) -> None:
-    """Sleep for ``total_seconds`` while animating an inline spinner.
-
-    ``render_frame(frame, remaining_seconds, frame_index)`` returns the
-    text painted on the status line each tick; ``clear_text`` sizes the final
-    clear. Falls back to a plain ``sleep_fn`` when the stream can't show
-    inline status, and is a no-op for non-positive durations.
-    """
-    if total_seconds <= 0:
-        return
-
-    output_stream = sys.stderr if stream is None else stream
-    if not supports_inline_status(output_stream):
-        sleep_fn(total_seconds)
-        return
-
-    remaining_seconds = float(total_seconds)
-    frame_index = 0
-    while remaining_seconds > 0:
-        frame = _FRAMES[frame_index % len(_FRAMES)]
-        show_inline_status(render_frame(frame, remaining_seconds, frame_index), output_stream)
-        sleep_duration = min(_FRAME_INTERVAL_SECONDS, remaining_seconds)
-        sleep_fn(sleep_duration)
-        remaining_seconds -= sleep_duration
-        frame_index += 1
-    clear_inline_status(output_stream, status_text=clear_text)
+        clear_inline_status(output_stream)
 
 
 def sleep_with_countdown_spinner(
@@ -150,19 +123,25 @@ def sleep_with_countdown_spinner(
     so a 30s sleep ticks 30→1. Callers that drive their own outer loop
     (e.g. ``_idle_with_heartbeat``) sleep in ~1s chunks but want the
     spinner to show the *outer* countdown — pass ``countdown_seconds`` to
-    pin the displayed value for this call.
+    pin the displayed value for this call. A plain ``sleep_fn`` when the
+    stream cannot show a status line; nothing for a non-positive duration.
     """
-    def render(frame, remaining_seconds, frame_index):
+    if total_seconds <= 0:
+        return
+    output_stream = _or_stderr(stream)
+    if not supports_inline_status(output_stream):
+        sleep_fn(total_seconds)
+        return
+    remaining_seconds = float(total_seconds)
+    frame_index = 0
+    while remaining_seconds > 0:
         if countdown_seconds is None:
             displayed = max(1, int(ceil(remaining_seconds)))
         else:
             displayed = max(0, int(countdown_seconds))
-        return f'{status_text} {frame} {displayed}'
-
-    _sleep_with_inline_spinner(
-        total_seconds,
-        render_frame=render,
-        clear_text=f'{status_text} 999',
-        sleep_fn=sleep_fn,
-        stream=stream,
-    )
+        show_inline_status(f'{status_text} {_frame(frame_index)} {displayed}', output_stream)
+        sleep_duration = min(_FRAME_INTERVAL_SECONDS, remaining_seconds)
+        sleep_fn(sleep_duration)
+        remaining_seconds -= sleep_duration
+        frame_index += 1
+    clear_inline_status(output_stream)

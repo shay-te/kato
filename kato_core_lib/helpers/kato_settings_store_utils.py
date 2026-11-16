@@ -172,7 +172,8 @@ def config_env_with_form(form: Mapping[str, str]) -> dict[str, str]:
     (``settings_first_env``), so what Test connection checks is what kato runs."""
     saved = read_kato_settings()
     for key, value in form.items():
-        saved[str(key)] = str(value or '').strip() and str(value)
+        text = str(value or '')
+        saved[str(key)] = text if text.strip() else ''
     environ = {k: v for k, v in os.environ.items() if str(k) not in form}
     return settings_first_env(saved, environ)
 
@@ -185,22 +186,18 @@ def load_kato_settings_into_environ() -> list[str]:
 
     Returns the keys it changed (never a value). Never raises.
     """
-    settings = read_kato_settings()
-    wanted = settings_first_env(settings, os.environ)
+    wanted = settings_first_env(read_kato_settings(), os.environ)
     changed = []
     for key, value in wanted.items():
         if os.environ.get(key) != value:
             os.environ[key] = value
             changed.append(key)
-    try:
-        from kato_core_lib.helpers.credential_sources import DISCOVERABLE_PROVIDERS, token_key
-    except Exception:  # noqa: BLE001
-        return changed
-    for provider in DISCOVERABLE_PROVIDERS:
-        key = token_key(provider)
-        if key not in wanted and key in os.environ:
-            del os.environ[key]  # an inherited token a chosen source replaced
-            changed.append(key)
+    # Every non-empty environment value is in ``wanted`` unless the rule
+    # dropped it: an inherited token a credential source chosen in Settings
+    # replaces.
+    for key in [key for key, value in os.environ.items() if value and key not in wanted]:
+        del os.environ[key]
+        changed.append(key)
     return changed
 
 

@@ -57,7 +57,7 @@ def refusal_hint(error: object) -> str:
         )
     if 'bitbucket' in lowered:
         return _bitbucket(lowered)
-    if 'api.github.com' in lowered or 'github.com' in lowered:
+    if 'github.com' in lowered:
         return _github(lowered)
     if 'gitlab' in lowered:
         return _gitlab(lowered)

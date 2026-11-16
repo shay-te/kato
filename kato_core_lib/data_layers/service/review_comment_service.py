@@ -588,12 +588,11 @@ class ReviewCommentService(Service):
 
     def _report_git_host(self, repository, error: Exception | None = None) -> None:
         """Tell connection_health how ``repository``'s git host answered."""
-        provider = text_from_attr(repository, 'provider')
         # The banner says what to change, not only the host's status line.
         said = f'{error}{refusal_hint(error)}' if error is not None else None
         report(
-            self._connection_health, git_host_key(provider), error=said,
-            label=provider_label(provider) if provider else 'the git host', kind='git_host',
+            self._connection_health, git_host_key(text_from_attr(repository, 'provider')), error=said,
+            label=_host_of(repository), kind='git_host',
         )
 
     def _say_paused_lookups(self) -> None:

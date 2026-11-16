@@ -3,6 +3,8 @@ import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import Icon from './Icon.jsx';
+import TabTooltip from './TabTooltip.jsx';
+import { useHoverCard } from '../hooks/useHoverCard.js';
 import DiffKindIcon from './DiffKindIcon.jsx';
 import {
   canToggleView,
@@ -33,6 +35,10 @@ export default function FileTabStrip({
   activeReviewLoopTab = '',
   onSelectReviewLoop = () => {},
   onCloseReviewLoop = () => {},
+  // taskId → the task's hover card (utils/taskTooltipModel.js), or null when
+  // the task is not in the list: a loop tab names its task the way the tasks
+  // menu row does.
+  taskCardFor = null,
   // The "New task" draft's tab (``buildNewTaskTabModel``), last in the strip;
   // null while no draft is open.
   newTaskTab = null,
@@ -155,6 +161,7 @@ export default function FileTabStrip({
       groupStart={loop.groupStart}
       onSelect={onSelectReviewLoop}
       onClose={onCloseReviewLoop}
+      card={taskCardFor ? taskCardFor(loop.taskId) : null}
     />
   );
   const items = order.map((entry) => {
@@ -188,13 +195,20 @@ export default function FileTabStrip({
 // A review loop's tab in the shared strip. Set apart from a file tab by a
 // loop glyph tinted with the loop's state (running = indigo, clean = green,
 // …) and an indigo active underline — so the two kinds never read alike.
-function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose }) {
+// Hovered, it shows the task's own card (the tasks menu row's, captioned
+// "Review loop of"): its id alone did not say which task it was.
+function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose, card = null }) {
+  const hover = useHoverCard();
   return (
     <li
+      ref={hover.ref}
       className={cx('file-tab', 'is-review-loop', active && 'active', groupStart && 'is-group-start')}
       data-review-loop-task={taskId}
-      title={`Review loop — ${taskId}`}
-      onClick={() => onSelect(taskId)}
+      title={card ? undefined : `Review loop — ${taskId}`}
+      aria-label={`Review loop — ${taskId}`}
+      onClick={() => { hover.close(); onSelect(taskId); }}
+      onMouseEnter={card ? hover.open : undefined}
+      onMouseLeave={hover.close}
     >
       <span className={cx('file-tab-loop-icon', `is-${tone || 'idle'}`)} aria-hidden="true">
         <Icon name="loop" />
@@ -204,10 +218,11 @@ function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose
         type="button"
         className="file-tab-close-btn"
         aria-label={`Close the ${taskId} review loop tab`}
-        onClick={(event) => { event.stopPropagation(); onClose(taskId); }}
+        onClick={(event) => { event.stopPropagation(); hover.close(); onClose(taskId); }}
       >
         <Icon name="xmark" />
       </button>
+      {card && hover.anchorRect && <TabTooltip anchorRect={hover.anchorRect} model={card} placement="below" />}
     </li>
   );
 }

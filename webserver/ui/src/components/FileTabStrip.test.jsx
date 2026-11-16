@@ -5,9 +5,10 @@
 // closes, Ctrl/Cmd+W closes the focused tab.
 
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, act } from '@testing-library/react';
 
 import FileTabStrip from './FileTabStrip.jsx';
+import { taskTooltipModelFor } from '../utils/taskTooltipModel.js';
 
 
 function tab(overrides = {}) {
@@ -724,3 +725,51 @@ describe('FileTabStrip — the "New task" draft tab', () => {
     confirm.mockRestore();
   });
 });
+
+
+describe('a review loop tab names its task', () => {
+  // "we need to know what it's related to": its tab only said "Review loop —
+  // UNA-3462". Hovered, it shows the tasks menu row's own card.
+  const session = {
+    task_id: 'UNA-3462', task_summary: 'Remove search history and relationship history',
+    branch_name: 'UNA-3462', repository_ids: ['ob-love-admin-backend'], status: 'active',
+  };
+  const strip = (taskCardFor) => render(
+    <FileTabStrip
+      tabs={[]}
+      activeKey={null}
+      onSelect={() => {}}
+      onClose={() => {}}
+      reviewLoopTabs={[{ taskId: 'UNA-3462', tone: 'clean' }]}
+      taskCardFor={taskCardFor}
+    />,
+  );
+
+  test('hovering shows the task card, captioned, below the tab', () => {
+    vi.useFakeTimers();
+    try {
+      strip((taskId) => (taskId === 'UNA-3462' ? taskTooltipModelFor(session, null, false, 'Review loop of') : null));
+      const loopTab = document.querySelector('[data-review-loop-task="UNA-3462"]');
+      expect(loopTab.getAttribute('title')).toBeNull(); // the card, not a native title on top of it
+      fireEvent.mouseEnter(loopTab);
+      act(() => { vi.advanceTimersByTime(400); });
+      const card = document.querySelector('.tab-tooltip');
+      expect(card).not.toBeNull();
+      expect(card.textContent).toContain('Review loop of');
+      expect(card.textContent).toContain('UNA-3462');
+      expect(card.textContent).toContain('Remove search history and relationship history');
+      expect(card.textContent).toContain('ob-love-admin-backend');
+      fireEvent.mouseLeave(loopTab);
+      expect(document.querySelector('.tab-tooltip')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a task not in the list keeps the plain title', () => {
+    strip(() => null);
+    const loopTab = document.querySelector('[data-review-loop-task="UNA-3462"]');
+    expect(loopTab.getAttribute('title')).toBe('Review loop — UNA-3462');
+  });
+});
+

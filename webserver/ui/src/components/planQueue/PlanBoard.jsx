@@ -4,6 +4,7 @@ import {
   syncPlanQueue, takeOverPlanQueue,
 } from '../../api.js';
 import { toastResult } from '../../stores/toastStore.js';
+import { forgottenByDelete, forgottenTasks } from '../../stores/forgottenTaskStore.js';
 import { useBusyAction } from '../../hooks/useBusyAction.js';
 import { cx } from '../../utils/cx.js';
 import Icon from '../Icon.jsx';
@@ -82,6 +83,8 @@ export default function PlanBoard({ plan, onPlan, onOpenTask = null }) {
       if (!result.ok) { return result; }
       const deleted = result.body?.deleted || {};
       const forgot = deleted.task_id ? await forgetTaskWorkspace(deleted.task_id) : null;
+      // Its tabs, caches and drafts go too — the same purge as the tab's ✕.
+      if (forgot) { forgottenTasks.announce(forgottenByDelete(deleted.task_id, forgot)); }
       toastResult(deletedStepToast(stepCode(step), deleted, forgot));
       return result;
     }, `Could not delete ${stepCode(step)}`);

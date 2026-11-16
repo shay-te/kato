@@ -11380,6 +11380,23 @@ button.settings-prompt-editor-head {
   transform-origin: top right;
 }
 
+.tab-tooltip.is-below {
+  transform-origin: top left;
+}
+
+.tab-tooltip.is-above {
+  transform-origin: bottom left;
+}
+
+/* How the trigger relates to the task ("Review loop of") — above its id. */
+.tab-tooltip-caption {
+  margin: 0 0 $SPACE-4;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .tab-tooltip-head {
   display: flex;
   align-items: center;

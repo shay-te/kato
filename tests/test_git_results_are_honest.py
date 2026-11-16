@@ -64,6 +64,28 @@ class HonestGitResultsTests(RealLocalTask, unittest.TestCase):
         self.assertEqual(failure['repository_id'], 'api')
         self.assertIn('refused by the host', failure['error'])
 
+    def test_a_host_that_fails_with_an_error_page_is_read_as_what_the_page_says(self) -> None:
+        # 2026-11-16, after "merge master": the host's own server-side check
+        # failed and sent its HTML error page down the push; the failure showed
+        # "106 earlier line(s) omitted" and the bottom of the page's markup.
+        hook = self.remote / 'hooks' / 'pre-receive'
+        page = ['<!DOCTYPE html>', '<html><head><style>', *[f'.r{i} {{ margin: 0 }}' for i in range(60)],
+                '</style></head><body><h1>Something went wrong.</h1>',
+                '<p>Check our <a href="https://status.example.org/">status page</a>.</p>', '</body></html>']
+        hook.write_text('#!/bin/sh\ncat >&2 <<"PAGE"\n' + '\n'.join(page) + '\nPAGE\nexit 1\n', encoding='utf-8')
+        hook.chmod(0o755)
+        task_id, _clone = self._task_with_work()
+
+        [failure] = self.publisher.push_task(task_id)['failed_repositories']
+
+        self.assertIn(
+            'the server sent an error page: Something went wrong. Check our status page '
+            '(https://status.example.org/).', failure['error'],
+        )
+        self.assertIn('pre-receive hook declined', failure['error'])
+        self.assertNotIn('omitted', failure['error'])
+        self.assertNotIn('</', failure['error'])
+
     def test_update_source_does_not_call_a_refused_push_updated(self) -> None:
         self._refuse_every_push()
         task_id, _clone = self._task_with_work()

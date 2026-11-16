@@ -1,26 +1,27 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { placeHoverCard } from '../utils/hoverCardPlacement.js';
 
 // Designed hover card for a task tab. Replaces the plain native
 // ``title`` string with a structured component: header (status dot
-// + id + Claude badge), the summary, then a labelled row per fact
+// + id + the agent's badge), the summary, then a labelled row per fact
 // (status / branch / repos / pending permission / changes / PR).
 //
 // Why a portal: the task rows live inside the tasks menu, which scrolls
 // (``overflow-y: auto``) — that same clip eats any in-flow absolute
 // tooltip. Rendering into ``document.body`` with ``position: fixed``
-// escapes it; the card sits BESIDE the row (the menu is on the left
-// edge, so beside means to its right), flips to the left when there is
-// no room, and is clamped vertically so it never leaves the viewport.
+// escapes it; where it sits is ``placeHoverCard`` (utils/hoverCardPlacement.js).
 //
 // ``pointer-events: none`` on the card (set in CSS) means the
 // tooltip never steals hover and never needs its own dismiss logic
-// — it follows the trigger's hover state, owned by ``Tab``.
+// — it follows the trigger's hover state (``useHoverCard``).
+//
+// ``placement``: ``beside`` for the tasks menu's rows (left edge), ``below``
+// for a tab along the top (a review loop's tab in the centre strip) — under
+// it, flipped above when there is no room. ``model.caption`` (optional) is a
+// line above the header saying how the trigger relates to the task.
 
-const GAP = 8;          // px between trigger and card
-const VIEWPORT_PAD = 8; // keep this far from any viewport edge
-
-export default function TabTooltip({ anchorRect, model }) {
+export default function TabTooltip({ anchorRect, model, placement = 'beside' }) {
   const cardRef = useRef(null);
   const [pos, setPos] = useState(null);
 
@@ -29,27 +30,9 @@ export default function TabTooltip({ anchorRect, model }) {
   // there's no one-frame flash at 0,0.
   useLayoutEffect(() => {
     if (!anchorRect || !cardRef.current) { return; }
-    const card = cardRef.current.getBoundingClientRect();
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let left = anchorRect.right + GAP;
-    let placement = 'right';
-    // Flip to the left of the row if it would overflow the right edge.
-    if (left + card.width + VIEWPORT_PAD > vw) {
-      left = anchorRect.left - GAP - card.width;
-      placement = 'left';
-    }
-    left = Math.max(VIEWPORT_PAD, left);
-
-    let top = anchorRect.top;
-    if (top + card.height + VIEWPORT_PAD > vh) {
-      top = vh - card.height - VIEWPORT_PAD;
-    }
-    top = Math.max(VIEWPORT_PAD, top);
-
-    setPos({ top, left, placement });
-  }, [anchorRect, model]);
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    setPos(placeHoverCard(anchorRect, cardRef.current.getBoundingClientRect(), viewport, placement));
+  }, [anchorRect, model, placement]);
 
   if (!anchorRect || !model) { return null; }
 
@@ -62,12 +45,13 @@ export default function TabTooltip({ anchorRect, model }) {
         : { top: '-9999px', left: '-9999px' }}
       role="tooltip"
     >
+      {model.caption && <p className="tab-tooltip-caption">{model.caption}</p>}
       <header className="tab-tooltip-head">
         <span className={`tab-tooltip-dot status-${model.statusKey}`} />
         <strong className="tab-tooltip-id">{model.taskId}</strong>
-        {model.claudeBadge && (
-          <span className={`tab-tooltip-badge is-${model.claudeBadge.kind}`}>
-            {model.claudeBadge.label}
+        {model.agentBadge && (
+          <span className={`tab-tooltip-badge is-${model.agentBadge.kind}`}>
+            {model.agentBadge.label}
           </span>
         )}
       </header>

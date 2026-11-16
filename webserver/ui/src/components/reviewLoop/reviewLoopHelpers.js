@@ -127,6 +127,21 @@ export function reviewLoopTabEntries(taskIds, loopFor) {
   });
 }
 
+// The open loop tabs once ``closedIds`` close, and the one shown after: the
+// same one unless it closed — then the tab that slid into its slot, else the
+// nearest one before it ('' = none left: the centre falls back to the file
+// view). One answer for a tab's own ✕ and for a deleted task's tab.
+export function closeReviewLoopTabs(tabs, active, closedIds) {
+  const closed = new Set([...(closedIds || [])].map(String));
+  const list = tabs || [];
+  const kept = list.filter((id) => !closed.has(id));
+  if (!closed.has(active)) { return { tabs: kept, active }; }
+  const index = list.indexOf(active);
+  const after = list.slice(index + 1).find((id) => !closed.has(id));
+  const before = list.slice(0, Math.max(index, 0)).reverse().find((id) => !closed.has(id));
+  return { tabs: kept, active: after || before || '' };
+}
+
 // The view model for the loop tabs shown in the shared file-tab strip: for
 // each ``{ taskId, tone }``, whether it is the active one and whether the
 // strip draws a divider before it (``groupStarts``: the loops that come right

@@ -210,6 +210,16 @@ vi.mock('./components/RightPane.jsx', () => ({
           >
             open-other-file-{activeTaskId}
           </button>
+          <button
+            type="button"
+            onClick={() => onOpenFile({
+              absolutePath: `/ws/${activeTaskId}/repo/README.md`,
+              relativePath: 'README.md',
+              repoId: 'repo',
+            })}
+          >
+            open-readme-{activeTaskId}
+          </button>
         </>
       ) : null}
     </div>
@@ -261,6 +271,7 @@ import { useResizable } from './hooks/useResizable.js';
 import { createLocalTask, fetchTaskUnpushedWork, forgetTaskWorkspace } from './api.js';
 import { _resetNewTaskDraft } from './components/newTask/newTaskDraftStore.js';
 import { _resetLastActiveTask } from './utils/lastActiveTask.js';
+import { forgottenTasks } from './stores/forgottenTaskStore.js';
 import App from './App.jsx';
 
 
@@ -549,13 +560,42 @@ describe('App — file tab strip (VS Code-style multi-file tabs)', () => {
 });
 
 
+// The centre strip's tabs, as the operator reads them (a loop tab has no
+// title, only its label), and what the review loop pane shows.
+const tabName = (tab) => tab.title || tab.getAttribute('aria-label') || '';
+const stripTitles = () => [...document.querySelectorAll('.file-tab')].map(tabName);
+const activeTabTitles = () => [...document.querySelectorAll('.file-tab.active')].map(tabName);
+const loopShown = () => screen.queryByTestId('review-loop-pane')?.textContent || '';
+// Review loop tabs open, the way a reload restores them from the browser.
+function withLoopTabsOpen(tabs, active = tabs[0]) {
+  localStorage.setItem('kato.reviewLoopTabs.v1', JSON.stringify({ tabs, active }));
+}
+const storedLoopTabs = () => JSON.parse(localStorage.getItem('kato.reviewLoopTabs.v1') || '{}').tabs;
+
+
+describe('App — a markdown tab keeps its preview / source pick', () => {
+  test('switching to another tab and back keeps the pick', () => {
+    // The toggle set the state but not the ref the next tab switch reads, so
+    // switching away and back undid the operator's pick.
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }], refresh: vi.fn() });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-readme-T1' }));
+    const toggle = () => document.querySelector('.file-tab-view-toggle').getAttribute('aria-label');
+    const before = toggle();
+    fireEvent.click(document.querySelector('.file-tab-view-toggle'));
+    const picked = toggle();
+    expect(picked).not.toBe(before);
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByTitle('repo/README.md'));
+    expect(toggle()).toBe(picked);
+  });
+});
+
+
 describe('App — file, loop and draft tabs are one row of tabs', () => {
-  // A review loop's tab open and on show, the way a reload restores it.
-  function withLoopTabOpen(taskId) {
-    localStorage.setItem('kato.reviewLoopTabs.v1', JSON.stringify({ tabs: [taskId], active: taskId }));
-  }
-  const loopShown = () => screen.queryByTestId('review-loop-pane')?.textContent || '';
-  const activeTabTitles = () => [...document.querySelectorAll('.file-tab.active')].map((tab) => tab.title);
+  // A review loop's tab open and on show.
+  const withLoopTabOpen = (taskId) => withLoopTabsOpen([taskId]);
   const close = (name) => fireEvent.click(screen.getByRole('button', { name: new RegExp(`Close ${name}`) }));
 
   beforeEach(() => {
@@ -566,8 +606,6 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'T1' }));
   }
-
-  const stripTitles = () => [...document.querySelectorAll('.file-tab')].map((tab) => tab.title);
 
   test('a file opened while the loop tab shows opens right AFTER it, as a browser tab does', () => {
     // THE REPORT: "how come file tab open before the loop review (left to
@@ -589,7 +627,7 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     fireEvent.contextMenu(screen.getByTitle('repo/src/T1.js'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Pin tab' }));
     expect(stripTitles()).toEqual(['repo/src/T1.js', 'Review loop — T1']);
-    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    fireEvent.click(screen.getByLabelText('Review loop — T1'));
     fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
     expect(stripTitles()).toEqual(['repo/src/T1.js', 'Review loop — T1', 'repo/src/other-T1.js']);
     // Closed, its left neighbour — the loop — shows.
@@ -614,7 +652,7 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     withLoopTabOpen('T1');
     renderOnTask();
     fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
-    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    fireEvent.click(screen.getByLabelText('Review loop — T1'));
     fireEvent.click(screen.getByRole('button', { name: 'open-other-file-T1' }));
     close('other-T1\\.js');
     expect(activeTabTitles()).toEqual(['Review loop — T1']);
@@ -661,7 +699,7 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     withLoopTabOpen('T1');
     renderOnTask();
     fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
-    fireEvent.click(screen.getByTitle('Review loop — T1'));
+    fireEvent.click(screen.getByLabelText('Review loop — T1'));
     close('T1\\.js');
     expect(loopShown()).toBe('loop=T1');
   });
@@ -677,6 +715,108 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('Half written');
   });
 });
+
+describe('App — a task that is gone keeps no tab open', () => {
+  // THE REPORT (2026-11-16): "I handed over/deleted a task, but the UI still
+  // shows its review loop tab." The loop tabs are App-level, not one of the
+  // task's own tabs, so the delete never closed them.
+  function listed(ids, extra = {}) {
+    useSessions.mockReturnValue({ sessions: ids.map((task_id) => ({ task_id })), refresh: vi.fn(), ...extra });
+  }
+  async function deleteTask(taskId) {
+    fireEvent.click(screen.getByRole('button', { name: `forget-${taskId}` }));
+    await waitFor(() => expect(document.getElementById('forget-task-confirm')).toBeInTheDocument());
+    fireEvent.click(document.getElementById('forget-task-confirm'));
+    await waitFor(() => expect(forgetTaskWorkspace).toHaveBeenCalledWith(taskId, { markDone: false }));
+  }
+
+  test('deleting a task closes its review loop tab, and the one on show moves to its neighbour', async () => {
+    listed(['T1', 'T2']);
+    withLoopTabsOpen(['T1', 'T2'], 'T1');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    expect(stripTitles()).toEqual(['Review loop — T1', 'Review loop — T2']);
+    await deleteTask('T1');
+    await waitFor(() => expect(stripTitles()).toEqual(['Review loop — T2']));
+    expect(loopShown()).toBe('loop=T2');
+    expect(storedLoopTabs()).toEqual(['T2']);   // a reload does not bring it back
+  });
+
+  test('handed over with "also delete it from my tasks": its files, plan and loop tabs all close', async () => {
+    listed(['T1', 'T2']);
+    withLoopTabsOpen(['T1']);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(stripTitles()).toEqual(['Review loop — T1', 'repo/src/T1.js']);
+    fireEvent.click(screen.getByRole('button', { name: 'handed-over-delete-here' }));
+    await waitFor(() => expect(stripTitles()).toEqual([]));
+    expect(storedLoopTabs()).toEqual([]);
+  });
+
+  test('the sub-tasks its plan took with it lose their tabs too — not one that stayed', async () => {
+    listed(['T1', 'T2', 'T3']);
+    withLoopTabsOpen(['T2', 'T3']);
+    forgetTaskWorkspace.mockResolvedValueOnce({
+      ok: true,
+      body: { sub_tasks: [{ task_id: 'T2', forgotten: true }, { task_id: 'T3', forgotten: false, error: 'locked' }] },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    await deleteTask('T1');
+    await waitFor(() => expect(stripTitles()).toEqual(['Review loop — T3']));
+  });
+
+  test('a delete that failed keeps the task\'s tabs', async () => {
+    listed(['T1']);
+    withLoopTabsOpen(['T1']);
+    forgetTaskWorkspace.mockResolvedValueOnce({ ok: false, error: 'workspace locked' });
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    await deleteTask('T1');
+    expect(stripTitles()).toEqual(['Review loop — T1']);
+  });
+
+  test('a sub-task deleted from the plan board (announced) loses its tabs', () => {
+    listed(['T1', 'T2']);
+    withLoopTabsOpen(['T1', 'T2']);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    act(() => { forgottenTasks.announce(['T2']); });
+    expect(stripTitles()).toEqual(['Review loop — T1']);
+  });
+
+  test('a loop tab of a task kato no longer lists closes once the list is in (deleted before this, or elsewhere)', () => {
+    listed(['T1'], { loaded: true });
+    withLoopTabsOpen(['GONE-1', 'T1'], 'GONE-1');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    expect(stripTitles()).toEqual(['Review loop — T1']);
+    expect(storedLoopTabs()).toEqual(['T1']);
+  });
+
+  test('deleted in another window: the task on screen loses its file tabs when the list stops naming it', () => {
+    listed(['T1', 'T2'], { loaded: true });
+    const { rerender } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(stripTitles()).toEqual(['repo/src/T1.js']);
+    listed(['T2'], { loaded: true });
+    rerender(<App />);
+    expect(stripTitles()).toEqual([]);
+  });
+
+  test('nothing closes before the list is in, or on an empty list (it proves nothing)', () => {
+    withLoopTabsOpen(['T1']);
+    listed([], { loaded: true });
+    const { rerender } = render(<App />);
+    expect(storedLoopTabs()).toEqual(['T1']);
+    listed(['T2'], { loaded: false });
+    rerender(<App />);
+    expect(storedLoopTabs()).toEqual(['T1']);
+  });
+});
+
 
 describe('App — forget task (hard-confirm modal gate)', () => {
 
