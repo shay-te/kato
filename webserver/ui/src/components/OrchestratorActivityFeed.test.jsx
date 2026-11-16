@@ -18,7 +18,7 @@ describe('OrchestratorActivityFeed', () => {
   test('renders the empty-state copy when history is empty', () => {
     render(<OrchestratorActivityFeed history={[]} />);
     expect(screen.getByText(/No activity yet/i)).toBeInTheDocument();
-    expect(screen.getByText('orchestrator activity')).toBeInTheDocument();
+    expect(screen.getByText('Orchestrator activity')).toBeInTheDocument();
   });
 
   test('renders the empty-state when history is undefined', () => {
@@ -29,7 +29,7 @@ describe('OrchestratorActivityFeed', () => {
   test('no close button when onClose is not provided', () => {
     render(<OrchestratorActivityFeed history={[]} />);
     expect(
-      screen.queryByLabelText('Close orchestrator activity'),
+      screen.queryByLabelText('Hide orchestrator activity'),
     ).not.toBeInTheDocument();
   });
 
@@ -38,7 +38,7 @@ describe('OrchestratorActivityFeed', () => {
     const { rerender } = render(
       <OrchestratorActivityFeed history={[]} onClose={onClose} />,
     );
-    fireEvent.click(screen.getByLabelText('Close orchestrator activity'));
+    fireEvent.click(screen.getByLabelText('Hide orchestrator activity'));
     expect(onClose).toHaveBeenCalledTimes(1);
 
     rerender(
@@ -47,7 +47,7 @@ describe('OrchestratorActivityFeed', () => {
         onClose={onClose}
       />,
     );
-    fireEvent.click(screen.getByLabelText('Close orchestrator activity'));
+    fireEvent.click(screen.getByLabelText('Hide orchestrator activity'));
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 

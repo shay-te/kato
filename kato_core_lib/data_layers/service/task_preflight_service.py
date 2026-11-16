@@ -324,9 +324,7 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
             return True
         if not repositories:
             return True
-        merged_findings: list = []
-        merged_runner_errors: list = []
-        block_threshold = None
+        reports = {}
         for repository in repositories:
             workspace_path = str(getattr(repository, 'local_path', '') or '').strip()
             if not workspace_path:
@@ -341,20 +339,13 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
                     task.id, getattr(repository, 'id', '?'),
                 )
                 continue
-            merged_findings.extend(report.findings)
-            merged_runner_errors.extend(report.runner_errors)
-            block_threshold = report.block_threshold
-        if block_threshold is None:
+            reports[str(getattr(repository, 'id', '') or os.path.basename(workspace_path))] = report
+        if not reports:
             return True
         from security_scanner_core_lib.security_scanner_core_lib.security_finding import ScanReport
-        aggregate = ScanReport(
-            findings=tuple(merged_findings),
-            blocking=any(
-                f.severity.is_at_least(block_threshold) for f in merged_findings
-            ),
-            block_threshold=block_threshold,
-            runner_errors=tuple(merged_runner_errors),
-        )
+        # One report, each finding under its repository's name, each scanner
+        # warning said once (the lib's job, not a merge of kato's own).
+        aggregate = ScanReport.combined(reports)
         if not aggregate.blocking:
             if aggregate.findings:
                 self._log_task_step(
@@ -369,7 +360,7 @@ class TaskPreflightService(MissionStepLoggerMixin, Service):
         self._log_task_step(
             task.id,
             'security scan: blocking on %d critical/high finding(s)',
-            sum(1 for f in aggregate.findings if f.severity.is_at_least(block_threshold)),
+            sum(1 for f in aggregate.findings if f.severity.is_at_least(aggregate.block_threshold)),
         )
         exc = SecurityScanBlocked(aggregate)
         if failure_handler is not None:

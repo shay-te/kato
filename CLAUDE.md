@@ -549,6 +549,13 @@ Email); `SchemaFieldGroup keys=[…]` puts one section's switches under several 
 switch is in `DEFAULT_ON_BOOL_KEYS` (release notes and the security scan were drawn OFF while kato ran them).
 Read-fresh switches are in `_live_settings_keys` (`_read_fresh_switch_keys`): Strict git, auto push and PR
 conventions used to answer "restart required" though they never needed one.
+- **The security scan** (`security_scanner_core_lib`, run per repository in `TaskPreflightService._run_security_scan`)
+  is said as ONE report: `ScanReport.combined` puts each finding under its repository (`audit-core-lib/tests/data/.env`,
+  `/` between parts) and each "not installed" warning once — the ticket comment named no repository among seven and
+  repeated every warning per repository (UNA-3464). Kato blocks on CRITICAL only. A real-looking `.env` value is
+  CRITICAL, except a connection URL whose host is THIS computer (`postgresql://u:pw@127.0.0.1/…`): HIGH
+  (`env-local-credential`) — reported, not blocking (operator's choice, 2026-11-16: a test database's password in a
+  tracked test `.env` refused a whole task). The host must end there: `127.0.0.1.evil.example` stays CRITICAL.
 - **`KATO_RUN_TESTS`** (`automation_switches_utils`, default ON, read fresh). Off: (1) kato's testing step is skipped
   at its one gate, `AgentService._run_task_testing_validation` — the old `OPENHANDS_SKIP_TESTING` (boot-read,
   mislabelled: it always applied to every backend) still works beside it; (2) every chat kato starts gets
@@ -636,7 +643,8 @@ rail cannot fit keep their place `visibility: hidden`. Never `overflow: hidden` 
 screen's bottom-left). The app bar's contents moved INTO the rail: `MenuHandle` (the kato logo + menu bars +
 orange count of tasks waiting, and "Kato") heads it; `MenuFooter` is pinned to its foot (`margin-top: auto`,
 grows upward so nothing pushes the rows): the waiting-task chips (`#menu-attention-slot`, portaled by
-`GlobalPermissionContainer`), the status line (click → activity feed), the lid chip, then usage, release notes,
+`GlobalPermissionContainer`), the status line (click → the "Orchestrator activity" TAB in the centre strip, app-wide like a loop tab — it
+used to cover the whole centre column), the lid chip, then usage, release notes,
 settings, shut down. **Scan now (the rail's actions) is the ONE refresh:** it scans, reloads the list, and re-probes
 the agent CLI version + model catalogues (`refreshAgentVersion`, `refreshCatalogs`). A second footer "Refresh" did
 only the last two plus a list reload (the list polls itself) under the same icon, claimed to "re-scan tickets", and

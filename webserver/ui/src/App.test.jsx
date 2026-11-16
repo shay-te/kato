@@ -171,7 +171,13 @@ vi.mock('./components/MenuHandle.jsx', () => ({
   default: () => <div data-testid="app-handle" />,
 }));
 vi.mock('./components/MenuFooter.jsx', () => ({
-  default: () => <div data-testid="app-footer" />,
+  default: ({ onStatusClick, statusActive }) => (
+    <div data-testid="app-footer">
+      <button type="button" onClick={onStatusClick} aria-pressed={statusActive ? 'true' : 'false'}>
+        status-line
+      </button>
+    </div>
+  ),
 }));
 vi.mock('./components/Layout.jsx', () => ({
   default: ({ top, left, center, right }) => (
@@ -257,7 +263,11 @@ vi.mock('./components/reviewLoop/ReviewLoopPane.jsx', () => ({
   default: ({ session }) => <div data-testid="review-loop-pane">loop={session?.task_id}</div>,
 }));
 vi.mock('./components/OrchestratorActivityFeed.jsx', () => ({
-  default: () => <div data-testid="orchestrator-feed" />,
+  default: ({ onClose }) => (
+    <div data-testid="orchestrator-feed">
+      <button type="button" onClick={onClose}>hide-activity</button>
+    </div>
+  ),
 }));
 vi.mock('./components/SafetyBanner.jsx', () => ({
   default: () => null,
@@ -715,6 +725,69 @@ describe('App — file, loop and draft tabs are one row of tabs', () => {
     expect(screen.getByLabelText('Title')).toHaveValue('Half written');
   });
 });
+
+describe('App — the orchestrator activity is a tab like the rest', () => {
+  // 2026-11-16: "it should be a normal tab, like friend of all the rest" — it
+  // replaced the whole centre column, strip and all.
+  const feedShown = () => !!screen.queryByTestId('orchestrator-feed');
+  const openActivity = () => fireEvent.click(screen.getByRole('button', { name: 'status-line' }));
+
+  beforeEach(() => {
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }, { task_id: 'T2' }], refresh: vi.fn() });
+  });
+
+  test('the status line opens it as a tab in the strip, beside the others', () => {
+    withLoopTabsOpen(['T1']);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    // Opened while the loop shows, so it sits right after the loop.
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    openActivity();
+    expect(stripTitles()).toEqual([
+      'Review loop — T1', 'repo/src/T1.js',
+      'Orchestrator activity — what kato is doing: scans, task moves, warnings',
+    ]);
+    expect(activeTabTitles()).toEqual(['Orchestrator activity — what kato is doing: scans, task moves, warnings']);
+    expect(feedShown()).toBe(true);
+    expect(screen.getByRole('button', { name: 'status-line' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('picking another tab leaves it in the strip; picking it again shows it', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    openActivity();
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    expect(feedShown()).toBe(false);
+    expect(screen.getByTestId('editor-pane').textContent).toContain('file=src/T1.js');
+    fireEvent.click(document.querySelector('[data-activity-tab]'));
+    expect(feedShown()).toBe(true);
+  });
+
+  test('it stays open across a task switch, like a loop tab', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    openActivity();
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    expect(feedShown()).toBe(true);
+    expect(document.querySelector('[data-activity-tab]')).not.toBeNull();
+  });
+
+  test('its ✕ closes it and the tab beside it shows; the feed\'s hide keeps the tab', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    openActivity();
+    fireEvent.click(screen.getByRole('button', { name: 'hide-activity' }));
+    expect(feedShown()).toBe(false);
+    expect(document.querySelector('[data-activity-tab]')).not.toBeNull();
+    fireEvent.click(document.querySelector('[data-activity-tab]'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close the orchestrator activity tab' }));
+    expect(document.querySelector('[data-activity-tab]')).toBeNull();
+    expect(feedShown()).toBe(false);
+    expect(activeTabTitles()).toEqual(['repo/src/T1.js']);
+  });
+});
+
 
 describe('App — a task that is gone keeps no tab open', () => {
   // THE REPORT (2026-11-16): "I handed over/deleted a task, but the UI still

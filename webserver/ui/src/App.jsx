@@ -99,7 +99,7 @@ import { taskTooltipModelFor } from './utils/taskTooltipModel.js';
 import { useActiveBackend } from './stores/activeBackendStore.js';
 import { mergePendingPermissionTaskIds } from './utils/sessionAttention.js';
 import {
-  NEW_TASK_STRIP_ID, STRIP_TAB_KIND, TAB_VIEW, closeTab, findTab, isViewTab, loopStripId, patchTab,
+  ACTIVITY_STRIP_ID, NEW_TASK_STRIP_ID, STRIP_TAB_KIND, TAB_VIEW, closeTab, findTab, isViewTab, loopStripId, patchTab,
   placeOpenedTab, planQueueTab, sortPinnedFirst, stripNeighbour, stripOrder, taskDefinitionTab, togglePin,
   upsertTab,
 } from './utils/fileTabs.js';
@@ -698,16 +698,27 @@ export default function App() {
     maxWidth: LEFT_PANE_MAX_WIDTH,
     anchor: 'left',
   });
-  // Operator clicks the "Scanning for…" pill at the top → the
-  // centre column (normally the read-only Monaco editor) gets
-  // swapped for the live orchestrator activity feed. Clicking
-  // again toggles it back. Lives at App so the pill button and
-  // the centre cell stay in sync without prop-drilling through
-  // every intermediate.
-  const [orchestratorOpen, setOrchestratorOpen] = useState(false);
-  const toggleOrchestrator = useCallback(() => {
-    setOrchestratorOpen((open) => !open);
+  // The orchestrator activity (what kato itself is doing) is a tab in the
+  // centre strip, app-wide like the loops: ``activityOpen`` is whether the tab
+  // exists, ``activityShown`` whether the centre shows it. It used to replace
+  // the whole centre column, strip and all ("it should be a normal tab").
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityShown, setActivityShown] = useState(false);
+  // What the centre shows, set in ONE call: a file (no arguments), a loop's
+  // tab, the draft or the activity — everything else hidden, the plan overlay
+  // too. Each "show X" used to clear the others itself, four lines a time.
+  const showInCentre = useCallback(({ loop = '', newTask = false, activity = false } = {}) => {
+    setActiveReviewLoopTab(loop);
+    setNewTaskActive(newTask);
+    setActivityShown(activity);
+    setCenterOverlay(null);
   }, []);
+  // The rail's status line opens (or returns to) the activity's tab.
+  const openActivity = useCallback(() => {
+    setActivityOpen(true);
+    showInCentre({ activity: true });
+  }, [showInCentre]);
+  const hideActivity = useCallback(() => { setActivityShown(false); }, []);
   // Settings drawer state. Lives at App so the gear button in the
   // Header and the drawer rendered next to the layout share a
   // single boolean — no prop-drilling, no context.
@@ -803,13 +814,8 @@ export default function App() {
       showFileTabs([], null);
       return;
     }
-    // Opening a file must take over the centre column. If the operator had the
-    // orchestrator-activity feed, the plan, or a review-loop tab showing, drop
-    // back to the file view so the file actually shows.
-    setOrchestratorOpen(false);
-    setCenterOverlay(null);
-    setActiveReviewLoopTab('');
-    setNewTaskActive(false);
+    // Opening a file must take over the centre column, whatever showed there.
+    showInCentre();
     openFileRequestRef.current += 1;
     // The operator just asked for this file — that is the one moment the
     // strip is allowed to move itself.
@@ -839,7 +845,7 @@ export default function App() {
     // are only useful as a stable block at the front, so re-apply the split
     // here; it is a stable partition, so nothing else moves.
     applyTabs(sortPinnedFirst(placed), activeKey);
-  }, [activeTaskId, applyTabs]);
+  }, [activeTaskId, applyTabs, showInCentre]);
 
   // The file tab on show, or '' while a loop / draft tab is.
   const shownFileKey = useCallback(
@@ -850,13 +856,24 @@ export default function App() {
   // (``stripNeighbour``). Read before the tabs change. Returns the file to
   // make active ('' = none: a loop / the draft shows, or nothing is left).
   const showNeighbourOf = useCallback((shownKey, closedKeys) => {
-    const { loopTabIds, newTaskOpen } = stripRef.current;
-    const order = stripOrder(openTabsRef.current, loopTabIds, newTaskOpen);
+    const { loopTabIds, activityOpen: activityTabOpen, newTaskOpen } = stripRef.current;
+    const order = stripOrder(openTabsRef.current, { loopTaskIds: loopTabIds, activityOpen: activityTabOpen, newTaskOpen });
     const next = stripNeighbour(order, shownKey, closedKeys);
-    if (next?.kind === STRIP_TAB_KIND.REVIEW_LOOP) { setActiveReviewLoopTab(next.taskId); }
-    if (next?.kind === STRIP_TAB_KIND.NEW_TASK) { setNewTaskActive(true); }
+    if (next?.kind === STRIP_TAB_KIND.REVIEW_LOOP) { showInCentre({ loop: next.taskId }); }
+    if (next?.kind === STRIP_TAB_KIND.ACTIVITY) { showInCentre({ activity: true }); }
+    if (next?.kind === STRIP_TAB_KIND.NEW_TASK) { showInCentre({ newTask: true }); }
     return next?.kind === STRIP_TAB_KIND.FILE ? next.id : '';
-  }, []);
+  }, [showInCentre]);
+  // The activity tab's ✕: on show, its neighbour in the strip shows, as for
+  // any tab.
+  const closeActivity = useCallback(() => {
+    if (stripRef.current.shownStripId === ACTIVITY_STRIP_ID) {
+      const file = showNeighbourOf(ACTIVITY_STRIP_ID, [ACTIVITY_STRIP_ID]);
+      if (file) { applyTabs(openTabsRef.current, file); }
+    }
+    setActivityOpen(false);
+    setActivityShown(false);
+  }, [applyTabs, showNeighbourOf]);
 
   const handleCloseAllFileTabs = useCallback(() => {
     const shownKey = shownFileKey();
@@ -900,12 +917,9 @@ export default function App() {
   // renders, so a tab switch is the point where the ref's latest
   // scroll/cursor position needs to actually become visible state.
   const handleSelectFileTab = useCallback((key) => {
-    setOrchestratorOpen(false);
-    setCenterOverlay(null);
-    setActiveReviewLoopTab('');
-    setNewTaskActive(false);
+    showInCentre();
     applyTabs(openTabsRef.current, key);
-  }, [applyTabs]);
+  }, [applyTabs, showInCentre]);
   const handleCloseFileTab = useCallback((key) => {
     const neighbour = key === shownFileKey() ? showNeighbourOf(key, [key]) : '';
     // Not on show: ``closeTab`` keeps (or picks) the file behind the loop.
@@ -919,7 +933,6 @@ export default function App() {
   // won't re-yank the centre pane onto a plan the operator already dismissed.
   const handleOpenPlan = useCallback(() => {
     if (!activeTaskId) { return; }
-    setOrchestratorOpen(false);
     setCenterOverlay(CENTER_OVERLAY.PLAN);
   }, [activeTaskId]);
   // Dismiss it. ``usePlanWatch`` re-opens only on a strictly-newer plan
@@ -938,26 +951,17 @@ export default function App() {
   const openReviewLoopTab = useCallback((taskId) => {
     const id = String(taskId || '');
     if (!id) { return; }
-    setOrchestratorOpen(false);
-    setCenterOverlay(null);
     setReviewLoopTabs((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    setActiveReviewLoopTab(id);
-    setNewTaskActive(false);
-  }, []);
+    showInCentre({ loop: id });
+  }, [showInCentre]);
   const selectReviewLoopTab = useCallback((taskId) => {
-    setOrchestratorOpen(false);
-    setCenterOverlay(null);
-    setActiveReviewLoopTab(String(taskId || ''));
-    setNewTaskActive(false);
-  }, []);
+    showInCentre({ loop: String(taskId || '') });
+  }, [showInCentre]);
   // "New task": open (or return to) the draft in the centre strip.
   const openNewTask = useCallback(() => {
     openNewTaskDraft();
-    setOrchestratorOpen(false);
-    setCenterOverlay(null);
-    setActiveReviewLoopTab('');
-    setNewTaskActive(true);
-  }, []);
+    showInCentre({ newTask: true });
+  }, [showInCentre]);
   // The tab's close discards the draft (it asks first when anything is
   // written); the pane's ✕ only hides it, the tab stays to come back to.
   const closeNewTask = useCallback(() => {
@@ -1085,38 +1089,36 @@ export default function App() {
   // otherwise the file tab is. The loop's session carries ``review_loop`` for
   // the pane — once a task has left the polled list a bare ``{ task_id }`` is
   // enough (the pane fetches the rounds by id).
-  const showingNewTask = newTaskActive && newTaskDraft.open;
-  const showingReviewLoop = !showingNewTask && !!activeReviewLoopTab;
+  const showingActivity = activityShown && activityOpen;
+  const showingNewTask = !showingActivity && newTaskActive && newTaskDraft.open;
+  const showingReviewLoop = !showingActivity && !showingNewTask && !!activeReviewLoopTab;
   // What the file-tab handlers read about the rest of the strip (``stripRef``).
   useEffect(() => {
     let shownStripId = '';
+    if (showingActivity) { shownStripId = ACTIVITY_STRIP_ID; }
     if (showingNewTask) { shownStripId = NEW_TASK_STRIP_ID; }
     if (showingReviewLoop) { shownStripId = loopStripId(activeReviewLoopTab); }
-    stripRef.current = { shownStripId, loopTabIds: reviewLoopTabs, newTaskOpen: !!newTaskDraft.open };
+    stripRef.current = {
+      shownStripId, loopTabIds: reviewLoopTabs, activityOpen, newTaskOpen: !!newTaskDraft.open,
+    };
   });
   const reviewLoopSession = showingReviewLoop
     ? (sessions.find((s) => s.task_id === activeReviewLoopTab) || { task_id: activeReviewLoopTab })
     : null;
   // While a loop tab is active no file tab is "active", so the file tabs stay
   // unhighlighted behind it.
-  const activeFileTabKey = showingReviewLoop || showingNewTask ? null : activeTabKey;
+  const activeFileTabKey = showingReviewLoop || showingNewTask || showingActivity ? null : activeTabKey;
   const newTaskTab = buildNewTaskTabModel(newTaskDraft, {
     active: showingNewTask,
-    hasOtherTabs: tabsForActiveTask.length + reviewLoopTabList.length > 0,
+    hasOtherTabs: tabsForActiveTask.length + reviewLoopTabList.length > 0 || activityOpen,
   });
-  // The centre column swaps between three bodies (activity feed, plan, and the
-  // shared file/loop tab view); all go through the shared PanelCard so the card
-  // chrome is identical no matter which is showing.
+  const activityTab = activityOpen ? { active: showingActivity } : null;
+  // The centre column swaps between two bodies (the plan, and the shared tab
+  // view); both go through the shared PanelCard so the card chrome is
+  // identical no matter which is showing.
   let centerBody;
   let centerContentClassName = '';
-  if (orchestratorOpen) {
-    centerBody = (
-      <OrchestratorActivityFeed
-        history={status.history}
-        onClose={toggleOrchestrator}
-      />
-    );
-  } else if (centerOverlay === CENTER_OVERLAY.PLAN) {
+  if (centerOverlay === CENTER_OVERLAY.PLAN) {
     centerBody = <PlanPane content={planContent} onClose={handleCloseOverlay} taskId={activeTaskId} />;
   } else {
     let filePane = activeOpenFile?.view === 'diff' ? (
@@ -1153,7 +1155,9 @@ export default function App() {
     // rules rather than adding another nested flex column. Below it, the loop
     // pane when a loop tab is active, otherwise the file/diff pane.
     let underStripPane = filePane;
-    if (showingNewTask) {
+    if (showingActivity) {
+      underStripPane = <OrchestratorActivityFeed history={status.history} onClose={hideActivity} />;
+    } else if (showingNewTask) {
       underStripPane = (
         <NewTaskPane
           onCreated={handleNewTaskCreated}
@@ -1184,6 +1188,9 @@ export default function App() {
           onSelectReviewLoop={selectReviewLoopTab}
           onCloseReviewLoop={closeReviewLoopTab}
           taskCardFor={reviewLoopTaskCard}
+          activityTab={activityTab}
+          onSelectActivity={openActivity}
+          onCloseActivity={closeActivity}
           newTaskTab={newTaskTab}
           onSelectNewTask={openNewTask}
           onCloseNewTask={closeNewTask}
@@ -1233,8 +1240,8 @@ export default function App() {
               statusLatest={status.latest}
               statusStale={status.stale}
               statusConnected={status.connected}
-              onStatusClick={toggleOrchestrator}
-              statusActive={orchestratorOpen}
+              onStatusClick={openActivity}
+              statusActive={showingActivity}
               onOpenSettings={openSettings}
               onOpenUsage={openUsage}
               onOpenReleaseNotes={openReleaseNotes}

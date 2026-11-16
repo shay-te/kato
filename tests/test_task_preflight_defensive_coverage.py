@@ -11,12 +11,38 @@ import types
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from kato_core_lib.data_layers.data.fields import TaskCommentFields
 from kato_core_lib.data_layers.service.task_preflight_service import (
     TaskPreflightService,
 )
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
+    ScanReport,
+    SecurityFinding,
+    Severity,
+)
 from tests.utils import build_task
+
+
+def _scan_report(*severities, errors=()):
+    """A real scan report: one ``tests/data/.env`` finding per severity."""
+    findings = tuple(
+        SecurityFinding(tool='env-file', severity=severity, rule_id='env-real-credential',
+                        message='looks like a real credential', path='tests/data/.env', line=1)
+        for severity in severities
+    )
+    return ScanReport(
+        findings=findings,
+        blocking=any(f.severity.is_at_least(Severity.CRITICAL) for f in findings),
+        block_threshold=Severity.CRITICAL,
+        runner_errors=tuple(errors),
+    )
+
+
+def _scanner(report):
+    scanner = MagicMock()
+    scanner.enabled = True
+    scanner.scan_workspace.return_value = report
+    return scanner
 
 
 def _make_service(**overrides):
@@ -216,54 +242,17 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         self.assertTrue(service._run_security_scan(self.task, [repo]))
         service.logger.exception.assert_called_once()
 
-    def test_security_scan_returns_true_when_block_threshold_none(self) -> None:
-        # Lines 453-454: block_threshold is None (scanner returned a
-        # report without a configured threshold) → True.
-        scanner = MagicMock()
-        scanner.enabled = True
-        report = MagicMock()
-        report.findings = []
-        report.runner_errors = []
-        report.block_threshold = None
-        scanner.scan_workspace.return_value = report
-        service, _ = _make_service(security_scanner_service=scanner)
-        repo = types.SimpleNamespace(id='client', local_path='/some/path')
-        self.assertTrue(service._run_security_scan(self.task, [repo]))
-
     def test_security_scan_logs_non_blocking_findings(self) -> None:
-        # Lines 464-471: non-blocking findings → log + return True.
-        from security_scanner_core_lib.security_scanner_core_lib.security_finding import (
-            ScanReport,
-        )
-        finding = MagicMock()
-        threshold = MagicMock()
-        finding.severity.is_at_least.return_value = False  # below threshold
-        scanner = MagicMock()
-        scanner.enabled = True
-        report = MagicMock()
-        report.findings = [finding]
-        report.runner_errors = []
-        report.block_threshold = threshold
-        scanner.scan_workspace.return_value = report
+        # Below the threshold: logged, and the task goes on.
+        scanner = _scanner(_scan_report(Severity.HIGH))
         service, _ = _make_service(security_scanner_service=scanner)
         service.logger = MagicMock()
         repo = types.SimpleNamespace(id='client', local_path='/some/path')
         self.assertTrue(service._run_security_scan(self.task, [repo]))
 
     def test_security_scan_blocks_without_handler(self) -> None:
-        # Lines 480-490: blocking findings AND no handler → log error +
-        # return False.
-        finding = MagicMock()
-        threshold = MagicMock()
-        finding.severity.is_at_least.return_value = True  # blocking
-        scanner = MagicMock()
-        scanner.enabled = True
-        report = MagicMock()
-        report.findings = [finding]
-        report.runner_errors = []
-        report.block_threshold = threshold
-        scanner.scan_workspace.return_value = report
-        service, _ = _make_service(security_scanner_service=scanner)
+        # Blocking findings AND no handler → log error + return False.
+        service, _ = _make_service(security_scanner_service=_scanner(_scan_report(Severity.CRITICAL)))
         service.logger = MagicMock()
         repo = types.SimpleNamespace(id='client', local_path='/some/path')
         result = service._run_security_scan(self.task, [repo])
@@ -271,18 +260,8 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         service.logger.error.assert_called_once()
 
     def test_security_scan_blocks_with_handler(self) -> None:
-        # Lines 480-482: blocking findings WITH handler → handler invoked.
-        finding = MagicMock()
-        threshold = MagicMock()
-        finding.severity.is_at_least.return_value = True
-        scanner = MagicMock()
-        scanner.enabled = True
-        report = MagicMock()
-        report.findings = [finding]
-        report.runner_errors = []
-        report.block_threshold = threshold
-        scanner.scan_workspace.return_value = report
-        service, _ = _make_service(security_scanner_service=scanner)
+        # Blocking findings WITH handler → handler invoked.
+        service, _ = _make_service(security_scanner_service=_scanner(_scan_report(Severity.CRITICAL)))
         handler = MagicMock()
         repo = types.SimpleNamespace(id='client', local_path='/some/path')
         result = service._run_security_scan(
@@ -291,18 +270,31 @@ class TaskPreflightDefensiveTests(unittest.TestCase):
         self.assertFalse(result)
         handler.assert_called_once()
 
-    def test_prepare_task_start_returns_none_when_security_blocks(self) -> None:
-        # Line 232: security scan returns False → None.
-        finding = MagicMock()
-        threshold = MagicMock()
-        finding.severity.is_at_least.return_value = True
+    def test_the_blocked_report_names_each_repository_and_says_each_warning_once(self) -> None:
+        # UNA-3464 (2026-11-16): the ticket comment said "tests\\data.env" with
+        # no repository among seven, and "bandit is not installed" once per
+        # repository.
+        missing = ('bandit', 'bandit is not installed')
         scanner = MagicMock()
         scanner.enabled = True
-        report = MagicMock()
-        report.findings = [finding]
-        report.runner_errors = []
-        report.block_threshold = threshold
-        scanner.scan_workspace.return_value = report
+        scanner.scan_workspace.side_effect = lambda path: (
+            _scan_report(Severity.CRITICAL, errors=[missing]) if path.endswith('audit')
+            else _scan_report(errors=[missing])
+        )
+        service, _ = _make_service(security_scanner_service=scanner)
+        handler = MagicMock()
+        repos = [
+            types.SimpleNamespace(id='audit-core-lib', local_path='/ws/audit'),
+            types.SimpleNamespace(id='ob-love-ui', local_path='/ws/ui'),
+        ]
+        self.assertFalse(service._run_security_scan(self.task, repos, failure_handler=handler))
+        report = handler.call_args.args[1].report
+        self.assertEqual([f.path for f in report.findings], ['audit-core-lib/tests/data/.env'])
+        self.assertEqual(report.runner_errors, (missing,))
+
+    def test_prepare_task_start_returns_none_when_security_blocks(self) -> None:
+        # Line 232: security scan returns False → None.
+        scanner = _scanner(_scan_report(Severity.CRITICAL))
         service, _ = _make_service(security_scanner_service=scanner)
         handler = MagicMock()
         result = service._prepare_task_start(

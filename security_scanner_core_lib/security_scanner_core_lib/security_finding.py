@@ -12,7 +12,8 @@ dependency graph.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum
 
 
@@ -106,6 +107,35 @@ class ScanReport:
     def has_findings_at_least(self, severity: Severity) -> bool:
         return any(f.severity.is_at_least(severity) for f in self.findings)
 
+    @classmethod
+    def combined(cls, reports: Mapping[str, 'ScanReport']) -> 'ScanReport':
+        """One report for several workspaces scanned apart, keyed by a label
+        each (a repository's name). ``reports`` must not be empty.
+
+        * Every finding's path starts with its label, with ``/`` between
+          parts: a bare ``tests/data/.env`` did not say which of a task's
+          seven repositories it was in, and a Windows ``tests\\data\\.env``
+          lost a backslash in a markdown ticket comment.
+        * A runner's warning is said once: a scanner that is not installed is
+          not installed for every workspace, and the comment listed it once
+          per repository.
+        * Blocking is decided once, against the threshold the scans used.
+        """
+        findings = tuple(
+            replace(finding, path=_labelled_path(label, finding.path))
+            for label, report in reports.items()
+            for finding in report.findings
+        )
+        threshold = next(iter(reports.values())).block_threshold
+        return cls(
+            findings=findings,
+            blocking=any(f.severity.is_at_least(threshold) for f in findings),
+            block_threshold=threshold,
+            runner_errors=tuple(dict.fromkeys(
+                error for report in reports.values() for error in report.runner_errors
+            )),
+        )
+
     def to_dict(self) -> dict:
         return {
             'blocking': self.blocking,
@@ -116,3 +146,10 @@ class ScanReport:
                 for name, err in self.runner_errors
             ],
         }
+
+
+def _labelled_path(label: str, path: str) -> str:
+    """``label/path`` with ``/`` between parts; just ``label`` for a finding
+    about the whole workspace (``path`` empty, e.g. a dependency)."""
+    parts = [part for part in (str(label or '').strip(), str(path or '').replace('\\', '/')) if part]
+    return '/'.join(parts)

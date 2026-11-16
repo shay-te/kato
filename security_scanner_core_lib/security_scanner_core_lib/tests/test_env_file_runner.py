@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from security_scanner_core_lib.security_scanner_core_lib.security_finding import Severity
 from security_scanner_core_lib.security_scanner_core_lib.runners.env_file_runner import (
     _is_real_env,
     _parse_env_line,
@@ -139,6 +140,70 @@ class RunEnvFileScannerTests(unittest.TestCase):
         )
         findings = run(str(self.workspace))
         self.assertEqual(findings, [])
+
+
+
+class LocalCredentialTests(unittest.TestCase):
+    """A password for a service on THIS computer is reported HIGH, not
+    CRITICAL: a test database's URL in a tracked ``tests/data/.env`` refused
+    a whole task (2026-11-16). Anywhere else stays CRITICAL."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Path(self._tmp.name)
+        (self.workspace / 'tests' / 'data').mkdir(parents=True)
+
+    def _scan(self, value: str):
+        (self.workspace / 'tests' / 'data' / '.env').write_text(f'DB_URL={value}\n')
+        [finding] = run(str(self.workspace))
+        return finding
+
+    def test_a_database_on_this_computer_is_high_and_says_so(self) -> None:
+        for value in (
+            'postgresql://audit:s3cret-pw@127.0.0.1:55432/audit_test',
+            'mysql://root:s3cret-pw@localhost/app',
+            'redis://:s3cret-pw@[::1]:6379/0',
+            '"postgres://u:s3cret-pw@127.0.0.1"',
+            'mongodb://u:s3cret-pw@127.0.0.2:27017',
+        ):
+            with self.subTest(value=value):
+                finding = self._scan(value)
+                self.assertEqual(finding.severity, Severity.HIGH)
+                self.assertEqual(finding.rule_id, 'env-local-credential')
+                self.assertIn('a service on this computer', finding.message)
+                self.assertIn('take it out of the file', finding.message)
+                self.assertEqual(finding.path.replace('\\', '/'), 'tests/data/.env')
+
+    def test_any_other_host_stays_critical_even_one_that_starts_like_this_computer(self) -> None:
+        for value in (
+            'postgresql://audit:s3cret-pw@db.prod.internal:5432/audit',
+            'postgres://u:s3cret-pw@127.0.0.1.evil.example/db',
+            'postgres://u:s3cret-pw@localhost.example.com/db',
+            'sk-live-abcdef1234567890',
+        ):
+            with self.subTest(value=value):
+                finding = self._scan(value)
+                self.assertEqual(finding.severity, Severity.CRITICAL)
+                self.assertEqual(finding.rule_id, 'env-real-credential')
+
+    def test_a_host_blocking_on_critical_only_lets_the_task_go_on(self) -> None:
+        from security_scanner_core_lib.security_scanner_core_lib.security_scanner_service import (
+            RunnerConfig,
+            SecurityScannerConfig,
+            SecurityScannerService,
+        )
+
+        (self.workspace / 'tests' / 'data' / '.env').write_text(
+            'AUDIT_TEST_POSTGRES_URL=postgresql://audit:s3cret-pw@127.0.0.1:55432/audit_test\n'
+        )
+        service = SecurityScannerService(SecurityScannerConfig(
+            block_on_severity=(Severity.CRITICAL,),
+            runners=[RunnerConfig(name='env-file', fn=run)],
+        ))
+        report = service.scan_workspace(str(self.workspace))
+        self.assertFalse(report.blocking)
+        self.assertEqual([f.severity for f in report.findings], [Severity.HIGH])
 
 
 if __name__ == '__main__':

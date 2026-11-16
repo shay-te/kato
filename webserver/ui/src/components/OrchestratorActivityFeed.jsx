@@ -11,14 +11,14 @@ const LEVEL_CLASS = {
 function FeedHeader({ onClose }) {
   return (
     <header className="orchestrator-feed-header">
-      <span className="orchestrator-feed-title">orchestrator activity</span>
+      <span className="orchestrator-feed-title">Orchestrator activity</span>
       {typeof onClose === 'function' && (
         <button
           type="button"
           className="orchestrator-feed-close tooltip-end"
           onClick={onClose}
-          data-tooltip="Close the activity feed and go back to the file preview."
-          aria-label="Close orchestrator activity"
+          data-tooltip="Hide the activity feed — its tab stays to come back to."
+          aria-label="Hide orchestrator activity"
         >
           <Icon name="xmark" />
         </button>

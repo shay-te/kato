@@ -73,8 +73,8 @@ export default function MenuFooter({
           aria-pressed={statusActive ? 'true' : 'false'}
           // The whole line: the rail shows only its start.
           title={`${statusText}\n\n${statusActive
-            ? 'Click to hide the orchestrator activity feed and bring the editor back.'
-            : 'Click to open the live orchestrator activity feed in the centre pane.'}`}
+            ? 'The orchestrator activity is the tab on show in the centre.'
+            : 'Click to open the orchestrator activity as a tab in the centre.'}`}
         >
           {status}
         </button>

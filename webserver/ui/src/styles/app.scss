@@ -5329,11 +5329,13 @@ code {
  * file never hides the loops), but reads as its own kind: a loop glyph tinted
  * by the loop's state, an indigo active underline (not the files' cyan), and a
  * divider before the group. */
-.file-tab.is-review-loop {
+.file-tab.is-review-loop,
+.file-tab.is-activity {
   gap: $SPACE-4;
 }
 
 .file-tab.is-review-loop.is-group-start,
+.file-tab.is-activity.is-group-start,
 .file-tab.is-new-task.is-group-start {
   border-left: 1px solid $C-NEUTRAL-16;
 }

@@ -229,5 +229,59 @@ class ScanReportTests(unittest.TestCase):
             report.findings = ()  # type: ignore[misc]
 
 
+
+def _finding(severity, path='', tool='env-file', line=1):
+    return SecurityFinding(tool=tool, severity=severity, rule_id='r', message='m', path=path, line=line)
+
+
+class CombinedReportTests(unittest.TestCase):
+    """Several workspaces scanned apart, said as ONE report: which workspace
+    each finding is in, each runner's warning once (a task's seven
+    repositories listed "bandit is not installed" seven times)."""
+
+    MISSING = ('bandit', 'bandit is not installed')
+
+    def _report(self, *findings, errors=()):
+        return ScanReport(
+            findings=tuple(findings),
+            blocking=any(f.severity.is_at_least(Severity.CRITICAL) for f in findings),
+            block_threshold=Severity.CRITICAL,
+            runner_errors=tuple(errors),
+        )
+
+    def test_each_finding_is_under_its_workspace_with_forward_slashes(self) -> None:
+        combined = ScanReport.combined({
+            'audit-core-lib': self._report(_finding(Severity.CRITICAL, 'tests\\data\\.env')),
+            'ob-love-ui': self._report(_finding(Severity.LOW, 'src/app.js', tool='bandit')),
+        })
+        self.assertEqual(
+            [f.path for f in combined.findings],
+            ['audit-core-lib/tests/data/.env', 'ob-love-ui/src/app.js'],
+        )
+        self.assertTrue(combined.blocking)
+        self.assertEqual(combined.block_threshold, Severity.CRITICAL)
+
+    def test_a_finding_about_a_whole_workspace_is_named_by_it(self) -> None:
+        combined = ScanReport.combined({'api': self._report(_finding(Severity.LOW, '', tool='safety'))})
+        self.assertEqual(combined.findings[0].path, 'api')
+
+    def test_each_runner_warning_is_said_once_in_first_seen_order(self) -> None:
+        other = ('safety', 'safety is not installed')
+        combined = ScanReport.combined({
+            'a': self._report(errors=[self.MISSING, other]),
+            'b': self._report(errors=[self.MISSING]),
+            'c': self._report(errors=[other, self.MISSING]),
+        })
+        self.assertEqual(combined.runner_errors, (self.MISSING, other))
+
+    def test_nothing_at_the_threshold_does_not_block(self) -> None:
+        combined = ScanReport.combined({
+            'a': self._report(_finding(Severity.HIGH, 'x')),
+            'b': self._report(),
+        })
+        self.assertFalse(combined.blocking)
+        self.assertEqual(len(combined.findings), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

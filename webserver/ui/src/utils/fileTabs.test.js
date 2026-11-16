@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  ACTIVITY_STRIP_ID,
   NEW_TASK_STRIP_ID,
   STRIP_TAB_KIND,
   closeTab,
@@ -214,28 +215,37 @@ const file = (key, after = '') => ({ key, after });
 
 test('the strip is one row: files, then each loop and the draft, each with the files opened from it', () => {
   const tabs = [file('a'), file('x', 'loop:T1'), file('b'), file('y', 'new-task'), file('z', 'loop:T2')];
-  assert.deepEqual(ids(stripOrder(tabs, ['T1', 'T2'], true)),
+  assert.deepEqual(ids(stripOrder(tabs, { loopTaskIds: ['T1', 'T2'], newTaskOpen: true })),
     ['a', 'b', 'loop:T1', 'x', 'loop:T2', 'z', 'new-task', 'y']);
-  const loop = stripOrder(tabs, ['T1'], false).find((entry) => entry.id === 'loop:T1');
+  const loop = stripOrder(tabs, { loopTaskIds: ['T1'] }).find((entry) => entry.id === 'loop:T1');
   assert.deepEqual(loop, { kind: STRIP_TAB_KIND.REVIEW_LOOP, id: loopStripId('T1'), taskId: 'T1' });
-  assert.deepEqual(stripOrder([], [], true), [{ kind: STRIP_TAB_KIND.NEW_TASK, id: NEW_TASK_STRIP_ID }]);
+  assert.deepEqual(stripOrder([], { newTaskOpen: true }), [{ kind: STRIP_TAB_KIND.NEW_TASK, id: NEW_TASK_STRIP_ID }]);
+});
+
+test('the orchestrator activity is a tab like the others: after the loops, before the draft', () => {
+  const tabs = [file('a'), file('x', 'activity')];
+  assert.deepEqual(ids(stripOrder(tabs, { loopTaskIds: ['T1'], activityOpen: true, newTaskOpen: true })),
+    ['a', 'loop:T1', ACTIVITY_STRIP_ID, 'x', 'new-task']);
+  assert.deepEqual(stripOrder([], { activityOpen: true }), [{ kind: STRIP_TAB_KIND.ACTIVITY, id: ACTIVITY_STRIP_ID }]);
+  // Closed, the files opened from it rejoin the first group.
+  assert.deepEqual(ids(stripOrder(tabs)), ['a', 'x']);
 });
 
 test('a file whose loop (or draft) tab has closed rejoins the first files, in list order', () => {
   const tabs = [file('x', 'loop:T1'), file('a'), file('y', 'new-task')];
-  assert.deepEqual(ids(stripOrder(tabs, [], false)), ['x', 'a', 'y']);
+  assert.deepEqual(ids(stripOrder(tabs)), ['x', 'a', 'y']);
   assert.deepEqual(ids(stripOrder(null)), []);
 });
 
 test('closing the tab on show shows its left neighbour, else the right — any kind', () => {
-  const order = stripOrder([file('a'), file('x', 'loop:T1'), file('y', 'loop:T1')], ['T1'], true);
+  const order = stripOrder([file('a'), file('x', 'loop:T1'), file('y', 'loop:T1')], { loopTaskIds: ['T1'], newTaskOpen: true });
   // a, loop:T1, x, y, new-task
   assert.equal(stripNeighbour(order, 'x', ['x']).id, 'loop:T1');
   assert.equal(stripNeighbour(order, 'y', ['y']).id, 'x');
   assert.equal(stripNeighbour(order, 'a', ['a']).id, 'loop:T1');
   // Every file closing at once: the nearest tab left standing.
   assert.equal(stripNeighbour(order, 'y', ['a', 'x', 'y']).id, 'loop:T1');
-  assert.equal(stripNeighbour(stripOrder([file('a')], [], false), 'a', ['a']), null);
+  assert.equal(stripNeighbour(stripOrder([file('a')]), 'a', ['a']), null);
   assert.equal(stripNeighbour(order, 'nope', ['nope']), null);
 });
 
@@ -244,7 +254,7 @@ test('a file opened from a loop becomes the first file after that loop', () => {
   const placed = placeOpenedTab(tabs, 'n', { stripId: 'loop:T1' });
   assert.deepEqual(placed.map((tab) => [tab.key, tab.after]),
     [['a', ''], ['n', 'loop:T1'], ['x', 'loop:T1']]);
-  assert.deepEqual(ids(stripOrder(placed, ['T1'])), ['a', 'loop:T1', 'n', 'x']);
+  assert.deepEqual(ids(stripOrder(placed, { loopTaskIds: ['T1'] })), ['a', 'loop:T1', 'n', 'x']);
   // Nothing after that loop yet: it goes last in the list, after the loop on screen.
   assert.deepEqual(placeOpenedTab([file('n'), file('a')], 'n', { stripId: 'new-task' })
     .map((tab) => tab.key), ['a', 'n']);

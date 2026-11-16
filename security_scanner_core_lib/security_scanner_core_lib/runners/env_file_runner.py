@@ -15,6 +15,13 @@ clears; a real credential mis-cleared is a leaked secret. Default
 to over-flagging, let the operator quiet false positives by adding
 ``# security-scanner:placeholder`` next to the value (or the
 host's own marker, passed as ``placeholder_annotation``).
+
+One exception, ``HIGH`` (``env-local-credential``): a connection URL whose
+host is THIS computer (``postgresql://audit:pw@127.0.0.1:55432/audit_test``).
+A test database's password, in a test ``.env`` a repository tracks on purpose,
+refused a whole task as CRITICAL (2026-11-16). It is still reported — the same
+URL can reach a real server through a tunnel — but a host that blocks only on
+CRITICAL lets the task go on.
 """
 
 from __future__ import annotations
@@ -70,6 +77,16 @@ _PLACEHOLDER_PATTERNS = (
     re.compile(r'^/[\w./-]*$'),                  # filesystem paths
 )
 
+# A connection URL to this computer, any scheme, credentials allowed:
+# ``scheme://[user[:password]@]<loopback>[:port][/…]``. The host must END at
+# ``:``, ``/``, ``?``, ``#`` or the value's end, so ``127.0.0.1.evil.example``
+# and ``localhost.example.com`` are not this computer.
+_LOCAL_URL = re.compile(
+    r'^[a-z][a-z0-9+.-]*://(?:[^@/\s]*@)?'
+    r'(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?=[:/?#]|$)',
+    re.IGNORECASE,
+)
+
 # Default annotation that silences a line when added as a trailing comment.
 # Operators can override this via the ``placeholder_annotation`` parameter.
 _DEFAULT_PLACEHOLDER_ANNOTATION = 'security-scanner:placeholder'
@@ -104,6 +121,12 @@ def _value_looks_real(value: str) -> bool:
         # Short values are almost always config flags / ports.
         return False
     return not any(p.match(stripped) for p in _PLACEHOLDER_PATTERNS)
+
+
+def _local_host(value: str) -> str:
+    """The loopback host ``value`` connects to, or ``''``."""
+    match = _LOCAL_URL.match(value.strip().strip('"').strip("'"))
+    return match.group(1) if match else ''
 
 
 def _parse_env_line(line: str) -> tuple[str, str, str] | None:
@@ -185,18 +208,31 @@ def run(
                 continue
             if not _value_looks_real(value):
                 continue
-            findings.append(SecurityFinding(
-                tool='env-file',
-                severity=Severity.CRITICAL,
-                rule_id='env-real-credential',
-                message=(
-                    f'{key} in {entry.name} looks like a real credential '
-                    f'(not a placeholder). If this is intentional repo '
-                    f'scaffolding, rename the file to {entry.name}.example '
-                    f'or annotate the line with "# {annotation}".'
-                ),
-                path=workspace_relative(workspace, entry),
-                line=line_no,
-                metadata=(('key', key),),
-            ))
+            findings.append(_finding(key, value, entry, workspace, line_no, annotation))
     return findings
+
+
+def _finding(key: str, value: str, entry: Path, workspace: Path, line_no: int, annotation: str) -> SecurityFinding:
+    quiet = f'annotate the line with "# {annotation}"'
+    host = _local_host(value)
+    if host:
+        severity, rule_id, message = Severity.HIGH, 'env-local-credential', (
+            f'{key} in {entry.name} holds a password for a service on this computer ({host}). '
+            f'If it is a real password (a tunnel to a real server), take it out of the file; '
+            f'if it is test scaffolding, {quiet}.'
+        )
+    else:
+        severity, rule_id, message = Severity.CRITICAL, 'env-real-credential', (
+            f'{key} in {entry.name} looks like a real credential (not a placeholder). '
+            f'If this is intentional repo scaffolding, rename the file to '
+            f'{entry.name}.example or {quiet}.'
+        )
+    return SecurityFinding(
+        tool='env-file',
+        severity=severity,
+        rule_id=rule_id,
+        message=message,
+        path=workspace_relative(workspace, entry),
+        line=line_no,
+        metadata=(('key', key),),
+    )

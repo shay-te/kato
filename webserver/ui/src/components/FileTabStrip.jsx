@@ -39,6 +39,11 @@ export default function FileTabStrip({
   // the task is not in the list: a loop tab names its task the way the tasks
   // menu row does.
   taskCardFor = null,
+  // The orchestrator activity's tab (``{ active }``), app-wide like the loops;
+  // null while it is closed.
+  activityTab = null,
+  onSelectActivity = () => {},
+  onCloseActivity = () => {},
   // The "New task" draft's tab (``buildNewTaskTabModel``), last in the strip;
   // null while no draft is open.
   newTaskTab = null,
@@ -95,11 +100,15 @@ export default function FileTabStrip({
 
   const fileTabs = tabs || [];
   const loopTabs = reviewLoopTabs || [];
-  if (fileTabs.length === 0 && loopTabs.length === 0 && !newTaskTab) { return null; }
+  if (fileTabs.length === 0 && loopTabs.length === 0 && !activityTab && !newTaskTab) { return null; }
   const draggedTab = drag.key ? fileTabs.find((tab) => tab.key === drag.key) : null;
-  // ONE row of tabs, each where ``stripOrder`` puts it: a file opened while a
-  // loop (or the draft) showed sits right after that tab.
-  const order = stripOrder(fileTabs, loopTabs.map((loop) => loop.taskId), !!newTaskTab);
+  // ONE row of tabs, each where ``stripOrder`` puts it: a file opened while
+  // another tab showed sits right after that tab.
+  const order = stripOrder(fileTabs, {
+    loopTaskIds: loopTabs.map((loop) => loop.taskId),
+    activityOpen: !!activityTab,
+    newTaskOpen: !!newTaskTab,
+  });
   const fileByKey = new Map(fileTabs.map((tab) => [tab.key, tab]));
   // A divider opens each run of loop tabs that comes after a file.
   const groupStarts = new Set(order
@@ -164,9 +173,20 @@ export default function FileTabStrip({
       card={taskCardFor ? taskCardFor(loop.taskId) : null}
     />
   );
-  const items = order.map((entry) => {
+  const items = order.map((entry, index) => {
     if (entry.kind === STRIP_TAB_KIND.FILE) { return fileTabEl(fileByKey.get(entry.id)); }
     if (entry.kind === STRIP_TAB_KIND.REVIEW_LOOP) { return loopTabEl(loopByTask.get(entry.taskId)); }
+    if (entry.kind === STRIP_TAB_KIND.ACTIVITY) {
+      return (
+        <ActivityFileTab
+          key="activity"
+          active={activityTab.active}
+          groupStart={index > 0}
+          onSelect={onSelectActivity}
+          onClose={onCloseActivity}
+        />
+      );
+    }
     return (
       <NewTaskFileTab key="new-task" tab={newTaskTab} onSelect={onSelectNewTask} onClose={onCloseNewTask} />
     );
@@ -223,6 +243,32 @@ function ReviewLoopFileTab({ taskId, tone, active, groupStart, onSelect, onClose
         <Icon name="xmark" />
       </button>
       {card && hover.anchorRect && <TabTooltip anchorRect={hover.anchorRect} model={card} placement="below" />}
+    </li>
+  );
+}
+
+
+// The orchestrator activity's tab: what kato itself is doing (scans, task
+// moves, warnings), app-wide. It was a view that covered the whole centre
+// column, strip and all; as a tab it sits among the others ("like the rest").
+function ActivityFileTab({ active, groupStart, onSelect, onClose }) {
+  return (
+    <li
+      className={cx('file-tab', 'is-activity', active && 'active', groupStart && 'is-group-start')}
+      data-activity-tab=""
+      title="Orchestrator activity — what kato is doing: scans, task moves, warnings"
+      onClick={onSelect}
+    >
+      <Icon name="history" />
+      <span className="file-tab-label">Orchestrator activity</span>
+      <button
+        type="button"
+        className="file-tab-close-btn"
+        aria-label="Close the orchestrator activity tab"
+        onClick={(event) => { event.stopPropagation(); onClose(); }}
+      >
+        <Icon name="xmark" />
+      </button>
     </li>
   );
 }

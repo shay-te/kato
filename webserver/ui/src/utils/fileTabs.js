@@ -176,16 +176,17 @@ export function closeTab(tabs, activeKey, key) {
 
 // --- the shared strip ------------------------------------------------------
 //
-// File tabs share the centre strip with the review-loop tabs and the "New
-// task" draft's tab, and it is ONE row of tabs: a tab opens right after the
-// one on show, and closing the one on show shows its neighbour — whatever
-// kind either is. A file opened while a loop (or the draft) shows records
-// that tab's strip id in ``after`` and sits right after it; the loops and
-// the draft keep their own order.
+// File tabs share the centre strip with the review-loop tabs, the
+// orchestrator activity's tab and the "New task" draft's tab, and it is ONE
+// row of tabs: a tab opens right after the one on show, and closing the one on
+// show shows its neighbour — whatever kind either is. A file opened while one
+// of the others shows records that tab's strip id in ``after`` and sits right
+// after it; the others keep their own order.
 export const STRIP_TAB_KIND = Object.freeze({
-  FILE: 'file', REVIEW_LOOP: 'review_loop', NEW_TASK: 'new_task',
+  FILE: 'file', REVIEW_LOOP: 'review_loop', ACTIVITY: 'activity', NEW_TASK: 'new_task',
 });
 
+export const ACTIVITY_STRIP_ID = 'activity';
 export const NEW_TASK_STRIP_ID = 'new-task';
 
 export function loopStripId(taskId) {
@@ -194,14 +195,15 @@ export function loopStripId(taskId) {
 
 // The strip in display order, as ``{ kind, id, taskId? }`` entries (a file's
 // ``id`` is its tab key): the files that follow no other tab, then each loop
-// tab and then the draft's, each followed by the files opened from it. A file
-// whose tab has closed since rejoins the first group, in list order.
-export function stripOrder(fileTabs, loopTaskIds = [], newTaskOpen = false) {
+// tab, the activity's and the draft's, each followed by the files opened from
+// it. A file whose tab has closed since rejoins the first group, in list order.
+export function stripOrder(fileTabs, { loopTaskIds = [], activityOpen = false, newTaskOpen = false } = {}) {
   const files = Array.isArray(fileTabs) ? fileTabs : [];
   const others = [
     ...loopTaskIds.map((taskId) => ({
       kind: STRIP_TAB_KIND.REVIEW_LOOP, id: loopStripId(taskId), taskId,
     })),
+    ...(activityOpen ? [{ kind: STRIP_TAB_KIND.ACTIVITY, id: ACTIVITY_STRIP_ID }] : []),
     ...(newTaskOpen ? [{ kind: STRIP_TAB_KIND.NEW_TASK, id: NEW_TASK_STRIP_ID }] : []),
   ];
   const open = new Set(others.map((entry) => entry.id));
@@ -224,7 +226,7 @@ export function stripNeighbour(order, shownId, closedIds) {
 
 // A file tab ``key`` just opened goes right after the tab on show. After a
 // file, ``upsertTab`` already put it there, and it joins that file's group
-// (``after``). After a loop / the draft (``stripId``), it becomes the first
+// (``after``). After any other tab (``stripId``), it becomes the first
 // of the files that follow that tab.
 export function placeOpenedTab(tabs, key, { after = '', stripId = '' } = {}) {
   const list = Array.isArray(tabs) ? tabs : [];
