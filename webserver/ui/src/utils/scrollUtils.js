@@ -108,3 +108,17 @@ export function scrollElementToTop(target, scroller, { offset = 0 } = {}) {
     - scroller.getBoundingClientRect().top;
   scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - offset);
 }
+
+// THE way the UI scrolls one element into view: the highlighted row of a list,
+// a tab, a comment thread, a settings field. ``nearest`` (the default) moves
+// only when the element is off-screen, and only as far as needed — a row the
+// operator can already see never moves; ``center`` puts it in the middle (a
+// jump the eye must follow). Guarded: jsdom and a couple of older embedded
+// browsers have no ``scrollIntoView``, and not scrolling is cosmetic — it must
+// never take a component down. True when it scrolled.
+export function revealInView(node, { center = false, smooth = false } = {}) {
+  if (typeof node?.scrollIntoView !== 'function') { return false; }
+  const block = center ? 'center' : 'nearest';
+  node.scrollIntoView(smooth ? { behavior: 'smooth', block } : { block });
+  return true;
+}

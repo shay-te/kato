@@ -595,6 +595,13 @@ conventions used to answer "restart required" though they never needed one.
   said Connected while every PR failed "missing pull request API token" (KAN-1). A token already in the env wins; a
   restart in place drops the resolved ones (`_RESOLVED_CREDENTIAL_KEYS`) so it resolves again. ONE settings loader:
   `load_kato_settings_into_environ` (an empty env value is unset; main's own raw copy was deleted).
+- **Every git call over HTTPS carries the token from Settings** (`RepositoryService._with_host_token`, inside the ONE
+  header builder `_build_git_http_auth_header`). A repository got its token only when its pull request API was set up,
+  so a Push after a restart sent NONE and git signed in with the computer's saved login — a username in the remote
+  (`https://shacoshe@bitbucket.org/…`) makes git ask the Keychain / credential manager — and an old one missing a scope
+  refused it (403, UNA-3477) while the Settings token could push. A copy is given the token (the inventory's object
+  stays as it was); an SSH remote, an unknown host or a host with no token in Settings are left to git as before.
+  Proven with real git against a local host that records the credentials it is sent.
 - **A git host's connection check reads the PULL REQUESTS too, and every refusal says what to change.** Each PR
   client's `validate_connection` (bitbucket/github/gitlab/azure_devops_core_lib) GETs the repository AND its pull
   request list (page size 1) — the call the review scan makes. It read the repository only, so a Bitbucket API token
@@ -680,6 +687,12 @@ when it is let go or the window loses focus. Tap-or-hold is `utils/keyHold.js` `
 injectable): use it for any other "reveal only on a hold" shortcut. Proven in headless Chromium
 (Playwright) against a real kato webserver: the rail collapsed to codes, expanded over the page with nothing
 moving, rows grouped, footer labels on screen, the switcher came and went.
+**The tab on show is kept in view — ONE hook, `hooks/useRevealActive.js`** (the rail's `.tab.active`, the centre strip's
+`.file-tab.active`): it scrolls when the item on show becomes a DIFFERENT element (any kind: file, review loop, activity,
+new task) or a reveal is asked again (a tree click, a palette pick) — never on a poll or re-render with the same one, and
+`nearest` moves nothing visible. It used to scroll only on a tree click: a clicked review loop's tab stayed off-screen.
+Every `scrollIntoView` in the UI goes through `utils/scrollUtils.js` `revealInView` (guarded; nearest or centre) — never
+a bare call.
 
 ### Commit messages and PR text can follow a repository's own CLAUDE.md / AGENTS.md
 Kato's backend — never the agent — writes the commit and opens the pull request (see "Git:" in Plan

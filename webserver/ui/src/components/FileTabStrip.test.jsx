@@ -340,25 +340,59 @@ describe('FileTabStrip — reveal and context menu', () => {
     );
   }
 
-  test('scrolls the active tab into view only when the reveal id changes', () => {
-    const scrollIntoView = vi.fn();
-    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
-    const { rerender } = strip({ revealRequestId: 1 });
-    scrollIntoView.mockClear();
+  // Which tabs were scrolled into view, by label, in order.
+  function watchReveals() {
+    const revealed = [];
+    window.HTMLElement.prototype.scrollIntoView = vi.fn(function reveal(options) {
+      revealed.push([this.querySelector('.file-tab-label')?.textContent, options]);
+    });
+    return revealed;
+  }
 
-    // A re-render that is NOT a new tree click must not move the strip —
-    // this is the "don't fight my scrolling" requirement.
-    rerender(
-      <FileTabStrip tabs={tabs} activeKey="b" onSelect={() => {}} onClose={() => {}}
-        revealRequestId={1} />,
-    );
-    expect(scrollIntoView).not.toHaveBeenCalled();
+  test('the tab on show is brought into view whenever it changes, and only then', () => {
+    const revealed = watchReveals();
+    const props = { tabs, onSelect: () => {}, onClose: () => {}, revealRequestId: 1 };
+    const { rerender } = render(<FileTabStrip {...props} activeKey="a" />);
+    expect(revealed).toEqual([['app.py', { behavior: 'smooth', block: 'nearest' }]]);
 
+    // The same tab on show: a re-render (a poll, a toggle) must not move the
+    // strip — the operator may have scrolled it to look at another tab.
+    rerender(<FileTabStrip {...props} activeKey="a" tabs={[...tabs]} />);
+    expect(revealed).toHaveLength(1);
+
+    rerender(<FileTabStrip {...props} activeKey="b" />);
+    expect(revealed.map(([label]) => label)).toEqual(['app.py', 'other.py']);
+  });
+
+  test('a file opened from the tree that is already on show is brought back into view', () => {
+    const revealed = watchReveals();
+    const props = { tabs, activeKey: 'b', onSelect: () => {}, onClose: () => {} };
+    const { rerender } = render(<FileTabStrip {...props} revealRequestId={1} />);
+    rerender(<FileTabStrip {...props} revealRequestId={2} />);
+    expect(revealed.map(([label]) => label)).toEqual(['other.py', 'other.py']);
+  });
+
+  test('every kind of tab is brought into view when it is put on show', () => {
+    // 2026-11-17: clicking a review loop left its tab scrolled off the strip.
+    const revealed = watchReveals();
+    const props = {
+      tabs, onSelect: () => {}, onClose: () => {}, reviewLoopTabs: [{ taskId: 'UNA-9', tone: 'clean' }],
+    };
+    const { rerender } = render(<FileTabStrip {...props} activeKey="a" />);
+    rerender(<FileTabStrip {...props} activeKey={null} activeReviewLoopTab="UNA-9" />);
+    rerender(<FileTabStrip {...props} activeKey={null} activityTab={{ active: true }} />);
     rerender(
-      <FileTabStrip tabs={tabs} activeKey="b" onSelect={() => {}} onClose={() => {}}
-        revealRequestId={2} />,
+      <FileTabStrip {...props} activeKey={null}
+        newTaskTab={{ label: 'New task', active: true, dirty: false, groupStart: false }} />,
     );
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(revealed.map(([label]) => label)).toEqual(['app.py', 'UNA-9', 'Orchestrator activity', 'New task']);
+  });
+
+  test('a browser with no scrollIntoView keeps the strip working', () => {
+    delete window.HTMLElement.prototype.scrollIntoView;
+    const props = { tabs, onSelect: () => {}, onClose: () => {} };
+    const { rerender } = render(<FileTabStrip {...props} activeKey="a" />);
+    expect(() => rerender(<FileTabStrip {...props} activeKey="b" />)).not.toThrow();
   });
 
   test('right-click opens the menu with every action', () => {

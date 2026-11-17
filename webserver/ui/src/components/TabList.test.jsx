@@ -82,11 +82,12 @@ describe('TabList', () => {
     expect(tabs[1].querySelector('.status-dot')).not.toHaveClass(`status-${TAB_STATUS.WORKING}`);
   });
 
-  test('selecting/updating the active tab never auto-scrolls the strip', () => {
+  test('a status poll with the same active task never moves the rail', () => {
     // Regression: an effect that re-centered the active tab on every
     // ``sessions`` change (e.g. a status poll) fought the operator's
     // own manual scroll/wheel input, making the strip feel like it
-    // "jumped back" mid-scroll. Selection must never move the strip.
+    // "jumped back" mid-scroll. Only a CHANGE of the task on show (or an
+    // explicit reveal) may move it.
     const scrollToSpy = vi.fn();
     const scrollIntoViewSpy = vi.fn();
     const origScrollTo = window.HTMLElement.prototype.scrollTo;
@@ -101,6 +102,7 @@ describe('TabList', () => {
           onSelect={() => {}}
         />,
       );
+      scrollIntoViewSpy.mockClear();  // the first paint brings the task on show into view
       // Simulate a status poll producing a new sessions array while
       // the active tab stays the same.
       rerender(
@@ -479,6 +481,23 @@ describe('TabList — scroll the selected tab into view', () => {
       />,
     );
     expect(node.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  test('switching to another task brings its row into view', () => {
+    // Any switch — a notification, a keyboard switch, a new task — not only
+    // a palette pick: a task on show must never sit scrolled off the rail.
+    const { rerender } = renderStrip({ revealRequestId: 1 });
+    const node = document.querySelector('[data-task-id="A-1"]');
+    node.scrollIntoView = vi.fn();
+    rerender(
+      <TabList
+        sessions={[_session('A-1'), _session('A-2'), _session('A-3')]}
+        activeTaskId="A-1"
+        onSelect={() => {}}
+        revealRequestId={1}
+      />,
+    );
+    expect(node.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' });
   });
 
   test('a missing scrollIntoView (jsdom, old webviews) does not break the strip', () => {

@@ -7,6 +7,7 @@ import {
 import { useChatComposer } from '../contexts/ChatComposerContext.jsx';
 import { useTaskDiff, useTaskComments, revalidate } from '../stores/taskCache/index.js';
 import DiffFileWithComments from './DiffFileWithComments.jsx';
+import { revealInView } from '../utils/scrollUtils.js';
 
 const EMPTY_COMMENTS = [];
 
@@ -161,12 +162,11 @@ export default function DiffPane({
     if (openRequestId === lastCommentScrolledRequestRef.current) { return; }
     const fileNode = fileNodeRef.current;
     if (!fileNode) { return; }
+    // Mark handled only when we reached the actual thread — until the
+    // comments load we keep retrying so the final landing is the thread.
     const thread = fileNode.querySelector('.diff-file-comment-thread');
-    if (thread && typeof thread.scrollIntoView === 'function') {
-      // Mark handled only when we reached the actual thread — until the
-      // comments load we keep retrying so the final landing is the thread.
+    if (revealInView(thread, { center: true, smooth: true })) {
       lastCommentScrolledRequestRef.current = openRequestId;
-      thread.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }, [
     restoreViewState, focusComment, status, selected,

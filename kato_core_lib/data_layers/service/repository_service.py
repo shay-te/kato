@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import threading
@@ -29,6 +30,7 @@ from utils_core_lib.utils_core_lib.text_utils import (
 )
 from kato_core_lib.data_layers.service.pull_request_lookup import PullRequestLookup
 from kato_core_lib.data_layers.service.repository_inventory_service import (
+    PullRequestApiNotSetUp,
     RepositoryInventoryService,
 )
 from kato_core_lib.data_layers.service.repository_publication_service import (
@@ -216,9 +218,38 @@ class RepositoryService(GitClientMixin, RepositoryInventoryService):
 
     def _build_git_http_auth_header(self, repository) -> str:
         return git_http_auth_header(
-            repository,
+            self._with_host_token(repository),
             bitbucket_username_attr=RepositoryFields.BITBUCKET_USERNAME,
         )
+
+    def _with_host_token(self, repository):
+        """``repository`` carrying its git host's token from Settings.
+
+        A repository got its token only when its pull request API was set up
+        (``_prepare_pull_request_api``), so a git call that came first — the
+        Push button after a restart — sent NO token, and git signed in with
+        whatever login the computer had saved for that address (a username in
+        the remote makes git ask the Keychain / credential manager). An old one
+        missing a scope refused the push with a 403 while the token in Settings
+        could push (UNA-3477, 2026-11-17). A copy: the inventory's own object is
+        left as it was. An SSH remote signs in with a key, never a token.
+        """
+        if repository is None or text_from_attr(repository, 'token'):
+            return repository
+        remote = text_from_attr(repository, 'remote_url').lower()
+        if not remote.startswith(('https://', 'http://')):
+            return repository
+        try:
+            provider = self._resolved_pull_request_provider(repository)
+        except PullRequestApiNotSetUp:
+            return repository
+        _, token = self._resolved_pull_request_api_values(repository, provider)
+        if not token:
+            return repository
+        resolved = copy.copy(repository)
+        resolved.provider = provider
+        resolved.token = token
+        return resolved
 
     def prepare_task_repositories(
         self, repositories: list[object], *, pull_requests_required: bool = True,

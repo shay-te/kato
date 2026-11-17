@@ -53,6 +53,7 @@ import {
 } from './utils/commentStatus.js';
 import { useDismissOnOutsidePointerOrEscape } from './hooks/useDismissOnOutsidePointerOrEscape.js';
 import { useClampedPointMenu } from './hooks/useClampedPointMenu.js';
+import { revealInView } from './utils/scrollUtils.js';
 import {
   branchWorthShowing, rememberRepos, rememberedRepos,
 } from './utils/taskRepoMemory.js';
@@ -1305,10 +1306,7 @@ function RepoTree({
       const root = repoRef.current;
       if (!root) { return; }
       const selector = `[data-changed-file-path="${cssEscapeAttr(targetPath)}"]`;
-      const row = root.querySelector(selector);
-      if (row && typeof row.scrollIntoView === 'function') {
-        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+      revealInView(root.querySelector(selector), { center: true, smooth: true });
     });
     return () => window.cancelAnimationFrame(timer);
   }, [
@@ -1416,10 +1414,7 @@ function RepoTree({
     window.requestAnimationFrame(() => {
       const selector = `[data-changed-file-path="${cssEscapeAttr(diffDisplayPath(file))}"]`
         + `[data-changed-file-kind="${cssEscapeAttr(file.type || 'modify')}"]`;
-      const row = repoRef.current?.querySelector(selector);
-      if (row && typeof row.scrollIntoView === 'function') {
-        row.scrollIntoView({ block: 'nearest' });
-      }
+      revealInView(repoRef.current?.querySelector(selector));
     });
   }
   const changedTreeContent = hasChangedFiles && filteredChangedNodes.length > 0 ? (

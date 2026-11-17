@@ -22,13 +22,7 @@ import { useCopyAction } from '../hooks/useCopyAction.js';
 import { useCommentStatusMap } from '../hooks/useCommentStatusMap.js';
 import { MessageFilter } from '../utils/MessageFilter.js';
 import { refusedToolsText, resultFailureText } from '../utils/resultFailure.js';
-import {
-  anchoredScrollTop,
-  isNearTop,
-  isPinnedToBottom,
-  scrollToBottom,
-  scrollElementToTop,
-} from '../utils/scrollUtils.js';
+import { anchoredScrollTop, isNearTop, isPinnedToBottom, revealInView, scrollElementToTop, scrollToBottom } from '../utils/scrollUtils.js';
 import { cx } from '../utils/cx.js';
 import { countNoun, withImageCountSuffix } from '../utils/pluralize.js';
 import { messageContentText } from '../utils/messageContent.js';
@@ -372,7 +366,7 @@ export default function EventLog({
       // Scroll into view smoothly so the operator can follow the
       // jump. ``center`` keeps the active bubble vertically centred
       // — the eye doesn't have to find it after each press.
-      current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      revealInView(current, { center: true, smooth: true });
     }
     if (typeof onSearchMatchCount === 'function') {
       onSearchMatchCount(matched.length);

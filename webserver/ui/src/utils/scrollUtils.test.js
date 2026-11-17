@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { STICK_THRESHOLD_PX, anchoredScrollTop, isNearTop, isPinnedToBottom, scrollToBottom, stickToBottomIfPinned } from './scrollUtils.js';
+import { STICK_THRESHOLD_PX, anchoredScrollTop, isNearTop, isPinnedToBottom, revealInView, scrollToBottom, stickToBottomIfPinned } from './scrollUtils.js';
 
 // Fake scroll container — just the three metrics the helpers read.
 function node({ scrollHeight, clientHeight, scrollTop }) {
@@ -100,4 +100,32 @@ test('anchoredScrollTop never scrolls backwards on a shrink', () => {
 test('anchoredScrollTop survives missing geometry', () => {
   assert.equal(anchoredScrollTop(undefined, undefined, undefined), 0);
   assert.equal(anchoredScrollTop(50, NaN, 900), 50);
+});
+
+
+function scrollable() {
+  const calls = [];
+  return { calls, scrollIntoView: (options) => calls.push(options) };
+}
+
+test('revealInView: nearest by default — what is visible does not move', function () {
+  const node = scrollable();
+  assert.equal(revealInView(node), true);
+  assert.deepEqual(node.calls, [{ block: 'nearest' }]);
+});
+
+test('revealInView: centred and smooth when asked', function () {
+  const node = scrollable();
+  revealInView(node, { center: true, smooth: true });
+  revealInView(node, { smooth: true });
+  assert.deepEqual(node.calls, [
+    { behavior: 'smooth', block: 'center' },
+    { behavior: 'smooth', block: 'nearest' },
+  ]);
+});
+
+test('revealInView: no element, or a browser without scrollIntoView, is not an error', function () {
+  for (const node of [null, undefined, {}, { scrollIntoView: 'no' }]) {
+    assert.equal(revealInView(node), false);
+  }
 });

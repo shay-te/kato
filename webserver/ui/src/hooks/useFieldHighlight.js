@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { revealInView } from '../utils/scrollUtils.js';
 
 // Scroll the field the operator jumped to from the settings search into view
 // and flash it. Shared by the generic SchemaSettingsPanel and the bespoke
@@ -13,7 +14,7 @@ export function useFieldHighlight(containerRef, highlightKey, deps = []) {
       `[data-field-key="${CSS.escape(highlightKey)}"]`,
     );
     if (!row) { return undefined; }
-    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    revealInView(row, { center: true, smooth: true });
     row.classList.add('is-search-highlight');
     const handle = window.setTimeout(
       () => row.classList.remove('is-search-highlight'), 1800,

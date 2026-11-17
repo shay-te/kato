@@ -37,5 +37,5 @@ test('the description takes the height; settings sit in a narrow column', () => 
 test('its tab reads apart from file (cyan) and loop (indigo) tabs: green', () => {
   assert.match(ruleBody('.file-tab.is-new-task.active'), /border-bottom-color: #34d399/);
   assert.match(ruleBody('.file-tab-new-task-icon'), /color: #34d399/);
-  assert.match(css, /\.file-tab\.is-review-loop\.is-group-start,\n\.file-tab\.is-new-task\.is-group-start \{/);
+  assert.match(css, /\.file-tab\.is-review-loop\.is-group-start,\n\.file-tab\.is-activity\.is-group-start,\n\.file-tab\.is-new-task\.is-group-start \{/);
 });

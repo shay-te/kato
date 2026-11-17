@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
+import { useRevealActive } from '../hooks/useRevealActive.js';
 import Icon from './Icon.jsx';
 import TabTooltip from './TabTooltip.jsx';
 import { useHoverCard } from '../hooks/useHoverCard.js';
@@ -49,9 +50,8 @@ export default function FileTabStrip({
   newTaskTab = null,
   onSelectNewTask = () => {},
   onCloseNewTask = () => {},
-  // Bumped ONLY when the operator opened a file from the tree. Scrolling
-  // the tab into view is a response to that click and nothing else — see
-  // the effect below.
+  // Bumped when the operator opened a file from the tree: the tab on show is
+  // brought into view again even when it already was the active one.
   revealRequestId = 0,
 }) {
   // Drag-to-reorder state. ``key`` is the tab being dragged, ``over`` the
@@ -62,28 +62,10 @@ export default function FileTabStrip({
   // null (no DOM node at all) whenever tabs is empty, which a plain
   // useEffect-on-a-stable-ref-object would miss the very first time
   // a tab actually opens (see the hook for the full explanation).
-  const wheelRef = useHorizontalWheelScroll();
-  const activeTabRef = useRef(null);
-  const lastRevealRef = useRef(revealRequestId);
+  // Whichever tab is on show — a file, a review loop, the activity, the new
+  // task — is kept in view when it changes (``useRevealActive``).
+  const wheelRef = useHorizontalWheelScroll(useRevealActive('.file-tab.active', revealRequestId));
   const [menu, setMenu] = useState(null);
-
-  // Bring the active tab into view — but ONLY when the reveal id changed,
-  // i.e. the operator just clicked a file in the tree. Deliberately NOT
-  // keyed on activeKey or on tabs: those change while scrolling, on
-  // refresh, and on view toggles, and re-centring then would drag the
-  // strip back under the operator's cursor every time they tried to look
-  // at something else. A scroll is intent too, and it must win.
-  useEffect(() => {
-    if (revealRequestId === lastRevealRef.current) { return; }
-    lastRevealRef.current = revealRequestId;
-    const node = activeTabRef.current;
-    // Guarded: jsdom has no scrollIntoView, and neither do a couple of
-    // older embedded browsers. Not being able to scroll is cosmetic —
-    // it must never take the strip down with it.
-    if (typeof node?.scrollIntoView === 'function') {
-      node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-    }
-  }, [revealRequestId]);
 
   useEffect(() => {
     if (!menu) { return undefined; }
@@ -126,7 +108,6 @@ export default function FileTabStrip({
       key={tab.key}
       tab={tab}
       active={tab.key === activeKey}
-      nodeRef={tab.key === activeKey ? activeTabRef : null}
       onSelect={onSelect}
       onClose={onClose}
       onToggleView={onToggleView}
@@ -373,7 +354,7 @@ function FileTabMenu({
 }
 
 function FileTab({
-  tab, active, nodeRef, onSelect, onClose, onToggleView, onToggleMarkdownView,
+  tab, active, onSelect, onClose, onToggleView, onToggleMarkdownView,
   onContextMenu, dragging, dropTarget, canDrop,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop,
 }) {
@@ -472,7 +453,6 @@ function FileTab({
 
   return (
     <li
-      ref={nodeRef}
       className={cx(
         'file-tab',
         active && 'active',

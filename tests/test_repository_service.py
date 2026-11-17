@@ -2897,3 +2897,89 @@ class PublishableUsesAFreshDestinationRefTests(unittest.TestCase):
         svc._git_reference_exists = Mock(return_value=False)
         with self.assertRaises(RuntimeError):
             svc._comparison_reference('/repo', 'master')
+
+
+class _RecordingGitHost(object):
+    """A local HTTP "git host" that writes down the credentials every request
+    carries and refuses each one (403), so a push stops at the first ask."""
+
+    def __init__(self) -> None:
+        import http.server
+        import threading
+
+        seen = self.authorizations = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 — the stdlib's name
+                seen.append(self.headers.get('Authorization'))
+                self.send_response(403)
+                self.end_headers()
+
+            do_POST = do_GET
+
+            def log_message(self, *args):
+                pass
+
+        self._server = http.server.HTTPServer(('127.0.0.1', 0), Handler)
+        self.url = f'http://127.0.0.1:{self._server.server_address[1]}/workspace/project.git'
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+class PushSendsTheTokenFromSettingsTests(unittest.TestCase):
+    """UNA-3477 (2026-11-17): a repository got its token only when its pull
+    request API was set up, so the Push button after a restart sent none, and
+    git signed in with the computer's saved login (an old one, missing a scope:
+    403) — while the token in Settings could push."""
+
+    def setUp(self) -> None:
+        # The whole ``kato`` block, as kato builds it: the git hosts' tokens
+        # from Settings live beside the repository list.
+        self.service = RepositoryService(build_test_cfg().kato, 3)
+
+    def test_a_push_carries_the_token_from_settings_though_no_pull_request_was_set_up(self) -> None:
+        host = _RecordingGitHost()
+        self.addCleanup(host.close)
+        with tempfile.TemporaryDirectory() as folder:
+            def git(*args):
+                subprocess.run(['git', '-C', folder, *args], check=True, capture_output=True,
+                               stdin=subprocess.DEVNULL)
+            git('init', '-q', '-b', 'UNA-1')
+            git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'work')
+            git('remote', 'add', 'origin', host.url)
+            repository = types.SimpleNamespace(
+                id='project', provider='bitbucket', remote_url=host.url, local_path=folder,
+            )
+            with self.assertRaisesRegex(RuntimeError, 'failed to push branch UNA-1'):
+                self.service._push_branch(folder, 'UNA-1', repository)
+        expected = 'Basic ' + base64.b64encode(b'x-token-auth:bb-core-token').decode('ascii')
+        self.assertTrue(host.authorizations)
+        self.assertEqual(set(host.authorizations), {expected})
+        self.assertFalse(hasattr(repository, 'token'))  # the inventory's object is left as it was
+
+    def test_a_token_the_repository_already_carries_is_the_one_sent(self) -> None:
+        repository = types.SimpleNamespace(
+            provider='bitbucket', remote_url='https://bitbucket.org/workspace/project.git', token='own-token',
+        )
+        self.assertIs(self.service._with_host_token(repository), repository)
+
+    def test_an_ssh_remote_signs_in_with_a_key_never_a_token(self) -> None:
+        repository = types.SimpleNamespace(provider='bitbucket', remote_url='git@bitbucket.org:workspace/project.git')
+        self.assertIs(self.service._with_host_token(repository), repository)
+        self.assertEqual(self.service._build_git_http_auth_header(repository), '')
+
+    def test_a_host_kato_does_not_know_gets_no_token_and_no_error(self) -> None:
+        repository = types.SimpleNamespace(id='project', remote_url='https://git.unknown.example/team/project.git')
+        self.assertIs(self.service._with_host_token(repository), repository)
+        self.assertEqual(self.service._build_git_http_auth_header(repository), '')
+
+    def test_a_host_with_no_token_in_settings_is_left_to_git(self) -> None:
+        repository = types.SimpleNamespace(provider='azure', remote_url='https://dev.azure.com/org/project/_git/repo')
+        self.service._provider_api_defaults['azure'] = {}
+        self.assertIs(self.service._with_host_token(repository), repository)
+
+    def test_no_repository_is_no_token(self) -> None:
+        self.assertIsNone(self.service._with_host_token(None))

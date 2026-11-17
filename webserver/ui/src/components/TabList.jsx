@@ -7,6 +7,8 @@ import { groupSubtaskTabs, subtaskListId } from '../utils/subtaskTabs.js';
 import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
+import { useRevealActive } from '../hooks/useRevealActive.js';
+import { revealInView } from '../utils/scrollUtils.js';
 import TaskMenuResizer from './TaskMenuResizer.jsx';
 import {
   closeTaskMenu, closeTaskMenuSoon, openTaskMenuSoon, useTaskMenuOpen,
@@ -136,11 +138,7 @@ export default function TabList({
       const node = document.querySelector(
         `#tabs-pane [data-task-id="${CSS.escape(taskId)}"]`,
       );
-      // jsdom (and a couple of older embedded browsers) have no
-      // ``scrollIntoView``; not scrolling is cosmetic, so never throw.
-      if (node && typeof node.scrollIntoView === 'function') {
-        node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
+      revealInView(node);
     };
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(follow);
@@ -335,26 +333,9 @@ export default function TabList({
     ];
   });
 
-  // Bring the ACTIVE task's row into view — but ONLY when the reveal id
-  // changed. Deliberately NOT keyed on activeTaskId or on sessions: those
-  // change on every status poll and whenever the operator clicks a row they
-  // can already see, and scrolling then would yank the menu out from under
-  // their cursor. A scroll is intent too, and it has to win.
-  const lastRevealRef = useRef(revealRequestId);
-  useEffect(() => {
-    if (revealRequestId === lastRevealRef.current) { return; }
-    lastRevealRef.current = revealRequestId;
-    if (!activeTaskId || typeof document === 'undefined') { return; }
-    const node = document.querySelector(
-      `#tabs-pane [data-task-id="${CSS.escape(activeTaskId)}"]`,
-    );
-    // Guarded: jsdom has no scrollIntoView, and neither do a couple of
-    // older embedded browsers. Not being able to scroll is cosmetic — it
-    // must never take the strip down with it.
-    if (typeof node?.scrollIntoView === 'function') {
-      node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
-    }
-  }, [revealRequestId, activeTaskId]);
+  // The active task's row is kept in view when the active task changes, or
+  // when asked again (``revealRequestId``: a pick in the palette).
+  const tabListRef = useRevealActive('.tab.active', revealRequestId);
 
   // What an EMPTY strip actually means. Three different situations used to
   // share the onboarding sentence, and the two that are not "you have no
@@ -492,7 +473,7 @@ export default function TabList({
           {emptyStateMessage}
         </p>
       ) : (
-        <ul id="tab-list">
+        <ul id="tab-list" ref={tabListRef}>
           {rows}
         </ul>
       )}

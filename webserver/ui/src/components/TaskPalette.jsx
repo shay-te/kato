@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { deriveAgentStatus } from '../utils/agentStatus.js';
+import { revealInView } from '../utils/scrollUtils.js';
 import {
   filterTaskPalette,
   nextPaletteIndex,
@@ -44,10 +45,7 @@ export default function TaskPalette({
   // Keep the highlighted row visible while arrowing through a list
   // longer than the panel.
   useEffect(() => {
-    const node = listRef.current?.querySelector('[data-highlighted="true"]');
-    if (node && typeof node.scrollIntoView === 'function') {
-      node.scrollIntoView({ block: 'nearest' });
-    }
+    revealInView(listRef.current?.querySelector('[data-highlighted="true"]'));
   }, [highlight, rows]);
 
   // Live SSE state for the focused task, polled state for the rest —

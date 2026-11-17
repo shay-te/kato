@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { revealInView } from '../utils/scrollUtils.js';
 
 // The ``@``-mention autocomplete dropdown for the composer. Pure presentational:
 // MessageForm owns the textarea, the filtered ``items``, the ``activeIndex`` and
@@ -12,10 +13,7 @@ export default function ComposerMentionMenu({ items, activeIndex, onSelect, onHo
 
   // Keep the highlighted row visible as the operator arrows through a long list.
   useEffect(() => {
-    const row = listRef.current?.children?.[activeIndex];
-    if (row && typeof row.scrollIntoView === 'function') {
-      row.scrollIntoView({ block: 'nearest' });
-    }
+    revealInView(listRef.current?.children?.[activeIndex]);
   }, [activeIndex]);
 
   return (
