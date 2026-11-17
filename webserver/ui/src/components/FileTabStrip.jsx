@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cx } from '../utils/cx.js';
 import { basenameOf } from '../utils/basenameOf.js';
+import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import { useRevealActive } from '../hooks/useRevealActive.js';
 import Icon from './Icon.jsx';
@@ -287,7 +288,6 @@ function FileTabMenu({
   menu, tabCount, onClose, onCloseAll, onCloseOthers, onTogglePin, dismiss,
 }) {
   const { tab, x, y } = menu;
-  const name = basenameOf(tab.relativePath || tab.absolutePath) || tab.relativePath;
 
   function run(action) {
     return (event) => {
@@ -295,18 +295,6 @@ function FileTabMenu({
       dismiss();
       action();
     };
-  }
-
-  async function copyName() {
-    // The file NAME, which is what the tab shows and what someone
-    // right-clicking a tab is almost always after — the full path is
-    // already on the tab's title tooltip.
-    try {
-      await navigator.clipboard.writeText(name);
-    } catch {
-      // Clipboard permission denied / insecure context: nothing to
-      // recover, and a failed copy must not take the menu down noisily.
-    }
   }
 
   const items = [
@@ -326,7 +314,13 @@ function FileTabMenu({
       action: () => onTogglePin && onTogglePin(tab.key),
       enabled: typeof onTogglePin === 'function',
     },
-    { label: 'Copy file name', action: copyName, enabled: true },
+    // The same two copies as the Files tab and the editor (``utils/clipboard.js``:
+    // a toast says what was copied). Not for a view (plan board, task): it has
+    // no file name or path.
+    ...(isViewTab(tab) ? [] : [
+      { label: 'Copy file name', action: () => copyFileName(tab.relativePath || tab.absolutePath), enabled: true },
+      { label: 'Copy relative path', action: () => copyRepoRelativePath(tab.repoId, tab.relativePath), enabled: true },
+    ]),
   ];
 
   return (

@@ -399,9 +399,45 @@ describe('FileTabStrip — reveal and context menu', () => {
     strip({ onCloseAll: vi.fn(), onCloseOthers: vi.fn(), onTogglePin: vi.fn() });
     fireEvent.contextMenu(screen.getByText('app.py'));
     const menu = screen.getByRole('menu');
-    for (const label of ['Close', 'Close others', 'Close all', 'Pin tab', 'Copy file name']) {
+    for (const label of ['Close', 'Close others', 'Close all', 'Pin tab', 'Copy file name', 'Copy relative path']) {
       expect(within(menu).getByText(label)).toBeInTheDocument();
     }
+  });
+
+  test('copies the file name or its path in its repository — the Files tab\'s own copies', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const original = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    try {
+      render(
+        <FileTabStrip
+          tabs={[{ key: 'a', repoId: 'client', relativePath: 'src/fields/CustomField.js', view: 'file' }]}
+          activeKey="a" onSelect={() => {}} onClose={() => {}}
+        />,
+      );
+      for (const [label, copied] of [['Copy file name', 'CustomField.js'], ['Copy relative path', 'client:src/fields/CustomField.js']]) {
+        fireEvent.contextMenu(screen.getByText('CustomField.js', { selector: '.file-tab-label' }));
+        await act(async () => { fireEvent.click(within(screen.getByRole('menu')).getByText(label)); });
+        expect(writeText).toHaveBeenLastCalledWith(copied);
+        expect(screen.queryByRole('menu')).toBeNull();
+      }
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { value: original, configurable: true });
+    }
+  });
+
+  test('a view (the plan board) offers no file name or path to copy', () => {
+    render(
+      <FileTabStrip
+        tabs={[{ key: 'plan-queue:T1', absolutePath: 'plan-queue:T1', relativePath: 'T1 Plan board', repoId: '', view: 'plan_queue' }]}
+        activeKey="plan-queue:T1" onSelect={() => {}} onClose={() => {}}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByText('T1 Plan board'));
+    const menu = screen.getByRole('menu');
+    expect(within(menu).queryByText('Copy file name')).toBeNull();
+    expect(within(menu).queryByText('Copy relative path')).toBeNull();
+    expect(within(menu).getByText('Close')).toBeInTheDocument();
   });
 
   test('close others is disabled when it is the only tab', () => {
