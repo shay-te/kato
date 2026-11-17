@@ -209,6 +209,7 @@ def _finisher(**overrides) -> tuple[AutopilotFinisher, dict]:
         read_task=MagicMock(side_effect=lambda task_id: Task(id=task_id, tags=[])),
         review_rounds=MagicMock(return_value=0),
         start_review_loop=MagicMock(),
+        already_reviewed=MagicMock(return_value=False),
         holds_push=MagicMock(return_value=False),
         runner_in_flight=MagicMock(return_value=False),
         logger=MagicMock(),
@@ -246,6 +247,17 @@ class FinisherTests(_Isolated):
         self.assertTrue(finisher.agent_said_done('UNA-1'))
         calls['start_review_loop'].assert_called_once()
         self.assertEqual(calls['start_review_loop'].call_args.args[0].id, 'UNA-1')
+        calls['press_done'].assert_not_called()
+
+    def test_a_later_fix_is_reviewed_again_before_autopilot_pushes_it(self) -> None:
+        # Unlike auto-wait, autopilot's done token PUSHES: a fix asked for after
+        # the first loop must not reach the remote unreviewed.
+        finisher, calls = _finisher(
+            review_rounds=MagicMock(return_value=5), already_reviewed=MagicMock(return_value=True),
+        )
+        self.assertTrue(finisher.agent_said_done('UNA-1'))
+        calls['start_review_loop'].assert_called_once()
+        calls['already_reviewed'].assert_not_called()
         calls['press_done'].assert_not_called()
 
     def test_a_run_kato_owns_presses_done_at_its_park_not_now(self) -> None:

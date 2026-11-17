@@ -23,6 +23,13 @@ the review loop (default rounds unless the ticket names them — kato's park
 starts it, ``AgentService._review_loop_rounds``), then the operator's own Done.
 Its done token never publishes, whatever the loop says. With both tags,
 auto-wait wins (``helpers/autopilot_store.py``).
+
+Auto-wait reviews the task ONCE, at its first finish. The agent prints the done
+token after every request the operator makes later too (its prompt tells it to
+finish by itself), and each one started a whole new loop: "whenever I tell him
+a prompt to fix something he will start the review loops again … wastes
+tokens" (2026-11-17). So a task that already had a loop (``already_reviewed``)
+gets none from a done token; the loop view's button starts another.
 """
 
 from __future__ import annotations
@@ -52,6 +59,7 @@ class AutopilotFinisher(object):
         read_task: Callable[[str], object],
         review_rounds: Callable[[object], int],
         start_review_loop: Callable[[object], None],
+        already_reviewed: Callable[[str], bool],
         holds_push: Callable[[object], bool],
         runner_in_flight: Callable[[str], bool],
         logger,
@@ -61,6 +69,7 @@ class AutopilotFinisher(object):
         self._read_task = read_task
         self._review_rounds = review_rounds
         self._start_review_loop = start_review_loop
+        self._already_reviewed = already_reviewed
         self._holds_push = holds_push
         self._runner_in_flight = runner_in_flight
         self._get_logger = provider_for(logger)
@@ -159,8 +168,15 @@ class AutopilotFinisher(object):
         return result
 
     def _review_then_wait(self, task_id: str) -> bool:
-        """Auto-wait's done token from a chat: its review loop starts, and
-        nothing is pushed — whatever the loop says, Done stays the operator's."""
+        """Auto-wait's done token from a chat: its review loop starts — unless
+        the task had one already — and nothing is pushed: whatever the loop
+        says, Done stays the operator's."""
+        if self._already_reviewed(task_id):
+            self._say(task_id, (
+                'auto-wait: the agent is done; this task already had its review loop, so none '
+                'starts again — start one from the review loop button if you want another'
+            ))
+            return True
         try:
             task = self._read_task(task_id)
         except Exception:

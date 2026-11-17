@@ -9,7 +9,8 @@ Pinned: the tag is read (auto-wait wins over autopilot) and remembered per task;
 the task starts in Auto and its agent is told to finish by itself; the park
 starts the review loop (default rounds, or the ticket's own) even with
 auto-push on; neither the park, the done token nor a CLEAN loop presses Done;
-the tag removed releases it; the tasks rail gets the level.
+the tag removed releases it; the tasks rail gets the level; a task that already
+had its review loop gets no second one from a later done token.
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ from kato_core_lib.helpers.autopilot_store import (
 from kato_core_lib.helpers.kato_tag_utils import DEFAULT_MAX_ROUNDS, automation_level_from_tags
 from kato_core_lib.helpers.plan_mode_store import AUTOPILOT_MODE, DEFAULT_MODE_ENV, unpicked_task_mode
 from kato_core_lib.helpers.task_context_utils import PreparedTaskContext
+from kato_core_lib.data_layers.service.review_loop_adapters import review_loops_root
+from review_loop_core_lib.review_loop_core_lib.data.state import ReviewLoopState, ReviewLoopStatus
+from review_loop_core_lib.review_loop_core_lib.store import ReviewLoopStore
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -62,6 +66,7 @@ class _Isolated(unittest.TestCase):
         env = patch.dict(os.environ, {
             'KATO_AUTOPILOT_PATH': str(self.store),
             'KATO_PLAN_MODE_PATH': str(self.folder / 'plan_mode.json'),
+            'KATO_REVIEW_LOOPS_DIR': str(self.folder / 'review_loops'),
         })
         env.start()
         self.addCleanup(env.stop)
@@ -298,11 +303,56 @@ class AgentServiceTests(_Isolated):
     def test_the_done_token_from_a_chat_starts_the_loop_and_never_publishes(self) -> None:
         set_automation_level('UNA-1', AUTO_WAIT)
         agent = self._agent(Task(id='UNA-1', tags=[TaskTags.AUTO_WAIT]))
-        agent._review_loop_service = SimpleNamespace(is_running=lambda task_id: False)
         with patch.object(AgentService, 'publish', new=_MustNotRun('publish')):
             self.assertIsNone(agent.finish_from_done_marker('UNA-1'))
         self.assertEqual(self.loops.calls, [('UNA-1', DEFAULT_MAX_ROUNDS)])
         self.assertEqual(self.done.calls, [])
+
+    @staticmethod
+    def _had_a_loop(task_id: str, status: ReviewLoopStatus) -> None:
+        """A loop the task had, saved where kato keeps them (as a finished loop leaves it)."""
+        state = ReviewLoopState.new(task_id, max_rounds=5, now=1.0)
+        state.status = status
+        assert ReviewLoopStore(review_loops_root()).save(state)
+
+    def test_a_task_that_had_its_review_loop_gets_no_second_one_from_a_later_done_token(self) -> None:
+        # The operator asks for a fix after the loop; the agent finishes it and
+        # prints the done token again. Every way the loop could have ended counts.
+        for status in (ReviewLoopStatus.CLEAN, ReviewLoopStatus.MAX_ROUNDS, ReviewLoopStatus.STUCK,
+                       ReviewLoopStatus.STOPPED, ReviewLoopStatus.FAILED, ReviewLoopStatus.INTERRUPTED):
+            with self.subTest(status=status.value):
+                set_automation_level('UNA-1', AUTO_WAIT)
+                self._had_a_loop('UNA-1', status)
+                agent = self._agent(Task(id='UNA-1', tags=[TaskTags.AUTO_WAIT]))
+                with self.assertLogs(self.logger, level='INFO') as logs:
+                    with patch.object(AgentService, 'publish', new=_MustNotRun('publish')):
+                        self.assertIsNone(agent.finish_from_done_marker('UNA-1'))
+                self.assertEqual(self.loops.calls, [])
+                self.assertEqual(self.done.calls, [])
+                self.assertTrue(any('this task already had its review loop, so none starts again' in line
+                                    for line in logs.output))
+
+    def test_a_loop_that_found_nothing_to_review_read_nothing_so_the_next_done_token_reviews(self) -> None:
+        set_automation_level('UNA-1', AUTO_WAIT)
+        self._had_a_loop('UNA-1', ReviewLoopStatus.NOTHING_TO_REVIEW)
+        agent = self._agent(Task(id='UNA-1', tags=[TaskTags.AUTO_WAIT]))
+        self.assertIsNone(agent.finish_from_done_marker('UNA-1'))
+        self.assertEqual(self.loops.calls, [('UNA-1', DEFAULT_MAX_ROUNDS)])
+
+    def test_another_task_s_loop_does_not_count(self) -> None:
+        set_automation_level('UNA-1', AUTO_WAIT)
+        self._had_a_loop('UNA-2', ReviewLoopStatus.CLEAN)
+        agent = self._agent(Task(id='UNA-1', tags=[TaskTags.AUTO_WAIT]))
+        self.assertIsNone(agent.finish_from_done_marker('UNA-1'))
+        self.assertEqual(self.loops.calls, [('UNA-1', DEFAULT_MAX_ROUNDS)])
+
+    def test_a_deleted_task_s_loops_go_with_it_so_added_again_it_is_reviewed(self) -> None:
+        set_automation_level('UNA-1', AUTO_WAIT)
+        self._had_a_loop('UNA-1', ReviewLoopStatus.CLEAN)
+        agent = self._agent(Task(id='UNA-1', tags=[TaskTags.AUTO_WAIT]))
+        agent.review_loops.forget('UNA-1')
+        self.assertIsNone(agent.finish_from_done_marker('UNA-1'))
+        self.assertEqual(self.loops.calls, [('UNA-1', DEFAULT_MAX_ROUNDS)])
 
     def test_the_done_token_during_kato_s_own_run_waits_for_the_park(self) -> None:
         set_automation_level('UNA-1', AUTO_WAIT)
@@ -356,7 +406,8 @@ class FinisherOffTests(_Isolated):
         done = _Recorder()
         finisher = AutopilotFinisher(
             press_done=done, read_task=_MustNotRun('read_task'), review_rounds=_MustNotRun('rounds'),
-            start_review_loop=_MustNotRun('loop'), holds_push=_MustNotRun('holds'),
+            start_review_loop=_MustNotRun('loop'), already_reviewed=_MustNotRun('reviewed'),
+            holds_push=_MustNotRun('holds'),
             runner_in_flight=_MustNotRun('runner'), logger=_Logs(),
         )
         self.assertFalse(finisher.agent_said_done('UNA-1'))

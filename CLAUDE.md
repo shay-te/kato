@@ -899,7 +899,11 @@ who can tag the ticket can turn this on: it skips the operator's look before the
 rounds unless the ticket's own `kato:review-loop:<n>` names them (`AgentService._review_loop_rounds`) — and then the
 task waits for the operator's own Done: never a push, a PR or a ticket move of its own, whatever the loop says
 (`AutopilotFinisher` asks the level; only `autopilot` presses). Its done token never publishes (in a chat it starts the
-loop), and `KATO_AUTO_PUSH_ENABLED` does not skip its park (`_should_pause_for_push_approval`). With both tags auto-wait
+loop — ONCE per task: the agent prints the token after every later request too, and each one started a whole new loop,
+"whenever I tell him a prompt to fix something he will start the review loops again … wastes tokens". A task that already
+had a loop, any ending but `nothing_to_review`, the operator's own included — `AgentService._task_was_reviewed`, read from
+the loop store, so deleting the task resets it — gets none; the loop button starts another. Autopilot still reviews every
+time: its token pushes), and `KATO_AUTO_PUSH_ENABLED` does not skip its park (`_should_pause_for_push_approval`). With both tags auto-wait
 wins — not pressing Done is the stricter statement. ONE store holds the level: `helpers/autopilot_store.py`
 (`automation_level` → `'autopilot' | 'auto-wait' | ''`, `~/.kato/autopilot_tasks.json` as `{task: level}`; an older file —
 a plain list — still reads as autopilot), set from the tags by `kato_tag_utils.automation_level_from_tags`; Auto mode and

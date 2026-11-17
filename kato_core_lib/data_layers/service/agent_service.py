@@ -4,6 +4,7 @@ import logging
 import threading
 
 from core_lib.data_layers.service.service import Service
+from review_loop_core_lib.review_loop_core_lib.data.state import ReviewLoopStatus
 
 from kato_core_lib.data_layers.service.agent_state_registry import AgentStateRegistry
 from kato_core_lib.data_layers.service.connection_health import report_startup_step
@@ -364,6 +365,7 @@ class AgentService(MissionStepLoggerMixin, Service):
             read_task=lambda task_id: self._task_service.get_task(task_id),
             review_rounds=lambda task: self._review_loop_rounds(task),
             start_review_loop=lambda task: self._start_review_loop_if_tagged(task),
+            already_reviewed=self._task_was_reviewed,
             holds_push=self._task_has_wait_before_push_tag,
             runner_in_flight=self._runner_in_flight,
             logger=later(self, 'logger'),
@@ -1186,6 +1188,18 @@ class AgentService(MissionStepLoggerMixin, Service):
             self.parked_task_listener(task_id, rounds)
         except Exception:
             self.logger.exception('could not start the review loop for task %s', task_id)
+
+    def _task_was_reviewed(self, task_id: str) -> bool:
+        """Has a review loop already read this task's change?
+
+        Any loop the task has had counts, however it ended (the operator's own
+        too: Resume or the loop button is theirs to press), except one that
+        found nothing to review — that one read nothing. Deleting the task
+        deletes its loops (``ReviewLoopService.forget``), so a task added again
+        starts unreviewed.
+        """
+        state = self._review_loop_service.state(str(task_id or ''))
+        return state is not None and state.status is not ReviewLoopStatus.NOTHING_TO_REVIEW
 
     def _review_loop_rounds(self, task: Task) -> int:
         """The rounds the task's ``kato:review-loop`` tags ask for; 0 means no loop.
