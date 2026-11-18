@@ -70,14 +70,40 @@ class ReleaseNoteLinksTests(unittest.TestCase):
     def _fact(state, url, created_at=''):
         return SimpleNamespace(state=state, url=url, created_at=created_at)
 
-    def test_merged_wins_over_open_and_declined_is_never_linked(self) -> None:
+    def test_the_newest_pull_request_is_linked_and_declined_never(self) -> None:
+        # A task continued after its first pull request merged: the new one on
+        # the same branch is the link, not the old merged one (2026-11-18).
         links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [
-            self._fact('declined', 'https://x/1'), self._fact('open', 'https://x/2'),
-            self._fact('merged', 'https://x/3'),
+            self._fact('merged', 'https://x/first', '2026-10-01T00:00:00Z'),
+            self._fact('open', 'https://x/second', '2026-10-05T00:00:00Z'),
+            self._fact('declined', 'https://x/declined', '2026-10-09T00:00:00Z'),
         ], logger=MagicMock())
-        self.assertEqual(links.links(self.SOURCE), [('PR', 'https://x/3')])
+        self.assertEqual(links.links(self.SOURCE), [('PR', 'https://x/second')])
+        both_merged = ReleaseNoteLinks(pull_requests=lambda t, r, **_: [
+            self._fact('merged', 'https://x/second', '2026-10-05T00:00:00Z'),
+            self._fact('merged', 'https://x/first', '2026-10-01T00:00:00Z'),
+        ])
+        self.assertEqual(both_merged.links(self.SOURCE), [('PR', 'https://x/second')])
         only_declined = ReleaseNoteLinks(pull_requests=lambda t, r, **_: [self._fact('declined', 'https://x/1')])
         self.assertEqual(only_declined.links(self.SOURCE), [])
+
+    def test_with_no_times_to_compare_an_open_pull_request_is_the_newer(self) -> None:
+        links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [
+            self._fact('merged', 'https://x/3'), self._fact('open', 'https://x/2'),
+        ])
+        self.assertEqual(links.links(self.SOURCE), [('PR', 'https://x/2')])
+
+    def test_since_leaves_out_a_merged_pull_request_opened_before_it_never_an_open_one(self) -> None:
+        # A repeat Slack post: the earlier round's merged pull request was posted
+        # already; an open one still carries the new commits.
+        since = 1_791_000_000.0  # 2026-10-03
+        old_merged = ReleaseNoteLinks(pull_requests=lambda t, r, **_: [
+            self._fact('merged', 'https://x/first', '2026-10-01T00:00:00Z')])
+        self.assertEqual(old_merged.links(self.SOURCE, since=since), [])
+        self.assertEqual(old_merged.links(self.SOURCE), [('PR', 'https://x/first')])
+        still_open = ReleaseNoteLinks(pull_requests=lambda t, r, **_: [
+            self._fact('open', 'https://x/first', '2026-10-01T00:00:00Z')])
+        self.assertEqual(still_open.links(self.SOURCE, since=since), [('PR', 'https://x/first')])
 
     def test_a_pull_request_from_before_the_task_started_is_another_task_s(self) -> None:
         links = ReleaseNoteLinks(pull_requests=lambda task, repo, **_: [

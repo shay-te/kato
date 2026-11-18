@@ -23,6 +23,7 @@ from pathlib import Path
 
 from agent_core_lib.agent_core_lib.data.agent_backend import AgentBackend
 from agent_core_lib.agent_core_lib.session.backend_chats import (
+    parked_chat,
     record_accepts_backend,
 )
 from agent_core_lib.agent_core_lib.helpers.logging_utils import configure_logger
@@ -176,6 +177,13 @@ class ClaudeSessionManager(object):
                 existing = self._records.get(lookup_key)
                 existing_id = read_session_id_from(existing)
                 if existing is not None and existing_id:
+                    continue
+                # ...nor onto a task's record that another agent's chat owns
+                # now: its EMPTY id is that agent's chat with no id yet, and
+                # writing this one there filed the Claude conversation under
+                # Codex — the Codex tab then opened blank, its history lost
+                # (UNA-3475, 2026-11-18).
+                if existing is not None and not record_accepts_backend(existing, self.AGENT_BACKEND):
                     continue
                 record = existing or AgentSessionRecord(
                     agent_backend=self.AGENT_BACKEND,
@@ -1431,7 +1439,11 @@ class ClaudeSessionManager(object):
                 )
             return True
         record = self._records.get(lookup_key)
-        pinned_id = read_session_id_from(record)
+        # THIS agent's chat on the record, active or parked: while the task is
+        # on another agent the record's own id is THAT agent's, and taking it
+        # for ours killed a parked Claude chat so its next spawn would resume
+        # the Codex chat's id.
+        pinned_id = fix_session_id(parked_chat(record, self.AGENT_BACKEND)['agent_session_id']) if record else ''
         if not pinned_id:
             return False
         live_id = read_session_id_from(session)

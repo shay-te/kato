@@ -48,6 +48,15 @@ import MarkdownContent from './MarkdownContent.jsx';
  * ``openFile`` shape:
  *   ``{ taskId, absolutePath, relativePath, repoId }``.
  */
+// The line an opener jumped to (a content-search hit, a go-to-definition):
+// the whole line tinted, with a bar in the gutter.
+export function lineJumpDecoration(line) {
+  return {
+    range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+    options: { isWholeLine: true, className: 'kato-line-jump', linesDecorationsClassName: 'kato-line-jump-gutter' },
+  };
+}
+
 export default function EditorPane({
   openFile,
   onCommentSpawned,
@@ -518,6 +527,7 @@ export default function EditorPane({
   // refetch: a poll that re-delivered the same content must not yank the
   // viewport out from under someone reading further down the file.
   const revealedRequestRef = useRef(null);
+  const jumpDecorationsRef = useRef([]);
   useEffect(() => {
     const line = Number(openFile?.line) || 0;
     const requestId = openFile?.openRequestId;
@@ -532,6 +542,11 @@ export default function EditorPane({
       startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1,
     });
     editor.setPosition?.({ lineNumber: line, column: 1 });
+    // ...and MARK it, so it is plain which line was asked for: the cursor
+    // alone was a blink lost in the file. It stays until the next jump.
+    jumpDecorationsRef.current = editor.deltaDecorations?.(
+      jumpDecorationsRef.current, [lineJumpDecoration(line)],
+    ) || [];
   }, [openFile?.line, openFile?.openRequestId, state.loading, state.content]);
 
   // Comments-at-end zone (anchored after the last line). The anchor

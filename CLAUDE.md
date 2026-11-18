@@ -456,7 +456,11 @@ task_done: 1. NOW (the forget flow deletes the workspace next): read the task (R
   developers' katos post to one channel. `KATO_AGENT_NAME` (Settings → Email & Slack, live), else git's global
   `user.name` (an email there → the account's full name, else its local part: never post an address), else the host.
   Its PRs (`ReleaseNoteLinks`, by branch) are the release notes' links, each shown as its
-  WHOLE link (`• backend: <url>`; a lone PR just `• <url>`) — a word like "pull request" hid where it went. Everything from a
+  WHOLE link (`• backend: <url>`; a lone PR just `• <url>`) — a word like "pull request" hid where it went. Per
+  repository the NEWEST PR (merged or open; no times → open), never "merged first": a task continued after its first PR
+  merged linked the old one. A REPEAT post links only the repositories that moved on since the last post
+  (`repositories_moved_on`, the same answer `moved_on_since` gives) and leaves out a merged PR opened before that post
+  (`links(since=)`): it linked all four old merged PRs where two repositories had new ones (2026-11-18). Everything from a
   ticket is escaped (`<!channel>` in a title must never notify a channel). A failed post is not marked posted:
   the next Done tries again. **Posting is CLAIMED, not checked** (`SlackDoneAnnouncer._claim`, one lock): Done on a
   plan sub-task calls `move_task_to_done` (→ `task_done`, background) and THEN `announce` (toast); both used to check
@@ -687,16 +691,44 @@ when it is let go or the window loses focus. Tap-or-hold is `utils/keyHold.js` `
 injectable): use it for any other "reveal only on a hold" shortcut. Proven in headless Chromium
 (Playwright) against a real kato webserver: the rail collapsed to codes, expanded over the page with nothing
 moving, rows grouped, footer labels on screen, the switcher came and went.
+**The tasks menu filters by the ticket's status** (the dropdown at the end of the actions; "All" + each state with its
+count; remembered per browser, `utils/ticketStateFilterPref.js`; the task on screen always stays; a note above the rows
+says what it shows, collapsed too, with ✕ back to all). Each row's `ticket_state` comes from ONE service,
+`data_layers/service/ticket_states.py` `TicketStates`: one `get_issues_status` batch (YouTrack / Jira) for every
+workspace task, local tasks from their store, at most once a minute and NEVER on the tab list's own 5s poll (`states()`
+answers the last read and starts one background read when it is a minute old). No tracker that can say → "No status".
+The filter is pure functions in `utils/ticketStateFilter.js`; the dropdown reuses the shared capsule `.pill-select`
+(the Files tab's repo picker). The hover card shows it as "Ticket".
+**Each task's open tabs survive a reload — ONE module, `utils/rememberedFileTabs.js`** (`rememberFileTabs` /
+`rememberedFileTabs` / `forgetFileTabs`), on `createPreferenceStore` like the selected task (`lastActiveTask`). Memory
+keeps each tab whole (scroll, cursor) for task switches; storage (`kato.openFileTabs.v1`) only what reopens a tab (file,
+view, pinned, `after`, `mdView`) and is written only when that changes, never per scroll tick. A task gone from kato's
+list is forgotten there too. App has no tab map of its own any more. Proven in headless Chromium against a real kato:
+open a file, reload, the tab is back on show with its content.
 **Hover-to-expand is ONE store: `stores/hoverExpand.js` `createHoverExpand`** (open after `HOVER_EXPAND_OPEN_DELAY_MS`,
-close after `HOVER_EXPAND_CLOSE_GRACE_MS`; `useHoverExpanded`). The tasks menu (`taskMenuStore`, plus its pin) and the
-files tree beside a maximized centre (`stores/filesRailStore.js`) both use it — never a second timer pair.
+close after `HOVER_EXPAND_CLOSE_GRACE_MS`) and ONE hook for a panel built on it, `hooks/useHoverExpandPanel.js`
+(enter / leave, Escape and a press outside through `useDismissOnOutsidePointerOrEscape`, collapse when switched off).
+The tasks menu (`taskMenuHover`, plus its pin) and the files rail beside a maximized pane (`stores/filesRailStore.js`)
+both use only that — never a second timer pair or a second dismiss listener.
 **One pane maximized at a time — ONE preference, `utils/maximizedPanePref.js`** (`'' | 'chat' | 'center'`, the old
 `kato.chatMaximized.v1` key, an old `{chatMaximized: true}` reads as the chat) and ONE toggle, `MaximizePaneButton` (the
 chat header, the centre's tab strip — `.file-tab-bar`, kept while maximized even with no tab — and the plan view, which
-takes the centre without the strip). Maximized centre: the chat column goes to zero (mounted) and the files tree stays a
-`$FILES-RAIL-WIDTH` rail with a vertical "Files" that expands OVER the code while hovered (`.is-rail-open`; Escape / a
-press outside close it), its tree kept at its own width so nothing reflows. Proven in headless Chromium: 28px → 320px,
-the centre's box unchanged, back to 28px on leaving.
+takes the centre without the strip). Whichever pane is maximized, the other big column goes to zero (mounted) and the
+files tree stays a `$FILES-RAIL-WIDTH` rail with a vertical "Files" that expands OVER the maximized pane while hovered
+(`.is-rail-open`; Escape / a press outside close it), its tree kept at its own width so nothing reflows. ONE answer for
+"is the tree a rail": `filesRailShown(pane)` → Layout's `has-files-rail` (every rail rule hangs off it) and RightPane's
+rail mode. Proven in headless Chromium for both panes: 28px → 320px, the maximized pane's box unchanged, back to 28px.
+**A content-search hit opens the FILE at its line, marked** (`ContentSearchResults` opens `view: file`; `EditorPane`'s
+jump adds `lineJumpDecoration` — the whole line tinted, a bar in the gutter, until the next jump). It opened in the tab's
+inherited diff view, which ignores the line and hides unchanged lines in gaps, and the file view only moved the cursor.
+**One chat per agent on a task, and an id never crosses agents** (`agent_core_lib/session/backend_chats.py`: the record's
+top-level fields are the ACTIVE agent's chat, the rest are parked in `chats_by_backend`). Anything a transport does with
+"its" id must ask `record_accepts_backend` before WRITING and `parked_chat(record, its backend)` before READING — never the
+record's top-level id, which is another agent's while the task is on it. Two Claude paths skipped that and lost UNA-3475's
+Codex history (2026-11-18): startup recovery (`_seed_records_from_workspaces`) wrote the Claude id onto a Codex-owned record
+whose Codex chat had no id yet, and the drift check (`_discard_if_session_id_drifted_locked`) took the Codex chat's id for
+Claude's and killed the parked Claude chat. A lost Codex chat is re-attached from its Chats menu: "Adopt existing Codex
+session…" (Codex's rollouts stay in `~/.codex/sessions`). `scripts/repair_crossed_session_ids.py` removes a crossed copy.
 **The tab on show is kept in view — ONE hook, `hooks/useRevealActive.js`** (the rail's `.tab.active`, the centre strip's
 `.file-tab.active`): it scrolls when the item on show becomes a DIFFERENT element (any kind: file, review loop, activity,
 new task) or a reveal is asked again (a tree click, a palette pick) — never on a poll or re-render with the same one, and
@@ -1575,6 +1607,13 @@ type a model id…", which opens a box (picking it never saves the marker). EVER
 "sonnet:4.6" / "claude sonnet 4.6" reach the CLI as `claude-sonnet-4-6` and a bare family as its alias; anything
 else (a dated id, Bedrock, `[1m]`) passes as written. The CLI's own "There's an issue with the selected model" was
 what a teammate saw for "sonnet 4.6". Do not add a fourth `--model` builder outside `model_flags`.
+
+**The composer's model and effort lists are the AGENT TAB's** (`/api/models?backend=`, `/api/effort-levels?backend=`;
+`useSessionOption` `catalogKey: models:<agent>` reloads list + current pick on a tab switch). They always answered for the
+configured backend, so the Codex tab offered Claude's Fable / Opus / Sonnet / Haiku. Defaults per agent come from
+`PlanningSessionRunner.defaults_for_backend`; an agent with no set of its own gets NONE (`_chat_runner_defaults(app,
+backend)`), never Claude's model flagged on its picker. The pick itself was already per task AND agent (`_override_key`).
+ONE reader of `?backend=` on the server (`_requested_backend`) and one builder on the client (`forBackend` in api.js).
 
 ### Usage dialog (the rail footer's chart button → `GET /api/usage`)
 Tokens per task, read from the Claude transcripts (`claude_core_lib/helpers/transcript_usage.py`), summed

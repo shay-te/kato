@@ -91,6 +91,9 @@ import {
   readLastActiveTask,
   writeLastActiveTask,
 } from './utils/lastActiveTask.js';
+import {
+  forgetFileTabs, rememberFileTabs, rememberedFileTabTaskIds, rememberedFileTabs,
+} from './utils/rememberedFileTabs.js';
 import { readTabNames, tabNameFor } from './utils/taskTabNames.js';
 import { usePlanWatch } from './hooks/usePlanWatch.js';
 import { CLAUDE_EVENT } from './constants/claudeEvent.js';
@@ -395,8 +398,6 @@ export default function App() {
   // loop / draft tab on show ('' = a file), and the loop and draft tabs open.
   // Synced after every render, below where the shown tab is worked out.
   const stripRef = useRef({ shownStripId: '', loopTabIds: [], newTaskOpen: false });
-  // Per task: { tabs, activeKey }. Restored wholesale on task switch.
-  const fileViewByTaskRef = useRef({});
   const openFileRequestRef = useRef(0);
   // Separate from openFileRequestRef because it drives RENDER (the strip
   // scrolls when it changes), while openFileRequestRef is bookkeeping
@@ -423,7 +424,7 @@ export default function App() {
     const ids = new Set((taskIds || []).map(String).filter(Boolean));
     if (!ids.size) { return; }
     dropReviewLoopTabs([...ids]);
-    for (const id of ids) { delete fileViewByTaskRef.current[id]; }
+    forgetFileTabs([...ids]);
     if (openTabsRef.current.some((tab) => ids.has(tab.taskId))) { showFileTabs([], null); }
   }, [dropReviewLoopTabs]);
 
@@ -461,7 +462,7 @@ export default function App() {
   // browser's storage). Kato's tab list is the record of what exists.
   useEffect(() => {
     if (!sessionsLoaded) { return; }
-    const tracked = [...reviewLoopTabs, ...Object.keys(fileViewByTaskRef.current)];
+    const tracked = [...reviewLoopTabs, ...rememberedFileTabTaskIds()];
     const gone = vanishedTaskIds(tracked, sessions);
     if (gone.length) { closeTaskTabs(gone); }
   }, [sessions, sessionsLoaded, reviewLoopTabs, closeTaskTabs]);
@@ -773,9 +774,9 @@ export default function App() {
   const activeSessionKey = activeTaskId || '__none__';
   const activeWorkspaceVersion = workspaceVersion[activeTaskId] || 0;
   useEffect(() => {
-    const remembered = activeTaskId
-      ? fileViewByTaskRef.current[activeTaskId] || null
-      : null;
+    // The task's tabs come back — after a switch, and after a reload
+    // (``rememberedFileTabs``).
+    const remembered = rememberedFileTabs(activeTaskId);
     const tabs = remembered
       ? remembered.tabs.map((tab) => ({ ...tab, restoreViewState: true }))
       : [];
@@ -786,10 +787,6 @@ export default function App() {
     setCenterOverlay(null);
     setFileTreeFocusTarget(null);
   }, [activeTaskId]);
-  function rememberTabsView(taskId, tabs, activeKey) {
-    if (!taskId) { return; }
-    fileViewByTaskRef.current[taskId] = { tabs, activeKey };
-  }
   // Put ``tabs`` on the strip with ``activeKey`` on show — the ref and the
   // state together, so the handlers (which read the ref) and the render agree.
   function showFileTabs(tabs, activeKey) {
@@ -802,7 +799,7 @@ export default function App() {
   // operator comes back to it. Flushing the ref into state also keeps a
   // view-state patch sitting in the ref from being lost on the re-render.
   const applyTabs = useCallback((tabs, activeKey) => {
-    rememberTabsView(activeTaskId, tabs, activeKey);
+    rememberFileTabs(activeTaskId, tabs, activeKey);
     showFileTabs(tabs, activeKey);
   }, [activeTaskId]);
   const handleOpenFile = useCallback((info) => {
@@ -812,9 +809,7 @@ export default function App() {
     // ``src/auth.py`` in repo A doesn't collide with the same path
     // in repo B).
     if (!info || !info.absolutePath) {
-      if (activeTaskId) {
-        delete fileViewByTaskRef.current[activeTaskId];
-      }
+      rememberFileTabs(activeTaskId, [], null);
       showFileTabs([], null);
       return;
     }
@@ -1030,7 +1025,7 @@ export default function App() {
     // remembered-per-task map fresh), never directly from render state.
     const tabs = patchTab(openTabsRef.current, key, viewState);
     openTabsRef.current = tabs;
-    rememberTabsView(activeTaskId, tabs, key);
+    rememberFileTabs(activeTaskId, tabs, key);
   }, [activeTaskId]);
   // Flip one tab between its diff and its plain-file view. Tabs are keyed
   // by repo+path (not by view), so this merges into the SAME tab rather

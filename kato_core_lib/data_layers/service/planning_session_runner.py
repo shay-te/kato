@@ -326,7 +326,12 @@ class PlanningSessionRunner(object):
             backend = str(resolver(task_id) or '').strip().lower()
         except Exception:
             return self._defaults
-        return self._defaults_by_backend.get(backend, self._defaults)
+        return self.defaults_for_backend(backend)
+
+    def defaults_for_backend(self, backend: str) -> StreamingSessionDefaults:
+        """The spawn defaults of ``backend`` — its binary, model, effort —
+        else the configured backend's (one with no set of its own)."""
+        return self._defaults_by_backend.get(str(backend or '').strip().lower(), self._defaults)
 
     def tagged_model(self, task_id: str) -> str:
         """The model the task's ``kato:model:`` tag selects — Claude chats only.

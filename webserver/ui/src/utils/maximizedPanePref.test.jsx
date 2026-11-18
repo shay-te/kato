@@ -15,6 +15,7 @@ import {
   toggleMaximizedPane,
   subscribeMaximizedPane,
   _resetMaximizedPanePref,
+  filesRailShown,
 } from './maximizedPanePref.js';
 
 const STORAGE_KEY = 'kato.chatMaximized.v1';
@@ -94,5 +95,14 @@ describe('maximizedPanePref', () => {
     } finally {
       if (original) { Object.defineProperty(window, 'localStorage', original); }
     }
+  });
+});
+
+describe('filesRailShown', () => {
+  test('the files tree is a rail whichever pane is maximized, a column otherwise', () => {
+    expect(filesRailShown(MAXIMIZED_PANE.CHAT)).toBe(true);
+    expect(filesRailShown(MAXIMIZED_PANE.CENTER)).toBe(true);
+    expect(filesRailShown(MAXIMIZED_PANE.NONE)).toBe(false);
+    expect(filesRailShown('sidebar')).toBe(false);
   });
 });

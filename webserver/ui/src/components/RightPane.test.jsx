@@ -148,6 +148,14 @@ describe('RightPane — the files rail beside a maximized centre', () => {
     expect(pane(container)).not.toHaveClass('is-rail-open');
   });
 
+  test('beside a maximized chat it is the same rail', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
+    const { container } = render(<RightPane activeTaskId="KATO-1" />);
+    fireEvent.mouseEnter(pane(container));
+    act(() => { vi.advanceTimersByTime(HOVER_EXPAND_OPEN_DELAY_MS); });
+    expect(pane(container)).toHaveClass('is-rail-open');
+  });
+
   test('outside that mode the tree is a plain column: hovering expands nothing', () => {
     const { container } = render(<RightPane activeTaskId="KATO-1" />);
     fireEvent.mouseEnter(pane(container));

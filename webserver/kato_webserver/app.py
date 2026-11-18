@@ -1847,7 +1847,7 @@ def _register_http_routes(app: Flask) -> None:
         # bypasses the discovery cache so the UI refresh updates labels live.
         # No ``?refresh``: re-probing spawns a subprocess and calls out to
         # the models API, so it is POST /api/refresh now. This stays a read.
-        return jsonify({'models': _discover_chat_models(app)})
+        return jsonify({'models': _discover_chat_models(app, backend=_requested_backend())})
 
     @app.get('/api/openrouter/models')
     def list_openrouter_models():
@@ -1965,9 +1965,10 @@ def _register_http_routes(app: Flask) -> None:
         # set tracks the installed agent version. '' = "Auto" (configured
         # default). ``default`` is the configured effort the UI shows as
         # the Auto resolution.
+        backend = _requested_backend()
         return jsonify({
-            'levels': _discover_chat_effort_levels(app),
-            'default': _configured_chat_effort(app),
+            'levels': _discover_chat_effort_levels(app, backend),
+            'default': _configured_chat_effort(app, backend),
         })
 
     @app.get('/api/sessions/<task_id>/effort')
@@ -1984,10 +1985,11 @@ def _register_http_routes(app: Flask) -> None:
             return jsonify({'error': 'not available'}), 503
         # '' clears the override (back to Auto). Any explicit level must be
         # one the CLI actually advertises, so a typo can't reach the spawn.
-        if effort and effort not in _discover_chat_effort_levels(app):
+        levels = _discover_chat_effort_levels(app, _task_backend(app, task_id))
+        if effort and effort not in levels:
             return jsonify({
                 'error': f'unknown effort {effort!r}; '
-                f'expected one of {_discover_chat_effort_levels(app)} or empty',
+                f'expected one of {levels} or empty',
             }), 400
         _set_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id, effort)
         return jsonify({'effort': effort})
@@ -2306,9 +2308,7 @@ def _register_http_routes(app: Flask) -> None:
         # ``parked_chat(record, '')`` returns each record's ACTIVE chat, so a
         # parked Claude id would be reported as un-adopted — exactly the case
         # the comment below says is handled.
-        backend = (
-            (request.args.get('backend', '') or '').strip().lower() or 'claude'
-        )
+        backend = _requested_backend() or 'claude'
         rows = list_adoptable_sessions(backend, query=query)
         # Mark sessions already adopted by a task so the UI can warn before
         # re-adoption. Cheap O(N*M) — N = sessions on disk, M = task records
@@ -4566,10 +4566,24 @@ def _register_session_events_route(app: Flask) -> None:
         )
 
 
-def _chat_runner_defaults(app: Flask):
-    """Return the planning runner's ``_defaults`` (binary, effort, …) or None."""
+def _chat_runner_defaults(app: Flask, backend: str = ''):
+    """The planning runner's spawn defaults (binary, model, effort, …) — of
+    ``backend`` when named ('' = the configured backend) — or None.
+
+    A backend with no set of its own gets none, never the configured
+    backend's: Claude's model flagged on Codex's picker would be a model
+    Codex refuses (the composer offered Claude models on the Codex tab).
+    """
     runner = app.config.get('PLANNING_SESSION_RUNNER')
-    return getattr(runner, '_defaults', None) if runner is not None else None
+    if runner is None:
+        return None
+    if not backend:
+        return getattr(runner, '_defaults', None)
+    from agent_backend_core_lib.agent_backend_core_lib.client.model_catalog_factory import platform_for_binary
+    pick = getattr(runner, 'defaults_for_backend', None)
+    defaults = pick(backend) if callable(pick) else None
+    binary = str(getattr(defaults, 'binary', '') or '')
+    return defaults if binary and platform_for_binary(binary) == platform_for_binary(backend) else None
 
 
 # Concrete effort kato falls back to when neither a per-task override nor a
@@ -4580,8 +4594,8 @@ def _chat_runner_defaults(app: Flask):
 DEFAULT_CHAT_EFFORT = 'high'
 
 
-def _configured_chat_effort(app: Flask) -> str:
-    defaults = _chat_runner_defaults(app)
+def _configured_chat_effort(app: Flask, backend: str = '') -> str:
+    defaults = _chat_runner_defaults(app, backend)
     configured = (
         str(getattr(defaults, 'effort', '') or '') if defaults is not None else ''
     )
@@ -4601,7 +4615,7 @@ def _configured_chat_effort(app: Flask) -> str:
 # these helpers talk to the session object rather than to the spawn argv.
 
 
-def _remote_control_backend(app: Flask, task_id: str) -> str:
+def _task_backend(app: Flask, task_id: str) -> str:
     """The chat backend a task is bound to ('' when unknown)."""
     manager = app.config.get('SESSION_MANAGER')
     resolver = getattr(manager, 'backend_for', None)
@@ -4624,7 +4638,7 @@ def _remote_control_supported(app: Flask, task_id: str) -> bool:
     from claude_core_lib.claude_core_lib.helpers.remote_control import (
         supports_remote_control,
     )
-    backend = _remote_control_backend(app, task_id)
+    backend = _task_backend(app, task_id)
     if backend and backend != 'claude':
         return False
     return supports_remote_control(_claude_binary(app))
@@ -4717,15 +4731,23 @@ def _apply_remote_control(app: Flask, task_id: str, on: bool) -> tuple[bool, str
     return bool(applied), ''
 
 
-def _discover_chat_effort_levels(app: Flask) -> list:
-    """Effort levels the chat CLI advertises (discovered, with fallback)."""
+def _discover_chat_effort_levels(app: Flask, backend: str = '') -> list:
+    """Effort levels the chat CLI advertises (discovered, with fallback) —
+    ``backend``'s when named ('' = the configured backend's)."""
     from agent_backend_core_lib.agent_backend_core_lib.client.model_catalog_factory import (
         discover_effort_levels,
         platform_for_binary,
     )
-    defaults = _chat_runner_defaults(app)
-    binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
-    return list(discover_effort_levels(platform_for_binary(binary), binary))
+    defaults = _chat_runner_defaults(app, backend)
+    binary = str(getattr(defaults, 'binary', '') or '') if defaults else ''
+    platform = platform_for_binary(backend or binary or 'claude')
+    return list(discover_effort_levels(platform, binary or ('' if backend else 'claude')))
+
+
+def _requested_backend() -> str:
+    """``?backend=`` — the agent a request is about (the tab on show: its model
+    and effort lists, its CLI version, its sessions); '' = not named."""
+    return str(request.args.get('backend', '') or '').strip().lower()
 
 
 def _truthy_arg(value: object) -> bool:
@@ -4763,7 +4785,7 @@ def _move_task_to_done_or_error(app: Flask, task_id: str) -> str:
     return ''
 
 
-def _discover_chat_models(app: Flask, force: bool = False) -> list:
+def _discover_chat_models(app: Flask, force: bool = False, backend: str = '') -> list:
     """Models the chat backend offers (discovered, with fallback).
 
     Never hardcodes a version. Claude serves the stable CLI aliases
@@ -4778,27 +4800,28 @@ def _discover_chat_models(app: Flask, force: bool = False) -> list:
         discover_models,
         platform_for_binary,
     )
-    defaults = _chat_runner_defaults(app)
+    defaults = _chat_runner_defaults(app, backend)
     binary = str(getattr(defaults, 'binary', '') or 'claude') if defaults else 'claude'
     # WHICH backend answers is the factory lib's question, not this route's:
     # a ``'codex' in binary`` test here is a backend switch in the UI layer,
-    # and it silently sends every unknown backend down the Claude path.
-    models = discover_models(platform_for_binary(binary), force=force)
-    return _apply_configured_default(app, models)
+    # and it silently sends every unknown backend down the Claude path. A
+    # named backend (the agent tab on show) answers for itself.
+    models = discover_models(platform_for_binary(backend or binary), force=force)
+    return _apply_configured_default(app, models, backend)
 
 
-def _configured_chat_model(app: Flask) -> str:
+def _configured_chat_model(app: Flask, backend: str = '') -> str:
     """The model the chat runner falls back to when a task has no override.
 
     This is ``runner._defaults.model`` — i.e. what spawn uses as ``model or
     self._defaults.model``. Empty string means "no configured model", in which
     case the CLI picks its own default (which ``discover`` already flags).
     """
-    defaults = _chat_runner_defaults(app)
+    defaults = _chat_runner_defaults(app, backend)
     return str(getattr(defaults, 'model', '') or '').strip() if defaults else ''
 
 
-def _apply_configured_default(app: Flask, models: list) -> list:
+def _apply_configured_default(app: Flask, models: list, backend: str = '') -> list:
     """Re-point the ``default`` flag onto the model the runner actually falls back to.
 
     The composer shows the default-flagged model (instead of an ambiguous
@@ -4810,7 +4833,7 @@ def _apply_configured_default(app: Flask, models: list) -> list:
     discovery flag (e.g. sonnet) in place would make the picker claim a
     model that will not run (the no-ambiguous-picker rule).
     """
-    configured = _configured_chat_model(app)
+    configured = _configured_chat_model(app, backend)
     if not configured:
         return models
     target = _match_model_alias(configured, [m.get('id') for m in models])
@@ -5455,7 +5478,7 @@ def _register_agent_version_route(app: Flask) -> None:
         # date" is a question about the agent the operator is LOOKING at. A
         # single cached answer for the configured backend could never surface
         # a stale Codex CLI on a Claude-configured host.
-        wanted = str(request.args.get('backend', '') or '').strip().lower()
+        wanted = _requested_backend()
         cache_key = f'AGENT_VERSION_INFO::{wanted}' if wanted else 'AGENT_VERSION_INFO'
         # No ``?refresh``: re-probing runs ``<binary> --version`` and calls the
         # npm registry, so it is POST /api/refresh now. This stays a read.
@@ -6323,7 +6346,7 @@ def _spawn_or_reject_chat_session(app: Flask, task_id: str, text: str):
     # effort (the old "Auto"). The operator always knows the level that ran.
     effort_override = (
         _get_task_override(app, 'TASK_EFFORT_OVERRIDES', task_id)
-        or _configured_chat_effort(app)
+        or _configured_chat_effort(app, _task_backend(app, task_id))
     )
     # Mode lock: the operator's pick, or Plan while the planning tag holds the
     # task. Empty → '' so the runner falls back to its configured default mode
@@ -7284,6 +7307,7 @@ def _records_as_dicts(
     plan_finished_tasks = _plan_queue_finished(agent_service)
     plan_parent_by_task = _plan_parents(agent_service)
     automation_by_task = _automation_levels()
+    ticket_state_by_task = _ticket_states(agent_service)
     return [
         _workspace_record_to_dict(
             record,
@@ -7299,9 +7323,24 @@ def _records_as_dicts(
             plan_finished_tasks=plan_finished_tasks,
             plan_parent_by_task=plan_parent_by_task,
             automation_by_task=automation_by_task,
+            ticket_state_by_task=ticket_state_by_task,
         )
         for record in workspace_records
     ]
+
+
+def _ticket_states(agent_service) -> dict[str, str]:
+    """Each task's state in its ticket system (lower-cased id), as last read —
+    never a tracker call here (``TicketStates``). Unknown → none: a filter is
+    never worth failing the tab list over."""
+    ticket_states = getattr(agent_service, 'ticket_states', None)
+    if ticket_states is None:
+        return {}
+    try:
+        states = ticket_states.states()
+    except Exception:
+        return {}
+    return states if isinstance(states, dict) else {}
 
 
 def _automation_levels() -> dict[str, str]:
@@ -7678,6 +7717,7 @@ def _workspace_record_to_dict(
     plan_finished_tasks: set[str] | None = None,
     plan_parent_by_task: dict[str, str] | None = None,
     automation_by_task: dict[str, str] | None = None,
+    ticket_state_by_task: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     payload = record.to_dict() if hasattr(record, 'to_dict') else dict(record)
     # The branch the task works on — the ONE answer (``task_branch``: a
@@ -7697,6 +7737,9 @@ def _workspace_record_to_dict(
     # How far kato takes it by itself: 'autopilot', 'auto-wait' or '' (the
     # rail draws an auto-wait row with a green border).
     payload['automation'] = (automation_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
+    # The task's state in its ticket system ('' = not known yet, or a tracker
+    # that cannot say) — the tasks menu filters by it (``TicketStates``).
+    payload['ticket_state'] = (ticket_state_by_task or {}).get(str(record.task_id or '').strip().lower(), '')
     # WORKSPACE records carry no backend — they predate agent tabs and are
     # about the clone on disk, not the chat. Without this the UI had nothing
     # to name the agent with and fell back to the literal word "Agent" on the

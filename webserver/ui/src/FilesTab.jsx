@@ -743,7 +743,7 @@ export default function FilesTab({
     // is loading once the wait is real — a label that flips to "Loading…" and
     // straight back on a fast load is flicker, not information.
     <select
-      className="files-tab-filter-scope"
+      className="pill-select"
       disabled
       aria-label={showLoader ? 'Loading repositories…' : 'Repositories'}
       title={showLoader ? 'Loading repositories…' : undefined}
@@ -752,7 +752,7 @@ export default function FilesTab({
     </select>
   ) : trees.length > 1 && (
     <select
-      className="files-tab-filter-scope"
+      className="pill-select"
       value={scopeRepoId}
       onChange={(e) => setScopeRepoId(e.target.value)}
       aria-label="Limit the search to one repository"

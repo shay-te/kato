@@ -198,5 +198,86 @@ class TheCorruptionCannotBeReproducedTests(unittest.TestCase):
         self.assertEqual(record.agent_session_id, 'claude-id-1')
 
 
+
+class StartupRecoveryNeverFilesClaudeUnderAnotherAgentTests(unittest.TestCase):
+    """UNA-3475 (2026-11-18): at startup the Claude manager recovers Claude ids
+    from each task's workspace metadata. It checked only the WORKSPACE's agent
+    stamp, so a task whose record was on Codex — its Codex chat with no id yet —
+    got the Claude id written onto the Codex chat; the next switch back filed it
+    under Codex and the Codex tab opened blank."""
+
+    def setUp(self) -> None:
+        self.manager = ClaudeSessionManager.__new__(ClaudeSessionManager)
+        self.manager.logger = logging.getLogger('test')
+        self.manager._lock = __import__('threading').RLock()
+        self.manager._records = {}
+        self.manager._sessions = {}
+        self.persisted = []
+        self.manager._persist_record = self.persisted.append
+        self.workspace = SimpleNamespace(
+            task_id='T1', task_summary='', cwd='/w/T1', agent_backend='claude', agent_session_id='claude-id-1',
+        )
+        self.manager._workspace_manager = SimpleNamespace(list_workspaces=lambda: [self.workspace])
+
+    def _seed(self):
+        self.manager._seed_records_from_workspaces()
+
+    def test_a_record_on_codex_with_no_codex_id_yet_is_left_alone(self) -> None:
+        record = _record(backend='codex', session_id='')
+        record.chats_by_backend = {'claude': {'agent_session_id': 'claude-id-1', 'previous_session_ids': []}}
+        self.manager._records['t1'] = record
+        self._seed()
+        self.assertEqual(record.agent_session_id, '')
+        self.assertEqual(self.persisted, [])
+        # …so switching back to Claude finds its own chat, and Codex keeps none of Claude's.
+        switch_backend(record, 'claude')
+        self.assertEqual(record.agent_session_id, 'claude-id-1')
+        self.assertEqual(parked_chat(record, 'codex')['agent_session_id'], '')
+
+    def test_a_task_with_no_record_still_gets_its_claude_id_back(self) -> None:
+        self._seed()
+        self.assertEqual(self.manager._records['t1'].agent_session_id, 'claude-id-1')
+        self.assertEqual(len(self.persisted), 1)
+
+    def test_a_claude_record_with_no_id_still_gets_it_back(self) -> None:
+        record = _record(backend='claude', session_id='')
+        self.manager._records['t1'] = record
+        self._seed()
+        self.assertEqual(record.agent_session_id, 'claude-id-1')
+
+
+class ParkedClaudeIsJudgedByItsOwnChatTests(unittest.TestCase):
+    """The drift check compared a live Claude id with the record's id while the
+    record was on Codex — the Codex chat's — and killed the parked Claude chat
+    so its next spawn would resume the Codex id (kato.log, 22:58:51)."""
+
+    def setUp(self) -> None:
+        self.manager = ClaudeSessionManager.__new__(ClaudeSessionManager)
+        self.manager.logger = logging.getLogger('test')
+        self.manager._records = {}
+        self.manager._sessions = {}
+        self.terminated = []
+
+    def _session(self, live_id):
+        return SimpleNamespace(agent_session_id=live_id, resume_was_ignored=False,
+                               terminate=lambda: self.terminated.append(live_id))
+
+    def test_a_parked_claude_chat_matching_its_own_id_is_kept(self) -> None:
+        record = _record(backend='codex', session_id='codex-thread-1')
+        record.chats_by_backend = {'claude': {'agent_session_id': 'claude-id-1', 'previous_session_ids': []}}
+        self.manager._records['t1'] = record
+        session = self._session('claude-id-1')
+        self.manager._sessions['t1'] = session
+        self.assertFalse(self.manager._discard_if_session_id_drifted_locked('t1', 'T1', session))
+        self.assertEqual(self.terminated, [])
+
+    def test_a_claude_chat_that_really_drifted_from_its_own_id_is_still_stopped(self) -> None:
+        record = _record(backend='claude', session_id='claude-id-1')
+        self.manager._records['t1'] = record
+        session = self._session('claude-id-OTHER')
+        self.manager._sessions['t1'] = session
+        self.assertTrue(self.manager._discard_if_session_id_drifted_locked('t1', 'T1', session))
+        self.assertEqual(self.terminated, ['claude-id-OTHER'])
+
 if __name__ == '__main__':
     unittest.main()

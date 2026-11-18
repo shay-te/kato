@@ -6,6 +6,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, fireEvent } from '@testing-library/react';
 
 import TabList from './TabList.jsx';
+import { _resetTicketStateFilter, writeTicketStateFilter } from '../utils/ticketStateFilterPref.js';
 import {
   TASK_MENU_CLOSE_GRACE_MS, TASK_MENU_OPEN_DELAY_MS, _resetTaskMenu, openTaskMenu,
 } from '../stores/taskMenuStore.js';
@@ -891,9 +892,9 @@ describe('TabList — the tasks menu opens from the kato icon', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(pane(container)).not.toHaveClass('is-open');
     act(() => openTaskMenu());
-    fireEvent.mouseDown(container.querySelector('li.tab'));
+    fireEvent.pointerDown(container.querySelector('li.tab'));
     expect(pane(container)).toHaveClass('is-open');  // inside: stays
-    fireEvent.mouseDown(document.body);
+    fireEvent.pointerDown(document.body);
     expect(pane(container)).not.toHaveClass('is-open');
   });
 
@@ -1075,5 +1076,63 @@ describe('TabList — pinned open, docked and resizable', () => {
     expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('360px');
     view.unmount();
     expect(document.documentElement.style.getPropertyValue('--task-rail-docked-width')).toBe('');
+  });
+});
+
+
+// The status dropdown: "All", or the tasks whose ticket is in one state.
+describe('TabList — filter the tasks by their ticket\'s status', () => {
+  const TASKS = [
+    { task_id: 'UNA-1', task_summary: 'one', status: 'active', ticket_state: 'In Review' },
+    { task_id: 'UNA-2', task_summary: 'two', status: 'active', ticket_state: 'In Progress' },
+    { task_id: 'UNA-3', task_summary: 'three', status: 'active', ticket_state: 'In Review' },
+  ];
+  const ids = () => [...document.querySelectorAll('#tab-list li.tab[data-task-id]')].map((li) => li.dataset.taskId);
+  const dropdown = () => screen.getByRole('combobox', { name: 'Show the tasks in one status' });
+
+  beforeEach(() => {
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetTicketStateFilter();
+  });
+  afterEach(() => {
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetTicketStateFilter();
+  });
+
+  test('All by default; picking a status shows only its tasks, and the pick is remembered', () => {
+    const { unmount } = render(<TabList sessions={TASKS} onSelect={() => {}} />);
+    expect(ids()).toEqual(['UNA-1', 'UNA-2', 'UNA-3']);
+    expect([...dropdown().options].map((option) => option.textContent))
+      .toEqual(['All (3)', 'In Progress (1)', 'In Review (2)']);
+
+    fireEvent.change(dropdown(), { target: { value: 'In Review' } });
+    expect(ids()).toEqual(['UNA-1', 'UNA-3']);
+
+    unmount();
+    _resetTicketStateFilter();                        // a reload: the page's memory gone
+    render(<TabList sessions={TASKS} onSelect={() => {}} />);
+    expect(ids()).toEqual(['UNA-1', 'UNA-3']);
+  });
+
+  test('the task on screen stays, and a note says what the menu shows, with the way back to all', () => {
+    writeTicketStateFilter('In Review');
+    render(<TabList sessions={TASKS} activeTaskId="UNA-2" onSelect={() => {}} />);
+    expect(ids()).toEqual(['UNA-1', 'UNA-2', 'UNA-3']);
+    expect(document.querySelector('.tabs-filter-note').textContent).toContain('In Review');
+    fireEvent.click(screen.getByRole('button', { name: 'Show all tasks' }));
+    expect(document.querySelector('.tabs-filter-note')).toBeNull();
+  });
+
+  test('none in the status picked is not "no tasks yet"', () => {
+    writeTicketStateFilter('Done');
+    render(<TabList sessions={TASKS} onSelect={() => {}} />);
+    expect(ids()).toEqual([]);
+    expect(document.querySelector('#empty-state')).toBeNull();
+    expect(document.querySelector('.tabs-filter-note').textContent).toContain('Done');
+  });
+
+  test('no dropdown while no task\'s status is known', () => {
+    render(<TabList sessions={TASKS.map(({ ticket_state, ...rest }) => rest)} onSelect={() => {}} />);
+    expect(screen.queryByRole('combobox', { name: 'Show the tasks in one status' })).toBeNull();
   });
 });

@@ -118,3 +118,25 @@ describe('Layout — centre maximize', () => {
     expect(layoutEl(container).className).not.toContain('is-center-maximized');
   });
 });
+
+
+describe('Layout — the files rail', () => {
+  // ONE answer (``filesRailShown``): whichever pane is maximized, the files
+  // tree stays as a slim rail beside it.
+  test('beside a maximized chat and beside a maximized centre; not otherwise', () => {
+    const { container } = render(<Layout {...panes} />);
+    expect(layoutEl(container).className).not.toContain('has-files-rail');
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.CHAT); });
+    expect(layoutEl(container).className).toContain('has-files-rail');
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.CENTER); });
+    expect(layoutEl(container).className).toContain('has-files-rail');
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.NONE); });
+    expect(layoutEl(container).className).not.toContain('has-files-rail');
+  });
+
+  test('not in the legacy sidebar shell', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
+    const { container } = render(<Layout left={panes.left} center={panes.center} right={panes.right} />);
+    expect(layoutEl(container).className).not.toContain('has-files-rail');
+  });
+});

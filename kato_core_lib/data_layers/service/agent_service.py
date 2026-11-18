@@ -371,6 +371,16 @@ class AgentService(MissionStepLoggerMixin, Service):
             logger=later(self, 'logger'),
         )
 
+        # Each task's state in its ticket system, for the tasks menu's status
+        # filter: one batch read a minute, never on the tab list's own poll.
+        from kato_core_lib.data_layers.service.ticket_states import TicketStates
+        self.ticket_states = TicketStates(
+            task_service=self._task_service,
+            task_state_service=self._task_state_service,
+            workspace_manager=later(self, '_workspace_manager'),
+            logger=later(self, 'logger'),
+        )
+
         # Tasks created in kato's own UI, no tracker. On only when the task
         # service routes local ids (``local_task_routing``); they are cloned
         # and branched through the same steps a ``kato:wait-planning`` ticket

@@ -51,6 +51,9 @@ function emitIfExpandedChanged() {
 }
 hover.subscribe(emitIfExpandedChanged);
 
+// The hover half on its own, for ``useHoverExpandPanel`` (the menu's
+// enter / leave / Escape / press outside — the files rail's too).
+export const taskMenuHover = hover;
 export const openTaskMenu = hover.open;
 export const openTaskMenuSoon = hover.openSoon;
 export const closeTaskMenuSoon = hover.closeSoon;

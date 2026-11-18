@@ -2416,3 +2416,66 @@ class AdoptSessionIsBackendScopedTests(unittest.TestCase):
             json={AGENT_SESSION_ID: 'thread-9', 'agent_backend': 'codex'},
         ).get_json()
         self.assertEqual(body['transcript_migrated_to'], '')
+
+
+class ModelListsFollowTheAgentTabTests(unittest.TestCase):
+    """The composer on the Codex tab offered Claude's models (Fable / Opus /
+    Sonnet / Haiku): ``/api/models`` and ``/api/effort-levels`` always answered
+    for the configured backend. ``?backend=`` names the agent tab on show."""
+
+    def setUp(self):
+        from claude_core_lib.claude_core_lib.helpers.model_catalog import reset_models_cache as reset_claude
+        from codex_core_lib.codex_core_lib.helpers.model_catalog import reset_models_cache as reset_codex
+        for reset in (reset_claude, reset_codex):
+            reset()
+            self.addCleanup(reset)
+        self.manager = _FakeManager()
+        self.manager.backend_for = lambda task_id: {'T-CODEX': 'codex'}.get(task_id, 'claude')
+        self.app = create_app(session_manager=self.manager)
+        claude = SimpleNamespace(binary='claude', model='opus', effort='high')
+        codex = SimpleNamespace(binary='codex', model='', effort='medium')
+        self.app.config['PLANNING_SESSION_RUNNER'] = SimpleNamespace(
+            _defaults=claude,
+            defaults_for_backend=lambda backend: {'codex': codex}.get(backend, claude),
+        )
+        self.client = self.app.test_client()
+
+    def _ids(self, query=''):
+        return [m['id'] for m in self.client.get(f'/api/models{query}').get_json()['models']]
+
+    def test_the_codex_tab_gets_codex_models_never_claude_s(self):
+        codex = self._ids('?backend=codex')
+        self.assertTrue(codex)
+        for claude_model in ('opus', 'sonnet', 'haiku', 'fable'):
+            self.assertNotIn(claude_model, codex)
+        self.assertIn('opus', self._ids('?backend=claude'))
+        self.assertIn('opus', self._ids())  # no backend named: the configured one, as before
+
+    def test_each_agent_flags_its_own_default_never_another_s(self):
+        codex = self.client.get('/api/models?backend=codex').get_json()['models']
+        self.assertFalse(any('opus' in m['id'] for m in codex))  # Claude's configured model is not surfaced
+        self.assertEqual(len([m for m in codex if m.get('default')]), 1)
+
+    def test_effort_levels_and_their_default_are_the_agent_s(self):
+        body = self.client.get('/api/effort-levels?backend=codex').get_json()
+        self.assertEqual(body['default'], 'medium')
+        self.assertTrue(body['levels'])
+        self.assertEqual(self.client.get('/api/effort-levels').get_json()['default'], 'high')
+
+    def test_an_agent_with_no_settings_of_its_own_gets_none_of_another_s(self):
+        from kato_webserver.app import _chat_runner_defaults
+        self.app.config['PLANNING_SESSION_RUNNER'] = SimpleNamespace(
+            _defaults=SimpleNamespace(binary='claude', model='opus', effort='high'),
+            defaults_for_backend=lambda backend: SimpleNamespace(binary='claude', model='opus', effort='high'),
+        )
+        self.assertIsNone(_chat_runner_defaults(self.app, 'codex'))
+        self.assertEqual(self.client.get('/api/effort-levels?backend=codex').get_json()['default'], 'high')
+        self.assertNotIn('opus', self._ids('?backend=codex'))
+
+    def test_a_task_s_effort_is_checked_against_its_own_agent_s_levels(self):
+        from kato_webserver.app import _discover_chat_effort_levels
+        level = _discover_chat_effort_levels(self.app, 'codex')[0]
+        response = self.client.post('/api/sessions/T-CODEX/effort', json={'effort': level})
+        self.assertEqual(response.status_code, 200)
+        refused = self.client.post('/api/sessions/T-CODEX/effort', json={'effort': 'ultra-mega'})
+        self.assertEqual(refused.status_code, 400)

@@ -8,10 +8,14 @@ import Icon, { BusyIcon } from './Icon.jsx';
 import Tab from './Tab.jsx';
 import { useDelayedFlag } from '../hooks/useDelayedFlag.js';
 import { useRevealActive } from '../hooks/useRevealActive.js';
+import { useHoverExpandPanel } from '../hooks/useHoverExpandPanel.js';
+import { useTicketStateFilter } from '../hooks/useTicketStateFilter.js';
+import { NO_TICKET_STATE, filterByTicketState } from '../utils/ticketStateFilter.js';
+import TicketStateFilter from './TicketStateFilter.jsx';
 import { revealInView } from '../utils/scrollUtils.js';
 import TaskMenuResizer from './TaskMenuResizer.jsx';
 import {
-  closeTaskMenu, closeTaskMenuSoon, openTaskMenuSoon, useTaskMenuOpen,
+  taskMenuHover, useTaskMenuOpen,
   useTaskMenuPinned, useTaskMenuWidth,
 } from '../stores/taskMenuStore.js';
 import {
@@ -148,9 +152,16 @@ export default function TabList({
   }, [pinnedIds]);
   // ``orderByPinned`` is a pure sort; memoise on the inputs so we
   // don't reshuffle the list on unrelated re-renders.
+  // The status filter (the dropdown among the actions): only the tasks whose
+  // ticket is in the state picked — the task on screen always stays.
+  const [stateFilter, setStateFilter] = useTicketStateFilter();
+  const shownSessions = useMemo(
+    () => filterByTicketState(sessions, stateFilter, { keep: activeTaskId }),
+    [sessions, stateFilter, activeTaskId],
+  );
   const orderedSessions = useMemo(
-    () => orderByPinned(sessions, pinnedIds, tabOrder),
-    [sessions, pinnedIds, tabOrder],
+    () => orderByPinned(shownSessions, pinnedIds, tabOrder),
+    [shownSessions, pinnedIds, tabOrder],
   );
   // A split plan's sub-tasks are drawn under their main task (a pinned one
   // keeps its place among the pins) — see utils/subtaskTabs.js.
@@ -241,25 +252,10 @@ export default function TabList({
     setDrag({ id: '', over: '' });
   }, []);
 
-  // The menu also closes on a press outside it (a touch screen has no mouse
-  // to leave with) and on Escape. Only while it is open.
-  useEffect(() => {
-    if (!menuOpen) { return undefined; }
-    function onPress(event) {
-      const target = event.target;
-      if (target?.closest?.('#tabs-pane, #kato-menu-trigger')) { return; }
-      closeTaskMenu();
-    }
-    function onKey(event) {
-      if (event.key === 'Escape') { closeTaskMenu(); }
-    }
-    window.addEventListener('mousedown', onPress);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('mousedown', onPress);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
+  // Hovering it open and closed, and closing it on Escape or a press outside
+  // it (the kato logo is inside): the shared hover-panel behaviour, the same
+  // the files rail beside a maximized pane uses.
+  const hoverPanel = useHoverExpandPanel(taskMenuHover);
 
   const draggedSession = drag.id
     ? orderedSessions.find((s) => s.task_id === drag.id) || null
@@ -441,10 +437,26 @@ export default function TabList({
       >
         <BusyIcon busy={scanPending} idle="refresh" />
       </button>
+      <TicketStateFilter sessions={sessions} value={stateFilter} onChange={setStateFilter} />
     </div>
   );
+  // While a status is picked the menu says so above its rows (collapsed too,
+  // where the dropdown is out of sight), with the way back to all of them.
+  const filterNote = stateFilter ? (
+    <p className="tabs-filter-note">
+      <span className="tabs-filter-note-label" title={`Showing the tasks in “${stateFilter === NO_TICKET_STATE ? 'No status' : stateFilter}”`}>
+        {stateFilter === NO_TICKET_STATE ? 'No status' : stateFilter}
+      </span>
+      <button type="button" className="tabs-filter-note-clear" aria-label="Show all tasks" title="Show all tasks"
+        onClick={() => setStateFilter('')}>
+        <Icon name="xmark" />
+      </button>
+    </p>
+  ) : null;
 
-  const empty = rows.length === 0;
+  // No task at all — not "none in the status picked", which still shows the
+  // menu (and the note saying what it filters by).
+  const empty = (sessions || []).length === 0;
   // Held open only once there is something to say: the first split second of
   // a load says nothing yet (``useDelayedFlag``), and an empty panel must not
   // flash open over the screen.
@@ -462,12 +474,14 @@ export default function TabList({
         menuPinned && 'is-docked', menuResizing && 'is-resizing',
       )}
       style={{ '--task-rail-open-width': `${menuWidth}px` }}
-      onMouseEnter={openTaskMenuSoon}
-      onMouseLeave={closeTaskMenuSoon}
+      ref={hoverPanel.ref}
+      onMouseEnter={hoverPanel.onMouseEnter}
+      onMouseLeave={hoverPanel.onMouseLeave}
     >
       {menuPinned ? <TaskMenuResizer onResizingChange={setMenuResizing} /> : null}
       {handle}
       {trailingActions}
+      {empty ? null : filterNote}
       {empty ? (
         <p id="empty-state" className="empty">
           {emptyStateMessage}

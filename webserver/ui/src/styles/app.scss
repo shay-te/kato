@@ -560,8 +560,9 @@ body {
   padding: 0 $SPACE-8 $SPACE-8;
 }
 
-/* Maximized: the chat gets the whole width and the files / preview columns
- * collapse to nothing.
+/* Maximized chat: the chat gets the width, the preview column collapses to
+ * nothing, and the files tree stays as the slim rail (see "The files rail"
+ * below — the same one a maximized centre has).
  *
  * A separate rule rather than nested inside the block above — nesting splits
  * the parent into two emitted blocks, and the shell-geometry tests read the
@@ -575,7 +576,7 @@ body {
  * zero-width column keeps the instance mounted and its own ``overflow:
  * hidden`` does the hiding. */
 #layout.has-top-tabs.is-chat-maximized {
-  grid-template-columns: 0 0 minmax(0, 1fr);
+  grid-template-columns: calc(#{$FILES-RAIL-WIDTH} + #{$SPACE-8}) 0 minmax(0, 1fr);
   /* Zero-WIDTH is not the same as gone. Each collapsed column still painted
    * its card's 1px left and right borders, and the grid still opened its
    * column gap on either side of it — so the maximized chat sat behind two
@@ -594,20 +595,16 @@ body {
   column-gap: 0;
 }
 
-/* The two collapsed panes — ``#right-pane`` is the file tree (it renders in
- * the LEFT slot despite the name) and ``#center-pane`` the editor. Still in
- * the layout, now painting nothing: a card at zero width is all border, which
- * is exactly the pair of hairlines this removes. */
-#layout.has-top-tabs.is-chat-maximized > #right-pane,
+/* The collapsed editor (``#center-pane``). Still in the layout, now painting
+ * nothing: a card at zero width is all border, which is exactly the hairlines
+ * this removes. */
 #layout.has-top-tabs.is-chat-maximized > #center-pane {
   border-width: 0;
 }
 
 /* Maximized centre: the file / diff view gets the width. The chat collapses
- * like the maximized chat's neighbours (zero-width column, no border — it
- * stays mounted). The files tree does NOT vanish: it stays as a slim rail at
- * the left edge (its column keeps a gutter beside it), and expands over the
- * code while pointed at — the tasks menu's behaviour (``filesRail``). */
+ * like the maximized chat's neighbour (zero-width column, no border — it stays
+ * mounted), and the files tree stays as the slim rail. */
 #layout.has-top-tabs.is-center-maximized {
   grid-template-columns: calc(#{$FILES-RAIL-WIDTH} + #{$SPACE-8}) minmax(0, 1fr) 0;
   column-gap: 0;
@@ -617,11 +614,14 @@ body {
   border-width: 0;
 }
 
-/* The rail. Expanded it is wider than its column and lies OVER the centre
- * (above it, pushing nothing). The tree inside keeps its own width the whole
- * time, so nothing reflows and its scroll and open folders survive: the rail
- * only shows less of it. */
-#layout.has-top-tabs.is-center-maximized > #right-pane {
+/* The files rail — whichever pane is maximized (``has-files-rail``, from
+ * ``filesRailShown``). The tree does NOT vanish: it stays a slim rail at the
+ * left edge (its column keeps a gutter beside it) and expands while pointed at
+ * — the tasks menu's behaviour (``filesRail``). Expanded it is wider than its
+ * column and lies OVER the maximized pane, pushing nothing. The tree inside
+ * keeps its own width the whole time, so nothing reflows and its scroll and
+ * open folders survive: the rail only shows less of it. */
+#layout.has-top-tabs.has-files-rail > #right-pane {
   width: $FILES-RAIL-WIDTH;
   justify-self: start;
   overflow: hidden;
@@ -629,21 +629,21 @@ body {
   transition: width 140ms ease-out, box-shadow 140ms ease-out;
 }
 
-#layout.has-top-tabs.is-center-maximized > #right-pane > #right-pane-root {
+#layout.has-top-tabs.has-files-rail > #right-pane > #right-pane-root {
   width: calc(var(--left-pane-width, 320px) - 2px);
 }
 
-#layout.has-top-tabs.is-center-maximized > #right-pane.is-rail-open {
+#layout.has-top-tabs.has-files-rail > #right-pane.is-rail-open {
   width: var(--left-pane-width, 320px);
   box-shadow: $SHADOW-30;
 }
 
 /* Collapsed: the tree hidden, a vertical "Files" in its place. */
-#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open) > #right-pane-root {
+#layout.has-top-tabs.has-files-rail > #right-pane:not(.is-rail-open) > #right-pane-root {
   visibility: hidden;
 }
 
-#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open)::after {
+#layout.has-top-tabs.has-files-rail > #right-pane:not(.is-rail-open)::after {
   content: 'Files';
   position: absolute;
   top: $SPACE-12;
@@ -862,8 +862,51 @@ body {
 
 /* Collapsed, the actions that fit (go to task, new task, add task); the rest
  * keep their place, invisible, until the rail expands. */
-.tabs-pane-side:not(.is-open) .tabs-action:nth-child(n + 4) {
+.tabs-pane-side:not(.is-open) .tabs-actions > :nth-child(n + 4) {
   visibility: hidden;
+}
+
+/* The status filter, at the end of the actions. */
+.tabs-state-filter {
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* What the menu is filtered by, above its rows — collapsed too. */
+.tabs-filter-note {
+  display: flex;
+  align-items: center;
+  gap: $SPACE-4;
+  margin: $SPACE-6 0 0;
+  padding: $SPACE-2 $SPACE-4 $SPACE-2 $SPACE-8;
+  border-radius: $RADIUS-PILL;
+  background: $C-NEUTRAL-100-A06;
+  color: $C-NEUTRAL-64;
+  font-size: $TEXT-11;
+}
+
+.tabs-filter-note-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs-filter-note-clear {
+  flex-shrink: 0;
+  display: inline-flex;
+  padding: $SPACE-2;
+  border: 0;
+  border-radius: $RADIUS-CIRCLE;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.tabs-filter-note-clear:hover {
+  background: $C-NEUTRAL-100-A10;
+  color: $C-NEUTRAL-96;
 }
 
 /* The rail's foot: pinned to the bottom (``margin-top: auto`` holds it there
@@ -5953,6 +5996,16 @@ code {
   background: $C-CYAN-52-A18;
 }
 
+/* The line an opener jumped to (a content-search hit, a go-to-definition) —
+ * plain at a glance which line was asked for. */
+.monaco-editor .kato-line-jump {
+  background: $C-ORANGE-50-A35;
+}
+
+.monaco-editor .kato-line-jump-gutter {
+  border-left: 3px solid $C-ORANGE-50-A65;
+}
+
 .monaco-editor .kato-add-comment-glyph {
   background: $C-CYAN-52-A18;
   border-radius: $RADIUS-CIRCLE;
@@ -6117,12 +6170,11 @@ code {
   justify-content: center;
 }
 
-/* While the chat is maximized there is nothing to resize AGAINST — the other
- * two columns are zero-width — and a live drag would silently rewrite the
- * stored widths the restore depends on. Hidden rather than merely disabled so
- * the grip does not sit over the chat's left edge. */
-#layout.is-chat-maximized .pane-resizer,
-#layout.is-center-maximized .pane-resizer {
+/* While a pane is maximized there is nothing to resize AGAINST — the files
+ * rail has its own width and the other column is zero-width — and a live drag
+ * would silently rewrite the stored widths the restore depends on. Hidden
+ * rather than merely disabled so the grip does not sit over the pane's edge. */
+#layout.has-files-rail .pane-resizer {
   display: none;
 }
 
@@ -6467,7 +6519,9 @@ $FILES-PANE-INSET: $SPACE-6;
 
 /* Repo scope picker, beside the search box. Only rendered on a multi-repo
  * task — a single-repo task has nothing to scope to. */
-.files-tab-filter-scope {
+/* The capsule dropdown: the Files tab's repository picker, the tasks menu's
+ * status filter. */
+.pill-select {
   /* Never squeezed: with the row able to wrap, the dropdown drops to its own
    * line rather than shrinking to something unreadable. */
   flex-shrink: 0;
@@ -6505,7 +6559,7 @@ $FILES-PANE-INSET: $SPACE-6;
   cursor: pointer;
 }
 
-.files-tab-filter-scope:hover {
+.pill-select:hover {
   color: $C-NEUTRAL-96;
 }
 

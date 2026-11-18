@@ -9,6 +9,7 @@ import {
   fetchTaskPullRequestState,
   fetchSessionContextUsage,
   fetchAgentVersion,
+  fetchEffortLevels,
   fetchModels,
   fetchPendingPermissions,
   handOverTask,
@@ -417,6 +418,18 @@ test('fetchModels without force does not refresh', async () => {
   await fetchModels();
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, '/api/models');
+});
+
+test('the model and effort lists name the agent tab they are for', async () => {
+  // The Codex tab offered Claude's models: the lists always came for the
+  // configured agent.
+  const calls = _stubFetch({ ok: true, json: () => Promise.resolve({}) });
+  await fetchModels(false, 'codex');
+  await fetchEffortLevels(false, 'codex');
+  await fetchEffortLevels();
+  assert.deepEqual(calls.map((call) => call.url), [
+    '/api/models?backend=codex', '/api/effort-levels?backend=codex', '/api/effort-levels',
+  ]);
 });
 
 test('refreshAgentBackends POSTs then re-reads', async () => {

@@ -141,3 +141,24 @@ describe('useSessionOption', () => {
     expect(result.current[0]).toEqual([]);
   });
 });
+
+
+describe('useSessionOption — a catalogue per agent', () => {
+  // The model list differs per agent: the composer keys it ``models:<agent>``.
+  test('a new catalogue key loads that catalogue and the current value again', async () => {
+    const fetchOptions = vi.fn((force) => Promise.resolve({ models: [{ id: 'x' }] }));
+    const fetchCurrent = vi.fn().mockResolvedValue({ model: '' });
+    const { result, rerender } = renderHook(
+      ({ key, options }) => useSessionOption('T1', {
+        ..._config({ fetchOptions: options, fetchCurrent }), catalogKey: key,
+      }),
+      { initialProps: { key: 'models:claude-test', options: fetchOptions } },
+    );
+    await waitFor(() => expect(result.current[0]).toEqual([{ id: 'x' }]));
+    const codexOptions = vi.fn().mockResolvedValue({ models: [{ id: 'gpt-5.5' }] });
+    rerender({ key: 'models:codex-test', options: codexOptions });
+    await waitFor(() => expect(result.current[0]).toEqual([{ id: 'gpt-5.5' }]));
+    expect(codexOptions).toHaveBeenCalledTimes(1);
+    expect(fetchCurrent).toHaveBeenCalledTimes(2);
+  });
+});

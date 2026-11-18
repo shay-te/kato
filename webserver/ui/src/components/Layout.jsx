@@ -1,5 +1,5 @@
 import { useMaximizedPane } from '../hooks/useMaximizedPane.js';
-import { MAXIMIZED_PANE } from '../utils/maximizedPanePref.js';
+import { MAXIMIZED_PANE, filesRailShown } from '../utils/maximizedPanePref.js';
 
 export default function Layout({
   top, left, center, right,
@@ -31,6 +31,7 @@ export default function Layout({
         // the three columns to collapse.
         top && maximized === MAXIMIZED_PANE.CHAT ? 'is-chat-maximized' : '',
         top && maximized === MAXIMIZED_PANE.CENTER ? 'is-center-maximized' : '',
+        top && filesRailShown(maximized) ? 'has-files-rail' : '',
       ].filter(Boolean).join(' ')}
       style={style}
     >

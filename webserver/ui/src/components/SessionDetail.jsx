@@ -262,11 +262,17 @@ export default function SessionDetail({
   // on-change state block (see useSessionOption). The model catalogue
   // and the effort levels are both discovered from the agent CLI (not
   // hardcoded); they differ only in the API fns and result keys.
+  // For the agent tab on show: each agent has its own models and effort
+  // levels (the Codex tab offered Claude's), and the task's pick is kept per
+  // agent on the server.
+  const fetchAgentModels = useCallback((force) => fetchModels(force, activeBackend), [activeBackend]);
+  const fetchAgentEffortLevels = useCallback((force) => fetchEffortLevels(force, activeBackend), [activeBackend]);
   const [availableModels, selectedModel, handleModelChange] = useSessionOption(
     taskId,
     {
-      fetchOptions: fetchModels,
+      fetchOptions: fetchAgentModels,
       optionsKey: 'models',
+      catalogKey: `models:${activeBackend}`,
       fetchCurrent: fetchSessionModel,
       currentKey: 'model',
       setCurrent: setSessionModel,
@@ -275,8 +281,9 @@ export default function SessionDetail({
   const [effortLevels, selectedEffort, handleEffortChange, effortDefault] = useSessionOption(
     taskId,
     {
-      fetchOptions: fetchEffortLevels,
+      fetchOptions: fetchAgentEffortLevels,
       optionsKey: 'levels',
+      catalogKey: `levels:${activeBackend}`,
       fetchCurrent: fetchSessionEffort,
       currentKey: 'effort',
       setCurrent: setSessionEffort,

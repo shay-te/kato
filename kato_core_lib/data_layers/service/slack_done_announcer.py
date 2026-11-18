@@ -19,7 +19,10 @@ is said in words that say what to do, and never fails the done.
 repository of the task was on (``TaskCommits``). A later Done (or the tracker's
 Done) whose repositories have moved on since — the agent kept working, Done
 committed and pushed more — posts the task again, marked as updated; with
-nothing committed since it is "already posted". A post kept before commits were
+nothing committed since it is "already posted". The repeat post links only the
+repositories that moved on, each with its NEWEST pull request (the earlier
+round's merged ones left out): it linked every repository's old merged pull
+request, four where two had changed (2026-11-18). A post kept before commits were
 recorded counts as moved on when a repository has a commit newer than the post.
 When the commits cannot be read it is "already posted": never a second post on
 a guess.
@@ -37,6 +40,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 
 from slack_core_lib.slack_core_lib.client.slack_client import SlackClient
 from slack_core_lib.slack_core_lib.client.slack_webhook import SlackWebhook
@@ -67,11 +71,14 @@ class _Post(object):
     ``commits``: where the task's repositories stood when it was claimed (kept
     with the post). ``again``: the task was posted before, and has moved on."""
 
-    def __init__(self, commits: TaskCommitReading | None = None, *, again: bool = False) -> None:
+    def __init__(self, commits: TaskCommitReading | None = None, *, last: SlackPost | None = None) -> None:
         self.finished = threading.Event()
         self.outcome: dict | None = None
         self.commits = commits
-        self.again = again
+        # The task's previous post (None: never posted) — a repeat links only
+        # what moved on since it.
+        self.last = last
+        self.again = last is not None
 
 #: How long a second caller waits for the post already under way.
 WAIT_FOR_POST_SECONDS = 30
@@ -85,17 +92,22 @@ def _cannot_tell(_task_id: str) -> None:
     return None
 
 
-def moved_on_since(post: SlackPost, commits: TaskCommitReading | None) -> bool:
-    """Was anything committed in the task since ``post``? False when the
-    commits cannot be read: "cannot tell" must never post a task twice.
+def repositories_moved_on(post: SlackPost, commits: TaskCommitReading | None) -> set[str]:
+    """The task's repositories with something committed since ``post``. Empty
+    when the commits cannot be read: "cannot tell" must never post a task twice.
 
     A post that kept its commits is compared repository by repository; an
     older one (no commits kept) by time: a commit made after it."""
     if commits is None:
-        return False
+        return set()
     if post.commits is not None:
-        return {repo: commit for repo, (commit, _at) in commits.items()} != post.commits
-    return any(committed_at > post.at for _commit, committed_at in commits.values())
+        return {repo for repo, (commit, _at) in commits.items() if post.commits.get(repo) != commit}
+    return {repo for repo, (_commit, committed_at) in commits.items() if committed_at > post.at}
+
+
+def moved_on_since(post: SlackPost, commits: TaskCommitReading | None) -> bool:
+    """Was anything committed in the task since ``post``?"""
+    return bool(repositories_moved_on(post, commits))
 
 
 def sender_for(settings: SlackDoneSettings, *, webhook_for=SlackWebhook, client_for=SlackClient):
@@ -213,14 +225,14 @@ class SlackDoneAnnouncer(object):
             last = self._posted.last_post(task)
             if last is not None and not moved_on_since(last, commits):
                 return _outcome(ALREADY_POSTED, '' if commits is not None else COMMITS_UNREADABLE)
-            post = _Post(commits, again=last is not None)
+            post = _Post(commits, last=last)
             self._under_way[key] = post
             return (post,)
 
     def _send(self, send, source: ReleaseNoteSource, post: _Post) -> dict:
         outcome = None
         try:
-            send(done_message(source, self._links.links(source), self._signed_by(), again=post.again))
+            send(done_message(source, self._links_of(source, post), self._signed_by(), again=post.again))
         except SlackError as exc:
             self.logger.error('task %s was not posted to Slack: %s', source.task_id, exc)
             outcome = _outcome(FAILED, str(exc))
@@ -235,6 +247,16 @@ class SlackDoneAnnouncer(object):
         finally:
             self._finish(source.task_id, post, outcome)
         return outcome
+
+    def _links_of(self, source: ReleaseNoteSource, post: _Post) -> list[tuple[str, str]]:
+        """Every repository's pull request on a first post; on a repeat only the
+        repositories that moved on since the last one, without the pull
+        requests that one already linked."""
+        if post.last is None:
+            return self._links.links(source)
+        moved = repositories_moved_on(post.last, post.commits)
+        repositories = tuple(repo for repo in source.repositories if repo in moved) or source.repositories
+        return self._links.links(replace(source, repositories=repositories), since=post.last.at)
 
     def _finish(self, task: str, post: _Post, outcome: dict | None) -> None:
         """The post is over: its claim is given back (a failure retries on the

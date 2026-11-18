@@ -176,6 +176,12 @@ export function fetchConfigStatus() {
   return fetchJson('/api/config-status');
 }
 
+// ``?backend=`` — the agent a request is about (the tab on show): its CLI
+// version, its model and effort lists. '' = the configured one.
+function forBackend(path, backend) {
+  return backend ? `${path}?backend=${encodeURIComponent(backend)}` : path;
+}
+
 export async function fetchAgentVersion(force = false, backend = '') {
   // ``force`` re-probes the host CLI server-side (banner/upgrade button reflect
   // a CLI or settings change with no kato restart) — a POST, because probing
@@ -183,8 +189,7 @@ export async function fetchAgentVersion(force = false, backend = '') {
   // ``backend`` scopes the answer to the agent the operator is looking at —
   // each tab has its own CLI and its own "out of date".
   if (force) { await refreshCache(REFRESH_TARGET.AGENT_VERSION); }
-  const query = backend ? `?backend=${encodeURIComponent(backend)}` : '';
-  return fetchJson(`/api/agent-version${query}`);
+  return fetchJson(forBackend('/api/agent-version', backend));
 }
 
 export function upgradeAgentCli(backend = '') {
@@ -695,13 +700,13 @@ export function createTaskPullRequest(taskId) {
   );
 }
 
-export async function fetchModels(force = false) {
+export async function fetchModels(force = false, backend = '') {
   // ``force`` bypasses the server-side discovery cache so a refresh updates the
   // model labels (e.g. after a CLI upgrade) without a kato restart.
   // A forced re-probe is a POST (it spawns a subprocess and calls the models
   // API); the read that follows is still a plain GET. See refreshCache.
   if (force) { await refreshCache(REFRESH_TARGET.MODELS); }
-  return fetchJson('/api/models');
+  return fetchJson(forBackend('/api/models', backend));
 }
 
 // Live OpenRouter catalogue for the settings model-field autocomplete. Parallels
@@ -776,9 +781,9 @@ export function setSessionModel(taskId, modelId) {
   );
 }
 
-export function fetchEffortLevels() {
+export function fetchEffortLevels(_force = false, backend = '') {
   // { levels: [...], default: '' } — levels discovered from the agent CLI.
-  return fetchJson('/api/effort-levels');
+  return fetchJson(forBackend('/api/effort-levels', backend));
 }
 
 export function fetchSessionEffort(taskId) {

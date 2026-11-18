@@ -20,3 +20,11 @@ describe('the task card names the agent the task runs on', () => {
     expect(taskTooltipModelFor(idle()).caption).toBeUndefined();
   });
 });
+
+describe('the task card says where its ticket is', () => {
+  test('a Ticket row with its status, none while it is not known', () => {
+    const rows = (session) => taskTooltipModelFor(session, null, false).rows;
+    expect(rows(idle({ ticket_state: 'In Review' }))).toContainEqual({ label: 'Ticket', value: 'In Review' });
+    expect(rows(idle()).some((row) => row.label === 'Ticket')).toBe(false);
+  });
+});

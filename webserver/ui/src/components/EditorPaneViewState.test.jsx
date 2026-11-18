@@ -62,7 +62,7 @@ vi.mock('../utils/clipboard.js', () => ({
   copyRepoRelativePath: vi.fn(async () => {}),
 }));
 
-import EditorPane from './EditorPane.jsx';
+import EditorPane, { lineJumpDecoration } from './EditorPane.jsx';
 
 const OPEN_FILE = {
   taskId: 'KATO-1',
@@ -101,5 +101,26 @@ describe('EditorPane — file view state', () => {
       editorViewState: { line: 77 },
     });
     expect(onViewStateChange).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+// A content-search hit (or a go-to-definition) opens the file AT a line:
+// scrolled there, and the line marked so it is plain which one was asked for.
+describe('EditorPane — the line an opener jumped to', () => {
+  test('is scrolled into the middle and marked as a whole line', async () => {
+    render(<EditorPane openFile={{ ...OPEN_FILE, line: 1, openRequestId: 5 }} />);
+    await waitFor(() => expect(fakeEditorState.editor?.deltaDecorations)
+      .toHaveBeenCalledWith([], [lineJumpDecoration(1)]));
+    expect(lineJumpDecoration(1)).toEqual({
+      range: { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 },
+      options: { isWholeLine: true, className: 'kato-line-jump', linesDecorationsClassName: 'kato-line-jump-gutter' },
+    });
+  });
+
+  test('an open with no line marks nothing', async () => {
+    render(<EditorPane openFile={{ ...OPEN_FILE, openRequestId: 6 }} />);
+    await waitFor(() => expect(screen.getByTestId('monaco-editor')).toBeInTheDocument());
+    expect(fakeEditorState.editor.deltaDecorations).not.toHaveBeenCalled();
   });
 });

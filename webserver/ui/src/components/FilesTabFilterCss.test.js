@@ -84,14 +84,14 @@ test('the field is the positioning context for its icon and clear button', () =>
 });
 
 test('the repo picker wraps rather than shrinking to nothing', () => {
-  assert.match(ruleBody('.files-tab-filter-scope {'), /flex-shrink:\s*0/);
+  assert.match(ruleBody('.pill-select {'), /flex-shrink:\s*0/);
 });
 
 test('the repo picker has room for its label and its chevron', () => {
   // 4px put the label hard against the border on one side and against the
   // native chevron on the other, and a 120px cap clipped a real repository id
   // like ``ob-love-admin-backend``.
-  const body = ruleBody('.files-tab-filter-scope {');
+  const body = ruleBody('.pill-select {');
   assert.match(body, /padding:\s*0\s+10px/);
   assert.match(body, /max-width:\s*160px/);
   // Capsule, like the search field above it — the row reads as one family.
@@ -137,7 +137,7 @@ test('the capsule keeps its focus ring while a toggle is clicked', () => {
 });
 
 test('the repo picker is the shared control height', () => {
-  assert.match(ruleBody('.files-tab-filter-scope {'), /height:\s*28px/);
+  assert.match(ruleBody('.pill-select {'), /height:\s*28px/);
 });
 
 test('the round buttons still define that height', () => {

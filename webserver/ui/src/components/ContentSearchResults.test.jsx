@@ -44,10 +44,13 @@ describe('ContentSearchResults', () => {
     render(<ContentSearchResults taskId="T1" query="hit" onOpenFile={onOpenFile} />);
     await waitFor(() => expect(screen.getByText('hit')).toBeInTheDocument());
     fireEvent.click(screen.getByText('hit'));
+    // In the FILE view: a diff hides unchanged lines, so a tab left in diff
+    // view never reached the hit's line.
     expect(onOpenFile).toHaveBeenCalledWith({
       absolutePath: '/wk/be/app.py',
       relativePath: 'app.py',
       repoId: 'be',
+      view: 'file',
       line: 12,
     });
   });

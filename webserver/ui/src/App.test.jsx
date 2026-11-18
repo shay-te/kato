@@ -281,6 +281,7 @@ import { useResizable } from './hooks/useResizable.js';
 import { createLocalTask, fetchTaskUnpushedWork, forgetTaskWorkspace } from './api.js';
 import { _resetNewTaskDraft } from './components/newTask/newTaskDraftStore.js';
 import { _resetLastActiveTask } from './utils/lastActiveTask.js';
+import { _resetRememberedFileTabs, rememberedFileTabTaskIds } from './utils/rememberedFileTabs.js';
 import { forgottenTasks } from './stores/forgottenTaskStore.js';
 import App from './App.jsx';
 
@@ -301,6 +302,7 @@ beforeEach(() => {
   // so clearing storage alone leaves the old value being served.
   try { localStorage.clear(); } catch (_) { /* jsdom */ }
   _resetLastActiveTask();
+  _resetRememberedFileTabs();
   _resetNewTaskDraft();
 });
 
@@ -607,6 +609,43 @@ describe('App — a markdown tab keeps its preview / source pick', () => {
     fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
     fireEvent.click(screen.getByTitle('repo/README.md'));
     expect(toggle()).toBe(picked);
+  });
+});
+
+
+describe('App — the open files come back after a reload', () => {
+  // "I open a file, reload the page, the file is not opened; I need to look
+  // for it again." A reload = the page's memory gone, the browser's storage kept.
+  function reloadApp(unmount) {
+    unmount();
+    _resetRememberedFileTabs();
+    _resetLastActiveTask();
+    return render(<App />);
+  }
+
+  test('the files the task had open, and the one on show, reopen', () => {
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }], refresh: vi.fn() });
+    const { unmount } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-readme-T1' }));
+    expect(stripTitles()).toEqual(['repo/src/T1.js', 'repo/README.md']);
+
+    reloadApp(unmount);
+
+    expect(stripTitles()).toEqual(['repo/src/T1.js', 'repo/README.md']);
+    expect(activeTabTitles()).toEqual(['repo/README.md']);
+  });
+
+  test('a task deleted in the meantime (gone from kato\'s list) leaves nothing remembered', () => {
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }, { task_id: 'T2' }], refresh: vi.fn(), loaded: true });
+    const { unmount } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'T2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'open-file-T2' }));
+    expect(rememberedFileTabTaskIds()).toContain('T2');
+    useSessions.mockReturnValue({ sessions: [{ task_id: 'T1' }], refresh: vi.fn(), loaded: true });
+    reloadApp(unmount);
+    expect(rememberedFileTabTaskIds()).not.toContain('T2');
   });
 });
 

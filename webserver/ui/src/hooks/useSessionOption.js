@@ -23,10 +23,16 @@ import { loadCatalog } from '../stores/catalogStore.js';
 // that concrete value instead of an ambiguous "Auto" — the effort
 // equivalent of the model picker's per-option ``default: true`` flag.
 //
+// ``catalogKey`` (optional, default ``optionsKey``) names WHICH catalogue: the
+// model list differs per agent (the Codex tab offered Claude's models), so the
+// composer passes ``models:<agent>``. A new key loads that catalogue (cached
+// per key) and the current value again — the pick is kept per agent too.
+//
 // Returns ``[options, selected, onChange, defaultValue]``.
 export function useSessionOption(taskId, {
   fetchOptions,
   optionsKey,
+  catalogKey = optionsKey,
   fetchCurrent,
   currentKey,
   setCurrent,
@@ -35,7 +41,7 @@ export function useSessionOption(taskId, {
   const [options, setOptions] = useState([]);
   const [selected, setSelected] = useState('');
   const [defaultValue, setDefaultValue] = useState('');
-  const loadedRef = useRef(false);
+  const loadedKeyRef = useRef(null);
 
   // Fetch + apply the option catalogue. ``force`` re-discovers server-side
   // (bypassing the version-label cache) — used by the on-demand refresh so a
@@ -45,7 +51,7 @@ export function useSessionOption(taskId, {
     // remounts this hook and resets ``loadedRef`` — reads the catalogue from
     // cache instead of re-hitting /models + /effort-levels every time. ``force``
     // (the header Refresh) bypasses + replaces the cache.
-    loadCatalog(optionsKey, fetchOptions, force).then((result) => {
+    loadCatalog(catalogKey, fetchOptions, force).then((result) => {
       if (result && Array.isArray(result[optionsKey])) {
         setOptions(result[optionsKey]);
       }
@@ -53,15 +59,15 @@ export function useSessionOption(taskId, {
         setDefaultValue(String(result[defaultKey]));
       }
     }).catch(() => {});
-  }, [fetchOptions, optionsKey, defaultKey]);
+  }, [fetchOptions, optionsKey, catalogKey, defaultKey]);
 
-  // Fetch the option catalogue once. Guarded so tab switches don't
-  // re-hit the endpoint — the list is the same for every task.
+  // Fetch each catalogue once (per key). Guarded so task switches don't
+  // re-hit the endpoint — a catalogue is the same for every task.
   useEffect(() => {
-    if (loadedRef.current) { return; }
-    loadedRef.current = true;
+    if (loadedKeyRef.current === catalogKey) { return; }
+    loadedKeyRef.current = catalogKey;
     loadOptions(false);
-  }, [loadOptions]);
+  }, [loadOptions, catalogKey]);
 
   // Re-fetch (forced) when a global catalogue refresh is broadcast — e.g. the
   // header Refresh after a CLI upgrade — so stale labels (the model version)
@@ -75,7 +81,7 @@ export function useSessionOption(taskId, {
       setSelected((result && result[currentKey]) || '');
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [taskId, catalogKey]);
 
   // Optimistically reflect the choice, then persist it.
   const onChange = useCallback(async (value) => {

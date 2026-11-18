@@ -38,10 +38,13 @@ function ruleBodies(selector) {
   }
 }
 
-test('the maximized chat keeps the collapsed columns at zero width', () => {
+test('the maximized chat keeps the files rail and collapses the preview to zero width', () => {
+  // The files tree stays as the slim rail (2026-11-18: "when expanding the
+  // chat make sure to have the file tree collapse on the side, same as view
+  // file full screen"); only the preview column goes to zero.
   const bodies = ruleBodies('#layout.has-top-tabs.is-chat-maximized {');
   assert.ok(bodies.length > 0, 'no maximized layout rule emitted');
-  assert.match(bodies[0], /grid-template-columns:\s*0 0 minmax\(0, 1fr\)/);
+  assert.match(bodies[0], /grid-template-columns:\s*calc\(28px \+ 8px\) 0 minmax\(0, 1fr\)/);
 });
 
 test('it closes the column gap that held the chat off-centre', () => {
@@ -65,21 +68,18 @@ test('the left inset matches the right one', () => {
   assert.equal(parts.length, 3, `expected "top x-axis bottom", got ${padding[1]}`);
 });
 
-test('the two collapsed panes paint no border', () => {
-  // A card at zero width is nothing BUT border — the two hairlines.
+test('the collapsed preview paints no border; the files rail keeps its card', () => {
+  // A card at zero width is nothing BUT border — the hairlines.
   const bodies = ruleBodies('#layout.has-top-tabs.is-chat-maximized > #center-pane');
-  assert.ok(bodies.length > 0, 'no border reset for the collapsed panes');
+  assert.ok(bodies.length > 0, 'no border reset for the collapsed preview');
   assert.match(bodies[bodies.length - 1], /border-width:\s*0/);
-  assert.ok(
-    CSS.includes('#layout.has-top-tabs.is-chat-maximized > #right-pane'),
-    'the files column is still painting its border',
-  );
+  assert.ok(!CSS.includes('#layout.has-top-tabs.is-chat-maximized > #right-pane'));
 });
 
 test('the resizers stay hidden while maximized', () => {
   // Nothing to resize against, and a live drag would rewrite the stored
   // widths the restore depends on.
-  const bodies = ruleBodies('#layout.is-chat-maximized .pane-resizer');
+  const bodies = ruleBodies('#layout.has-files-rail .pane-resizer');
   assert.ok(bodies.length > 0);
   assert.match(bodies[0], /display:\s*none/);
 });
@@ -98,27 +98,24 @@ test('the maximized centre\'s chat paints no border, and nothing resizes', () =>
   const borders = ruleBodies('#layout.has-top-tabs.is-center-maximized > #session-pane');
   assert.ok(borders.length > 0, 'the chat column is still painting its border');
   assert.match(borders[borders.length - 1], /border-width:\s*0/);
-  const resizers = ruleBodies('#layout.is-center-maximized .pane-resizer');
-  assert.ok(resizers.length > 0);
-  assert.match(resizers[0], /display:\s*none/);
 });
 
 // The files tree beside a maximized centre: a slim rail that expands OVER the
 // code while pointed at, its tree kept at its own width (nothing reflows).
 test('the files rail is slim, lies above the code, and keeps its tree at full width', () => {
-  const rail = ruleBodies('#layout.has-top-tabs.is-center-maximized > #right-pane {')[0];
+  const rail = ruleBodies('#layout.has-top-tabs.has-files-rail > #right-pane {')[0];
   assert.match(rail, /width:\s*28px/);
   assert.match(rail, /overflow:\s*hidden/);
   assert.match(rail, /z-index:\s*\d+/);
-  const tree = ruleBodies('#layout.has-top-tabs.is-center-maximized > #right-pane > #right-pane-root {')[0];
+  const tree = ruleBodies('#layout.has-top-tabs.has-files-rail > #right-pane > #right-pane-root {')[0];
   assert.match(tree, /width:\s*calc\(var\(--left-pane-width, 320px\) - 2px\)/);
 });
 
 test('hovered open it takes the tree\'s own width; collapsed it hides the tree behind a "Files" label', () => {
-  const open = ruleBodies('#layout.has-top-tabs.is-center-maximized > #right-pane.is-rail-open {')[0];
+  const open = ruleBodies('#layout.has-top-tabs.has-files-rail > #right-pane.is-rail-open {')[0];
   assert.match(open, /width:\s*var\(--left-pane-width, 320px\)/);
-  const hidden = ruleBodies('#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open) > #right-pane-root {')[0];
+  const hidden = ruleBodies('#layout.has-top-tabs.has-files-rail > #right-pane:not(.is-rail-open) > #right-pane-root {')[0];
   assert.match(hidden, /visibility:\s*hidden/);
-  const label = ruleBodies('#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open)::after {')[0];
+  const label = ruleBodies('#layout.has-top-tabs.has-files-rail > #right-pane:not(.is-rail-open)::after {')[0];
   assert.match(label, /content:\s*"Files"|content:\s*'Files'/);
 });

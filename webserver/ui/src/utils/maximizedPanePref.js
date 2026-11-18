@@ -46,6 +46,13 @@ export function writeMaximizedPane(pane) {
   return _store.write({ pane }).pane;
 }
 
+// While either pane has the window, the files tree stays as a slim rail at the
+// left edge that expands on hover (``filesRail``) — never gone. ONE answer, read
+// by the layout grid and by the files pane.
+export function filesRailShown(pane) {
+  return PANES.has(pane);
+}
+
 // Maximize ``pane``, or restore the panes when it already is.
 export function toggleMaximizedPane(pane) {
   return writeMaximizedPane(readMaximizedPane() === pane ? MAXIMIZED_PANE.NONE : pane);

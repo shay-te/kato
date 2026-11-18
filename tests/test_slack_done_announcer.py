@@ -46,7 +46,7 @@ class _Links(object):
         self.result = links
         self.asked: list[ReleaseNoteSource] = []
 
-    def links(self, source):
+    def links(self, source, **_):
         self.asked.append(source)
         return self.result
 

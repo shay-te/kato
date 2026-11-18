@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { searchTaskWorkspaceContent } from '../api.js';
 import { groupContentMatchesByFile } from '../FilesTabHelpers.js';
+import { TAB_VIEW } from '../utils/fileTabs.js';
 
 // Content (grep) search results for the Files tab. Shown when the search
 // box has a query: fetches matching LINES across the task's repos and
@@ -72,10 +73,14 @@ export default function ContentSearchResults({
 function ContentFileGroup({ group, onOpenFile }) {
   function openAt(line) {
     if (typeof onOpenFile !== 'function') { return; }
+    // The FILE, not its diff: the hit's line number is the file's, and a diff
+    // hides unchanged lines in collapsed gaps — a tab left in diff view
+    // opened there and never reached the line.
     onOpenFile({
       absolutePath: group.absPath,
       relativePath: group.path,
       repoId: group.repoId,
+      view: TAB_VIEW.FILE,
       line,
     });
   }

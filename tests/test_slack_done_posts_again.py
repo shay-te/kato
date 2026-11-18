@@ -31,6 +31,7 @@ from kato_core_lib.data_layers.service.slack_done_announcer import (
     SlackDoneAnnouncer,
     done_message,
     moved_on_since,
+    repositories_moved_on,
 )
 from kato_core_lib.data_layers.service.slack_posted_tasks import SlackPost, SlackPostedTasks
 from kato_core_lib.data_layers.service.task_commits import TaskCommits
@@ -56,7 +57,7 @@ def _git(cwd: Path, *args: str, at: int | None = None) -> str:
 
 
 class _Links(object):
-    def links(self, _source):
+    def links(self, _source, **_):
         return [('backend', 'https://git.example/backend/pull/7')]
 
 
@@ -167,6 +168,49 @@ class PostsAgainWhenTheWorkMovedOnTests(_Base):
         self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted_again')
 
 
+class _RecordingLinks(object):
+    """Each repository asked for, with its link; remembers every ask."""
+
+    def __init__(self) -> None:
+        self.asked = []
+
+    def links(self, source, *, since=0.0):
+        self.asked.append((source.repositories, since))
+        return [(repo, f'https://git.example/{repo}/pull/2') for repo in source.repositories]
+
+
+class RepeatPostLinksOnlyWhatMovedOnTests(_Base):
+    """2026-11-18: four repositories' pull requests the first time, then the task
+    continued in two of them with new pull requests — the repeat post still
+    linked all four old (merged) ones."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.links = _RecordingLinks()
+        self.announcer._links = self.links
+
+    def test_the_first_post_links_every_repository(self) -> None:
+        self.announcer.announce('UNA-1')
+        self.assertEqual(self.links.asked, [(('backend', 'client'), 0.0)])
+
+    def test_a_repeat_links_only_the_repositories_committed_in_since_newer_than_that_post(self) -> None:
+        self.announcer.announce('UNA-1')
+        first_post_at = self.now
+        self.now += 3600
+        self._commit('client')
+        self.assertEqual(self.announcer.announce('UNA-1')['status'], 'posted_again')
+        self.assertEqual(self.links.asked[-1], (('client',), first_post_at))
+        repeat = self._texts()[-1]
+        self.assertIn('https://git.example/client/pull/2', repeat)
+        self.assertNotIn('backend', repeat)
+
+    def test_an_older_post_with_no_commits_kept_picks_the_repositories_by_time(self) -> None:
+        (self.root / 'slack_posted.json').write_text(json.dumps({'una-1': 1_700_000_100.0}))
+        self._commit('backend', at=1_700_000_200)
+        self.announcer.announce('UNA-1')
+        self.assertEqual(self.links.asked[-1], (('backend',), 1_700_000_100.0))
+
+
 class PostsKeptBeforeCommitsWereRecordedTests(_Base):
     """A post written before this change is a bare time: a commit made after it
     counts as moved on, one made before it does not."""
@@ -201,6 +245,17 @@ class MovedOnSinceTests(unittest.TestCase):
         post = SlackPost(at=100.0)
         self.assertFalse(moved_on_since(post, {'a': ('x', 100), 'b': ('y', 50)}))
         self.assertTrue(moved_on_since(post, {'a': ('x', 101)}))
+
+
+class RepositoriesMovedOnTests(unittest.TestCase):
+    def test_kept_commits_name_each_repository_that_changed_or_is_new(self) -> None:
+        post = SlackPost(at=1.0, commits={'a': 'x', 'b': 'y'})
+        self.assertEqual(repositories_moved_on(post, {'a': ('x', 9), 'b': ('z', 9), 'c': ('w', 9)}), {'b', 'c'})
+        self.assertEqual(repositories_moved_on(post, {'a': ('x', 9), 'b': ('y', 9)}), set())
+
+    def test_an_older_post_names_those_committed_after_it_and_cannot_tell_names_none(self) -> None:
+        self.assertEqual(repositories_moved_on(SlackPost(at=100.0), {'a': ('x', 101), 'b': ('y', 99)}), {'a'})
+        self.assertEqual(repositories_moved_on(SlackPost(at=1.0, commits={'a': 'x'}), None), set())
 
 
 class SlackPostedTasksFormatTests(unittest.TestCase):

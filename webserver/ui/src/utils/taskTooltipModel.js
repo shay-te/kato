@@ -35,6 +35,9 @@ export function buildTaskTooltipModel(session, baseStatus, needsAttention, agent
   if (statusLine) {
     rows.push({ label: 'Status', value: statusLine });
   }
+  // Where its ticket is (YouTrack / Jira / local) — the tasks menu filters by it.
+  const ticketState = String(session?.ticket_state || '').trim();
+  if (ticketState) { rows.push({ label: 'Ticket', value: ticketState }); }
 
   const branch = String(session?.branch_name || '').trim();
   if (branch) { rows.push({ label: 'Branch', value: branch }); }
