@@ -205,6 +205,9 @@ $ICON-GLYPH-SM: 10px;
 // allows (codes are never cut: "UNA-3444" is ~65px at 12px semibold), with a
 // sub-task's indent and a few pixels to spare for wider system fonts.
 $TASK-RAIL-WIDTH: 118px;
+// The files tree beside a maximized centre, collapsed: just wide enough for
+// its vertical "Files" label. It expands to the tree's own width on hover.
+$FILES-RAIL-WIDTH: 28px;
 // What the collapsed rail holds inside its 6px side padding: the controls that
 // must not move when it expands are laid out within this width in both states.
 $TASK-RAIL-INNER: $TASK-RAIL-WIDTH - 12px;

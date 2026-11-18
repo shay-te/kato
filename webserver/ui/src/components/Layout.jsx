@@ -1,20 +1,16 @@
-import { useEffect, useState } from 'react';
-
-import {
-  readChatMaximized,
-  subscribeChatMaximized,
-} from '../utils/chatMaximizedPref.js';
+import { useMaximizedPane } from '../hooks/useMaximizedPane.js';
+import { MAXIMIZED_PANE } from '../utils/maximizedPanePref.js';
 
 export default function Layout({
   top, left, center, right,
   rightWidth, leftWidth,
 }) {
-  // Maximized = the chat takes the whole window and the files/preview columns
-  // collapse. Read from the shared preference rather than a prop, because the
-  // control that flips it lives in the chat header — inside a component App
-  // remounts on every task switch — and this grid is its sibling.
-  const [maximized, setMaximized] = useState(() => readChatMaximized());
-  useEffect(() => subscribeChatMaximized(setMaximized), []);
+  // A maximized pane (the chat, or the centre) takes the whole window and the
+  // other two columns collapse. Read from the shared preference rather than a
+  // prop: the controls that flip it live in the chat header (inside a
+  // component App remounts on every task switch), the tab strip and the plan
+  // view, and this grid is their sibling.
+  const maximized = useMaximizedPane();
   // Pre-build the style object so we only set CSS vars that were
   // actually passed — Layout is rendered by both the new top-tabs
   // shell and the legacy sidebar shell, only one of which needs
@@ -31,9 +27,10 @@ export default function Layout({
       id="layout"
       className={[
         top ? 'has-top-tabs' : '',
-        // Only meaningful in the top-tabs shell, which is the only one with a
-        // chat column to maximize.
-        top && maximized ? 'is-chat-maximized' : '',
+        // Only meaningful in the top-tabs shell, which is the only one with
+        // the three columns to collapse.
+        top && maximized === MAXIMIZED_PANE.CHAT ? 'is-chat-maximized' : '',
+        top && maximized === MAXIMIZED_PANE.CENTER ? 'is-center-maximized' : '',
       ].filter(Boolean).join(' ')}
       style={style}
     >

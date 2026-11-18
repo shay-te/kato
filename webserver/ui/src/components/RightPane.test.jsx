@@ -9,8 +9,8 @@
 // on RightPane's own behavior (layout, keyboard shortcut, no-task
 // branch).
 
-import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { afterEach, beforeEach, describe, test, expect, vi } from 'vitest';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 
 // Stub the heavy child BEFORE importing RightPane.
 vi.mock('../FilesTab.jsx', () => ({
@@ -22,6 +22,9 @@ vi.mock('../FilesTab.jsx', () => ({
 }));
 
 import RightPane from './RightPane.jsx';
+import { filesRail } from '../stores/filesRailStore.js';
+import { HOVER_EXPAND_CLOSE_GRACE_MS, HOVER_EXPAND_OPEN_DELAY_MS } from '../stores/hoverExpand.js';
+import { MAXIMIZED_PANE, writeMaximizedPane, _resetMaximizedPanePref } from '../utils/maximizedPanePref.js';
 
 
 describe('RightPane', () => {
@@ -94,5 +97,70 @@ describe('RightPane', () => {
     render(<RightPane activeTaskId={null} />);
     fireEvent.keyDown(window, { key: 'p', metaKey: true });
     expect(screen.queryByTestId('files-tab')).not.toBeInTheDocument();
+  });
+});
+
+
+// While the centre is maximized the tree is a slim rail that expands over the
+// code while pointed at — the tasks menu's behaviour, through the same
+// ``createHoverExpand``.
+describe('RightPane — the files rail beside a maximized centre', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetMaximizedPanePref();
+    filesRail.reset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    filesRail.reset();
+  });
+
+  function pane(container) {
+    return container.querySelector('#right-pane');
+  }
+
+  test('hovered it expands after the short delay, and collapses after the grace', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    const { container } = render(<RightPane activeTaskId="KATO-1" />);
+    expect(pane(container)).not.toHaveClass('is-rail-open');
+
+    fireEvent.mouseEnter(pane(container));
+    act(() => { vi.advanceTimersByTime(HOVER_EXPAND_OPEN_DELAY_MS); });
+    expect(pane(container)).toHaveClass('is-rail-open');
+
+    fireEvent.mouseLeave(pane(container));
+    act(() => { vi.advanceTimersByTime(HOVER_EXPAND_CLOSE_GRACE_MS); });
+    expect(pane(container)).not.toHaveClass('is-rail-open');
+  });
+
+  test('Escape, or a press outside it, collapses it; a press inside does not', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    const { container } = render(<><RightPane activeTaskId="KATO-1" /><div data-testid="code" /></>);
+    act(() => { filesRail.open(); });
+    fireEvent.pointerDown(screen.getByTestId('files-tab'));
+    expect(pane(container)).toHaveClass('is-rail-open');
+    fireEvent.pointerDown(screen.getByTestId('code'));
+    expect(pane(container)).not.toHaveClass('is-rail-open');
+
+    act(() => { filesRail.open(); });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(pane(container)).not.toHaveClass('is-rail-open');
+  });
+
+  test('outside that mode the tree is a plain column: hovering expands nothing', () => {
+    const { container } = render(<RightPane activeTaskId="KATO-1" />);
+    fireEvent.mouseEnter(pane(container));
+    act(() => { vi.advanceTimersByTime(HOVER_EXPAND_OPEN_DELAY_MS * 2); });
+    expect(filesRail.isOpen()).toBe(false);
+    expect(pane(container)).not.toHaveClass('is-rail-open');
+  });
+
+  test('restoring the panes collapses it, so the next maximize starts slim', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    render(<RightPane activeTaskId="KATO-1" />);
+    act(() => { filesRail.open(); });
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.NONE); });
+    expect(filesRail.isOpen()).toBe(false);
   });
 });

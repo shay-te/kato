@@ -65,3 +65,11 @@ test('nothing to split without a plan, or without the task it belongs to', () =>
   rerender(<PlanPane content="# hi" />);
   expect(screen.queryByRole('button', { name: /split plan/i })).toBeNull();
 });
+
+
+describe('PlanPane — the centre\'s maximize toggle', () => {
+  test('the plan takes the centre without the tab strip, so its toggle is here too', () => {
+    render(<PlanPane content="# Plan" onClose={() => {}} taskId="T1" />);
+    expect(screen.getByRole('button', { name: /maximize file view|restore panes/i })).toBeInTheDocument();
+  });
+});

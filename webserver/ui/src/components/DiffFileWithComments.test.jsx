@@ -8,7 +8,7 @@
 //   - Collapsed files render only the header, not a placeholder body.
 
 import { beforeEach, describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { parseDiff } from 'react-diff-view';
 
 import DiffFileWithComments, {
@@ -554,6 +554,32 @@ describe('DiffFileWithComments — buried comment auto-reveal', () => {
       name: /show hidden lines below \(8 hidden lines\)/i,
     });
     expect(below).toBeInTheDocument();
+  });
+
+  test('a new file is shown once: nothing below it to expand, no "before" fetched', async () => {
+    // 2026-11-17: the base fetch for a new file fell back to the file on disk,
+    // so a trailing "hidden lines" expander offered the whole file again.
+    const file = parseDiff([
+      'diff --git a/src/new.py b/src/new.py',
+      'new file mode 100644',
+      'index 0000000..39e9af3',
+      '--- /dev/null',
+      '+++ b/src/new.py',
+      '@@ -0,0 +1,2 @@',
+      '+import logging',
+      '+x = 1',
+      '',
+    ].join('\n'))[0];
+    apiMocks.fetchBaseFileContent.mockResolvedValue({ content: 'import logging\nx = 1\n', binary: false });
+
+    const { container } = renderDiff({ file, path: 'src/new.py', initiallyExpanded: true });
+    await act(async () => {});
+
+    expect(apiMocks.fetchBaseFileContent).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /hidden lines/i })).toBeNull();
+    // Its two lines, added — and no unchanged copy of them after.
+    expect(container.querySelectorAll('td.diff-code-insert')).toHaveLength(2);
+    expect(container.querySelectorAll('td.diff-code-normal')).toHaveLength(0);
   });
 
   test('an open comment hidden in a gap is revealed with no manual click', async () => {

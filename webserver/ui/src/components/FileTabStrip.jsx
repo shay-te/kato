@@ -4,6 +4,9 @@ import { basenameOf } from '../utils/basenameOf.js';
 import { copyFileName, copyRepoRelativePath } from '../utils/clipboard.js';
 import { useHorizontalWheelScroll } from '../hooks/useHorizontalWheelScroll.js';
 import { useRevealActive } from '../hooks/useRevealActive.js';
+import { useMaximizedPane } from '../hooks/useMaximizedPane.js';
+import { MAXIMIZED_PANE } from '../utils/maximizedPanePref.js';
+import MaximizePaneButton from './MaximizePaneButton.jsx';
 import Icon from './Icon.jsx';
 import TabTooltip from './TabTooltip.jsx';
 import { useHoverCard } from '../hooks/useHoverCard.js';
@@ -67,6 +70,9 @@ export default function FileTabStrip({
   // task — is kept in view when it changes (``useRevealActive``).
   const wheelRef = useHorizontalWheelScroll(useRevealActive('.file-tab.active', revealRequestId));
   const [menu, setMenu] = useState(null);
+  // While the centre has the whole window the bar stays, tabs or not: its
+  // maximize toggle is the way back, and closing the last tab must not hide it.
+  const centreMaximized = useMaximizedPane() === MAXIMIZED_PANE.CENTER;
 
   useEffect(() => {
     if (!menu) { return undefined; }
@@ -83,7 +89,8 @@ export default function FileTabStrip({
 
   const fileTabs = tabs || [];
   const loopTabs = reviewLoopTabs || [];
-  if (fileTabs.length === 0 && loopTabs.length === 0 && !activityTab && !newTaskTab) { return null; }
+  const noTabs = fileTabs.length === 0 && loopTabs.length === 0 && !activityTab && !newTaskTab;
+  if (noTabs && !centreMaximized) { return null; }
   const draggedTab = drag.key ? fileTabs.find((tab) => tab.key === drag.key) : null;
   // ONE row of tabs, each where ``stripOrder`` puts it: a file opened while
   // another tab showed sits right after that tab.
@@ -173,7 +180,10 @@ export default function FileTabStrip({
       <NewTaskFileTab key="new-task" tab={newTaskTab} onSelect={onSelectNewTask} onClose={onCloseNewTask} />
     );
   });
+  // The toggle sits beside the strip, not in it: the strip scrolls sideways
+  // under a long row of tabs, and the button must stay put at its right end.
   return (
+    <div className="file-tab-bar">
     <nav className="file-tab-strip" aria-label="Open files" ref={wheelRef}>
       <ul className="file-tab-list">
         {items}
@@ -190,6 +200,8 @@ export default function FileTabStrip({
         />
       )}
     </nav>
+    <MaximizePaneButton pane={MAXIMIZED_PANE.CENTER} />
+    </div>
   );
 }
 

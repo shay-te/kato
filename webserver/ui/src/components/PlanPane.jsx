@@ -1,5 +1,7 @@
 import Icon from './Icon.jsx';
 import MarkdownContent from './MarkdownContent.jsx';
+import MaximizePaneButton from './MaximizePaneButton.jsx';
+import { MAXIMIZED_PANE } from '../utils/maximizedPanePref.js';
 import { planQueueView } from './planQueue/planQueueViewStore.js';
 
 // Centre-pane view for the agent's plan (``<workspace>/plan.md``).
@@ -40,6 +42,9 @@ export default function PlanPane({ content, onClose, taskId = '' }) {
             <Icon name="xmark" />
           </button>
         )}
+        {/* The plan takes the centre without the tab strip, so the centre's
+            maximize toggle (and its way back) is here too. */}
+        <MaximizePaneButton pane={MAXIMIZED_PANE.CENTER} />
       </header>
       <div className="plan-pane-body">
         {text

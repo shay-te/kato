@@ -120,7 +120,11 @@ const RIGHT_PANE_STORAGE_KEY = 'kato.rightPaneWidth';
 // (#layout.has-top-tabs grid-template-columns).
 const CENTER_PANE_MIN_WIDTH = 360;
 const LEFT_PANE_DEFAULT_WIDTH = 320;
-const LEFT_PANE_MIN_WIDTH = 220;
+// Narrow enough to keep only the tree's shape and change counts on screen
+// ("allow me to shrink the width of the file trees even more", 2026-11-18: it
+// stopped at 220). Everything in the tree ellipsises (min-width: 0), and the
+// whole pane can be hidden with the centre's maximize instead.
+const LEFT_PANE_MIN_WIDTH = 140;
 // Generous upper bound — operators routinely widen the Files /
 // Changes pane to read long diffs side-by-side with the chat, and
 // 700px capped that too early. The grid uses minmax(0, …) so the

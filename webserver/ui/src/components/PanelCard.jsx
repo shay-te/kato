@@ -32,13 +32,25 @@ export default function PanelCard({
   contentClassName = '',
   resizerId = '',
   onResizePointerDown,
+  // The card's own element (a pane that must tell a press inside it from
+  // one outside), and pointer enter / leave on it.
+  rootRef,
+  onMouseEnter,
+  onMouseLeave,
   children,
 }) {
   const resizer = resizerId && typeof onResizePointerDown === 'function'
     ? <PaneResizer id={resizerId} onPointerDown={onResizePointerDown} />
     : null;
   return (
-    <Tag id={id} className={cx('panel-card', className)} style={style}>
+    <Tag
+      ref={rootRef}
+      id={id}
+      className={cx('panel-card', className)}
+      style={style}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
       {resizer}
       <div id={contentId} className={cx('panel-card-content', contentClassName)}>
         {children}

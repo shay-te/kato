@@ -687,6 +687,16 @@ when it is let go or the window loses focus. Tap-or-hold is `utils/keyHold.js` `
 injectable): use it for any other "reveal only on a hold" shortcut. Proven in headless Chromium
 (Playwright) against a real kato webserver: the rail collapsed to codes, expanded over the page with nothing
 moving, rows grouped, footer labels on screen, the switcher came and went.
+**Hover-to-expand is ONE store: `stores/hoverExpand.js` `createHoverExpand`** (open after `HOVER_EXPAND_OPEN_DELAY_MS`,
+close after `HOVER_EXPAND_CLOSE_GRACE_MS`; `useHoverExpanded`). The tasks menu (`taskMenuStore`, plus its pin) and the
+files tree beside a maximized centre (`stores/filesRailStore.js`) both use it — never a second timer pair.
+**One pane maximized at a time — ONE preference, `utils/maximizedPanePref.js`** (`'' | 'chat' | 'center'`, the old
+`kato.chatMaximized.v1` key, an old `{chatMaximized: true}` reads as the chat) and ONE toggle, `MaximizePaneButton` (the
+chat header, the centre's tab strip — `.file-tab-bar`, kept while maximized even with no tab — and the plan view, which
+takes the centre without the strip). Maximized centre: the chat column goes to zero (mounted) and the files tree stays a
+`$FILES-RAIL-WIDTH` rail with a vertical "Files" that expands OVER the code while hovered (`.is-rail-open`; Escape / a
+press outside close it), its tree kept at its own width so nothing reflows. Proven in headless Chromium: 28px → 320px,
+the centre's box unchanged, back to 28px on leaving.
 **The tab on show is kept in view — ONE hook, `hooks/useRevealActive.js`** (the rail's `.tab.active`, the centre strip's
 `.file-tab.active`): it scrolls when the item on show becomes a DIFFERENT element (any kind: file, review loop, activity,
 new task) or a reveal is asked again (a tree click, a palette pick) — never on a poll or re-render with the same one, and

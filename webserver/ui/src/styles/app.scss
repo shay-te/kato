@@ -603,6 +603,59 @@ body {
   border-width: 0;
 }
 
+/* Maximized centre: the file / diff view gets the width. The chat collapses
+ * like the maximized chat's neighbours (zero-width column, no border — it
+ * stays mounted). The files tree does NOT vanish: it stays as a slim rail at
+ * the left edge (its column keeps a gutter beside it), and expands over the
+ * code while pointed at — the tasks menu's behaviour (``filesRail``). */
+#layout.has-top-tabs.is-center-maximized {
+  grid-template-columns: calc(#{$FILES-RAIL-WIDTH} + #{$SPACE-8}) minmax(0, 1fr) 0;
+  column-gap: 0;
+}
+
+#layout.has-top-tabs.is-center-maximized > #session-pane {
+  border-width: 0;
+}
+
+/* The rail. Expanded it is wider than its column and lies OVER the centre
+ * (above it, pushing nothing). The tree inside keeps its own width the whole
+ * time, so nothing reflows and its scroll and open folders survive: the rail
+ * only shows less of it. */
+#layout.has-top-tabs.is-center-maximized > #right-pane {
+  width: $FILES-RAIL-WIDTH;
+  justify-self: start;
+  overflow: hidden;
+  z-index: 30;
+  transition: width 140ms ease-out, box-shadow 140ms ease-out;
+}
+
+#layout.has-top-tabs.is-center-maximized > #right-pane > #right-pane-root {
+  width: calc(var(--left-pane-width, 320px) - 2px);
+}
+
+#layout.has-top-tabs.is-center-maximized > #right-pane.is-rail-open {
+  width: var(--left-pane-width, 320px);
+  box-shadow: $SHADOW-30;
+}
+
+/* Collapsed: the tree hidden, a vertical "Files" in its place. */
+#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open) > #right-pane-root {
+  visibility: hidden;
+}
+
+#layout.has-top-tabs.is-center-maximized > #right-pane:not(.is-rail-open)::after {
+  content: 'Files';
+  position: absolute;
+  top: $SPACE-12;
+  left: 50%;
+  writing-mode: vertical-rl;
+  transform: translateX(-50%) rotate(180deg);
+  font-size: $TEXT-12;
+  letter-spacing: 0.04em;
+  color: $C-NEUTRAL-64;
+  pointer-events: none;
+}
+
 
 /* The hoisted task header — spans every column, between the tab
  * strip and the panels. Kept as a grid item (NOT display:none when
@@ -2140,10 +2193,9 @@ body {
   font-size: $TEXT-12;
 }
 
-/* Maximize toggle — pushed to the right end of the agent-tab row, so it reads
- * as acting on the CHAT rather than on any one agent tab. */
-.agent-backend-maximize {
-  margin-left: auto;
+/* A pane's maximize toggle (``MaximizePaneButton``): the chat header, the
+ * centre's tab strip, the plan view. Where it sits is its container's call. */
+.pane-maximize-btn {
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -2161,12 +2213,12 @@ body {
   transition: background 120ms ease, color 120ms ease;
 }
 
-.agent-backend-maximize:hover {
+.pane-maximize-btn:hover {
   background: $C-NEUTRAL-100-A06;
   color: $C-NEUTRAL-96;
 }
 
-.agent-backend-maximize[aria-pressed='true'] {
+.pane-maximize-btn[aria-pressed='true'] {
   color: $C-CYAN-58;
 }
 
@@ -2176,6 +2228,12 @@ body {
   gap: $SPACE-4;
   padding: 0 $SPACE-8;
   flex-shrink: 0;
+}
+
+/* Pushed to the right end of the agent-tab row, so it reads as acting on the
+ * CHAT rather than on any one agent tab. */
+.agent-backend-tabs > .pane-maximize-btn {
+  margin-left: auto;
 }
 
 .agent-backend-tab {
@@ -5356,11 +5414,15 @@ code {
 .file-tab-loop-icon.is-warn { color: $C-ORANGE-50; }
 .file-tab-loop-icon.is-bad { color: $C-RED-60; }
 
-.file-tab-strip {
+/* The band above the code: the tabs, and the centre's maximize toggle at its
+ * right end. The tabs scroll sideways inside it; the toggle stays put. */
+.file-tab-bar {
   flex-shrink: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  // This strip is now the pane's ONLY chrome — the .editor-pane-header
+  display: flex;
+  align-items: center;
+  gap: $SPACE-4;
+  padding-right: $SPACE-6;
+  // This band is now the pane's ONLY chrome — the .editor-pane-header
   // that used to sit under it (path + read-only pill) was removed as
   // redundant with the tab's own hover title and view toggle. The
   // gradient stays: it reads as a toolbar band above the code.
@@ -5368,6 +5430,14 @@ code {
       $C-NEUTRAL-11-A62 0%,
       $C-NEUTRAL-07-A75 100%);
   border-bottom: 1px solid $C-NEUTRAL-16;
+}
+
+.file-tab-strip {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .file-tab-list {
@@ -6051,7 +6121,8 @@ code {
  * two columns are zero-width — and a live drag would silently rewrite the
  * stored widths the restore depends on. Hidden rather than merely disabled so
  * the grip does not sit over the chat's left edge. */
-#layout.is-chat-maximized .pane-resizer {
+#layout.is-chat-maximized .pane-resizer,
+#layout.is-center-maximized .pane-resizer {
   display: none;
 }
 

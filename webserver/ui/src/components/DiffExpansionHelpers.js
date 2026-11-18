@@ -16,10 +16,15 @@ export function splitSourceLines(content) {
   return lines;
 }
 
+// Where the file was before the change — the source the hidden unchanged
+// lines are read from. '' for a NEW file: it had no "before". It used to fall
+// back to the new path; the base has no such file, so the fetch fell back to
+// the file on disk, and expanding the "hidden lines below" appended the whole
+// file again under its own diff (2026-11-17: "why the file content is twice?").
 export function basePathForDiffFile(file, fallbackPath = '') {
   const oldPath = String(file?.oldPath || '');
-  if (oldPath && oldPath !== '/dev/null') { return oldPath; }
-  return String(fallbackPath || '');
+  if (file?.type === 'add' || oldPath === '/dev/null') { return ''; }
+  return oldPath || String(fallbackPath || '');
 }
 
 export function buildDiffRenderItems(hunks, sourceLineCount = 0) {

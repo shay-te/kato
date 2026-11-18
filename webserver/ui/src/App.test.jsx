@@ -364,6 +364,14 @@ describe('App — render shell', () => {
       });
     }
   });
+
+  test('the files tree can be dragged down to 140px', () => {
+    // It stopped at 220px ("allow me to shrink the width of the file trees even more").
+    render(<App />);
+    expect(useResizable).toHaveBeenCalledWith(
+      expect.objectContaining({ storageKey: 'kato.leftPaneWidth', minWidth: 140 }),
+    );
+  });
 });
 
 

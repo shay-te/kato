@@ -10,15 +10,16 @@ import { render, act } from '@testing-library/react';
 
 import Layout from './Layout.jsx';
 import {
-  writeChatMaximized,
-  _resetChatMaximizedPref,
-} from '../utils/chatMaximizedPref.js';
+  MAXIMIZED_PANE,
+  writeMaximizedPane,
+  _resetMaximizedPanePref,
+} from '../utils/maximizedPanePref.js';
 
 beforeEach(() => {
   try { localStorage.clear(); } catch (_) { /* jsdom */ }
-  _resetChatMaximizedPref();
+  _resetMaximizedPanePref();
 });
-afterEach(() => { _resetChatMaximizedPref(); });
+afterEach(() => { _resetMaximizedPanePref(); });
 
 const panes = {
   top: <div id="tabs" />,
@@ -38,7 +39,7 @@ describe('Layout — chat maximize', () => {
   });
 
   test('reads the stored preference on mount', () => {
-    writeChatMaximized(true);
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
     const { container } = render(<Layout {...panes} />);
     expect(layoutEl(container).className).toContain('is-chat-maximized');
   });
@@ -47,10 +48,10 @@ describe('Layout — chat maximize', () => {
     const { container } = render(<Layout {...panes} />);
     expect(layoutEl(container).className).not.toContain('is-chat-maximized');
 
-    act(() => { writeChatMaximized(true); });
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.CHAT); });
     expect(layoutEl(container).className).toContain('is-chat-maximized');
 
-    act(() => { writeChatMaximized(false); });
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.NONE); });
     expect(layoutEl(container).className).not.toContain('is-chat-maximized');
   });
 
@@ -60,7 +61,7 @@ describe('Layout — chat maximize', () => {
     // so tearing it down and rebuilding it a moment later is exactly the
     // "UI shifts while you are reading it" behaviour the diff viewer already
     // has rules against.
-    writeChatMaximized(true);
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
     const { container } = render(<Layout {...panes} />);
     expect(container.querySelector('#left')).toBeInTheDocument();
     expect(container.querySelector('#center')).toBeInTheDocument();
@@ -69,7 +70,7 @@ describe('Layout — chat maximize', () => {
 
   test('the legacy sidebar shell is unaffected', () => {
     // No ``top`` means the old shell, which has no chat column to maximize.
-    writeChatMaximized(true);
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
     const { container } = render(
       <Layout left={panes.left} center={panes.center} right={panes.right} />,
     );
@@ -80,12 +81,40 @@ describe('Layout — chat maximize', () => {
   test('pane widths still reach the grid while maximized', () => {
     // The CSS zeroes the columns; the vars stay set so restoring returns the
     // operator to the widths they had, not to the defaults.
-    writeChatMaximized(true);
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
     const { container } = render(
       <Layout {...panes} leftWidth={321} rightWidth={654} />,
     );
     const style = layoutEl(container).getAttribute('style');
     expect(style).toContain('321px');
     expect(style).toContain('654px');
+  });
+});
+
+
+describe('Layout — centre maximize', () => {
+  test('the centre maximized collapses the tree and the chat, every pane still mounted', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    const { container } = render(<Layout {...panes} />);
+    expect(layoutEl(container).className).toContain('is-center-maximized');
+    expect(layoutEl(container).className).not.toContain('is-chat-maximized');
+    for (const id of ['#left', '#center', '#right']) {
+      expect(container.querySelector(id)).toBeInTheDocument();
+    }
+  });
+
+  test('one pane at a time: maximizing the chat un-maximizes the centre', () => {
+    const { container } = render(<Layout {...panes} />);
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.CENTER); });
+    expect(layoutEl(container).className).toContain('is-center-maximized');
+    act(() => { writeMaximizedPane(MAXIMIZED_PANE.CHAT); });
+    expect(layoutEl(container).className).toContain('is-chat-maximized');
+    expect(layoutEl(container).className).not.toContain('is-center-maximized');
+  });
+
+  test('the legacy sidebar shell is unaffected', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    const { container } = render(<Layout left={panes.left} center={panes.center} right={panes.right} />);
+    expect(layoutEl(container).className).not.toContain('is-center-maximized');
   });
 });

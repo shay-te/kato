@@ -17,10 +17,11 @@ vi.mock('../stores/toastStore.js', () => ({
 
 import AgentBackendTabs from './AgentBackendTabs.jsx';
 import {
-  readChatMaximized,
-  writeChatMaximized,
-  _resetChatMaximizedPref,
-} from '../utils/chatMaximizedPref.js';
+  MAXIMIZED_PANE,
+  readMaximizedPane,
+  writeMaximizedPane,
+  _resetMaximizedPanePref,
+} from '../utils/maximizedPanePref.js';
 import { fetchAgentBackends, fetchTaskChats, switchTaskBackend, fetchTaskAgentStatus} from '../api.js';
 import { toast } from '../stores/toastStore.js';
 
@@ -592,7 +593,7 @@ describe('AgentBackendTabs — status on the tab', () => {
 describe('AgentBackendTabs — maximize chat', () => {
   beforeEach(() => {
     try { localStorage.clear(); } catch (_) { /* jsdom */ }
-    _resetChatMaximizedPref();
+    _resetMaximizedPanePref();
   });
 
   async function renderTabs() {
@@ -611,7 +612,7 @@ describe('AgentBackendTabs — maximize chat', () => {
     const button = await renderTabs();
     fireEvent.click(button);
 
-    expect(readChatMaximized()).toBe(true);
+    expect(readMaximizedPane()).toBe(MAXIMIZED_PANE.CHAT);
     await waitFor(() => {
       expect(
         screen.getByRole('button', { name: /restore panes/i }),
@@ -622,14 +623,14 @@ describe('AgentBackendTabs — maximize chat', () => {
   it('clicking again restores', async () => {
     const button = await renderTabs();
     fireEvent.click(button);
-    await waitFor(() => expect(readChatMaximized()).toBe(true));
+    await waitFor(() => expect(readMaximizedPane()).toBe(MAXIMIZED_PANE.CHAT));
 
     fireEvent.click(screen.getByRole('button', { name: /restore panes/i }));
-    expect(readChatMaximized()).toBe(false);
+    expect(readMaximizedPane()).toBe(MAXIMIZED_PANE.NONE);
   });
 
   it('opens in the stored state after a reload', async () => {
-    writeChatMaximized(true);
+    writeMaximizedPane(MAXIMIZED_PANE.CHAT);
     const button = await renderTabs();
     expect(button).toHaveAttribute('aria-pressed', 'true');
   });
@@ -641,7 +642,7 @@ describe('AgentBackendTabs — maximize chat', () => {
     expect(button).toHaveAttribute('aria-pressed', 'false');
 
     await waitFor(() => {
-      writeChatMaximized(true);
+      writeMaximizedPane(MAXIMIZED_PANE.CHAT);
       expect(
         screen.getByRole('button', { name: /restore panes/i }),
       ).toHaveAttribute('aria-pressed', 'true');

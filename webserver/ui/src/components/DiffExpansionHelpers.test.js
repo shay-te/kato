@@ -21,10 +21,18 @@ test('basePathForDiffFile reads context from the old side of the diff', () => {
     basePathForDiffFile({ oldPath: 'src/old.js', newPath: 'src/new.js' }, 'x'),
     'src/old.js',
   );
-  assert.equal(
-    basePathForDiffFile({ oldPath: '/dev/null', newPath: 'src/new.js' }, 'src/new.js'),
-    'src/new.js',
-  );
+  // No old path in the parsed file: the path the caller knows it by.
+  assert.equal(basePathForDiffFile({ newPath: 'src/a.js' }, 'src/a.js'), 'src/a.js');
+});
+
+test('basePathForDiffFile: a new file has no "before" to read hidden lines from', () => {
+  for (const file of [
+    { type: 'add', oldPath: '/dev/null', newPath: 'src/new.js' },
+    { oldPath: '/dev/null', newPath: 'src/new.js' },
+    { type: 'add', oldPath: 'src/new.js', newPath: 'src/new.js' },
+  ]) {
+    assert.equal(basePathForDiffFile(file, 'src/new.js'), '');
+  }
 });
 
 test('buildDiffRenderItems inserts leading, middle, and trailing gaps', () => {

@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
 import { createPubSub } from './pubsub.js';
+import {
+  HOVER_EXPAND_CLOSE_GRACE_MS,
+  HOVER_EXPAND_OPEN_DELAY_MS,
+  createHoverExpand,
+} from './hoverExpand.js';
 
 // Whether the tasks menu (the rail of tasks on the left, Chrome-style) is
 // EXPANDED. The rail itself is always there, showing each task's code;
@@ -11,17 +16,13 @@ import { createPubSub } from './pubsub.js';
 // rather than lying under it — and its width can be dragged
 // (``setTaskMenuWidth``). Both are remembered per browser.
 //
-// Both waits are short on purpose:
-//   - the expand waits ``TASK_MENU_OPEN_DELAY_MS``: the rail sits at the
-//     screen's edge, and a pointer only passing over it must not throw a
-//     panel over the page. The kato logo expands at once — pointing at it is
-//     asking.
-//   - the collapse waits ``TASK_MENU_CLOSE_GRACE_MS``: a pointer that slips
-//     off the edge for a moment must not snap it shut. Entering again in time
-//     keeps it open.
+// Hovering open and closed is the shared ``createHoverExpand`` (the files tree
+// beside a maximized centre does the same), with its timing: the expand waits
+// ``TASK_MENU_OPEN_DELAY_MS``, the collapse ``TASK_MENU_CLOSE_GRACE_MS``. The
+// kato logo expands at once — pointing at it is asking.
 
-export const TASK_MENU_OPEN_DELAY_MS = 150;
-export const TASK_MENU_CLOSE_GRACE_MS = 220;
+export const TASK_MENU_OPEN_DELAY_MS = HOVER_EXPAND_OPEN_DELAY_MS;
+export const TASK_MENU_CLOSE_GRACE_MS = HOVER_EXPAND_CLOSE_GRACE_MS;
 
 export const TASK_MENU_WIDTH_DEFAULT = 360;
 export const TASK_MENU_WIDTH_MIN = 240;
@@ -29,65 +30,38 @@ export const TASK_MENU_WIDTH_MAX = 640;
 const PINNED_KEY = 'kato.taskMenu.pinned.v1';
 const WIDTH_KEY = 'kato.taskMenu.width.v1';
 
-let open = false;
+const hover = createHoverExpand({
+  openDelayMs: TASK_MENU_OPEN_DELAY_MS,
+  closeGraceMs: TASK_MENU_CLOSE_GRACE_MS,
+});
 let pinned = readStored(PINNED_KEY) === 'true';
 let width = clampWidth(Number(readStored(WIDTH_KEY)) || TASK_MENU_WIDTH_DEFAULT);
-let timer = null;
 // Expanded = hovered open OR pinned: a pinned menu ignores the pointer.
-const pubsub = createPubSub(() => open || pinned);
+const expanded = () => hover.isOpen() || pinned;
+const pubsub = createPubSub(expanded);
 const pinnedPubsub = createPubSub(() => pinned);
 const widthPubsub = createPubSub(() => width);
+let shownExpanded = expanded();
 
-function set(next) {
-  const wasExpanded = open || pinned;
-  open = next;
-  if ((open || pinned) !== wasExpanded) { pubsub.emit(); }
+// Subscribers hear only a change of EXPANDED, whichever of the two moved it.
+function emitIfExpandedChanged() {
+  if (expanded() === shownExpanded) { return; }
+  shownExpanded = expanded();
+  pubsub.emit();
 }
+hover.subscribe(emitIfExpandedChanged);
 
-function cancelPending() {
-  if (timer !== null) {
-    clearTimeout(timer);
-    timer = null;
-  }
-}
-
-function setSoon(next, delayMs) {
-  cancelPending();
-  timer = setTimeout(() => {
-    timer = null;
-    set(next);
-  }, delayMs);
-}
-
-export function openTaskMenu() {
-  cancelPending();
-  set(true);
-}
-
-// Already open: stays open (and a pending collapse is called off).
-export function openTaskMenuSoon() {
-  if (open) {
-    cancelPending();
-    return;
-  }
-  setSoon(true, TASK_MENU_OPEN_DELAY_MS);
-}
-
-export function closeTaskMenuSoon() {
-  setSoon(false, TASK_MENU_CLOSE_GRACE_MS);
-}
-
-export function closeTaskMenu() {
-  cancelPending();
-  set(false);
-}
+export const openTaskMenu = hover.open;
+export const openTaskMenuSoon = hover.openSoon;
+export const closeTaskMenuSoon = hover.closeSoon;
+export const closeTaskMenu = hover.close;
 
 export function isTaskMenuOpen() {
-  return open || pinned;
+  return expanded();
 }
 
 export function useTaskMenuOpen() {
-  const [value, setValue] = useState(open || pinned);
+  const [value, setValue] = useState(expanded());
   useEffect(() => pubsub.subscribe(setValue), []);
   return value;
 }
@@ -96,13 +70,11 @@ export function useTaskMenuOpen() {
 // hover-only menu — collapsed, since the pointer is on the logo it just left
 // pinned and leaving would collapse it anyway.
 export function toggleTaskMenuPinned() {
-  const wasExpanded = open || pinned;
   pinned = !pinned;
-  cancelPending();
-  open = false;
   writeStored(PINNED_KEY, pinned ? 'true' : 'false');
   pinnedPubsub.emit();
-  if ((open || pinned) !== wasExpanded) { pubsub.emit(); }
+  hover.close();
+  emitIfExpandedChanged();
 }
 
 export function isTaskMenuPinned() {
@@ -164,8 +136,8 @@ function writeStored(key, value) {
 
 // Test-only: back to collapsed, unpinned, default width, nothing pending.
 export function _resetTaskMenu() {
-  cancelPending();
-  open = false;
+  hover.reset();
   pinned = false;
   width = TASK_MENU_WIDTH_DEFAULT;
+  shownExpanded = false;
 }

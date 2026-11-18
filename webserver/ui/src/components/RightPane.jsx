@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import FilesTab from '../FilesTab.jsx';
 import PanelCard from './PanelCard.jsx';
+import { useDismissOnOutsidePointerOrEscape } from '../hooks/useDismissOnOutsidePointerOrEscape.js';
+import { useMaximizedPane } from '../hooks/useMaximizedPane.js';
+import { filesRail } from '../stores/filesRailStore.js';
+import { useHoverExpanded } from '../stores/hoverExpand.js';
+import { MAXIMIZED_PANE } from '../utils/maximizedPanePref.js';
+import { cx } from '../utils/cx.js';
 import { useGlobalSearchShortcut } from '../hooks/useGlobalSearchShortcut.js';
 
 export default function RightPane({
@@ -14,6 +20,16 @@ export default function RightPane({
   onResizePointerDown,
   onOpenFile,
 }) {
+  // While the centre is maximized the tree is a slim rail that expands over
+  // the code while pointed at (``filesRail``, the tasks menu's behaviour); it
+  // also closes on a press outside it (a touch screen has no pointer to leave
+  // with) and on Escape. Leaving that mode collapses it, so the next maximize
+  // starts slim.
+  const railMode = useMaximizedPane() === MAXIMIZED_PANE.CENTER;
+  const railOpen = useHoverExpanded(filesRail) && railMode;
+  const paneRef = useRef(null);
+  useEffect(() => { if (!railMode) { filesRail.close(); } }, [railMode]);
+  useDismissOnOutsidePointerOrEscape(railOpen, filesRail.close, paneRef);
   // Bumped each time Cmd/Ctrl+P fires. ``FilesTab`` watches this and
   // focuses its filter input on every increment. Using a counter
   // (vs a boolean toggle) so consecutive invocations always trigger
@@ -108,10 +124,14 @@ export default function RightPane({
     <PanelCard
       as="aside"
       id="right-pane"
+      className={cx(railOpen && 'is-rail-open')}
       style={inlineStyle}
       contentId="right-pane-root"
       resizerId="left-pane-resizer"
       onResizePointerDown={onResizePointerDown}
+      rootRef={paneRef}
+      onMouseEnter={railMode ? filesRail.openSoon : undefined}
+      onMouseLeave={railMode ? filesRail.closeSoon : undefined}
     >
       {sessionBody}
     </PanelCard>

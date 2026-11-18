@@ -4,11 +4,12 @@
 // close button); click selects, close button closes, middle-click
 // closes, Ctrl/Cmd+W closes the focused tab.
 
-import { describe, test, expect, vi } from 'vitest';
+import { beforeEach, describe, test, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 
 import FileTabStrip from './FileTabStrip.jsx';
 import { taskTooltipModelFor } from '../utils/taskTooltipModel.js';
+import { MAXIMIZED_PANE, readMaximizedPane, writeMaximizedPane, _resetMaximizedPanePref } from '../utils/maximizedPanePref.js';
 
 
 function tab(overrides = {}) {
@@ -843,3 +844,44 @@ describe('a review loop tab names its task', () => {
   });
 });
 
+
+describe('FileTabStrip — the centre\'s maximize toggle', () => {
+  beforeEach(() => {
+    try { localStorage.clear(); } catch (_) { /* jsdom */ }
+    _resetMaximizedPanePref();
+  });
+
+  const props = {
+    tabs: [{ key: 'a', relativePath: 'src/app.py', view: 'file' }],
+    activeKey: 'a', onSelect: () => {}, onClose: () => {},
+  };
+
+  test('sits at the end of the strip, outside the part that scrolls', () => {
+    const { container } = render(<FileTabStrip {...props} />);
+    const button = screen.getByRole('button', { name: 'Maximize file view' });
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(container.querySelector('.file-tab-strip').contains(button)).toBe(false);
+    expect(container.querySelector('.file-tab-bar').contains(button)).toBe(true);
+  });
+
+  test('maximizes the centre, and the same button restores', async () => {
+    render(<FileTabStrip {...props} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Maximize file view' }));
+    expect(readMaximizedPane()).toBe(MAXIMIZED_PANE.CENTER);
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore panes' }));
+    expect(readMaximizedPane()).toBe(MAXIMIZED_PANE.NONE);
+  });
+
+  test('closing the last tab while maximized keeps the way back on screen', () => {
+    writeMaximizedPane(MAXIMIZED_PANE.CENTER);
+    render(<FileTabStrip tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Restore panes' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('no tabs and nothing maximized: no bar at all', () => {
+    const { container } = render(
+      <FileTabStrip tabs={[]} activeKey={null} onSelect={() => {}} onClose={() => {}} />,
+    );
+    expect(container.querySelector('.file-tab-bar')).toBeNull();
+  });
+});
