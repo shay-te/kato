@@ -1410,6 +1410,16 @@ class ClaudeSessionManager(object):
             self._persist_record(record)
         return record
 
+    def _own_chat_id(self, record) -> str:
+        """This agent's chat id on ``record``: the record's own id while it is
+        ours (one naming no agent predates them and is), else our parked chat's
+        — the same ownership rule every write here asks (``record_accepts_backend``)."""
+        if record is None:
+            return ''
+        if record_accepts_backend(record, self.AGENT_BACKEND):
+            return read_session_id_from(record)
+        return fix_session_id(parked_chat(record, self.AGENT_BACKEND)['agent_session_id'])
+
     def _discard_if_session_id_drifted_locked(
         self,
         lookup_key: str,
@@ -1439,11 +1449,10 @@ class ClaudeSessionManager(object):
                 )
             return True
         record = self._records.get(lookup_key)
-        # THIS agent's chat on the record, active or parked: while the task is
-        # on another agent the record's own id is THAT agent's, and taking it
-        # for ours killed a parked Claude chat so its next spawn would resume
-        # the Codex chat's id.
-        pinned_id = fix_session_id(parked_chat(record, self.AGENT_BACKEND)['agent_session_id']) if record else ''
+        # THIS agent's chat on the record: while the task is on another agent
+        # the record's own id is THAT agent's, and taking it for ours killed a
+        # parked Claude chat so its next spawn would resume the Codex chat's id.
+        pinned_id = self._own_chat_id(record)
         if not pinned_id:
             return False
         live_id = read_session_id_from(session)
